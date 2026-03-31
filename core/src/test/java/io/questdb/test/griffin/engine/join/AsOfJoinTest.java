@@ -1326,6 +1326,64 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinThreeSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                sym3 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                sym3 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 'P', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'X', 'Q', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('A', 'Y', 'P', 3.0, '2024-01-01T10:02:00.000000Z'),
+                        ('B', 'X', 'P', 4.0, '2024-01-01T10:03:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 'P', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'X', 'Q', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('A', 'Y', 'P', 30.0, '2024-01-01T09:45:00.000000Z')
+                    """);
+
+            // (B, X, P) has no match in slave
+            String expected = """
+                    sym1\tsym2\tsym3\tval\tprice
+                    A\tX\tP\t1.0\t10.0
+                    A\tX\tQ\t2.0\t20.0
+                    A\tY\tP\t3.0\t30.0
+                    B\tX\tP\t4.0\tnull
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.sym3, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2 AND m.sym3 = s.sym3)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+        });
+    }
+
+    @Test
     public void testAsOfJoinTolerance() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -1672,6 +1730,92 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinTwoSymbolKeysEmptyMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 'Y', 20.0, '2024-01-01T09:30:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysEmptySlave() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('B', 'Y', 2.0, '2024-01-01T10:01:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\tnull
+                    B\tY\t2.0\tnull
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+        });
+    }
+
+    @Test
     public void testAsOfJoinTwoSymbolKeysMasterOnlySymbols() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -1774,9 +1918,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\tX\t3.0\t30.0
                     """;
 
+            String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN (SELECT * FROM slave WHERE price > 10) s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
             assertQueryNoLeakCheck(
                     expected,
-                    "SELECT m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN (SELECT * FROM slave WHERE price > 10) s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)",
+                    query,
                     null,
                     false,
                     true
@@ -1828,6 +1975,66 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     A\t\t1.0\t10.0
                     \tX\t2.0\t20.0
                     A\tX\t3.0\t30.0
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysWithReversedSymbolOrder() throws Exception {
+        // Master and slave insert symbols in different order, so symbol IDs differ.
+        // SymbolTranslatingRecord must correctly map master IDs to slave IDs.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            // Master inserts B first (ID=0), then A (ID=1)
+            execute("""
+                    INSERT INTO master VALUES
+                        ('B', 'Y', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'X', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z'),
+                        ('A', 'Y', 4.0, '2024-01-01T10:03:00.000000Z')
+                    """);
+
+            // Slave inserts A first (ID=0), then B (ID=1) — reversed symbol table
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T09:45:00.000000Z'),
+                        ('B', 'Y', 40.0, '2024-01-01T09:50:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    B\tY\t1.0\t40.0
+                    A\tX\t2.0\t10.0
+                    B\tX\t3.0\t30.0
+                    A\tY\t4.0\t20.0
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
@@ -3743,9 +3950,12 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     B\tX\t3.0\tnull
                     """;
 
+            String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m LT JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join Light");
             assertQueryNoLeakCheck(
                     expected,
-                    "SELECT m.sym1, m.sym2, m.val, s.price FROM master m LT JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)",
+                    query,
                     null,
                     false,
                     true
