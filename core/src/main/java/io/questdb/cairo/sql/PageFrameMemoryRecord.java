@@ -25,9 +25,11 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
@@ -148,6 +150,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             array.ofNull();
         }
         return array;
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int columnIndex, int columnType, int idx0, int idx1) {
+        return getArrayDouble1d2d0(columnIndex, columnType, idx0, idx1, rowIndex);
     }
 
     @Override
@@ -644,6 +651,37 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         bsViews.extendAndSet(columnIndex, view = new DirectByteSequenceView());
         return view;
+    }
+
+    protected double getArrayDouble1d2d0(int columnIndex, int columnType, int idx0, int idx1, long rowIdx) {
+        final long auxAddr = auxPageAddresses.get(columnOffset + columnIndex);
+        if (auxAddr == 0) {
+            return Double.NaN;
+        }
+        final long auxEntryAddr = auxAddr + ArrayTypeDriver.getAuxVectorOffsetStatic(rowIdx);
+        final int sizeBytes = Unsafe.getUnsafe().getInt(auxEntryAddr + Long.BYTES);
+        if (sizeBytes == 0) {
+            return Double.NaN;
+        }
+        final long dataOffset = Unsafe.getUnsafe().getLong(auxEntryAddr) & ArrayTypeDriver.OFFSET_MAX;
+        final long dataAddr = pageAddresses.get(columnOffset + columnIndex);
+        final long shapeAddr = dataAddr + dataOffset;
+        final int flatIndex;
+        if (ColumnType.decodeArrayDimensionality(columnType) == 1) {
+            if (idx0 >= Unsafe.getUnsafe().getInt(shapeAddr)) {
+                return Double.NaN;
+            }
+            flatIndex = idx0;
+        } else {
+            final int dimLen1 = Unsafe.getUnsafe().getInt(shapeAddr + Integer.BYTES);
+            if (idx0 >= Unsafe.getUnsafe().getInt(shapeAddr) || idx1 >= dimLen1) {
+                return Double.NaN;
+            }
+            flatIndex = idx0 * dimLen1 + idx1;
+        }
+        // 1D and 2D double arrays: values always start at dataOffset + Double.BYTES
+        // (1D: 4 bytes shape + 4 bytes padding; 2D: 8 bytes shape + 0 padding)
+        return Unsafe.getUnsafe().getDouble(dataAddr + dataOffset + Double.BYTES + (long) flatIndex * Double.BYTES);
     }
 
     protected BinarySequence getBin(long base, long offset, long dataLim, DirectByteSequenceView view) {

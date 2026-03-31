@@ -301,9 +301,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                             tenant = copyOfTenant != null
                                     ? newCopyOfTenant(copyOfTenant, rootEntry, e, i, supervisor)
                                     : newTenant(tableToken, rootEntry, e, i, supervisor);
-                        } catch (CairoException ex) {
+                        } catch (Throwable th) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
-                            throw ex;
+                            throw th;
                         }
 
                         e.assignTenant(i, tenant);
