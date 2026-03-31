@@ -402,7 +402,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 case UNSUPPORTED_VERSION -> droppedBadVersionCount++;
                 default -> droppedParseErrorCount++;
             }
-            LOG.error().$("header parse error: ").$(e.getMessage()).$();
+            LOG.error().$("header parse error: ").$(e.getFlyweightMessage()).$();
             return;
         }
         long totalLength = HEADER_SIZE + messageHeader.getPayloadLength();

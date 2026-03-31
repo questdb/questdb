@@ -25,54 +25,65 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Exception thrown when parsing QWP v1 protocol data fails.
  */
 public class QwpParseException extends Exception implements Sinkable, FlyweightMessageContainer {
+    private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+    private static final ThreadLocal<QwpParseException> tlException = new ThreadLocal<>(QwpParseException::new);
 
-    private final ErrorCode errorCode;
+    private ErrorCode errorCode;
     private final StringSink messageSink = new StringSink();
 
-    public QwpParseException(ErrorCode errorCode, CharSequence message) {
-        this.errorCode = errorCode;
-        this.messageSink.put(message);
+    private QwpParseException() {
     }
 
     public static QwpParseException bitReadOverflow() {
-        return new QwpParseException(ErrorCode.BIT_READ_OVERFLOW, "attempt to read beyond available bits");
+        return instance(ErrorCode.BIT_READ_OVERFLOW).put("attempt to read beyond available bits");
     }
 
     public static QwpParseException create(ErrorCode errorCode, CharSequence message) {
-        return new QwpParseException(errorCode, message);
+        return instance(errorCode).put(message);
     }
 
     public static QwpParseException headerTooShort() {
-        return new QwpParseException(ErrorCode.HEADER_TOO_SHORT, "message header too short");
+        return instance(ErrorCode.HEADER_TOO_SHORT).put("message header too short");
     }
 
     public static QwpParseException incompleteVarint() {
-        return new QwpParseException(ErrorCode.INCOMPLETE_VARINT, "incomplete varint: buffer underflow");
+        return instance(ErrorCode.INCOMPLETE_VARINT).put("incomplete varint: buffer underflow");
     }
 
     public static QwpParseException invalidMagic() {
-        return new QwpParseException(ErrorCode.INVALID_MAGIC, "invalid magic bytes");
+        return instance(ErrorCode.INVALID_MAGIC).put("invalid magic bytes");
     }
 
     public static QwpParseException payloadTooLarge() {
-        return new QwpParseException(ErrorCode.PAYLOAD_TOO_LARGE, "payload exceeds maximum size");
+        return instance(ErrorCode.PAYLOAD_TOO_LARGE).put("payload exceeds maximum size");
     }
 
     public static QwpParseException unsupportedVersion() {
-        return new QwpParseException(ErrorCode.UNSUPPORTED_VERSION, "unsupported protocol version");
+        return instance(ErrorCode.UNSUPPORTED_VERSION).put("unsupported protocol version");
     }
 
     public static QwpParseException varintOverflow() {
-        return new QwpParseException(ErrorCode.VARINT_OVERFLOW, "varint overflow: too many continuation bytes");
+        return instance(ErrorCode.VARINT_OVERFLOW).put("varint overflow: too many continuation bytes");
+    }
+
+    public static QwpParseException instance(ErrorCode errorCode) {
+        QwpParseException exception = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (exception = new QwpParseException()) != null;
+        exception.errorCode = errorCode;
+        exception.messageSink.clear();
+        return exception;
     }
 
     public ErrorCode getErrorCode() {
@@ -87,6 +98,31 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
     @Override
     public String getMessage() {
         return messageSink.toString();
+    }
+
+    @Override
+    public StackTraceElement[] getStackTrace() {
+        StackTraceElement[] result = EMPTY_STACK_TRACE;
+        // This is to have correct stack trace reported in CI
+        assert (result = super.getStackTrace()) != null;
+        return result;
+    }
+
+    public QwpParseException put(@Nullable CharSequence message) {
+        if (message != null) {
+            messageSink.put(message);
+        }
+        return this;
+    }
+
+    public QwpParseException put(long value) {
+        messageSink.put(value);
+        return this;
+    }
+
+    public QwpParseException put(char value) {
+        messageSink.put(value);
+        return this;
     }
 
     @Override

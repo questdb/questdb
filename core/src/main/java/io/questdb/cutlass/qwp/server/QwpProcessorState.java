@@ -360,8 +360,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             }
 
         } catch (QwpParseException e) {
-            LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getMessage()).$();
-            reject(Status.PARSE_ERROR, e.getMessage(), fd);
+            LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getFlyweightMessage()).$();
+            reject(Status.PARSE_ERROR, e.getFlyweightMessage(), fd);
         } catch (CommitFailedException e) {
             LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
             tudCache.setDistressed();
