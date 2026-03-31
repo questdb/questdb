@@ -105,6 +105,14 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
     }
 
     @Override
+    public void toPlan(PlanSink sink) {
+        super.toPlan(sink);
+        if (symbolTranslatingRecord != null) {
+            sink.attr("symbolKeyJoin").val(true);
+        }
+    }
+
+    @Override
     protected void putFactoryType(PlanSink sink) {
         sink.type("AsOf Join Dense");
     }

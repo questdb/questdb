@@ -1319,9 +1319,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym, m.id, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym AND m.id = s.id)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -1377,9 +1377,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.sym3, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2 AND m.sym3 = s.sym3)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -1723,9 +1723,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON(m.sym1 = s.sym1 AND m.sym2 = s.sym2) TOLERANCE 15s";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -1780,9 +1780,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -1822,9 +1822,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -1866,9 +1866,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -1920,9 +1920,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -1978,6 +1978,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN (SELECT * FROM slave WHERE price > 10) s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Filtered AsOf Join Fast");
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
             assertQueryNoLeakCheck(
                     expected,
                     query,
@@ -1989,7 +1990,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // asof_linear hint bypasses filter stealing, exercising the Light
             // factory with multi-symbol key optimization on a pre-filtered subquery.
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN (SELECT * FROM slave WHERE price > 10) s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -2040,9 +2041,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -2100,9 +2101,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
-            assertAlgoAndResult(queryBody, "", "Fast", expected);
-            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
-            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
         });
     }
 
@@ -4015,6 +4016,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m LT JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join Light");
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
             assertQueryNoLeakCheck(
                     expected,
                     query,
@@ -4841,6 +4843,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws SqlException {
+        assertAlgoAndResult(queryBody, hint, expectedAlgo, expectedResult, false);
+    }
+
+    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult, boolean expectSymbolKeyJoin) throws SqlException {
         String hintedQuery;
         if (!hint.isEmpty()) {
             hintedQuery = "SELECT /*+ " + hint + "*/ " + queryBody;
@@ -4851,6 +4857,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
         TestUtils.assertContains(sink, "AsOf Join " + expectedAlgo);
         if (hint.contains("asof_driveby_cache(t q)")) {
             TestUtils.assertContains(sink, "driveByCache: true");
+        }
+        if (expectSymbolKeyJoin) {
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
         }
         assertSql(expectedResult, hintedQuery);
     }

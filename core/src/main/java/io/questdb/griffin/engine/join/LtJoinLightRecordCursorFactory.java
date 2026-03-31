@@ -134,6 +134,9 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("Lt Join Light");
         sink.attr("condition").val(joinContext);
+        if (symbolTranslatingRecord != null) {
+            sink.attr("symbolKeyJoin").val(true);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
