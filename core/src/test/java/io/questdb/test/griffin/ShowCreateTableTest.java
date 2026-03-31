@@ -301,6 +301,51 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetBloomFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a VARCHAR PARQUET(BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta VARCHAR PARQUET(bloom_filter)
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetBloomFilterWithEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(PLAIN, BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET(plain, bloom_filter)
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
+    public void testParquetBloomFilterWithEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET(delta_binary_packed, zstd(3), bloom_filter)
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
     public void testPartitioning() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year wal;");
