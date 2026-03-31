@@ -52,11 +52,11 @@ import io.questdb.std.str.StringSink;
  * State management for QWP v1 processing.
  */
 public class QwpProcessorState implements QuietCloseable, ConnectionAware {
-    private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
     static final int SEND_STATE_READY = 0;
     static final int SEND_STATE_RESUME_ACK = 1;
-    static final int SEND_STATE_RESUME_ERROR = 2;
     static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
+    static final int SEND_STATE_RESUME_ERROR = 2;
+    private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
     // Per-connection accumulated symbol dictionary for delta encoding
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
     private final StringSink deferredErrorMessage = new StringSink();
@@ -71,20 +71,20 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private int bufferPosition;
     private int bufferSize;
     private Status currentStatus = Status.OK;
+    private long deferredErrorSequence = -1;
+    private byte deferredErrorStatus;
     private long fd = -1;
     // WebSocket connection state — persists across ILP messages, reset by onDisconnected()
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
-    private long deferredErrorSequence = -1;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
-    private byte deferredErrorStatus;
     private int recvBufferLen;
+    private long resumeAckSequence = -1;
     private SecurityContext securityContext;
     // The response sink owns the serialized bytes; sendState tracks what
     // resumeResponseSend() will flush next and what must follow it.
     private int sendState = SEND_STATE_READY;
-    private long resumeAckSequence = -1;
     private QwpStreamingDecoder streamingDecoder;
     private QwpTudCache tudCache;
     private QwpWalAppender walAppender;
@@ -177,14 +177,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    public String getErrorText() {
-        return error.toString();
-    }
-
-    public long getHighestProcessedSequence() {
-        return highestProcessedSequence;
-    }
-
     public CharSequence getDeferredErrorMessage() {
         return deferredErrorMessage;
     }
@@ -197,12 +189,24 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return deferredErrorStatus;
     }
 
+    public String getErrorText() {
+        return error.toString();
+    }
+
+    public long getHighestProcessedSequence() {
+        return highestProcessedSequence;
+    }
+
     public long getLastAckedSequence() {
         return lastAckedSequence;
     }
 
     public int getRecvBufferLen() {
         return recvBufferLen;
+    }
+
+    public int getSendState() {
+        return sendState;
     }
 
     public Status getStatus() {
@@ -258,26 +262,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         lastAckedSequence = sequence;
     }
 
-    public void onErrorBlocked(byte status, long sequence, CharSequence errorMessage) {
-        deferredErrorStatus = status;
-        deferredErrorSequence = sequence;
-        deferredErrorMessage.clear();
-        if (errorMessage != null) {
-            deferredErrorMessage.put(errorMessage);
-        }
-
-        if (sendState == SEND_STATE_RESUME_ACK || sendState == SEND_STATE_RESUME_ACK_THEN_ERROR) {
-            sendState = SEND_STATE_RESUME_ACK_THEN_ERROR;
-        } else {
-            sendState = SEND_STATE_RESUME_ERROR;
-        }
-    }
-
-    public void onErrorSent() {
-        clearDeferredError();
-        sendState = SEND_STATE_READY;
-    }
-
     @Override
     public void onDisconnected() {
         clear();
@@ -306,6 +290,26 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
                     .$("%]").$();
         }
         symbolCache.clear();
+    }
+
+    public void onErrorBlocked(byte status, long sequence, CharSequence errorMessage) {
+        deferredErrorStatus = status;
+        deferredErrorSequence = sequence;
+        deferredErrorMessage.clear();
+        if (errorMessage != null) {
+            deferredErrorMessage.put(errorMessage);
+        }
+
+        if (sendState == SEND_STATE_RESUME_ACK || sendState == SEND_STATE_RESUME_ACK_THEN_ERROR) {
+            sendState = SEND_STATE_RESUME_ACK_THEN_ERROR;
+        } else {
+            sendState = SEND_STATE_RESUME_ERROR;
+        }
+    }
+
+    public void onErrorSent() {
+        clearDeferredError();
+        sendState = SEND_STATE_READY;
     }
 
     /**
@@ -413,10 +417,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void setWsHandshakeSent(boolean wsHandshakeSent) {
         this.wsHandshakeSent = wsHandshakeSent;
-    }
-
-    public int getSendState() {
-        return sendState;
     }
 
     /**
