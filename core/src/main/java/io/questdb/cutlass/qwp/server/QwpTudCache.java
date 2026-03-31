@@ -196,8 +196,9 @@ public class QwpTudCache implements QuietCloseable {
         Utf8String tableNameCopy = Utf8String.newInstance(tableNameUtf8);
 
         TableWriterAPI walWriter = engine.getWalWriter(tableToken);
+        WalTableUpdateDetails tud = null;
         try {
-            WalTableUpdateDetails tud = new WalTableUpdateDetails(
+            tud = new WalTableUpdateDetails(
                     engine,
                     securityContext,
                     walWriter,
@@ -208,11 +209,14 @@ public class QwpTudCache implements QuietCloseable {
                     false,
                     Long.MAX_VALUE
             );
-
             tableUpdateDetails.putAt(key, tableNameCopy, tud);
             return tud;
         } catch (Throwable th) {
-            Misc.free(walWriter);
+            if (tud != null) {
+                tud.close();
+            } else {
+                Misc.free(walWriter);
+            }
             throw th;
         }
     }
