@@ -260,7 +260,7 @@ public class BindVariableServiceImplTest {
 
             bindVariableService.setFloat(0, Float.NaN);
             final double d = bindVariableService.getFunction(0).getDouble(null);
-            Assert.assertTrue(d != d);
+            Assert.assertTrue(Double.isNaN(d));
         });
     }
 
@@ -276,7 +276,7 @@ public class BindVariableServiceImplTest {
 
             bindVariableService.setInt(0, Numbers.INT_NULL);
             final double d = bindVariableService.getFunction(0).getDouble(null);
-            Assert.assertTrue(d != d);
+            Assert.assertTrue(Double.isNaN(d));
         });
     }
 
@@ -291,8 +291,8 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(450, bindVariableService.getFunction(0).getDouble(null), 0.00001);
 
             bindVariableService.setLong(0, Numbers.LONG_NULL);
-            final double f = bindVariableService.getFunction(0).getDouble(null);
-            Assert.assertTrue(f != f);
+            final double d = bindVariableService.getFunction(0).getDouble(null);
+            Assert.assertTrue(Double.isNaN(d));
         });
     }
 
@@ -333,8 +333,8 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(450, bindVariableService.getFunction(0).getFloat(null), 0.000001);
 
             bindVariableService.setInt(0, Numbers.INT_NULL);
-            final float d = bindVariableService.getFunction(0).getFloat(null);
-            Assert.assertTrue(d != d);
+            final float f = bindVariableService.getFunction(0).getFloat(null);
+            Assert.assertTrue(Float.isNaN(f));
         });
     }
 
@@ -350,7 +350,7 @@ public class BindVariableServiceImplTest {
 
             bindVariableService.setLong(0, Numbers.LONG_NULL);
             final float f = bindVariableService.getFunction(0).getFloat(null);
-            Assert.assertTrue(f != f);
+            Assert.assertTrue(Float.isNaN(f));
         });
     }
 
@@ -799,7 +799,7 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(21.2, bindVariableService.getFunction(0).getDouble(null), 0.00001);
             bindVariableService.setStr(0, null);
             final double d = bindVariableService.getFunction(0).getDouble(null);
-            Assert.assertTrue(d != d);
+            Assert.assertTrue(Double.isNaN(d));
         });
     }
 
@@ -832,7 +832,7 @@ public class BindVariableServiceImplTest {
             Assert.assertEquals(21.2, bindVariableService.getFunction(0).getFloat(null), 0.00001);
             bindVariableService.setStr(0, null);
             final float f = bindVariableService.getFunction(0).getFloat(null);
-            Assert.assertTrue(f != f);
+            Assert.assertTrue(Float.isNaN(f));
 
             try {
                 bindVariableService.setStr(0, "xyz");

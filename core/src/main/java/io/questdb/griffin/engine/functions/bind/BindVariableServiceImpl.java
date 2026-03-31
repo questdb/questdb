@@ -206,10 +206,8 @@ public class BindVariableServiceImpl implements BindVariableService {
                 f.getDecimal256(null, dec);
                 copy.setDecimal(index, dec.getHh(), dec.getHl(), dec.getLh(), dec.getLl(), type);
             }
-            default -> {
-                // UNDEFINED, ARRAY, or unknown — define with type only (no value)
-                copy.define(index, type, 0);
-            }
+            default -> // UNDEFINED, ARRAY, or unknown — define with type only (no value)
+                    copy.define(index, type, 0);
         }
         return dec;
     }
