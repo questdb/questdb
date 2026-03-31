@@ -1139,7 +1139,7 @@ class LateralJoinRewriter implements Mutable {
         rnWindowExpr.of(rnAlias, rnFunc);
 
         for (int i = 0, n = latestBy.size(); i < n; i++) {
-            ExpressionNode cloned = ExpressionNode.deepClone(expressionNodePool, latestBy.getQuick(i));
+            ExpressionNode cloned = latestBy.getQuick(i);
             if (hasCorrelatedExprAtDepth(cloned, depth)) {
                 cloned = rewriteOuterRefs(cloned, outerToInnerAlias, depth);
             }
@@ -2333,6 +2333,20 @@ class LateralJoinRewriter implements Mutable {
             savedIdx++;
         }
         outerAliasSaveStack.setPos(aliasSaveBase);
+
+        groupingCols.clear();
+        ObjList<CharSequence> restoreKeys = outerToInnerAlias.keys();
+        for (int ki = 0, kn = restoreKeys.size(); ki < kn; ki++) {
+            CharSequence key = restoreKeys.getQuick(ki);
+            if (key != null) {
+                CharSequence value = outerToInnerAlias.get(key);
+                if (value != null) {
+                    groupingCols.add(expressionNodePool.next().of(
+                            ExpressionNode.LITERAL, value, 0, 0
+                    ));
+                }
+            }
+        }
     }
 
     private CharSequence pushDownPerSidePush(
@@ -2434,7 +2448,7 @@ class LateralJoinRewriter implements Mutable {
                 ensureColumnInSelect(branchTop, cloneColNode, cloneColAlias);
             }
 
-            // Restore outerToInnerAlias
+            // Restore outerToInnerAlias and rebuild groupingCols
             int savedIdx = aliasSaveBase;
             for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
                 CharSequence key = oKeys.getQuick(ok);
@@ -2443,6 +2457,20 @@ class LateralJoinRewriter implements Mutable {
                 savedIdx++;
             }
             outerAliasSaveStack.setPos(aliasSaveBase);
+
+            groupingCols.clear();
+            ObjList<CharSequence> restoreKeys = outerToInnerAlias.keys();
+            for (int ki = 0, kn = restoreKeys.size(); ki < kn; ki++) {
+                CharSequence key = restoreKeys.getQuick(ki);
+                if (key != null) {
+                    CharSequence value = outerToInnerAlias.get(key);
+                    if (value != null) {
+                        groupingCols.add(expressionNodePool.next().of(
+                                ExpressionNode.LITERAL, value, 0, 0
+                        ));
+                    }
+                }
+            }
         }
 
         if (firstCloneAlias != null) {
@@ -2925,12 +2953,14 @@ class LateralJoinRewriter implements Mutable {
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
     ) {
-        for (int i = 0, n = inner.getBottomUpColumns().size(); i < n; i++) {
-            QueryColumn col = inner.getBottomUpColumns().getQuick(i);
-            ExpressionNode ast = col.getAst();
-            if (hasCorrelatedExprAtDepth(ast, depth)) {
-                col.of(col.getAlias(),
-                        rewriteOuterRefs(ast, outerToInnerAlias, depth));
+        if (inner.isOwnCorrelatedAtDepth(depth, CORRELATED_PROJECTION)) {
+            for (int i = 0, n = inner.getBottomUpColumns().size(); i < n; i++) {
+                QueryColumn col = inner.getBottomUpColumns().getQuick(i);
+                ExpressionNode ast = col.getAst();
+                if (hasCorrelatedExprAtDepth(ast, depth)) {
+                    col.of(col.getAlias(),
+                            rewriteOuterRefs(ast, outerToInnerAlias, depth));
+                }
             }
         }
     }
@@ -2943,72 +2973,71 @@ class LateralJoinRewriter implements Mutable {
             ObjList<LowerCaseCharSequenceIntHashMap> correlatedColumns
     ) {
         int flags = 0;
-        boolean before;
-
-        before = hasCorrelation;
+        boolean baseline = hasCorrelation;
         ObjList<QueryColumn> cols = current.getBottomUpColumns();
         for (int i = 0, n = cols.size(); i < n; i++) {
             collectCorrelatedRef(cols.getQuick(i).getAst(), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
         }
-        if (!before && hasCorrelation) {
+        if (!baseline && hasCorrelation) {
             flags |= CORRELATED_PROJECTION;
         }
+        hasCorrelation = baseline;
 
-        before = hasCorrelation;
         collectCorrelatedRef(current.getWhereClause(), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
-        if (!before && hasCorrelation) {
+        if (!baseline && hasCorrelation) {
             flags |= CORRELATED_WHERE;
         }
+        hasCorrelation = baseline;
 
-        before = hasCorrelation;
         ObjList<ExpressionNode> orderBy = current.getOrderBy();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
             collectCorrelatedRef(orderBy.getQuick(i), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
         }
-        if (!before && hasCorrelation) {
+        if (!baseline && hasCorrelation) {
             flags |= CORRELATED_ORDER_BY;
         }
+        hasCorrelation = baseline;
 
-        before = hasCorrelation;
         ObjList<ExpressionNode> groupBy = current.getGroupBy();
         for (int i = 0, n = groupBy.size(); i < n; i++) {
             collectCorrelatedRef(groupBy.getQuick(i), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
         }
-        if (!before && hasCorrelation) {
+        if (!baseline && hasCorrelation) {
             flags |= CORRELATED_GROUP_BY;
         }
+        hasCorrelation = baseline;
 
-        before = hasCorrelation;
         collectCorrelatedRef(current.getSampleBy(), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
-        if (!before && hasCorrelation) {
+        if (!baseline && hasCorrelation) {
             flags |= CORRELATED_SAMPLE_BY;
         }
+        hasCorrelation = baseline;
 
-        before = hasCorrelation;
         ObjList<ExpressionNode> latestBy = current.getLatestBy();
         for (int i = 0, n = latestBy.size(); i < n; i++) {
             collectCorrelatedRef(latestBy.getQuick(i), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
         }
-        if (!before && hasCorrelation) {
+        if (!baseline && hasCorrelation) {
             flags |= CORRELATED_LATEST_BY;
         }
+        hasCorrelation = baseline;
 
-        before = hasCorrelation;
         collectCorrelatedRef(current.getLimitLo(), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
         collectCorrelatedRef(current.getLimitHi(), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
-        if (!before && hasCorrelation) {
+        if (!baseline && hasCorrelation) {
             flags |= CORRELATED_LIMIT;
         }
+        hasCorrelation = baseline;
 
-        before = hasCorrelation;
         for (int i = 1, n = current.getJoinModels().size(); i < n; i++) {
             QueryModel jm = current.getJoinModels().getQuick(i);
             collectCorrelatedRef(jm.getJoinCriteria(), outerModel, lateralJoinIndex, lateralDepth, current, correlatedColumns);
         }
-        if (!before && hasCorrelation) {
+        if (!baseline && hasCorrelation) {
             flags |= CORRELATED_JOIN_ON;
         }
 
+        hasCorrelation = flags != 0 || baseline;
         return flags;
     }
 
