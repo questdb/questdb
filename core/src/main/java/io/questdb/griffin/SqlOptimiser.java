@@ -5680,8 +5680,14 @@ public class SqlOptimiser implements Mutable {
                     emitLiteralsTopDown(jc.aNodes.getQuick(k), model);
                     emitLiteralsTopDown(jc.bNodes.getQuick(k), model);
 
-                    emitLiteralsTopDown(jc.aNodes.getQuick(k), jm);
-                    emitLiteralsTopDown(jc.bNodes.getQuick(k), jm);
+                    // Use vanilla column names (without table alias prefix) when
+                    // emitting to the join model. The expression nodes carry the
+                    // outer query's table aliases (e.g. "v2.max") which cannot be
+                    // resolved within the join model's own scope (e.g. v2 internally
+                    // uses aliases like "v1", "t0"). Using the plain column name
+                    // allows the column to be found in the join model's alias map.
+                    addTopDownColumn(jc.aNames.getQuick(k), jm);
+                    addTopDownColumn(jc.bNames.getQuick(k), jm);
 
                     if (papaModel != null) {
                         emitLiteralsTopDown(jc.aNodes.getQuick(k), papaModel);
@@ -9923,6 +9929,67 @@ public class SqlOptimiser implements Mutable {
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
     }
 
+    /**
+     * Tries to evaluate the expression as a non-negative long constant.
+     * Returns -1 if the expression contains column references (dynamic bound).
+     * Returns {@link Long#MAX_VALUE} if expr is null.
+     */
+    private long tryEvalNonNegativeLongConstant(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (expr != null) {
+            // Walk the expression tree iteratively to detect column references.
+            // If found, the expression is dynamic — return -1 without parsing.
+            // This avoids a catch-all SqlException that would mask real parse errors.
+            sqlNodeStack.clear();
+            ExpressionNode node = expr;
+            while (node != null || !sqlNodeStack.isEmpty()) {
+                if (node != null) {
+                    if (node.type == LITERAL) {
+                        return -1;
+                    }
+                    if (node.paramCount < 3) {
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        node = node.lhs;
+                    } else {
+                        for (int i = 0, n = node.paramCount; i < n; i++) {
+                            sqlNodeStack.push(node.args.getQuick(i));
+                        }
+                        node = null;
+                    }
+                    continue;
+                }
+                node = sqlNodeStack.poll();
+            }
+
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                Misc.free(func);
+                return -1;
+            }
+
+            try {
+                long value;
+                if (!(func instanceof CharConstant)) {
+                    value = func.getLong(null);
+                } else {
+                    long tmp = (byte) (func.getChar(null) - '0');
+                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
+                }
+
+                if (value < 0) {
+                    throw SqlException.$(expr.position, "non-negative integer expression expected");
+                }
+                return value;
+            } catch (UnsupportedOperationException | ImplicitCastException e) {
+                throw SqlException.$(expr.position, "integer expression expected");
+            } finally {
+                Misc.free(func);
+            }
+        }
+        return Long.MAX_VALUE;
+    }
+
     private boolean tryPushFilterIntoSetOperationBranches(ExpressionNode node, QueryModel parent, QueryModel nested) throws SqlException {
         // Only push filters on the designated timestamp into union branches.
         // Timestamp filters enable partition pruning — the only high-value optimization here.
@@ -10565,6 +10632,9 @@ public class SqlOptimiser implements Mutable {
         }
 
         validateWindowJoins(model.getNestedModel(), sqlExecutionContext, recursionLevel + 1);
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            validateWindowJoins(model.getJoinModels().get(i).getNestedModel(), sqlExecutionContext, recursionLevel + 1);
+        }
         validateWindowJoins(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
     }
 
@@ -10675,67 +10745,6 @@ public class SqlOptimiser implements Mutable {
             if (!func.isConstant()) {
                 Misc.free(func);
                 throw SqlException.$(expr.position, "constant expression expected");
-            }
-
-            try {
-                long value;
-                if (!(func instanceof CharConstant)) {
-                    value = func.getLong(null);
-                } else {
-                    long tmp = (byte) (func.getChar(null) - '0');
-                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
-                }
-
-                if (value < 0) {
-                    throw SqlException.$(expr.position, "non-negative integer expression expected");
-                }
-                return value;
-            } catch (UnsupportedOperationException | ImplicitCastException e) {
-                throw SqlException.$(expr.position, "integer expression expected");
-            } finally {
-                Misc.free(func);
-            }
-        }
-        return Long.MAX_VALUE;
-    }
-
-    /**
-     * Tries to evaluate the expression as a non-negative long constant.
-     * Returns -1 if the expression contains column references (dynamic bound).
-     * Returns {@link Long#MAX_VALUE} if expr is null.
-     */
-    private long tryEvalNonNegativeLongConstant(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expr != null) {
-            // Walk the expression tree iteratively to detect column references.
-            // If found, the expression is dynamic — return -1 without parsing.
-            // This avoids a catch-all SqlException that would mask real parse errors.
-            sqlNodeStack.clear();
-            ExpressionNode node = expr;
-            while (node != null || !sqlNodeStack.isEmpty()) {
-                if (node != null) {
-                    if (node.type == LITERAL) {
-                        return -1;
-                    }
-                    if (node.paramCount < 3) {
-                        if (node.rhs != null) {
-                            sqlNodeStack.push(node.rhs);
-                        }
-                        node = node.lhs;
-                    } else {
-                        for (int i = 0, n = node.paramCount; i < n; i++) {
-                            sqlNodeStack.push(node.args.getQuick(i));
-                        }
-                        node = null;
-                    }
-                    continue;
-                }
-                node = sqlNodeStack.poll();
-            }
-
-            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!func.isConstant()) {
-                Misc.free(func);
-                return -1;
             }
 
             try {

@@ -891,6 +891,59 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByArrayAccessConstantIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(compiler,
+                                "CREATE TABLE tango (ts TIMESTAMP, arr1d DOUBLE[], arr2d DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext);
+                        execute(compiler,
+                                """
+                                        INSERT INTO tango VALUES
+                                        ('2025-06-26', ARRAY[10.0, 20], ARRAY[[1.0, 2], [3.0, 4]]),
+                                        ('2025-06-26', null, null),
+                                        ('2025-06-27', ARRAY[30.0, 40], ARRAY[[5.0, 6], [7.0, 8]]),
+                                        ('2025-06-27', ARRAY[50.0, 60], ARRAY[[9.0, 10], [11.0, 12]]),
+                                        ('2025-06-28', ARRAY[], ARRAY[]),
+                                        ('2025-06-28', ARRAY[70.0, 80], ARRAY[[13.0, 14], [15.0, 16]])
+                                        """,
+                                sqlExecutionContext);
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "SELECT sum(arr1d[1]) FROM tango",
+                                """
+                                        sum
+                                        160.0
+                                        """,
+                                "SELECT sum(arr1d[2]) FROM tango",
+                                """
+                                        sum
+                                        200.0
+                                        """,
+                                "SELECT sum(arr2d[1, 1]) FROM tango",
+                                """
+                                        sum
+                                        28.0
+                                        """,
+                                "SELECT sum(arr2d[2, 1]) FROM tango",
+                                """
+                                        sum
+                                        36.0
+                                        """
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByArrayFunction() throws Exception {
         Assume.assumeTrue(!convertToParquet && enableParallelGroupBy);
         assertMemoryLeak(() -> {
