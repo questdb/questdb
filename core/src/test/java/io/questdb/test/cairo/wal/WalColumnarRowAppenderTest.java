@@ -1723,6 +1723,84 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutDecimalColumn_Decimal64ToDecimal8_PrecisionOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(2, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dec64_to_dec8_precision_ovf", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            int dataLength = 1 + 1 + rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
+                Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 0); // wire scale
+                Unsafe.getUnsafe().putLong(dataAddress + 2, 13L); // 13 -> 13.0, exceeds DECIMAL(2,1)
+
+                QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    try {
+                        appender.putDecimalToSmallDecimalColumn(0, cursor, rowCount, columnType);
+                        fail("Expected CairoException");
+                    } catch (CairoException e) {
+                        assertTrue(e.getMessage().contains("decimal value overflows"));
+                    }
+                    appender.cancelColumnarWrite();
+                }
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutDecimalColumn_Decimal64ToDecimal64_ScaleDownPrecisionLoss() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(10, 2);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_dec64_to_dec64_precision_loss", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            int dataLength = 1 + 1 + rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
+                Unsafe.getUnsafe().putByte(dataAddress + 1, (byte) 4); // wire scale
+                Unsafe.getUnsafe().putLong(dataAddress + 2, 12_345L); // 1.2345 -> cannot be represented at scale 2
+
+                QwpDecimalColumnCursor cursor = new QwpDecimalColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_DECIMAL64);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    try {
+                        appender.putDecimal64Column(0, cursor, rowCount, columnType);
+                        fail("Expected CairoException");
+                    } catch (CairoException e) {
+                        assertTrue(e.getMessage().contains("precision loss"));
+                    }
+                    appender.cancelColumnarWrite();
+                }
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testPutDecimalColumn_Rescale() throws Exception {
         assertMemoryLeak(() -> {
             // Wire scale=2, column scale=4
@@ -3659,6 +3737,82 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                         "value\n3.0\n\n-1.0\n",
                         "SELECT value FROM test_fixed_dec8_nulls ORDER BY ts"
                 );
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedToDecimal64Column_PrecisionOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(10, 2);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_fixed_dec64_precision_ovf", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            int dataLength = 1 + rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
+                Unsafe.getUnsafe().putLong(dataAddress + 1, 100_000_000L); // 100000000.00 exceeds DECIMAL(10,2)
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_LONG);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    try {
+                        appender.putFixedToDecimal64Column(0, cursor, rowCount, columnType);
+                        fail("Expected CairoException");
+                    } catch (CairoException e) {
+                        assertTrue(e.getMessage().contains("decimal value overflows"));
+                    }
+                    appender.cancelColumnarWrite();
+                }
+            } finally {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedToSmallDecimalColumn_Decimal8_PrecisionOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            int columnType = ColumnType.getDecimalType(2, 1);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_fixed_dec8_precision_ovf", PartitionBy.HOUR)
+                    .col("value", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            int dataLength = 1 + rowCount * 8;
+            long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putByte(dataAddress, (byte) 0); // no null bitmap
+                Unsafe.getUnsafe().putLong(dataAddress + 1, 13L); // 13 -> 13.0, exceeds DECIMAL(2,1)
+
+                QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+                cursor.of(dataAddress, dataLength, rowCount, QwpConstants.TYPE_LONG);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    try {
+                        appender.putFixedToSmallDecimalColumn(0, cursor, rowCount, columnType);
+                        fail("Expected CairoException");
+                    } catch (CairoException e) {
+                        assertTrue(e.getMessage().contains("decimal value overflows"));
+                    }
+                    appender.cancelColumnarWrite();
+                }
             } finally {
                 Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
             }

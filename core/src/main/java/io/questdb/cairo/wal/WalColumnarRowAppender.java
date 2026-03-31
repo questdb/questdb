@@ -607,14 +607,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL);
+                writeDecimalNullSentinel(dataMem, columnType);
             } else {
                 decimal.ofRaw(cursor.getLong());
                 decimal.setScale(0);
                 if (columnScale != 0) {
-                    decimal.rescale(columnScale);
+                    rescaleDecimalValue(decimal, 0, columnScale, columnType, columnIndex);
                 }
-                dataMem.putDecimal128(decimal.getLh(), decimal.getLl());
+                validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
@@ -632,15 +632,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL,
-                        Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL);
+                writeDecimalNullSentinel(dataMem, columnType);
             } else {
                 decimal.ofRaw(cursor.getLong());
                 decimal.setScale(0);
                 if (columnScale != 0) {
-                    decimal.rescale(columnScale);
+                    rescaleDecimalValue(decimal, 0, columnScale, columnType, columnIndex);
                 }
-                dataMem.putDecimal256(decimal.getHh(), decimal.getHl(), decimal.getLh(), decimal.getLl());
+                validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
@@ -658,14 +657,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
-                dataMem.putLong(Decimals.DECIMAL64_NULL);
+                writeDecimalNullSentinel(dataMem, columnType);
             } else {
                 decimal.ofRaw(cursor.getLong());
                 decimal.setScale(0);
                 if (columnScale != 0) {
-                    decimal.rescale(columnScale);
+                    rescaleDecimalValue(decimal, 0, columnScale, columnType, columnIndex);
                 }
-                dataMem.putLong(decimal.getLl());
+                validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
@@ -681,42 +680,18 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
         cursor.resetRowPosition();
         switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DECIMAL8 -> {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32 -> {
                 for (int row = 0; row < rowCount; row++) {
                     cursor.advanceRow();
                     if (cursor.isNull()) {
-                        dataMem.putByte(Decimals.DECIMAL8_NULL);
+                        writeDecimalNullSentinel(dataMem, columnType);
                     } else {
                         decimal.ofRaw(cursor.getLong());
                         decimal.setScale(0);
-                        decimal.rescale(columnScale);
-                        dataMem.putByte((byte) decimal.getLl());
-                    }
-                }
-            }
-            case ColumnType.DECIMAL16 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    cursor.advanceRow();
-                    if (cursor.isNull()) {
-                        dataMem.putShort(Decimals.DECIMAL16_NULL);
-                    } else {
-                        decimal.ofRaw(cursor.getLong());
-                        decimal.setScale(0);
-                        decimal.rescale(columnScale);
-                        dataMem.putShort((short) decimal.getLl());
-                    }
-                }
-            }
-            case ColumnType.DECIMAL32 -> {
-                for (int row = 0; row < rowCount; row++) {
-                    cursor.advanceRow();
-                    if (cursor.isNull()) {
-                        dataMem.putInt(Decimals.DECIMAL32_NULL);
-                    } else {
-                        decimal.ofRaw(cursor.getLong());
-                        decimal.setScale(0);
-                        decimal.rescale(columnScale);
-                        dataMem.putInt((int) decimal.getLl());
+                        if (columnScale != 0) {
+                            rescaleDecimalValue(decimal, 0, columnScale, columnType, columnIndex);
+                        }
+                        validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
                     }
                 }
             }
@@ -1986,9 +1961,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 decimal.ofRaw(cursor.getDecimal128Hi(), cursor.getDecimal128Lo());
                 decimal.setScale(wireScale);
                 if (needsRescale) {
-                    decimal.rescale(columnScale);
+                    rescaleDecimalValue(decimal, wireScale, columnScale, columnType, columnIndex);
                 }
-                writeDecimalValue(dataMem, decimal, columnType, columnIndex);
+                validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
     }
@@ -2009,9 +1984,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 );
                 decimal.setScale(wireScale);
                 if (needsRescale) {
-                    decimal.rescale(columnScale);
+                    rescaleDecimalValue(decimal, wireScale, columnScale, columnType, columnIndex);
                 }
-                writeDecimalValue(dataMem, decimal, columnType, columnIndex);
+                validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
     }
@@ -2034,9 +2009,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 decimal.ofRaw(cursor.getDecimal64());
                 decimal.setScale(wireScale);
                 if (needsRescale) {
-                    decimal.rescale(columnScale);
+                    rescaleDecimalValue(decimal, wireScale, columnScale, columnType, columnIndex);
                 }
-                writeDecimalValue(dataMem, decimal, columnType, columnIndex);
+                validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
     }
@@ -2394,6 +2369,39 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
                 .put(", decimal=").put(decimal)
                 .put(']');
+    }
+
+    private void throwDecimalPrecisionLoss(Decimal256 decimal, int columnType, int columnIndex) {
+        throw CairoException.nonCritical()
+                .put("decimal value causes precision loss converting to ")
+                .put(ColumnType.nameOf(columnType))
+                .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(", decimal=").put(decimal)
+                .put(']');
+    }
+
+    private void rescaleDecimalValue(
+            Decimal256 decimal,
+            int sourceScale,
+            int targetScale,
+            int columnType,
+            int columnIndex
+    ) {
+        try {
+            decimal.rescale(targetScale);
+        } catch (NumericException ignored) {
+            if (sourceScale > targetScale) {
+                throwDecimalPrecisionLoss(decimal, columnType, columnIndex);
+            }
+            throwDecimalOverflow(decimal, columnType, columnIndex);
+        }
+    }
+
+    private void validateAndWriteDecimalValue(MemoryMA dataMem, Decimal256 decimal, int columnType, int columnIndex) {
+        if (!decimal.comparePrecision(ColumnType.getDecimalPrecision(columnType))) {
+            throwDecimalOverflow(decimal, columnType, columnIndex);
+        }
+        writeDecimalValue(dataMem, decimal, columnType, columnIndex);
     }
 
     private void writeDecimalValue(MemoryMA dataMem, Decimal256 decimal, int columnType, int columnIndex) {
