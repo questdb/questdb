@@ -80,9 +80,7 @@ class LateralJoinRewriter implements Mutable {
     private final ObjList<CharSequence> subCountColAliases;
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private boolean hasCorrelation;
-    private boolean isPerSidePush;
     private int outerRefId;
-    private CharSequence perSidePushCloneAlias;
 
     LateralJoinRewriter(
             CharacterStore characterStore,
@@ -127,9 +125,7 @@ class LateralJoinRewriter implements Mutable {
         innerJoinNonCorrelated.clear();
         nonCorrelatedPreds.clear();
         hasCorrelation = false;
-        isPerSidePush = false;
         outerRefId = 0;
-        perSidePushCloneAlias = null;
     }
 
     public void rewrite(QueryModel model) throws SqlException {
@@ -466,17 +462,21 @@ class LateralJoinRewriter implements Mutable {
     // - All branches at terminateHere level are INNER/CROSS/RIGHT
     // - Every branch with correlated ON has a correlated nested model
     //   (so a clone can be pushed into it)
+    // Per-side push: skip main chain CROSS JOIN when main chain has no
+    // correlated expressions and all branches discard unmatched left rows.
+    // Two conditions:
+    //  1. Main chain has no own correlated expressions (excluding join ON)
+    //  2. All branches at terminateHere level are INNER/CROSS/RIGHT
     private boolean canPerSidePush(QueryModel model, int depth) {
         QueryModel m = model;
         while (m != null) {
             if (m.isOwnCorrelatedAtDepth(depth, ~CORRELATED_JOIN_ON)) {
                 return false;
             }
-
             QueryModel nested = m.getNestedModel();
             if (nested == null || !nested.isCorrelatedAtDepth(depth)) {
-                boolean hasBranches = false;
-                for (int i = 1; i < m.getJoinModels().size(); i++) {
+                boolean hasCorrelatedBranch = false;
+                for (int i = 1, n = m.getJoinModels().size(); i < n; i++) {
                     QueryModel branch = m.getJoinModels().getQuick(i);
                     int jt = branch.getJoinType();
                     if (jt != QueryModel.JOIN_INNER && jt != QueryModel.JOIN_CROSS
@@ -485,19 +485,15 @@ class LateralJoinRewriter implements Mutable {
                     }
                     boolean hasCorrelatedOn = branch.getJoinCriteria() != null
                             && hasCorrelatedExprAtDepth(branch.getJoinCriteria(), depth);
-                    boolean isNestedCorrelated = branch.getNestedModel() != null
-                            && branch.getNestedModel().isCorrelatedAtDepth(depth);
-                    if (hasCorrelatedOn || isNestedCorrelated) {
-                        hasBranches = true;
-                    }
-                    if (hasCorrelatedOn && !isNestedCorrelated) {
+                    if (hasCorrelatedOn && branch.getNestedModel() == null) {
                         return false;
                     }
+                    if (hasCorrelatedOn || (branch.getNestedModel() != null
+                            && branch.getNestedModel().isCorrelatedAtDepth(depth))) {
+                        hasCorrelatedBranch = true;
+                    }
                 }
-                if (m.getUnionModel() != null) {
-                    return false;
-                }
-                return hasBranches;
+                return hasCorrelatedBranch;
             }
             m = nested;
         }
@@ -1326,11 +1322,19 @@ class LateralJoinRewriter implements Mutable {
                 outerRefJoinModel.setAlias(outerRefAliasExpr);
 
                 // Push down outer refs
+                boolean isPerSidePush = canPerSidePush(topInner, depth);
+                CharSequence perSideCloneAlias = null;
                 countColAliases.clear();
-                pushDownOuterRefs(
-                        null, topInner, outerToInnerAlias, isLeft,
-                        countColAliases, outerRefJoinModel, joinModel, depth
-                );
+                if (isPerSidePush) {
+                    perSideCloneAlias = pushDownPerSidePush(
+                            topInner, outerToInnerAlias, outerRefJoinModel, joinModel, depth
+                    );
+                } else {
+                    pushDownOuterRefs(
+                            null, topInner, outerToInnerAlias, isLeft,
+                            countColAliases, outerRefJoinModel, joinModel, depth
+                    );
+                }
 
                 ExpressionNode originalOnCondition = joinModel.getJoinCriteria();
 
@@ -1341,10 +1345,10 @@ class LateralJoinRewriter implements Mutable {
                 for (int j = 0, m = outerCols.size(); j < m; j++) {
                     ExpressionNode outerCol = outerCols.getQuick(j);
                     CharSequence outerRefColAlias;
-                    if (isPerSidePush && perSidePushCloneAlias != null) {
+                    if (perSideCloneAlias != null) {
                         CharSequence colName = unqualify(outerCol.token);
                         characterStore.newEntry();
-                        characterStore.put(perSidePushCloneAlias).put("_").put(colName);
+                        characterStore.put(perSideCloneAlias).put("_").put(colName);
                         outerRefColAlias = characterStore.toImmutable();
                     } else {
                         outerRefColAlias = outerToInnerAlias.get(outerCol.token);
@@ -2028,21 +2032,16 @@ class LateralJoinRewriter implements Mutable {
             int depth
     ) throws SqlException {
         if (parent == null) {
-            isPerSidePush = canPerSidePush(current, depth);
-            perSidePushCloneAlias = null;
-
             groupingCols.clear();
-            if (!isPerSidePush) {
-                ObjList<CharSequence> mapKeys = outerToInnerAlias.keys();
-                for (int ki = 0, kn = mapKeys.size(); ki < kn; ki++) {
-                    CharSequence key = mapKeys.getQuick(ki);
-                    if (key != null) {
-                        CharSequence value = outerToInnerAlias.get(key);
-                        if (value != null) {
-                            groupingCols.add(expressionNodePool.next().of(
-                                    ExpressionNode.LITERAL, value, 0, 0
-                            ));
-                        }
+            ObjList<CharSequence> mapKeys = outerToInnerAlias.keys();
+            for (int ki = 0, kn = mapKeys.size(); ki < kn; ki++) {
+                CharSequence key = mapKeys.getQuick(ki);
+                if (key != null) {
+                    CharSequence value = outerToInnerAlias.get(key);
+                    if (value != null) {
+                        groupingCols.add(expressionNodePool.next().of(
+                                ExpressionNode.LITERAL, value, 0, 0
+                        ));
                     }
                 }
             }
@@ -2173,10 +2172,8 @@ class LateralJoinRewriter implements Mutable {
                     switch (terminate) {
                         case 1 -> {
                             terminateHere(current, outerRefJoinModel, outerToInnerAlias, depth);
-                            if (!isPerSidePush) {
-                                jn = current.getJoinModels().size();
-                                ji = 1;
-                            }
+                            jn = current.getJoinModels().size();
+                            ji = 1;
                         }
                         case 2 -> terminateHere(nestModel, outerRefJoinModel, outerToInnerAlias, depth);
                         case 3 -> pushDownOuterRefs(
@@ -2225,7 +2222,7 @@ class LateralJoinRewriter implements Mutable {
     ) throws SqlException {
         boolean hasCorrelatedCriteria = jm.getJoinCriteria() != null
                 && hasCorrelatedExprAtDepth(jm.getJoinCriteria(), depth);
-        if (hasCorrelatedCriteria && !isPerSidePush) {
+        if (hasCorrelatedCriteria) {
             jm.setJoinCriteria(rewriteOuterRefs(jm.getJoinCriteria(), outerToInnerAlias, depth));
         }
 
@@ -2236,9 +2233,6 @@ class LateralJoinRewriter implements Mutable {
         characterStore.newEntry();
         characterStore.put(OUTER_REF_PREFIX).put(outerRefId++);
         CharSequence cloneAlias = characterStore.toImmutable();
-        if (isPerSidePush && perSidePushCloneAlias == null) {
-            perSidePushCloneAlias = cloneAlias;
-        }
 
         QueryModel cloneSubquery = queryModelPool.next();
         cloneSubquery.setDistinct(true);
@@ -2282,81 +2276,57 @@ class LateralJoinRewriter implements Mutable {
             outerToInnerAlias.put(key, cse.toImmutable());
         }
 
-        if (hasCorrelatedCriteria && isPerSidePush) {
-            jm.setJoinCriteria(rewriteOuterRefs(jm.getJoinCriteria(), outerToInnerAlias, depth));
-        }
-        boolean savedIsPerSidePush = isPerSidePush;
-        CharSequence savedPerSidePushCloneAlias = perSidePushCloneAlias;
-
         pushDownOuterRefs(
                 null, jmNested, outerToInnerAlias, false,
                 countColAliases, clonedOuterRef, jm, depth
         );
 
-        isPerSidePush = savedIsPerSidePush;
-        perSidePushCloneAlias = savedPerSidePushCloneAlias;
-
-        if (!isPerSidePush) {
-            ExpressionNode alignCriteria = jm.getJoinCriteria();
-            QueryModel jmTop = jm.getNestedModel();
-            CharSequence jmAlias = jm.getAlias() != null ? jm.getAlias().token : null;
-            int savedIdx = aliasSaveBase;
-            for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
-                CharSequence key = oKeys.getQuick(ok);
-                if (key == null) {
-                    continue;
-                }
-
-                CharSequence cloneColAlias = outerToInnerAlias.get(key);
-                CharSequence mainColAlias = outerAliasSaveStack.getQuick(savedIdx);
-
-                ExpressionNode cloneColNode = expressionNodePool.next().of(
-                        ExpressionNode.LITERAL, cloneColAlias, 0, 0
-                );
-                CharSequence subAlias = ensureColumnInSelect(jmTop, cloneColNode, cloneColAlias);
-                CharSequence qualifiedSubCol;
-                if (jmAlias != null) {
-                    characterStore.newEntry();
-                    characterStore.put(jmAlias).put('.').put(subAlias);
-                    qualifiedSubCol = characterStore.toImmutable();
-                } else {
-                    qualifiedSubCol = subAlias;
-                }
-                ExpressionNode mainColNode = expressionNodePool.next().of(
-                        ExpressionNode.LITERAL, mainColAlias, 0, 0
-                );
-                CharSequence mainAlias = ensureColumnInSelect(current, mainColNode, mainColAlias);
-                ExpressionNode subRef = expressionNodePool.next().of(
-                        ExpressionNode.LITERAL, qualifiedSubCol, 0, 0
-                );
-                ExpressionNode mainRef = expressionNodePool.next().of(
-                        ExpressionNode.LITERAL, mainAlias, 0, 0
-                );
-                ExpressionNode eq = createBinaryOp("=", subRef, mainRef);
-                alignCriteria = alignCriteria == null ? eq : createBinaryOp("and", alignCriteria, eq);
-                savedIdx++;
+        ExpressionNode alignCriteria = jm.getJoinCriteria();
+        QueryModel jmTop = jm.getNestedModel();
+        CharSequence jmAlias = jm.getAlias() != null ? jm.getAlias().token : null;
+        int savedIdx = aliasSaveBase;
+        for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
+            CharSequence key = oKeys.getQuick(ok);
+            if (key == null) {
+                continue;
             }
-            jm.setJoinCriteria(alignCriteria);
-            if (jm.getJoinType() == QueryModel.JOIN_CROSS) {
-                jm.setJoinType(QueryModel.JOIN_INNER);
+
+            CharSequence cloneColAlias = outerToInnerAlias.get(key);
+            CharSequence mainColAlias = outerAliasSaveStack.getQuick(savedIdx);
+
+            ExpressionNode cloneColNode = expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, cloneColAlias, 0, 0
+            );
+            CharSequence subAlias = ensureColumnInSelect(jmTop, cloneColNode, cloneColAlias);
+            CharSequence qualifiedSubCol;
+            if (jmAlias != null) {
+                characterStore.newEntry();
+                characterStore.put(jmAlias).put('.').put(subAlias);
+                qualifiedSubCol = characterStore.toImmutable();
+            } else {
+                qualifiedSubCol = subAlias;
             }
-        } else {
-            QueryModel jmTop = jm.getNestedModel();
-            for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
-                CharSequence key = oKeys.getQuick(ok);
-                if (key == null) {
-                    continue;
-                }
-                CharSequence cloneColAlias = outerToInnerAlias.get(key);
-                ExpressionNode cloneColNode = expressionNodePool.next().of(
-                        ExpressionNode.LITERAL, cloneColAlias, 0, 0
-                );
-                ensureColumnInSelect(jmTop, cloneColNode, cloneColAlias);
-            }
+            ExpressionNode mainColNode = expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, mainColAlias, 0, 0
+            );
+            CharSequence mainAlias = ensureColumnInSelect(current, mainColNode, mainColAlias);
+            ExpressionNode subRef = expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, qualifiedSubCol, 0, 0
+            );
+            ExpressionNode mainRef = expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, mainAlias, 0, 0
+            );
+            ExpressionNode eq = createBinaryOp("=", subRef, mainRef);
+            alignCriteria = alignCriteria == null ? eq : createBinaryOp("and", alignCriteria, eq);
+            savedIdx++;
+        }
+        jm.setJoinCriteria(alignCriteria);
+        if (jm.getJoinType() == QueryModel.JOIN_CROSS) {
+            jm.setJoinType(QueryModel.JOIN_INNER);
         }
 
         // Restore outerToInnerAlias values
-        int savedIdx = aliasSaveBase;
+        savedIdx = aliasSaveBase;
         for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
             CharSequence key = oKeys.getQuick(ok);
             if (key == null) continue;
@@ -2364,6 +2334,125 @@ class LateralJoinRewriter implements Mutable {
             savedIdx++;
         }
         outerAliasSaveStack.setPos(aliasSaveBase);
+    }
+
+    // Handles the per-side push optimization: instead of inserting the
+    // __qdb_outer_ref__ into the main nestedModel chain, each correlated
+    // join branch at the terminateHere level gets its own clone.
+    // Returns the first clone alias used for outer-level alignment, or null.
+    private CharSequence pushDownPerSidePush(
+            QueryModel topInner,
+            LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
+            QueryModel outerRefJoinModel,
+            QueryModel lateralJoinModel,
+            int depth
+    ) throws SqlException {
+        QueryModel terminateLevel = topInner;
+        while (terminateLevel != null) {
+            QueryModel nested = terminateLevel.getNestedModel();
+            if (nested == null || !nested.isCorrelatedAtDepth(depth)) {
+                break;
+            }
+            terminateLevel = nested;
+        }
+        if (terminateLevel == null) {
+            return null;
+        }
+
+        CharSequence firstCloneAlias = null;
+        for (int bi = 1, bn = terminateLevel.getJoinModels().size(); bi < bn; bi++) {
+            QueryModel branch = terminateLevel.getJoinModels().getQuick(bi);
+            QueryModel branchNested = branch.getNestedModel();
+
+            boolean hasCorrelatedOn = branch.getJoinCriteria() != null
+                    && hasCorrelatedExprAtDepth(branch.getJoinCriteria(), depth);
+            boolean isNestedCorrelated = branchNested != null
+                    && branchNested.isCorrelatedAtDepth(depth);
+
+            if (!hasCorrelatedOn && !isNestedCorrelated) {
+                continue;
+            }
+            if (branchNested == null) {
+                continue;
+            }
+
+            characterStore.newEntry();
+            characterStore.put(OUTER_REF_PREFIX).put(outerRefId++);
+            CharSequence cloneAlias = characterStore.toImmutable();
+            if (firstCloneAlias == null) {
+                firstCloneAlias = cloneAlias;
+            }
+
+            QueryModel cloneSubquery = queryModelPool.next();
+            cloneSubquery.setDistinct(true);
+            QueryModel origSubquery = outerRefJoinModel.getNestedModel();
+            cloneSubquery.setNestedModel(origSubquery.getNestedModel()
+                    .deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
+
+            ObjList<QueryColumn> origCols = origSubquery.getBottomUpColumns();
+            for (int oc = 0, ocn = origCols.size(); oc < ocn; oc++) {
+                QueryColumn origCol = origCols.getQuick(oc);
+                ExpressionNode origAst = origCol.getAst();
+                CharSequence colName = unqualify(origAst.token);
+                CharacterStoreEntry cse = characterStore.newEntry();
+                cse.put(cloneAlias).put("_").put(colName);
+                CharSequence newColAlias = cse.toImmutable();
+                ExpressionNode ref = expressionNodePool.next().of(
+                        ExpressionNode.LITERAL, origAst.token, 0, origAst.position);
+                cloneSubquery.addBottomUpColumnIfNotExists(queryColumnPool.next().of(newColAlias, ref));
+            }
+
+            QueryModel clonedOuterRef = queryModelPool.next();
+            clonedOuterRef.setNestedModel(cloneSubquery);
+            clonedOuterRef.setNestedModelIsSubQuery(true);
+            ExpressionNode cloneAliasExpr = expressionNodePool.next().of(
+                    ExpressionNode.LITERAL, cloneAlias, 0, 0);
+            clonedOuterRef.setAlias(cloneAliasExpr);
+            clonedOuterRef.setJoinType(QueryModel.JOIN_CROSS);
+
+            int aliasSaveBase = outerAliasSaveStack.size();
+            ObjList<CharSequence> oKeys = outerToInnerAlias.keys();
+            for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
+                CharSequence key = oKeys.getQuick(ok);
+                if (key == null) continue;
+                outerAliasSaveStack.add(outerToInnerAlias.get(key));
+                CharSequence cn = unqualify(key);
+                CharacterStoreEntry cse = characterStore.newEntry();
+                cse.put(cloneAlias).put("_").put(cn);
+                outerToInnerAlias.put(key, cse.toImmutable());
+            }
+
+            if (hasCorrelatedOn) {
+                branch.setJoinCriteria(rewriteOuterRefs(branch.getJoinCriteria(), outerToInnerAlias, depth));
+            }
+
+            subCountColAliases.clear();
+            pushDownOuterRefs(
+                    null, branchNested, outerToInnerAlias, false,
+                    subCountColAliases, clonedOuterRef, branch, depth
+            );
+
+            QueryModel branchTop = branch.getNestedModel();
+            for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
+                CharSequence key = oKeys.getQuick(ok);
+                if (key == null) continue;
+                CharSequence cloneColAlias = outerToInnerAlias.get(key);
+                ExpressionNode cloneColNode = expressionNodePool.next().of(
+                        ExpressionNode.LITERAL, cloneColAlias, 0, 0);
+                ensureColumnInSelect(branchTop, cloneColNode, cloneColAlias);
+            }
+
+            // Restore outerToInnerAlias
+            int savedIdx = aliasSaveBase;
+            for (int ok = 0, okn = oKeys.size(); ok < okn; ok++) {
+                CharSequence key = oKeys.getQuick(ok);
+                if (key == null) continue;
+                outerToInnerAlias.put(key, outerAliasSaveStack.getQuick(savedIdx));
+                savedIdx++;
+            }
+            outerAliasSaveStack.setPos(aliasSaveBase);
+        }
+        return firstCloneAlias;
     }
 
     private void pushMatchingPredicates(
@@ -3041,10 +3130,6 @@ class LateralJoinRewriter implements Mutable {
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
     ) throws SqlException {
-        if (isPerSidePush) {
-            return;
-        }
-
         ObjList<QueryModel> joinModels = current.getJoinModels();
         final int insertPos = 1;
         joinModels.add(outerRefJoinModel);
