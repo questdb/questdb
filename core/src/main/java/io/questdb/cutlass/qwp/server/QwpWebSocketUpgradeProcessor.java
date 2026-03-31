@@ -199,11 +199,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
             // Connection is closing anyway, ignore
         } finally {
-            state.onDisconnected();
-            // Free native resources (bufferAddress, ddlMem, path, symbolCachePool).
-            // set(null) calls Misc.freeIfCloseable(state) → state.close() and removes
-            // the entry so that localValueMap.disconnect() won't call onDisconnected() again.
-            LV.set(context, null);
+            try {
+                state.onDisconnected();
+            } finally {
+                // Free native resources (bufferAddress, ddlMem, path, symbolCachePool).
+                // set(null) calls Misc.freeIfCloseable(state) → state.close() and removes
+                // the entry so that localValueMap.disconnect() won't call onDisconnected() again.
+                LV.set(context, null);
+            }
         }
     }
 
