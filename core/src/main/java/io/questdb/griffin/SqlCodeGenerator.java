@@ -4135,6 +4135,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         Misc.freeObjList(slave.getBindVarFunctions());
                         slave.halfClose();
 
+                        int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                         return new FilteredAsOfJoinFastRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
@@ -4147,7 +4148,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 NullRecordFactory.getInstance(slaveMetadata),
                                 null,
                                 slaveTimestampIndex,
-                                toleranceInterval
+                                toleranceInterval,
+                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
+                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null
                         );
                     } else if (slave.isProjection()) {
                         RecordCursorFactory projectionBase = slave.getBaseFactory();
@@ -4174,6 +4177,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 Misc.freeObjList(projectionBase.getBindVarFunctions());
                                 projectionBase.halfClose();
 
+                                int[][] projFilteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                                 return new FilteredAsOfJoinFastRecordCursorFactory(
                                         configuration,
                                         joinMetadata,
@@ -4186,7 +4190,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         NullRecordFactory.getInstance(slaveMetadata),
                                         stolenCrossIndex,
                                         slaveTimestampIndex,
-                                        toleranceInterval
+                                        toleranceInterval,
+                                        projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[0] : null,
+                                        projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[1] : null
                                 );
                             }
                         }
