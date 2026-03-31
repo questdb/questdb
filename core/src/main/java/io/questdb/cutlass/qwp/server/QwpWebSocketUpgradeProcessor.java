@@ -31,8 +31,8 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
@@ -146,17 +146,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         return offset;
     }
 
-    private static int badRequestResponseSize(String reason) {
-        return badRequestResponseSize(reason.getBytes(StandardCharsets.UTF_8).length);
-    }
-
-    private static int badRequestResponseSize(int reasonByteCount) {
-        return BAD_REQUEST_PREFIX.length
-                + Integer.toString(reasonByteCount).length()
-                + HTTP_HEADER_END.length
-                + reasonByteCount;
-    }
-
     /**
      * Writes a WebSocket handshake response to the buffer.
      *
@@ -193,16 +182,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
 
         return UPGRADE_REQUIRED_RESPONSE.length;
-    }
-
-    private static HttpException responseDoesNotFitSendBuffer(long fd, CharSequence responseType, int bufferSize, int requiredSize) {
-        LOG.error().$("WebSocket ").$(responseType).$(" does not fit send buffer [fd=").$(fd)
-                .$(", required=").$(requiredSize)
-                .$(", available=").$(bufferSize).I$();
-        return HttpException.instance("WebSocket ").put(responseType)
-                .put(" does not fit send buffer [required=").put(requiredSize)
-                .put(", available=").put(bufferSize)
-                .put(']');
     }
 
     @Override
@@ -427,6 +406,52 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
+    private static int badRequestResponseSize(String reason) {
+        return badRequestResponseSize(reason.getBytes(StandardCharsets.UTF_8).length);
+    }
+
+    private static int badRequestResponseSize(int reasonByteCount) {
+        return BAD_REQUEST_PREFIX.length
+                + Integer.toString(reasonByteCount).length()
+                + HTTP_HEADER_END.length
+                + reasonByteCount;
+    }
+
+    private static HttpException responseDoesNotFitSendBuffer(long fd, CharSequence responseType, int bufferSize, int requiredSize) {
+        LOG.error().$("WebSocket ").$(responseType).$(" does not fit send buffer [fd=").$(fd)
+                .$(", required=").$(requiredSize)
+                .$(", available=").$(bufferSize).I$();
+        return HttpException.instance("WebSocket ").put(responseType)
+                .put(" does not fit send buffer [required=").put(requiredSize)
+                .put(", available=").put(bufferSize)
+                .put(']');
+    }
+
+    private void drainPendingResponse(HttpConnectionContext context, QwpProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        switch (state.getSendState()) {
+            case QwpProcessorState.SEND_STATE_READY:
+                return;
+            case QwpProcessorState.SEND_STATE_RESUME_ACK:
+                context.resumeResponseSend();
+                state.onResumeAckComplete();
+                return;
+            case QwpProcessorState.SEND_STATE_RESUME_ERROR:
+                context.resumeResponseSend();
+                state.onResumeErrorComplete();
+                return;
+            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR:
+                context.resumeResponseSend();
+                state.onResumeAckComplete();
+                sendDeferredErrorResponse(context, state);
+                return;
+            default:
+                LOG.critical().$("Invalid WebSocket send state during close [fd=").$(context.getFd())
+                        .$(", state=").$(state.getSendState()).I$();
+                throw PeerDisconnectedException.INSTANCE;
+        }
+    }
+
     /**
      * Flushes any pending cumulative ACK.
      * Only attempts to send when in READY state (buffer is clear).
@@ -646,7 +671,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         return negotiated;
     }
-
 
     private void processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
@@ -870,31 +894,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             LOG.debug().$("Failed to send error response [fd=").$(context.getFd())
                     .$(", seq=").$(sequence).I$();
             throw e;
-        }
-    }
-
-    private void drainPendingResponse(HttpConnectionContext context, QwpProcessorState state)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        switch (state.getSendState()) {
-            case QwpProcessorState.SEND_STATE_READY:
-                return;
-            case QwpProcessorState.SEND_STATE_RESUME_ACK:
-                context.resumeResponseSend();
-                state.onResumeAckComplete();
-                return;
-            case QwpProcessorState.SEND_STATE_RESUME_ERROR:
-                context.resumeResponseSend();
-                state.onResumeErrorComplete();
-                return;
-            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR:
-                context.resumeResponseSend();
-                state.onResumeAckComplete();
-                sendDeferredErrorResponse(context, state);
-                return;
-            default:
-                LOG.critical().$("Invalid WebSocket send state during close [fd=").$(context.getFd())
-                        .$(", state=").$(state.getSendState()).I$();
-                throw PeerDisconnectedException.INSTANCE;
         }
     }
 
