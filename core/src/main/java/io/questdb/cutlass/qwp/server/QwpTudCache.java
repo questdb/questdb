@@ -212,11 +212,7 @@ public class QwpTudCache implements QuietCloseable {
             tableUpdateDetails.putAt(key, tableNameCopy, tud);
             return tud;
         } catch (Throwable th) {
-            if (tud != null) {
-                tud.close();
-            } else {
-                Misc.free(walWriter);
-            }
+            Misc.free(tud != null ? tud : walWriter);
             throw th;
         }
     }
