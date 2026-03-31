@@ -303,8 +303,8 @@ public final class QwpConstants {
     /**
      * Returns a human-readable name for the type code.
      *
-     * @param typeCode the column type code
-     * @return type name
+     * @param typeCode QWP v1 type code
+     * @return human-readable type name
      */
     public static String getTypeName(byte typeCode) {
         return switch (typeCode) {
@@ -317,6 +317,7 @@ public final class QwpConstants {
             case TYPE_FLOAT -> "FLOAT";
             case TYPE_DOUBLE -> "DOUBLE";
             case TYPE_STRING -> "STRING";
+            case TYPE_VARCHAR -> "VARCHAR";
             case TYPE_SYMBOL -> "SYMBOL";
             case TYPE_TIMESTAMP -> "TIMESTAMP";
             case TYPE_TIMESTAMP_NANOS -> "TIMESTAMP_NANOS";
@@ -324,7 +325,6 @@ public final class QwpConstants {
             case TYPE_UUID -> "UUID";
             case TYPE_LONG256 -> "LONG256";
             case TYPE_GEOHASH -> "GEOHASH";
-            case TYPE_VARCHAR -> "VARCHAR";
             case TYPE_DOUBLE_ARRAY -> "DOUBLE_ARRAY";
             case TYPE_LONG_ARRAY -> "LONG_ARRAY";
             case TYPE_DECIMAL64 -> "DECIMAL64";

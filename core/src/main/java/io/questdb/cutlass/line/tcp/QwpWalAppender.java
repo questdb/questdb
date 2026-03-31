@@ -37,6 +37,7 @@ import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpGeoHashColumnCursor;
@@ -218,45 +219,12 @@ public class QwpWalAppender implements QuietCloseable {
     ) {
         return CairoException.nonCritical()
                 .put("type coercion from ")
-                .put(getQwpTypeName(qwpType))
+                .put(QwpConstants.getTypeName(qwpType))
                 .put(" to ")
                 .put(ColumnType.nameOf(columnType))
                 .put(" is not supported [column=")
                 .put(tableBlock.getColumnDef(col).getName())
                 .put(']');
-    }
-
-    /**
-     * Returns a human-readable name for a QWP v1 type code.
-     *
-     * @param qwpType QWP v1 type code
-     * @return human-readable type name
-     */
-    private static String getQwpTypeName(byte qwpType) {
-        return switch (qwpType) {
-            case TYPE_BOOLEAN -> "BOOLEAN";
-            case TYPE_BYTE -> "BYTE";
-            case TYPE_SHORT -> "SHORT";
-            case TYPE_INT -> "INT";
-            case TYPE_LONG -> "LONG";
-            case TYPE_FLOAT -> "FLOAT";
-            case TYPE_DOUBLE -> "DOUBLE";
-            case TYPE_STRING -> "STRING";
-            case TYPE_VARCHAR -> "VARCHAR";
-            case TYPE_SYMBOL -> "SYMBOL";
-            case TYPE_TIMESTAMP -> "TIMESTAMP";
-            case TYPE_TIMESTAMP_NANOS -> "TIMESTAMP_NANOS";
-            case TYPE_DATE -> "DATE";
-            case TYPE_UUID -> "UUID";
-            case TYPE_LONG256 -> "LONG256";
-            case TYPE_GEOHASH -> "GEOHASH";
-            case TYPE_DOUBLE_ARRAY -> "DOUBLE_ARRAY";
-            case TYPE_LONG_ARRAY -> "LONG_ARRAY";
-            case TYPE_DECIMAL64 -> "DECIMAL64";
-            case TYPE_DECIMAL128 -> "DECIMAL128";
-            case TYPE_DECIMAL256 -> "DECIMAL256";
-            default -> "UNKNOWN(" + qwpType + ")";
-        };
     }
 
     /**
@@ -340,7 +308,7 @@ public class QwpWalAppender implements QuietCloseable {
     ) {
         return CairoException.nonCritical()
                 .put("cannot write ")
-                .put(getQwpTypeName(qwpType))
+                .put(QwpConstants.getTypeName(qwpType))
                 .put(" to column [column=")
                 .put(tableBlock.getColumnDef(col).getName())
                 .put(", type=")
