@@ -346,6 +346,22 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetBloomFilterRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER), b VARCHAR PARQUET(BLOOM_FILTER)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            printSql("SHOW CREATE TABLE foo;");
+            String printedSql = sink.toString().replace("ddl\n", "");
+
+            execute("DROP TABLE foo;");
+            execute(printedSql);
+
+            printSql("SHOW CREATE TABLE foo;");
+            TestUtils.assertEquals(sink.toString().replace("ddl\n", ""), printedSql);
+        });
+    }
+
+    @Test
     public void testPartitioning() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year wal;");

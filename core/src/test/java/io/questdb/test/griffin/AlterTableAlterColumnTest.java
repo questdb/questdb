@@ -906,6 +906,65 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetParquetBloomFilterCaseInsensitive() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN c SET PARQUET(bloom_filter)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("c");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetBloomFilterWithDefaultEncoding() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(default, BLOOM_FILTER)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DEFAULT, TableUtils.getParquetConfigEncoding(config));
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetBloomFilterWithDefaultEncodingAndCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("ALTER TABLE x ALTER COLUMN i SET PARQUET(default, UNCOMPRESSED, BLOOM_FILTER)");
+
+            try (TableWriter writer = getWriter("x")) {
+                int colIndex = writer.getMetadata().getColumnIndex("i");
+                int config = writer.getMetadata().getColumnMetadata(colIndex).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertTrue(TableUtils.isParquetConfigBloomFilter(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DEFAULT, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(ParquetCompression.COMPRESSION_UNCOMPRESSED, TableUtils.getParquetConfigCompression(config) - 1);
+            }
+        });
+    }
+
+    @Test
+    public void testSetParquetBloomFilterJunkAfter() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN i SET PARQUET(PLAIN, BLOOM_FILTER, junk)",
+                60,
+                "')' expected"
+        );
+    }
+
+    @Test
     public void testSetParquetEncodingInvalidForType() throws Exception {
         assertFailure(
                 "ALTER TABLE x ALTER COLUMN d SET PARQUET(DELTA_LENGTH_BYTE_ARRAY)",
