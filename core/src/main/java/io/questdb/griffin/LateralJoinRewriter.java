@@ -462,11 +462,12 @@ class LateralJoinRewriter implements Mutable {
     // - All branches at terminateHere level are INNER/CROSS/RIGHT
     // - Every branch with correlated ON has a correlated nested model
     //   (so a clone can be pushed into it)
-    // Per-side push: skip main chain CROSS JOIN when main chain has no
-    // correlated expressions and all branches discard unmatched left rows.
-    // Two conditions:
-    //  1. Main chain has no own correlated expressions (excluding join ON)
-    //  2. All branches at terminateHere level are INNER/CROSS/RIGHT
+    // Per-side push: skip main chain CROSS JOIN (Neumann-Kemper transform
+    // R ⋈ (D ⋈ S) instead of (R × D) ⋈ S). Conditions:
+    //  1. Main chain has no own correlated expressions (R doesn't need D)
+    //  2. All branches are INNER/CROSS/RIGHT (no LEFT/FULL row preservation)
+    //  3. Table-model branches have no correlated ON (can't create clone)
+    //  4. At least one correlated branch exists (alignment needs a source)
     private boolean canPerSidePush(QueryModel model, int depth) {
         QueryModel m = model;
         while (m != null) {
@@ -1326,9 +1327,7 @@ class LateralJoinRewriter implements Mutable {
                 CharSequence perSideCloneAlias = null;
                 countColAliases.clear();
                 if (isPerSidePush) {
-                    perSideCloneAlias = pushDownPerSidePush(
-                            topInner, outerToInnerAlias, outerRefJoinModel, joinModel, depth
-                    );
+                    perSideCloneAlias = pushDownPerSidePush(topInner, outerToInnerAlias, outerRefJoinModel, depth);
                 } else {
                     pushDownOuterRefs(
                             null, topInner, outerToInnerAlias, isLeft,
@@ -2336,15 +2335,10 @@ class LateralJoinRewriter implements Mutable {
         outerAliasSaveStack.setPos(aliasSaveBase);
     }
 
-    // Handles the per-side push optimization: instead of inserting the
-    // __qdb_outer_ref__ into the main nestedModel chain, each correlated
-    // join branch at the terminateHere level gets its own clone.
-    // Returns the first clone alias used for outer-level alignment, or null.
     private CharSequence pushDownPerSidePush(
             QueryModel topInner,
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             QueryModel outerRefJoinModel,
-            QueryModel lateralJoinModel,
             int depth
     ) throws SqlException {
         QueryModel terminateLevel = topInner;

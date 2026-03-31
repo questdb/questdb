@@ -1303,7 +1303,6 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // T102: WINDOW JOIN inside lateral subquery
     @Test
-    @Ignore("Unignored after https://github.com/questdb/questdb/pull/6912 merge")
     public void testT102WindowJoinInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE instruments (id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1331,23 +1330,24 @@ public class LateralJoinTest extends AbstractCairoTest {
             // sum of (trade_price + quote_price) over a time window
             assertQueryNoLeakCheck(
                     """
-                            id\tsum
-                            1\t19.5
-                            1\t21.5
-                            2\t39.0
+                            id	sum
+                            1	19.5
+                            1	42.0
+                            2	39.0
                             """,
                     """
-                            SELECT i.id, sub.sum                                                                                                                                                                                                                 \s
-                              FROM instruments i                                                                                                                                                                                                                   \s
-                              JOIN (                                                                                                                                                                                                                               \s
-                                  SELECT sum(t.price + q.price) AS sum, t.instrument_id\s
-                                  FROM trades t
-                                  WINDOW JOIN quotes q ON tag
-                                      RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW                                                                                                                                                                             \s
-                              ) sub ON sub.instrument_id = i.id
-                              ORDER BY i.id, sub.sum
+                            SELECT i.id, sub.sum
+                            FROM instruments i
+                            JOIN LATERAL (
+                                SELECT sum(t.price + q.price) AS sum
+                                FROM trades t
+                                WINDOW JOIN quotes q ON tag
+                                    RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW
+                                WHERE t.instrument_id = i.id
+                            ) sub
+                            ORDER BY i.id, sub.sum
                             """,
-                    null, true, false
+                    null, true, true
             );
         });
     }
