@@ -1927,6 +1927,135 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinTwoSymbolKeysSymbolKeyJoinNotUsedForSingleKey() throws Exception {
+        // Negative EXPLAIN test: symbolKeyJoin must NOT appear for single-symbol
+        // key joins (those use the specialized SymbolKeyMappingRecordCopier path).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("INSERT INTO master VALUES ('A', 1.0, '2024-01-01T10:00:00.000000Z')");
+
+            execute("INSERT INTO slave VALUES ('A', 10.0, '2024-01-01T09:00:00.000000Z')");
+
+            // Single symbol key — should NOT use symbolKeyJoin
+            String query = "SELECT m.sym, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+
+            // Dense
+            query = "SELECT /*+ asof_dense(m s) */ m.sym, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+
+            // Light
+            query = "SELECT /*+ asof_linear(m s) */ m.sym, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysToTop() throws Exception {
+        // Verifies that toTop() re-iteration produces identical results when
+        // SymbolTranslatingRecord is active. The CROSS JOIN forces the ASOF JOIN
+        // cursor to be reset via toTop() for each row in the multiplier table.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO master VALUES
+                                ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                                ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                                ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z')
+                            """
+            );
+
+            execute(
+                    """
+                            INSERT INTO slave VALUES
+                                ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                                ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                                ('B', 'X', 30.0, '2024-01-01T09:45:00.000000Z')
+                            """
+            );
+
+            execute("CREATE TABLE multiplier (id INT)");
+            execute("INSERT INTO multiplier VALUES (1), (2)");
+
+            // Results repeat twice (once for each multiplier row), testing
+            // that toTop() properly preserves SymbolTranslatingRecord state
+            String expected = """
+                    id\tsym1\tsym2\tval\tprice
+                    1\tA\tX\t1.0\t10.0
+                    1\tA\tY\t2.0\t20.0
+                    1\tB\tX\t3.0\t30.0
+                    2\tA\tX\t1.0\t10.0
+                    2\tA\tY\t2.0\t20.0
+                    2\tB\tX\t3.0\t30.0
+                    """;
+
+            String query = """
+                    SELECT m.id, asof_result.* FROM multiplier m
+                    CROSS JOIN (
+                      SELECT ma.sym1, ma.sym2, ma.val, s.price
+                      FROM master ma
+                      ASOF JOIN slave s ON (ma.sym1 = s.sym1 AND ma.sym2 = s.sym2)
+                    ) asof_result
+                    """;
+            assertQueryNoLeakCheck(
+                    expected,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testAsOfJoinTwoSymbolKeysWithFilter() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3959,6 +4088,70 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSql("EXPLAIN " + query);
             TestUtils.assertContains(sink, "Lt Join");
             assertQueryNoLeakCheck(expected, query, null, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testLtJoinToleranceTwoSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:59:50.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T10:01:50.000000Z')
+                    """);
+
+            // LT JOIN with tolerance of 15s:
+            // (A,X) at 10:00:00 — slave at 09:59:50 is 10s before and strictly less, within tolerance -> match
+            // (A,Y) at 10:01:00 — slave at 09:00:00 is 61min before and strictly less, outside tolerance -> null
+            // (B,X) at 10:02:00 — slave at 10:01:50 is 10s before and strictly less, within tolerance -> match
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\tnull
+                    B\tX\t3.0\t30.0
+                    """;
+
+            String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m LT JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2) TOLERANCE 15s";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertContains(sink, "Lt Join Light");
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
+            assertQueryNoLeakCheck(
+                    expected,
+                    query,
+                    null,
+                    false,
+                    true
+            );
         });
     }
 
