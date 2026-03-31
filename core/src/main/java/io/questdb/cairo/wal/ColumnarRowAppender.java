@@ -45,9 +45,15 @@ import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
  * <b>Lifecycle:</b>
  * <ol>
  *   <li>Call {@link #beginColumnarWrite(int)} with the row count</li>
- *   <li>Write each column using the appropriate putXxxColumn method</li>
+ *   <li>Write any present columns using the appropriate putXxxColumn method</li>
  *   <li>Call {@link #endColumnarWrite(long, long, boolean)} to finalize</li>
  * </ol>
+ * <p>
+ * Regular table columns may be omitted for a batch. Omitted columns are filled with NULL values
+ * for all rows when {@link #endColumnarWrite(long, long, boolean)} is called. Columns that are
+ * written must provide values for the full batch size, encoding per-row NULLs in the column data
+ * itself (for example via a null bitmap). The designated timestamp column is special: it must be
+ * written explicitly for the batch, unless the caller uses a separate server-assigned timestamp path.
  * <p>
  * <b>Error handling:</b> If any error occurs during column writes, call {@link #cancelColumnarWrite()}
  * to rollback the partial write.
@@ -65,8 +71,10 @@ public interface ColumnarRowAppender {
      * Begins a columnar write operation.
      * <p>
      * Must be called before any putXxxColumn methods. After this call,
-     * the caller must write all columns and then call either
+     * the caller may write any subset of regular columns and then call either
      * {@link #endColumnarWrite(long, long, boolean)} or {@link #cancelColumnarWrite()}.
+     * Regular columns omitted from the batch are NULL-filled on finalize. The designated timestamp
+     * column remains mandatory unless the caller uses a separate server-assigned timestamp path.
      *
      * @param rowCount number of rows to be written
      */
@@ -84,7 +92,8 @@ public interface ColumnarRowAppender {
     /**
      * Completes the columnar write operation.
      * <p>
-     * Finalizes all written columns and updates internal state.
+     * Finalizes all written columns, NULL-fills any omitted regular columns for the batch, and
+     * updates internal state. This method expects each written column to cover the full batch size.
      *
      * @param minTimestamp the minimum timestamp in the written rows
      * @param maxTimestamp the maximum timestamp in the written rows

@@ -1977,6 +1977,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         for (int i = 0; i < columnCount; i++) {
             long lastWrittenRow = rowValueIsNotNull.getQuick(i);
             if (lastWrittenRow < lastExpectedRow) {
+                if (rowCount > 0 && i == timestampIndex) {
+                    throw CairoException.nonCritical()
+                            .put("columnar write did not write designated timestamp column [table=")
+                            .put(tableToken.getTableName())
+                            .put(", column=").put(metadata.getColumnName(timestampIndex))
+                            .put(']');
+                }
                 // Calculate how many nulls are needed
                 long nullsNeeded = lastExpectedRow - Math.max(lastWrittenRow, segmentRowCount - 1);
                 Runnable nullSetter = nullSetters.getQuick(i);

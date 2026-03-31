@@ -338,6 +338,43 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEndColumnarWrite_MissingDesignatedTimestamp_Throws() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_lifecycle_missing_ts", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            long valuesAddr = Unsafe.malloc((long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putInt(valuesAddr, 42);
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumn(0, valuesAddr, rowCount, Integer.BYTES, 0, rowCount);
+
+                    try {
+                        appender.endColumnarWrite(1_000_000L, 1_000_000L, false);
+                        Assert.fail("Expected CairoException");
+                    } catch (CairoException e) {
+                        assertTrue(e.getMessage().contains("designated timestamp column"));
+                    } finally {
+                        appender.cancelColumnarWrite();
+                    }
+
+                    assertEquals(0, walWriter.getSegmentRowCount());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testColumnarMatchesRowPath_FixedWidth() throws Exception {
         assertMemoryLeak(() -> {
             // Write via row path
