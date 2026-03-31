@@ -1673,6 +1673,63 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinToleranceTwoSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:59:50.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-01T10:01:55.000000Z')
+                    """);
+
+            // Tolerance of 15s:
+            // (A,X) at 10:00:00 — slave at 09:59:50 is 10s before, within tolerance -> match
+            // (A,Y) at 10:01:00 — slave at 09:00:00 is 61min before, outside tolerance -> null
+            // (B,X) at 10:02:00 — slave at 10:01:55 is 5s before, within tolerance -> match
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\tnull
+                    B\tX\t3.0\t30.0
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON(m.sym1 = s.sym1 AND m.sym2 = s.sym2) TOLERANCE 15s";
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
+        });
+    }
+
+    @Test
     public void testAsOfJoinTwoSymbolKeys() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -1928,6 +1985,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     false,
                     true
             );
+
+            // asof_linear hint bypasses filter stealing, exercising the Light
+            // factory with multi-symbol key optimization on a pre-filtered subquery.
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN (SELECT * FROM slave WHERE price > 10) s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected);
         });
     }
 
