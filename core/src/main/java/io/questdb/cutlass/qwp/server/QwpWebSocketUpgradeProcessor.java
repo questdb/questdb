@@ -379,9 +379,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
 
         switch (state.getSendState()) {
-            case QwpProcessorState.SEND_STATE_READY:
-                return;
-            case QwpProcessorState.SEND_STATE_RESUME_ACK:
+            case QwpProcessorState.SEND_STATE_READY -> {
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_ACK -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
                 LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
@@ -389,23 +389,24 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 if (state.hasPendingAck()) {
                     trySendAck(context, state);
                 }
-                return;
-            case QwpProcessorState.SEND_STATE_RESUME_ERROR:
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_ERROR -> {
                 context.resumeResponseSend();
                 LOG.debug().$("Resumed error response sent successfully [fd=").$(context.getFd()).I$();
                 state.onResumeErrorComplete();
-                return;
-            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR:
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
                 LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
                         .$(", upTo=").$(state.getLastAckedSequence()).I$();
                 sendDeferredErrorResponse(context, state);
-                return;
-            default:
+            }
+            default -> {
                 LOG.critical().$("Invalid WebSocket send state [fd=").$(context.getFd())
                         .$(", state=").$(state.getSendState()).I$();
                 throw ServerDisconnectException.INSTANCE;
+            }
         }
     }
 
@@ -433,25 +434,26 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     private void drainPendingResponse(HttpConnectionContext context, QwpProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         switch (state.getSendState()) {
-            case QwpProcessorState.SEND_STATE_READY:
-                return;
-            case QwpProcessorState.SEND_STATE_RESUME_ACK:
+            case QwpProcessorState.SEND_STATE_READY -> {
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_ACK -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
-                return;
-            case QwpProcessorState.SEND_STATE_RESUME_ERROR:
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeErrorComplete();
-                return;
-            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR:
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
                 sendDeferredErrorResponse(context, state);
-                return;
-            default:
+            }
+            default -> {
                 LOG.critical().$("Invalid WebSocket send state during close [fd=").$(context.getFd())
                         .$(", state=").$(state.getSendState()).I$();
                 throw PeerDisconnectedException.INSTANCE;
+            }
         }
     }
 

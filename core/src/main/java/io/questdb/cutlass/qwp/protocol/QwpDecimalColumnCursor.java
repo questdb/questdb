@@ -268,19 +268,17 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
 
     private void readCurrentValue(long address) {
         switch (typeCode) {
-            case TYPE_DECIMAL64:
-                currentValue64 = Unsafe.getUnsafe().getLong(address);
-                break;
-            case TYPE_DECIMAL128:
+            case TYPE_DECIMAL64 -> currentValue64 = Unsafe.getUnsafe().getLong(address);
+            case TYPE_DECIMAL128 -> {
                 currentValue128Lo = Unsafe.getUnsafe().getLong(address);
                 currentValue128Hi = Unsafe.getUnsafe().getLong(address + 8);
-                break;
-            case TYPE_DECIMAL256:
+            }
+            case TYPE_DECIMAL256 -> {
                 currentValue256Ll = Unsafe.getUnsafe().getLong(address);
                 currentValue256Lh = Unsafe.getUnsafe().getLong(address + 8);
                 currentValue256Hl = Unsafe.getUnsafe().getLong(address + 16);
                 currentValue256Hh = Unsafe.getUnsafe().getLong(address + 24);
-                break;
+            }
         }
     }
 }

@@ -298,40 +298,25 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
 
     private void readCurrentValue(long address) {
         switch (typeCode) {
-            case TYPE_BYTE:
-                currentLong = Unsafe.getUnsafe().getByte(address);
-                break;
-            case TYPE_SHORT:
-            case TYPE_CHAR:
-                currentLong = Unsafe.getUnsafe().getShort(address);
-                break;
-            case TYPE_INT:
-                currentLong = Unsafe.getUnsafe().getInt(address);
-                break;
-            case TYPE_LONG:
-            case TYPE_DATE:
-            case TYPE_TIMESTAMP:
-            case TYPE_TIMESTAMP_NANOS:
-                currentLong = Unsafe.getUnsafe().getLong(address);
-                break;
-            case TYPE_FLOAT:
-                currentDouble = Unsafe.getUnsafe().getFloat(address);
-                break;
-            case TYPE_DOUBLE:
-                currentDouble = Unsafe.getUnsafe().getDouble(address);
-                break;
-            case TYPE_UUID:
+            case TYPE_BYTE -> currentLong = Unsafe.getUnsafe().getByte(address);
+            case TYPE_SHORT, TYPE_CHAR -> currentLong = Unsafe.getUnsafe().getShort(address);
+            case TYPE_INT -> currentLong = Unsafe.getUnsafe().getInt(address);
+            case TYPE_LONG, TYPE_DATE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS ->
+                    currentLong = Unsafe.getUnsafe().getLong(address);
+            case TYPE_FLOAT -> currentDouble = Unsafe.getUnsafe().getFloat(address);
+            case TYPE_DOUBLE -> currentDouble = Unsafe.getUnsafe().getDouble(address);
+            case TYPE_UUID -> {
                 // UUID is stored little-endian: lo bytes first, then hi bytes
                 currentUuidLo = Unsafe.getUnsafe().getLong(address);
                 currentUuidHi = Unsafe.getUnsafe().getLong(address + 8);
-                break;
-            case TYPE_LONG256:
+            }
+            case TYPE_LONG256 -> {
                 // LONG256 is stored little-endian: 4 longs, least significant first
                 currentLong256_0 = Unsafe.getUnsafe().getLong(address);
                 currentLong256_1 = Unsafe.getUnsafe().getLong(address + 8);
                 currentLong256_2 = Unsafe.getUnsafe().getLong(address + 16);
                 currentLong256_3 = Unsafe.getUnsafe().getLong(address + 24);
-                break;
+            }
         }
     }
 }
