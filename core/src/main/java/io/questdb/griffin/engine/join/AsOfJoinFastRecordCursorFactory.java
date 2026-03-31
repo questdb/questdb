@@ -136,7 +136,6 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     }
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
-
         private final SingleRecordSink masterSinkTarget;
         private final SingleRecordSink slaveSinkTarget;
 
@@ -171,24 +170,15 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             symbolShortCircuit.of(slaveCursor);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+                symbolTranslatingRecord.of(masterRecord);
+                masterKeyRecord = symbolTranslatingRecord;
             }
         }
 
         @Override
         protected void performKeyMatching(long masterTimestamp) {
-            // Fast path: skip key matching when master symbol keys don't exist in slave.
-            Record masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
-                symbolTranslatingRecord.of(masterRecord);
-                if (symbolTranslatingRecord.hasNonExistentKey()) {
-                    // One of the master record's symbol does not match any symbol in the slave table,
-                    // so we can skip the key matching part and report no match.
-                    record.hasSlave(false);
-                    return;
-                }
-                // Use the translating record so that getInt() on symbol key columns
-                // returns slave symbol IDs for integer-based comparison.
-                masterKeyRecord = symbolTranslatingRecord;
+                symbolTranslatingRecord.resetNonExistentKeyFlag();
             } else if (symbolShortCircuit.isShortCircuit(masterRecord)) {
                 record.hasSlave(false);
                 return;
@@ -198,6 +188,12 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             // We have to make sure the JOIN keys match as well.
             masterSinkTarget.clear();
             masterKeySink.copy(masterKeyRecord, masterSinkTarget);
+
+            // Check if any symbol key was VALUE_NOT_FOUND during copy.
+            if (symbolTranslatingRecord != null && symbolTranslatingRecord.hadNonExistentKey()) {
+                record.hasSlave(false);
+                return;
+            }
 
             long rowLo = slaveTimeFrame.getRowLo();
             int keyedFrameIndex = slaveTimeFrame.getFrameIndex();

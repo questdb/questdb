@@ -39,7 +39,6 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 
 public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoinDenseRecordCursorFactoryBase {
-
     private final SymbolJoinKeyMapping joinKeyMapping;
     private final int slaveSymbolColumnIndex;
 
@@ -138,7 +137,7 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
 
         @Override
         protected int setupSymbolKeyToFind() {
-            return joinKeyMapping.getSlaveKey(masterRecord);
+            return joinKeyMapping.getSlaveKey(masterKeyRecord);
         }
     }
 }

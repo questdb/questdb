@@ -245,16 +245,16 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                 }
 
                 key = joinKeyMap.withKey();
-                // Fast path: skip map probe when master symbol keys don't exist in slave.
+                // Use the translating record (if available) so that getInt() on symbol
+                // key columns returns slave symbol IDs for integer-based map lookup.
                 if (symbolTranslatingRecord != null) {
-                    symbolTranslatingRecord.of(masterRecord);
-                    if (symbolTranslatingRecord.hasNonExistentKey()) {
+                    symbolTranslatingRecord.resetNonExistentKeyFlag();
+                    key.put(symbolTranslatingRecord, masterKeySink);
+                    // Skip map probe when master symbol keys don't exist in slave.
+                    if (symbolTranslatingRecord.hadNonExistentKey()) {
                         record.hasSlave(false);
                         return true;
                     }
-                    // Use the translating record so that getInt() on symbol
-                    // key columns returns slave symbol IDs for integer-based map lookup.
-                    key.put(symbolTranslatingRecord, masterKeySink);
                 } else {
                     key.put(masterRecord, masterKeySink);
                 }
@@ -306,6 +306,9 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             this.slaveCursor = slaveCursor;
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecordB();
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.of(masterRecord);
+            }
             record.of(masterRecord, slaveRecord);
         }
     }

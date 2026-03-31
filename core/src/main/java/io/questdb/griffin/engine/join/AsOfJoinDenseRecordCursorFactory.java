@@ -153,6 +153,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
             slaveSinkTarget.reopen();
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+                symbolTranslatingRecord.of(masterRecord);
+                masterKeyRecord = symbolTranslatingRecord;
             }
         }
 
@@ -175,27 +177,21 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
 
         @Override
         protected void putSlaveKeyToFind(MapKey key, int slaveKeyToFind) {
-            key.put(getMasterKeyRecord(), masterKeyCopier);
+            key.put(masterKeyRecord, masterKeyCopier);
         }
 
         @Override
         protected int setupSymbolKeyToFind() {
-            Record masterKeyRecord = getMasterKeyRecord();
-            // Fast path: skip key matching when master symbol keys don't exist in slave.
-            if (symbolTranslatingRecord != null && symbolTranslatingRecord.hasNonExistentKey()) {
-                return SymbolTable.VALUE_NOT_FOUND;
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.resetNonExistentKeyFlag();
             }
             masterSinkTarget.clear();
             masterKeyCopier.copy(masterKeyRecord, masterSinkTarget);
-            return DUMMY_VALUE;
-        }
-
-        private Record getMasterKeyRecord() {
-            if (symbolTranslatingRecord != null) {
-                symbolTranslatingRecord.of(masterRecord);
-                return symbolTranslatingRecord;
+            // Check if any symbol key was VALUE_NOT_FOUND during copy.
+            if (symbolTranslatingRecord != null && symbolTranslatingRecord.hadNonExistentKey()) {
+                return SymbolTable.VALUE_NOT_FOUND;
             }
-            return masterRecord;
+            return DUMMY_VALUE;
         }
     }
 }
