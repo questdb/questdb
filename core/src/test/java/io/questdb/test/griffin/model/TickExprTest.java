@@ -1301,6 +1301,236 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateListImpreciseBareExpression() throws SqlException {
+        // Bare imprecise date + time (no brackets): 2024-02T09:30
+        // parseTickExpr wraps it as [2024-02]T09:30 and routes to expandDateList
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String bare = "2024-02T09:30";
+        String bracketed = "[2024-02]T09:30";
+        out.clear();
+        parseTickExpr(timestampDriver, bare, 0, bare.length(), 0, out, IntervalOperation.INTERSECT);
+        String bareResult = intervalToString(timestampDriver, out).toString();
+        out.clear();
+        parseTickExpr(timestampDriver, bracketed, 0, bracketed.length(), 0, out, IntervalOperation.INTERSECT);
+        String bracketedResult = intervalToString(timestampDriver, out).toString();
+        TestUtils.assertEquals(bracketedResult, bareResult);
+    }
+
+    @Test
+    public void testDateListImpreciseBracketExpansion() throws SqlException {
+        // Bracket expansion at month level with time: 2024-[01..02]T09:30
+        // This goes through expandBracketsRecursive path
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        String interval = "2024-[01..02]T09:30";
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        // January 31 + February 29 (leap year) = 60 days
+        Assert.assertEquals(60, out.size() / 2);
+    }
+
+    @Test
+    public void testDateListImpreciseDateCompiledPath() throws SqlException {
+        // Imprecise date with time in compiled tick expression (has $today variable)
+        assertCompiledTickExpr("[$today, 2024-01]T09:30");
+    }
+
+    @Test
+    public void testDateListImpreciseDateWithDurationAndDayFilter() throws SqlException {
+        // Duration + day filter on imprecise date without time override.
+        // [2024-01]#workday;6h30m should expand each workday from midnight for 6h30m.
+        // 2024-01-01 is Monday. First week workdays: Mon 1, Tue 2, Wed 3, Thu 4, Fri 5.
+        // Verify equivalence with explicit day range.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String imprecise = "[2024-01]#workday;6h30m";
+        String explicit = "[2024-01-[01..31]]#workday;6h30m";
+        out.clear();
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        String impreciseResult = intervalToString(timestampDriver, out).toString();
+        out.clear();
+        parseTickExpr(timestampDriver, explicit, 0, explicit.length(), 0, out, IntervalOperation.INTERSECT);
+        String explicitResult = intervalToString(timestampDriver, out).toString();
+        TestUtils.assertEquals(explicitResult, impreciseResult);
+        // 23 workdays in Jan 2024
+        Assert.assertEquals(23, out.size() / 2);
+    }
+
+    @Test
+    public void testDateListImpreciseDateEquivalence() throws SqlException {
+        // Core correctness property: imprecise month produces same output
+        // as explicit day range
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String imprecise = "[2024-02]T09:30";
+        String explicit = "[2024-02-[01..29]]T09:30";
+        out.clear();
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        String impreciseResult = intervalToString(timestampDriver, out).toString();
+        out.clear();
+        parseTickExpr(timestampDriver, explicit, 0, explicit.length(), 0, out, IntervalOperation.INTERSECT);
+        String explicitResult = intervalToString(timestampDriver, out).toString();
+        TestUtils.assertEquals(explicitResult, impreciseResult);
+    }
+
+    @Test
+    public void testDateListImpreciseDateNamedTimezone() throws SqlException {
+        // DST transition test: March 2024 contains spring-forward on March 10
+        // in America/New_York. Verify imprecise month handles it correctly
+        // by comparing against explicit day range.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String imprecise = "[2024-03]T09:30@America/New_York#workday";
+        String explicit = "[2024-03-[01..31]]T09:30@America/New_York#workday";
+        out.clear();
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        String impreciseResult = intervalToString(timestampDriver, out).toString();
+        out.clear();
+        parseTickExpr(timestampDriver, explicit, 0, explicit.length(), 0, out, IntervalOperation.INTERSECT);
+        String explicitResult = intervalToString(timestampDriver, out).toString();
+        TestUtils.assertEquals(explicitResult, impreciseResult);
+    }
+
+    @Test
+    public void testDateListImpreciseDateWithTimeAndDayFilter() throws SqlException {
+        // Month-level date + time + workday filter + duration
+        // 2024-01-01 is Monday. Workdays in first week: Mon 1, Tue 2, Wed 3, Thu 4, Fri 5
+        assertBracketInterval(
+                "[{lo=2024-01-01T09:30:00.000000Z, hi=2024-01-01T15:59:59.999999Z}" +
+                        ",{lo=2024-01-02T09:30:00.000000Z, hi=2024-01-02T15:59:59.999999Z}" +
+                        ",{lo=2024-01-03T09:30:00.000000Z, hi=2024-01-03T15:59:59.999999Z}" +
+                        ",{lo=2024-01-04T09:30:00.000000Z, hi=2024-01-04T15:59:59.999999Z}" +
+                        ",{lo=2024-01-05T09:30:00.000000Z, hi=2024-01-05T15:59:59.999999Z}" +
+                        ",{lo=2024-01-08T09:30:00.000000Z, hi=2024-01-08T15:59:59.999999Z}" +
+                        ",{lo=2024-01-09T09:30:00.000000Z, hi=2024-01-09T15:59:59.999999Z}" +
+                        ",{lo=2024-01-10T09:30:00.000000Z, hi=2024-01-10T15:59:59.999999Z}" +
+                        ",{lo=2024-01-11T09:30:00.000000Z, hi=2024-01-11T15:59:59.999999Z}" +
+                        ",{lo=2024-01-12T09:30:00.000000Z, hi=2024-01-12T15:59:59.999999Z}" +
+                        ",{lo=2024-01-15T09:30:00.000000Z, hi=2024-01-15T15:59:59.999999Z}" +
+                        ",{lo=2024-01-16T09:30:00.000000Z, hi=2024-01-16T15:59:59.999999Z}" +
+                        ",{lo=2024-01-17T09:30:00.000000Z, hi=2024-01-17T15:59:59.999999Z}" +
+                        ",{lo=2024-01-18T09:30:00.000000Z, hi=2024-01-18T15:59:59.999999Z}" +
+                        ",{lo=2024-01-19T09:30:00.000000Z, hi=2024-01-19T15:59:59.999999Z}" +
+                        ",{lo=2024-01-22T09:30:00.000000Z, hi=2024-01-22T15:59:59.999999Z}" +
+                        ",{lo=2024-01-23T09:30:00.000000Z, hi=2024-01-23T15:59:59.999999Z}" +
+                        ",{lo=2024-01-24T09:30:00.000000Z, hi=2024-01-24T15:59:59.999999Z}" +
+                        ",{lo=2024-01-25T09:30:00.000000Z, hi=2024-01-25T15:59:59.999999Z}" +
+                        ",{lo=2024-01-26T09:30:00.000000Z, hi=2024-01-26T15:59:59.999999Z}" +
+                        ",{lo=2024-01-29T09:30:00.000000Z, hi=2024-01-29T15:59:59.999999Z}" +
+                        ",{lo=2024-01-30T09:30:00.000000Z, hi=2024-01-30T15:59:59.999999Z}" +
+                        ",{lo=2024-01-31T09:30:00.000000Z, hi=2024-01-31T15:59:59.999999Z}]",
+                "[2024-01]T09:30#workday;6h30m"
+        );
+    }
+
+    @Test
+    public void testDateListImpreciseDateWithTimeList() throws SqlException {
+        // Time list with imprecise date: [2024-02]T[09:30,14:00]
+        // Each day in Feb 2024 at both 09:30 and 14:00 = 29 * 2 = 58 intervals
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String imprecise = "[2024-02]T[09:30,14:00]";
+        String explicit = "[2024-02-[01..29]]T[09:30,14:00]";
+        out.clear();
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        String impreciseResult = intervalToString(timestampDriver, out).toString();
+        out.clear();
+        parseTickExpr(timestampDriver, explicit, 0, explicit.length(), 0, out, IntervalOperation.INTERSECT);
+        String explicitResult = intervalToString(timestampDriver, out).toString();
+        TestUtils.assertEquals(explicitResult, impreciseResult);
+        Assert.assertEquals(58, out.size() / 2);
+    }
+
+    @Test
+    public void testDateListImpreciseDateWithMixedPrecision() throws SqlException {
+        // Mixed precise and imprecise elements: one day-level, one month-level
+        // 2024-01-15 is precise (1 interval), 2024-02 is imprecise (29 intervals)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        String interval = "[2024-01-15, 2024-02]T09:30";
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(30, out.size() / 2); // 1 + 29
+    }
+
+    @Test
+    public void testDateListImpreciseDateWithTimeOverride() throws SqlException {
+        // Month-level dates with time override: [2024-02]T09:30
+        // February 2024 has 29 days (leap year), all at 09:30.
+        assertBracketInterval(
+                "[{lo=2024-02-01T09:30:00.000000Z, hi=2024-02-01T09:30:59.999999Z}" +
+                        ",{lo=2024-02-02T09:30:00.000000Z, hi=2024-02-02T09:30:59.999999Z}" +
+                        ",{lo=2024-02-03T09:30:00.000000Z, hi=2024-02-03T09:30:59.999999Z}" +
+                        ",{lo=2024-02-04T09:30:00.000000Z, hi=2024-02-04T09:30:59.999999Z}" +
+                        ",{lo=2024-02-05T09:30:00.000000Z, hi=2024-02-05T09:30:59.999999Z}" +
+                        ",{lo=2024-02-06T09:30:00.000000Z, hi=2024-02-06T09:30:59.999999Z}" +
+                        ",{lo=2024-02-07T09:30:00.000000Z, hi=2024-02-07T09:30:59.999999Z}" +
+                        ",{lo=2024-02-08T09:30:00.000000Z, hi=2024-02-08T09:30:59.999999Z}" +
+                        ",{lo=2024-02-09T09:30:00.000000Z, hi=2024-02-09T09:30:59.999999Z}" +
+                        ",{lo=2024-02-10T09:30:00.000000Z, hi=2024-02-10T09:30:59.999999Z}" +
+                        ",{lo=2024-02-11T09:30:00.000000Z, hi=2024-02-11T09:30:59.999999Z}" +
+                        ",{lo=2024-02-12T09:30:00.000000Z, hi=2024-02-12T09:30:59.999999Z}" +
+                        ",{lo=2024-02-13T09:30:00.000000Z, hi=2024-02-13T09:30:59.999999Z}" +
+                        ",{lo=2024-02-14T09:30:00.000000Z, hi=2024-02-14T09:30:59.999999Z}" +
+                        ",{lo=2024-02-15T09:30:00.000000Z, hi=2024-02-15T09:30:59.999999Z}" +
+                        ",{lo=2024-02-16T09:30:00.000000Z, hi=2024-02-16T09:30:59.999999Z}" +
+                        ",{lo=2024-02-17T09:30:00.000000Z, hi=2024-02-17T09:30:59.999999Z}" +
+                        ",{lo=2024-02-18T09:30:00.000000Z, hi=2024-02-18T09:30:59.999999Z}" +
+                        ",{lo=2024-02-19T09:30:00.000000Z, hi=2024-02-19T09:30:59.999999Z}" +
+                        ",{lo=2024-02-20T09:30:00.000000Z, hi=2024-02-20T09:30:59.999999Z}" +
+                        ",{lo=2024-02-21T09:30:00.000000Z, hi=2024-02-21T09:30:59.999999Z}" +
+                        ",{lo=2024-02-22T09:30:00.000000Z, hi=2024-02-22T09:30:59.999999Z}" +
+                        ",{lo=2024-02-23T09:30:00.000000Z, hi=2024-02-23T09:30:59.999999Z}" +
+                        ",{lo=2024-02-24T09:30:00.000000Z, hi=2024-02-24T09:30:59.999999Z}" +
+                        ",{lo=2024-02-25T09:30:00.000000Z, hi=2024-02-25T09:30:59.999999Z}" +
+                        ",{lo=2024-02-26T09:30:00.000000Z, hi=2024-02-26T09:30:59.999999Z}" +
+                        ",{lo=2024-02-27T09:30:00.000000Z, hi=2024-02-27T09:30:59.999999Z}" +
+                        ",{lo=2024-02-28T09:30:00.000000Z, hi=2024-02-28T09:30:59.999999Z}" +
+                        ",{lo=2024-02-29T09:30:00.000000Z, hi=2024-02-29T09:30:59.999999Z}]",
+                "[2024-02]T09:30"
+        );
+    }
+
+    @Test
+    public void testDateListImpreciseDateWithTimezone() throws SqlException {
+        // Imprecise month with time + timezone: verify against explicit day range
+        // 09:30 in UTC+5 = 04:30 UTC
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String precise = "[2024-01-[01..03]]T09:30@+05:00";
+        out.clear();
+        parseTickExpr(timestampDriver, precise, 0, precise.length(), 0, out, IntervalOperation.INTERSECT);
+        String expected = intervalToString(timestampDriver, out).toString();
+
+        // Imprecise month with day filter should produce same first 3 days
+        // 2024-01-01 is Monday, 02 Tue, 03 Wed
+        String imprecise = "[2024-01]T09:30@+05:00#Mon,Tue,Wed";
+        out.clear();
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        // Take only the first 3 intervals (6 longs) — both expressions produce them
+        LongList first3 = new LongList();
+        for (int i = 0; i < Math.min(6, out.size()); i++) {
+            first3.add(out.getQuick(i));
+        }
+        TestUtils.assertEquals(expected, intervalToString(timestampDriver, first3));
+    }
+
+    @Test
+    public void testDateListImpreciseMultipleMonths() throws SqlException {
+        // Two month-level elements with time override
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        String interval = "[2024-01, 2024-02]T09:30";
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        // January has 31 days, February 2024 has 29 days (leap year) = 60 total
+        Assert.assertEquals(60, out.size() / 2);
+    }
+
+    @Test
+    public void testDateListImpreciseYearLevel() throws SqlException {
+        // Year-level date with time: [2024]T09:30
+        // Expands to all 366 days of 2024 (leap year) at 09:30
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String imprecise = "[2024]T09:30";
+        out.clear();
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(366, out.size() / 2);
+    }
+
+    @Test
     public void testDateListBracketExpansionWithPerElementDayFilter() throws SqlException {
         // Bracket expansion inside element WITH per-element day filter
         // [2024-01-[01..07]#Mon,2024-01-15] - the #Mon applies to all expanded dates from 01..07
