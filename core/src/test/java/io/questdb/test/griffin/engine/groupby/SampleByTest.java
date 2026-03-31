@@ -324,6 +324,61 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueCachedPlanReturnsCorrectResults() throws Exception {
+        // Reproducer for https://github.com/questdb/questdb/issues/6902
+        // fill() returns correct results on first execution but nulls on second
+        // execution when using a cached plan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (" +
+                    "  symbol SYMBOL," +
+                    "  side SYMBOL," +
+                    "  price DOUBLE," +
+                    "  amount DOUBLE," +
+                    "  timestamp TIMESTAMP" +
+                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
+
+            execute("INSERT INTO trades VALUES" +
+                    "('BTC', 'buy',  100.0, 10.0, '2026-03-31T02:00:00.000000Z')," +
+                    "('BTC', 'buy',  101.0, 20.0, '2026-03-31T02:30:00.000000Z')," +
+                    "('BTC', 'sell', 102.0, 15.0, '2026-03-31T03:15:00.000000Z')," +
+                    "('BTC', 'buy',  103.0, 25.0, '2026-03-31T05:45:00.000000Z')");
+
+            String query = "SELECT timestamp," +
+                    "  sum(price * amount) / sum(amount) AS value," +
+                    "  sum(amount) AS count," +
+                    "  first(price)," +
+                    "  first(amount)" +
+                    " FROM trades" +
+                    " WHERE timestamp >= '2026-03-30T02:44:07.792000+01:00'" +
+                    "   AND timestamp <= '2026-03-31T09:27:07.030999+01:00'" +
+                    " SAMPLE BY 1h" +
+                    " FROM '2026-03-31T00:00:00+01:00' TO '2026-03-31T23:59:59+01:00'" +
+                    " FILL(0, 0, 0, 0)";
+
+            // getCursor() called multiple times on the same factory must
+            // return consistent results (tests cached plan reuse).
+            RecordCursorFactory factory = select(query);
+            try {
+                String firstResult = null;
+                for (int i = 0; i < 5; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        StringSink s = new StringSink();
+                        CursorPrinter.println(factory.getMetadata(), s);
+                        CursorPrinter.println(cursor, factory.getMetadata(), s);
+                        if (firstResult == null) {
+                            firstResult = s.toString();
+                        } else {
+                            TestUtils.assertEquals("execution #" + (i + 1) + " differs from #1", firstResult, s.toString());
+                        }
+                    }
+                }
+            } finally {
+                Misc.free(factory);
+            }
+        });
+    }
+
+    @Test
     public void testFillPrevConsistency() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
