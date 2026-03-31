@@ -657,6 +657,61 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPerSidePushIntermediateLayerProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO base_data VALUES
+                    (1, 'A', '2024-01-01T00:05:00.000000Z'),
+                    (2, 'B', '2024-01-01T01:05:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\ttrade_total
+                            1\t30.0
+                            2\t30.0
+                            """,
+                    """
+                            SELECT o.id, sub.trade_total
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT s2.trade_total
+                                FROM (
+                                    SELECT s1.trade_total
+                                    FROM (
+                                        SELECT t.trade_total
+                                        FROM base_data b
+                                        INNER JOIN (
+                                            SELECT sum(qty) AS trade_total, order_id
+                                            FROM trades
+                                            WHERE order_id = o.id
+                                            GROUP BY order_id
+                                        ) t ON b.order_id = t.order_id
+                                    ) s1
+                                ) s2
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testPerSidePushLeftBranchFallback() throws Exception {
         // LEFT branch inside the lateral subquery should NOT use per-side push
         // because LEFT preserves unmatched rows. This test verifies the normal

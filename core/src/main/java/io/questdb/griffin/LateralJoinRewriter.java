@@ -2349,9 +2349,6 @@ class LateralJoinRewriter implements Mutable {
             }
             terminateLevel = nested;
         }
-        if (terminateLevel == null) {
-            return null;
-        }
 
         CharSequence firstCloneAlias = null;
         for (int bi = 1, bn = terminateLevel.getJoinModels().size(); bi < bn; bi++) {
@@ -2445,6 +2442,26 @@ class LateralJoinRewriter implements Mutable {
                 savedIdx++;
             }
             outerAliasSaveStack.setPos(aliasSaveBase);
+        }
+
+        if (firstCloneAlias != null) {
+            QueryModel layer = topInner;
+            while (layer != terminateLevel) {
+                ObjList<CharSequence> mapKeys = outerToInnerAlias.keys();
+                for (int ki = 0, kn = mapKeys.size(); ki < kn; ki++) {
+                    CharSequence key = mapKeys.getQuick(ki);
+                    if (key != null) {
+                        CharSequence cn = unqualify(key);
+                        characterStore.newEntry();
+                        characterStore.put(firstCloneAlias).put("_").put(cn);
+                        CharSequence cloneColAlias = characterStore.toImmutable();
+                        ExpressionNode colNode = expressionNodePool.next().of(
+                                ExpressionNode.LITERAL, cloneColAlias, 0, 0);
+                        ensureColumnInSelect(layer, colNode, cloneColAlias);
+                    }
+                }
+                layer = layer.getNestedModel();
+            }
         }
         return firstCloneAlias;
     }
