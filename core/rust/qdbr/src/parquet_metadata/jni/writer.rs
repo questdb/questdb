@@ -98,12 +98,14 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
     mut env: JNIEnv,
     _class: JClass,
     ptr: *mut JniParquetMetaWriter,
-    top: u64,
     name_ptr: *const u8,
     name_len: jint,
     id: jint,
     col_type: jint,
     flags: jint,
+    physical_type: u8,
+    max_rep_level: u8,
+    max_def_level: u8,
 ) {
     check_not_null!(env, ptr, "ParquetMetaFileWriter");
     if name_ptr.is_null() || name_len < 0 {
@@ -123,9 +125,15 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
             return err.into_cairo_exception().throw(&mut env);
         }
     };
-    wrapper
-        .writer
-        .add_column(top, name, id, col_type, ColumnFlags(flags));
+    wrapper.writer.add_column(
+        name,
+        id,
+        col_type,
+        ColumnFlags(flags),
+        physical_type,
+        max_rep_level,
+        max_def_level,
+    );
     wrapper.column_count += 1;
 }
 

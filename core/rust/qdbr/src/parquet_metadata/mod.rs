@@ -41,9 +41,13 @@ pub mod types;
 pub mod writer;
 
 pub use column_chunk::ColumnChunkRaw;
+pub use convert::{
+    generate_parquet_metadata, physical_type_to_u8, update_parquet_metadata, ParquetMetaColumnInfo,
+    ParquetMetaUpdateResult,
+};
 pub use footer::{Footer, FooterBuilder};
 pub use header::{ColumnDescriptorRaw, FileHeader, FileHeaderBuilder};
 pub use reader::ParquetMetaReader;
 pub use row_group::{RowGroupBlockBuilder, RowGroupBlockReader};
 pub use types::*;
-pub use writer::ParquetMetaWriter;
+pub use writer::{ParquetMetaUpdateWriter, ParquetMetaWriter};

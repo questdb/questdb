@@ -91,6 +91,11 @@ public class PartitionUpdater implements QuietCloseable {
         return getResultUnusedBytes(ptr);
     }
 
+    public long getResultParquetMetaFileSize() {
+        assert ptr != 0;
+        return getResultParquetMetaFileSize(ptr);
+    }
+
     public void of(
             @Transient LPSZ srcPath,
             int readerFd,
@@ -104,7 +109,10 @@ public class PartitionUpdater implements QuietCloseable {
             long rowGroupSize,
             long dataPageSize,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long parquetMetaFileSize,
+            long existingParquetMetaFileSize
     ) {
         final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
@@ -123,7 +131,10 @@ public class PartitionUpdater implements QuietCloseable {
                 rowGroupSize,
                 dataPageSize,
                 bloomFilterFpp,
-                minCompressionRatio
+                minCompressionRatio,
+                parquetMetaFd,
+                parquetMetaFileSize,
+                existingParquetMetaFileSize
         );
     }
 
@@ -210,10 +221,15 @@ public class PartitionUpdater implements QuietCloseable {
             long rowGroupSize,
             long dataPageSize,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long parquetMetaFileSize,
+            long existingParquetMetaFileSize
     ) throws CairoException;
 
     private static native void destroy(long impl);
+
+    private static native long getResultParquetMetaFileSize(long impl);
 
     private static native long getResultUnusedBytes(long impl);
 

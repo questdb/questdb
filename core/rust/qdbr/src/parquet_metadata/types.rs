@@ -44,7 +44,7 @@ pub const COLUMN_DESCRIPTOR_SIZE: usize = 32;
 /// Size of a single column chunk inside a row group block.
 pub const COLUMN_CHUNK_SIZE: usize = 64;
 
-/// Fixed portion of the footer (parquet_footer_offset + parquet_footer_length + row_group_count).
+/// Fixed portion of the footer (parquet_footer_offset(8) + parquet_footer_length(4) + row_group_count(4)).
 pub const FOOTER_FIXED_SIZE: usize = 16;
 
 /// Size of the CRC32 checksum appended after the footer entries.

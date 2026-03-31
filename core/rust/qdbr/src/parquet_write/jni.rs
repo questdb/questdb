@@ -167,6 +167,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     data_page_size: jlong,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
+    parquet_meta_fd: jint,
+    parquet_meta_file_size: jlong,
+    existing_parquet_meta_file_size: jlong,
 ) -> *mut ParquetUpdater {
     let create = || -> ParquetResult<ParquetUpdater> {
         // reader_fd and writer_fd must be distinct OS file descriptors.
@@ -212,6 +215,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             None
         };
 
+        let pm_fd = if parquet_meta_fd >= 0 {
+            Some(unsafe { crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd) })
+        } else {
+            None
+        };
+
         ParquetUpdater::new(
             allocator,
             reader_file,
@@ -226,6 +235,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             data_page_size,
             bloom_filter_fpp,
             min_compression_ratio,
+            pm_fd,
+            parquet_meta_file_size as u64,
+            existing_parquet_meta_file_size,
         )
     };
 
@@ -299,6 +311,22 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
     let parquet_updater = unsafe { &*updater };
     parquet_updater.result_unused_bytes() as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_getResultParquetMetaFileSize(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *const ParquetUpdater,
+) -> jlong {
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.getResultParquetMetaFileSize");
+        return err.into_cairo_exception().throw::<jlong>(&mut env);
+    }
+
+    let parquet_updater = unsafe { &*updater };
+    parquet_updater.result_parquet_meta_size()
 }
 
 #[no_mangle]
@@ -439,8 +467,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_column_count: jint,
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
-) {
-    let encode = || -> ParquetResult<()> {
+    parquet_meta_fd: jint,
+) -> jlong {
+    let encode = || -> ParquetResult<i64> {
         let partition = create_partition_descriptor(
             table_name_ptr,
             table_name_size,
@@ -499,24 +528,97 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let sorting_columns =
             local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
 
-        ParquetWriter::new(&mut file)
+        // Break apart ParquetWriter::finish() to access row groups after writing.
+        let writer = ParquetWriter::new(&mut file)
             .with_version(version)
             .with_compression(compression_options)
             .with_statistics(statistics_enabled)
             .with_raw_array_encoding(raw_array_encoding)
             .with_row_group_size(row_group_size)
             .with_data_page_size(data_page_size)
-            .with_sorting_columns(sorting_columns)
+            .with_sorting_columns(sorting_columns.clone())
             .with_bloom_filter_columns(bloom_filter_cols)
             .with_bloom_filter_fpp(bloom_filter_fpp)
-            .with_min_compression_ratio(min_compression_ratio)
-            .finish(partition)
-            .map(|_| ())
-            .context("ParquetWriter::finish failed")
+            .with_min_compression_ratio(min_compression_ratio);
+
+        let (schema, additional_meta) =
+            crate::parquet_write::schema::to_parquet_schema(&partition, raw_array_encoding)?;
+        let encodings = crate::parquet_write::schema::to_encodings(&partition);
+        let compressions = crate::parquet_write::schema::to_compressions(&partition);
+        let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
+        chunked.write_chunk(&partition)?;
+        let parquet_file_size = chunked
+            .finish(additional_meta)
+            .context("ParquetWriter::finish failed")?;
+
+        // Generate _pm from the in-memory thrift row groups.
+        if parquet_meta_fd < 0 {
+            return Ok(-1);
+        }
+
+        let footer_offset = chunked.parquet_footer_offset();
+        let footer_length = parquet_file_size
+            .checked_sub(footer_offset)
+            .and_then(|v| v.checked_sub(8))
+            .ok_or_else(|| {
+                crate::parquet::error::fmt_err!(
+                    InvalidLayout,
+                    "parquet footer offset {} exceeds file size {}",
+                    footer_offset,
+                    parquet_file_size
+                )
+            })? as u32;
+        let schema_columns = chunked.schema().columns();
+
+        let col_infos = build_column_infos_from_partition(
+            &partition,
+            schema_columns,
+            sorting_columns.as_deref(),
+        );
+        let sorting_col_indices: Vec<u32> = sorting_columns
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|sc| sc.column_idx as u32)
+            .collect();
+
+        let designated_ts = partition
+            .columns
+            .iter()
+            .position(|c| c.designated_timestamp)
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+
+        let (parquet_meta_bytes, _pm_footer_offset) =
+            crate::parquet_metadata::generate_parquet_metadata(
+                &col_infos,
+                schema_columns,
+                chunked.row_groups(),
+                designated_ts,
+                &sorting_col_indices,
+                footer_offset,
+                footer_length,
+            )
+            .context("generate_parquet_metadata failed")?;
+
+        let parquet_meta_size = parquet_meta_bytes.len() as i64;
+
+        // Write to the parquet metadata fd. ManuallyDrop ensures Rust never
+        // closes the fd — Java owns it.
+        let mut parquet_meta_file: std::mem::ManuallyDrop<File> =
+            std::mem::ManuallyDrop::new(unsafe {
+                crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd)
+            });
+        parquet_meta_file
+            .write_all(&parquet_meta_bytes)
+            .map_err(crate::parquet::error::ParquetError::from)
+            .context("could not write _pm file")?;
+
+        Ok(parquet_meta_size)
     };
 
     match encode() {
-        Ok(_) => (),
+        Ok(size) => size,
         Err(mut err) => {
             // SAFETY: JNI caller guarantees a valid pointer to `table_name_size` bytes of table name data.
             // The memory remains valid for the JNI call duration.
@@ -531,9 +633,74 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 "could not encode partition for table {table_name} and timestamp index {timestamp_index}"
             ));
             err.add_context("error in PartitionEncoder.encodePartition");
-            err.into_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw::<i64>(&mut env)
         }
     }
+}
+
+fn build_column_infos_from_partition<'a>(
+    partition: &'a crate::parquet_write::schema::Partition,
+    schema_columns: &[parquet2::metadata::ColumnDescriptor],
+    sorting_columns: Option<&[parquet2::metadata::SortingColumn]>,
+) -> Vec<crate::parquet_metadata::ParquetMetaColumnInfo<'a>> {
+    partition
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(i, col)| {
+            let col_type = if col.designated_timestamp {
+                col.data_type
+                    .into_designated_with_order(col.designated_timestamp_ascending)
+                    .unwrap_or(col.data_type)
+            } else {
+                col.data_type
+            };
+
+            let mut flags = crate::parquet_metadata::types::ColumnFlags::new();
+            let repetition = if col.not_null_hint {
+                crate::parquet_metadata::types::FieldRepetition::Required
+            } else {
+                crate::parquet_metadata::types::FieldRepetition::Optional
+            };
+            flags = flags.with_repetition(repetition);
+
+            if col.data_type.tag() == qdb_core::col_type::ColumnTypeTag::Symbol {
+                flags = flags.with_local_key_is_global();
+            }
+
+            if let Some(scs) = sorting_columns {
+                if let Some(sc) = scs.iter().find(|sc| sc.column_idx == i as i32) {
+                    if sc.descending {
+                        flags = flags.with_descending();
+                    }
+                }
+            }
+
+            let (physical_type, max_rep_level, max_def_level) =
+                if let Some(col_desc) = schema_columns.get(i) {
+                    (
+                        crate::parquet_metadata::physical_type_to_u8(
+                            col_desc.descriptor.primitive_type.physical_type,
+                        ),
+                        col_desc.descriptor.max_rep_level as u8,
+                        col_desc.descriptor.max_def_level as u8,
+                    )
+                } else {
+                    (0, 0, 0)
+                };
+
+            crate::parquet_metadata::ParquetMetaColumnInfo {
+                name: col.name,
+                col_type_code: col_type.code(),
+                col_type_tag: Some(col.data_type.tag()),
+                id: col.id,
+                flags,
+                physical_type,
+                max_rep_level,
+                max_def_level,
+            }
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]

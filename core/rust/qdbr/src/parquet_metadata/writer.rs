@@ -74,16 +74,26 @@ impl ParquetMetaWriter {
         self
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_column(
         &mut self,
-        top: u64,
         name: &str,
         id: i32,
         col_type: i32,
         flags: ColumnFlags,
+        physical_type: u8,
+        max_rep_level: u8,
+        max_def_level: u8,
     ) -> &mut Self {
-        self.header_builder
-            .add_column(top, name, id, col_type, flags);
+        self.header_builder.add_column(
+            name,
+            id,
+            col_type,
+            flags,
+            physical_type,
+            max_rep_level,
+            max_def_level,
+        );
         self
     }
 
@@ -148,8 +158,6 @@ impl ParquetMetaWriter {
 pub struct ParquetMetaUpdateWriter<'a> {
     existing: &'a [u8],
     existing_footer_offset: u64,
-    #[allow(dead_code)]
-    column_count: u32,
     /// (original_offset | None for new/replaced, builder)
     entries: Vec<RowGroupEntry>,
     parquet_footer_offset: u64,
@@ -181,10 +189,6 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         })?;
         let footer = Footer::new(footer_data)?;
 
-        let header_data = existing;
-        let hdr = crate::parquet_metadata::header::FileHeader::new(header_data)?;
-        let column_count = hdr.column_count();
-
         // Initialize entries with existing row group offsets.
         let mut entries = Vec::with_capacity(footer.row_group_count() as usize);
         for i in 0..footer.row_group_count() as usize {
@@ -194,7 +198,6 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         Ok(Self {
             existing,
             existing_footer_offset,
-            column_count,
             entries,
             parquet_footer_offset: footer.parquet_footer_offset(),
             parquet_footer_length: footer.parquet_footer_length(),
@@ -322,13 +325,15 @@ mod tests {
         let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(0);
         w.add_column(
-            0,
             "ts",
             0,
             8,
             ColumnFlags::new().with_repetition(FieldRepetition::Required),
+            0,
+            0,
+            0,
         );
-        w.add_column(0, "val", 1, 10, ColumnFlags::new());
+        w.add_column("val", 1, 10, ColumnFlags::new(), 0, 0, 0);
         w.add_sorting_column(0);
 
         let mut rg = RowGroupBlockBuilder::new(2);
@@ -363,7 +368,7 @@ mod tests {
     #[test]
     fn create_empty() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new());
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
 
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
@@ -414,7 +419,7 @@ mod tests {
     fn update_replace_row_group() {
         // Build a file with 2 row groups.
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new());
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
 
         let mut rg0 = RowGroupBlockBuilder::new(1);
         rg0.set_num_rows(100);
@@ -462,7 +467,7 @@ mod tests {
     #[test]
     fn default_creates_same_as_new() {
         let mut w = ParquetMetaWriter::default();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new());
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 1);

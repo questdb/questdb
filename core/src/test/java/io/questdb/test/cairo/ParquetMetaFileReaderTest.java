@@ -60,7 +60,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             for (int i = 0; i < columnCount; i++) {
                 try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
                     name.put("col_").put(i);
-                    ParquetMetaFileWriter.addColumn(writerPtr, 0, name.ptr(), name.size(), i, 5, 0);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), i, 5, 0, 0, 0, 0);
                 }
             }
             for (long numRows : rowGroupSizes) {

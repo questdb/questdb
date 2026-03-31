@@ -41,6 +41,20 @@ use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType, TimeUnit};
 use parquet2::statistics::{BinaryStatistics, BooleanStatistics, PrimitiveStatistics, Statistics};
 use qdb_core::col_type::ColumnTypeTag;
 
+/// Maps a parquet2 `PhysicalType` enum to its ordinal `u8` encoding.
+pub fn physical_type_to_u8(pt: PhysicalType) -> u8 {
+    match pt {
+        PhysicalType::Boolean => 0,
+        PhysicalType::Int32 => 1,
+        PhysicalType::Int64 => 2,
+        PhysicalType::Int96 => 3,
+        PhysicalType::Float => 4,
+        PhysicalType::Double => 5,
+        PhysicalType::ByteArray => 6,
+        PhysicalType::FixedLenByteArray(_) => 7,
+    }
+}
+
 /// Converts a parquet file's metadata into a `_pm` binary representation.
 ///
 /// # Arguments
@@ -99,12 +113,13 @@ pub fn convert_from_parquet(
         let name = &field_info.name;
         let id = field_info.id.unwrap_or(-1);
 
-        let (col_type_code, top) = if let Some(meta) = qdb_meta {
+        let col_type_code = if let Some(meta) = qdb_meta {
             let col_meta = &meta.schema[i];
-            (col_meta.column_type.code(), col_meta.column_top as u64)
+            col_meta.column_type.code()
         } else {
-            // Without QdbMeta, we store -1 as type (unknown) and 0 as top.
-            (-1i32, 0u64)
+            // Without QdbMeta, infer the QDB type from the parquet schema.
+            let inferred = crate::parquet_read::meta::infer_column_type(col_desc);
+            inferred.map(|t| t.code()).unwrap_or(-1)
         };
 
         let mut flags = ColumnFlags::new();
@@ -131,7 +146,18 @@ pub fn convert_from_parquet(
             }
         }
 
-        writer.add_column(top, name, id, col_type_code, flags);
+        let physical_type = physical_type_to_u8(col_desc.descriptor.primitive_type.physical_type);
+        let max_rep_level = col_desc.descriptor.max_rep_level as u8;
+        let max_def_level = col_desc.descriptor.max_def_level as u8;
+        writer.add_column(
+            name,
+            id,
+            col_type_code,
+            flags,
+            physical_type,
+            max_rep_level,
+            max_def_level,
+        );
     }
 
     // Add row groups.
@@ -150,10 +176,15 @@ pub fn convert_from_parquet(
         rg_builder.set_num_rows(rg.num_rows().max(0) as u64);
 
         for (col_idx, col_chunk) in rg_columns.iter().enumerate() {
-            let col_type_tag = qdb_meta.and_then(|m| {
-                let code = m.schema[col_idx].column_type.tag() as u8;
-                ColumnTypeTag::try_from(code).ok()
-            });
+            let col_type_tag = qdb_meta
+                .and_then(|m| {
+                    let code = m.schema[col_idx].column_type.tag() as u8;
+                    ColumnTypeTag::try_from(code).ok()
+                })
+                .or_else(|| {
+                    crate::parquet_read::meta::infer_column_type(&columns[col_idx])
+                        .map(|ct| ct.tag())
+                });
 
             let chunk = build_column_chunk(col_chunk, col_type_tag)?;
             rg_builder.set_column_chunk(col_idx, chunk.raw)?;
@@ -185,7 +216,7 @@ fn build_column_chunk(
 ) -> ParquetResult<BuiltChunk> {
     let (byte_range_start, total_compressed) = col_chunk.byte_range();
     let codec = Codec::from(col_chunk.compression());
-    // column_encoding() returns parquet_format_safe's Encoding; convert to parquet2's.
+    // column_encoding() returns parquet2::thrift_format's Encoding; convert to parquet2's.
     let p2_encodings: Vec<parquet2::encoding::Encoding> = col_chunk
         .column_encoding()
         .iter()
@@ -196,7 +227,7 @@ fn build_column_chunk(
     let bloom_filter_off = col_chunk
         .metadata()
         .bloom_filter_offset
-        .map(|off| BlockAlignedOffset::from_byte_offset(off as u64))
+        .map(|off| BlockAlignedOffset::from_byte_offset(off.max(0) as u64))
         .transpose()?
         .unwrap_or(BlockAlignedOffset::ZERO);
 
@@ -461,6 +492,359 @@ fn convert_stat_to_qdb(
     }
 }
 
+fn build_column_chunk_from_thrift(
+    meta: &parquet2::thrift_format::ColumnMetaData,
+    schema_col: Option<&parquet2::metadata::ColumnDescriptor>,
+    col_type_tag: Option<ColumnTypeTag>,
+) -> ParquetResult<BuiltChunk> {
+    // byte_range_start: prefer dictionary_page_offset if present.
+    let byte_range_start = meta
+        .dictionary_page_offset
+        .unwrap_or(meta.data_page_offset)
+        .max(0) as u64;
+    let total_compressed = meta.total_compressed_size.max(0) as u64;
+
+    // Codec: thrift CompressionCodec → parquet2 Compression → our Codec enum.
+    let codec = parquet2::compression::Compression::try_from(meta.codec)
+        .map(Codec::from)
+        .map_err(|_| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Conversion,
+                "unsupported compression codec: {:?}",
+                meta.codec
+            )
+        })?;
+
+    // Encodings: convert thrift Encoding values to parquet2 Encoding, then to EncodingMask.
+    let p2_encodings: Vec<parquet2::encoding::Encoding> = meta
+        .encodings
+        .iter()
+        .filter_map(|e| parquet2::encoding::Encoding::try_from(*e).ok())
+        .collect();
+    let encodings = EncodingMask::from(p2_encodings.as_slice());
+
+    // Bloom filter offset.
+    let bloom_filter_off = meta
+        .bloom_filter_offset
+        .map(|off| BlockAlignedOffset::from_byte_offset(off.max(0) as u64))
+        .transpose()?
+        .unwrap_or(BlockAlignedOffset::ZERO);
+
+    let mut raw = ColumnChunkRaw::zeroed();
+    raw.codec = codec as u8;
+    raw.encodings = encodings.0;
+    raw.bloom_filter_off = bloom_filter_off;
+    raw.num_values = meta.num_values.max(0) as u64;
+    raw.byte_range_start = byte_range_start;
+    raw.total_compressed = total_compressed;
+
+    let mut ool_min: Option<Vec<u8>> = None;
+    let mut ool_max: Option<Vec<u8>> = None;
+
+    // Determine if stats should be inline or out-of-line.
+    let fixed_size = col_type_tag.and_then(|t| t.fixed_size());
+    let is_inline = fixed_size.is_some_and(|s| s <= 8);
+
+    // Deserialize and process statistics.
+    if let (Some(ref thrift_stats), Some(col_desc)) = (&meta.statistics, schema_col) {
+        let primitive_type = col_desc.descriptor.primitive_type.clone();
+        if let Ok(stats) =
+            parquet2::statistics::deserialize_statistics(thrift_stats, primitive_type)
+        {
+            let mut stat_flags = StatFlags::new();
+
+            if let Some(nc) = stats.null_count() {
+                stat_flags = stat_flags.with_null_count();
+                raw.null_count = nc.max(0) as u64;
+            }
+
+            let physical_type = col_desc.descriptor.primitive_type.physical_type;
+            let (raw_min, raw_max, distinct_count) =
+                extract_stat_values(stats.as_ref(), physical_type);
+
+            let logical_type = col_desc.descriptor.primitive_type.logical_type.as_ref();
+
+            let min_bytes = raw_min
+                .and_then(|v| convert_stat_to_qdb(&v, physical_type, logical_type, col_type_tag));
+            let max_bytes = raw_max
+                .and_then(|v| convert_stat_to_qdb(&v, physical_type, logical_type, col_type_tag));
+
+            if let Some(dc) = distinct_count {
+                stat_flags = stat_flags.with_distinct_count();
+                raw.distinct_count = dc.max(0) as u64;
+            }
+
+            if let Some(ref min_val) = min_bytes {
+                if is_inline && min_val.len() <= 8 {
+                    stat_flags = stat_flags.with_min(true, true);
+                    let mut buf = [0u8; 8];
+                    buf[..min_val.len()].copy_from_slice(min_val);
+                    raw.min_stat = u64::from_le_bytes(buf);
+                } else if !min_val.is_empty() {
+                    stat_flags = stat_flags.with_min(false, true);
+                    ool_min = Some(min_val.clone());
+                }
+            }
+
+            if let Some(ref max_val) = max_bytes {
+                if is_inline && max_val.len() <= 8 {
+                    stat_flags = stat_flags.with_max(true, true);
+                    let mut buf = [0u8; 8];
+                    buf[..max_val.len()].copy_from_slice(max_val);
+                    raw.max_stat = u64::from_le_bytes(buf);
+                } else if !max_val.is_empty() {
+                    stat_flags = stat_flags.with_max(false, true);
+                    ool_max = Some(max_val.clone());
+                }
+            }
+
+            if is_inline {
+                let min_size = min_bytes
+                    .as_ref()
+                    .filter(|_| stat_flags.is_min_inlined())
+                    .map(|v| v.len() as u8)
+                    .unwrap_or(0);
+                let max_size = max_bytes
+                    .as_ref()
+                    .filter(|_| stat_flags.is_max_inlined())
+                    .map(|v| v.len() as u8)
+                    .unwrap_or(0);
+                raw.stat_sizes = encode_stat_sizes(min_size, max_size);
+            }
+
+            raw.stat_flags = stat_flags.0;
+        }
+    }
+
+    Ok(BuiltChunk { raw, ool_min, ool_max })
+}
+
+/// Column metadata needed to build a `_pm` header.
+///
+/// Callers construct this from their own types (`Partition`, `QdbMeta`, etc.)
+/// so that `parquet_metadata` doesn't depend on `parquet_write`.
+pub struct ParquetMetaColumnInfo<'a> {
+    pub name: &'a str,
+    pub col_type_code: i32,
+    pub col_type_tag: Option<ColumnTypeTag>,
+    pub id: i32,
+    pub flags: ColumnFlags,
+    pub physical_type: u8,
+    pub max_rep_level: u8,
+    pub max_def_level: u8,
+}
+
+/// Result of an incremental `_pm` update.
+pub struct ParquetMetaUpdateResult {
+    /// Bytes to write. For incremental updates these are append-only bytes;
+    /// for full creates (fallback) these are the entire file.
+    pub bytes: Vec<u8>,
+    /// Total `_pm` file size after writing.
+    pub new_file_size: u64,
+    /// If true, `bytes` should be appended at `existing_file_size`.
+    /// If false, `bytes` should be written from offset 0 (full rewrite).
+    pub is_append: bool,
+}
+
+/// Generates a complete `_pm` file from scratch.
+///
+/// Used by the batch encode path and the O3 rewrite path.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_parquet_metadata(
+    columns: &[ParquetMetaColumnInfo],
+    schema_columns: &[parquet2::metadata::ColumnDescriptor],
+    thrift_row_groups: &[parquet2::thrift_format::RowGroup],
+    designated_timestamp: i32,
+    sorting_columns: &[u32],
+    parquet_footer_offset: u64,
+    parquet_footer_length: u32,
+) -> ParquetResult<(Vec<u8>, u64)> {
+    let mut writer = ParquetMetaWriter::new();
+    writer.designated_timestamp(designated_timestamp);
+    writer.parquet_footer(parquet_footer_offset, parquet_footer_length);
+
+    for &sc_idx in sorting_columns {
+        writer.add_sorting_column(sc_idx);
+    }
+
+    for col in columns {
+        writer.add_column(
+            col.name,
+            col.id,
+            col.col_type_code,
+            col.flags,
+            col.physical_type,
+            col.max_rep_level,
+            col.max_def_level,
+        );
+    }
+
+    let col_type_tags: Vec<Option<ColumnTypeTag>> =
+        columns.iter().map(|c| c.col_type_tag).collect();
+
+    for thrift_rg in thrift_row_groups {
+        let block = build_row_group_block_from_thrift_with_types(
+            thrift_rg,
+            schema_columns,
+            &col_type_tags,
+        )?;
+        writer.add_row_group(block);
+    }
+
+    writer.finish()
+}
+
+/// Updates an existing `_pm` file incrementally (append-only).
+///
+/// Compares the new parquet row groups against the existing `_pm` to determine
+/// which row groups are unchanged, changed, or new. Unchanged row groups keep
+/// their original offsets (no data rewritten). Only new/changed blocks and a
+/// new footer are appended.
+///
+/// Returns a `ParquetMetaUpdateResult` describing what to write and where.
+pub fn update_parquet_metadata(
+    existing_pm: &[u8],
+    existing_pm_file_size: u64,
+    columns: &[ParquetMetaColumnInfo],
+    schema_columns: &[parquet2::metadata::ColumnDescriptor],
+    thrift_row_groups: &[parquet2::thrift_format::RowGroup],
+    parquet_footer_offset: u64,
+    parquet_footer_length: u32,
+) -> ParquetResult<ParquetMetaUpdateResult> {
+    // Read the existing _pm to get row group fingerprints (byte_range_start of first column).
+    let existing_reader = crate::parquet_metadata::reader::ParquetMetaReader::from_file_size(
+        existing_pm,
+        existing_pm_file_size,
+    )?;
+    let existing_rg_count = existing_reader.row_group_count() as usize;
+
+    // Collect fingerprints: first column's byte_range_start for each existing row group.
+    let mut existing_fingerprints: Vec<u64> = Vec::with_capacity(existing_rg_count);
+    for i in 0..existing_rg_count {
+        let rg = existing_reader.row_group(i)?;
+        let fp = if existing_reader.column_count() > 0 {
+            rg.column_chunk(0)
+                .map(|c| c.byte_range_start)
+                .unwrap_or(u64::MAX)
+        } else {
+            u64::MAX
+        };
+        existing_fingerprints.push(fp);
+    }
+
+    // If the new file has fewer row groups (compaction), fall back to full create.
+    // The incremental writer can only add/replace, not remove row groups.
+    if thrift_row_groups.len() < existing_rg_count {
+        let designated_ts = existing_reader
+            .designated_timestamp()
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+        let mut sorting_indices = Vec::new();
+        for i in 0..existing_reader.sorting_column_count() as usize {
+            if let Ok(idx) = existing_reader.sorting_column(i) {
+                sorting_indices.push(idx);
+            }
+        }
+        let (bytes, _) = generate_parquet_metadata(
+            columns,
+            schema_columns,
+            thrift_row_groups,
+            designated_ts,
+            &sorting_indices,
+            parquet_footer_offset,
+            parquet_footer_length,
+        )?;
+        let new_file_size = bytes.len() as u64;
+        return Ok(ParquetMetaUpdateResult { bytes, new_file_size, is_append: false });
+    }
+
+    // Build the update writer from existing data.
+    let existing_footer_offset = existing_reader.footer_offset();
+    let mut updater = crate::parquet_metadata::writer::ParquetMetaUpdateWriter::new(
+        existing_pm,
+        existing_footer_offset,
+    )?;
+
+    let col_type_tags: Vec<Option<ColumnTypeTag>> =
+        columns.iter().map(|c| c.col_type_tag).collect();
+
+    for (i, thrift_rg) in thrift_row_groups.iter().enumerate() {
+        let block = build_row_group_block_from_thrift_with_types(
+            thrift_rg,
+            schema_columns,
+            &col_type_tags,
+        )?;
+
+        // Fingerprint the new row group: first column's byte_range_start.
+        let new_fp = thrift_rg
+            .columns
+            .first()
+            .and_then(|c| c.meta_data.as_ref())
+            .map(|m| m.dictionary_page_offset.unwrap_or(m.data_page_offset) as u64)
+            .unwrap_or(u64::MAX);
+
+        if i < existing_rg_count {
+            if existing_fingerprints[i] == new_fp {
+                // Unchanged row group — keep existing block.
+                continue;
+            }
+            // Changed row group — replace.
+            updater.replace_row_group(i, block)?;
+        } else {
+            // New row group — append.
+            updater.add_row_group(block);
+        }
+    }
+
+    updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
+    let (append_bytes, _new_footer_offset) = updater.finish()?;
+    let new_file_size = existing_pm_file_size + append_bytes.len() as u64;
+
+    Ok(ParquetMetaUpdateResult {
+        bytes: append_bytes,
+        new_file_size,
+        is_append: true,
+    })
+}
+
+/// Builds a `RowGroupBlockBuilder` directly from a thrift `RowGroup` struct
+/// with pre-resolved column type tags. Used by `generate_parquet_metadata`
+/// and `update_parquet_metadata` where the caller already knows the types.
+pub fn build_row_group_block_from_thrift_with_types(
+    rg: &parquet2::thrift_format::RowGroup,
+    schema_columns: &[parquet2::metadata::ColumnDescriptor],
+    col_type_tags: &[Option<ColumnTypeTag>],
+) -> ParquetResult<RowGroupBlockBuilder> {
+    let col_count = rg.columns.len();
+    let mut builder = RowGroupBlockBuilder::new(col_count as u32);
+    builder.set_num_rows(rg.num_rows.max(0) as u64);
+
+    for (col_idx, col_chunk) in rg.columns.iter().enumerate() {
+        let col_type_tag = col_type_tags.get(col_idx).copied().flatten();
+
+        let meta = col_chunk.meta_data.as_ref().ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Conversion,
+                "column chunk at col={} has no metadata",
+                col_idx
+            )
+        })?;
+
+        let chunk =
+            build_column_chunk_from_thrift(meta, schema_columns.get(col_idx), col_type_tag)?;
+        builder.set_column_chunk(col_idx, chunk.raw)?;
+
+        if let Some(ref min_bytes) = chunk.ool_min {
+            builder.add_out_of_line_stat(col_idx, true, min_bytes)?;
+        }
+        if let Some(ref max_bytes) = chunk.ool_max {
+            builder.add_out_of_line_stat(col_idx, false, max_bytes)?;
+        }
+    }
+
+    Ok(builder)
+}
+
 fn validate_file_paths(file_metadata: &FileMetaData) -> ParquetResult<()> {
     for (rg_idx, rg) in file_metadata.row_groups.iter().enumerate() {
         for (col_idx, col) in rg.columns().iter().enumerate() {
@@ -682,7 +1066,9 @@ mod tests {
         let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 1);
         let desc = reader.column_descriptor(0).unwrap();
-        assert_eq!(desc.col_type, -1); // Unknown without QdbMeta.
+        // Without QdbMeta, the type is inferred from the parquet schema.
+        // The test parquet has a Timestamp(Micros) column → ColumnTypeTag::Timestamp (8).
+        assert_eq!(desc.col_type, ColumnTypeTag::Timestamp as i32);
     }
 
     #[test]
@@ -885,7 +1271,7 @@ mod tests {
         let flags = desc.flags();
         assert!(flags.is_local_key_global());
         assert!(flags.is_ascii());
-        assert_eq!(desc.top, 42);
+        // `top` is no longer part of the column descriptor.
     }
 
     #[test]
@@ -1467,5 +1853,527 @@ mod tests {
         let raw = vec![0u8; 8];
         let result = convert_stat_to_qdb(&raw, PhysicalType::Int96, None, None);
         assert_eq!(result, Some(raw));
+    }
+
+    // ── Tests for build_row_group_block_from_thrift_with_types ─────────
+
+    /// Test helper: resolve col_type_tags from QdbMeta + schema, then delegate.
+    fn build_row_group_block_from_thrift(
+        rg: &parquet2::thrift_format::RowGroup,
+        schema_columns: &[parquet2::metadata::ColumnDescriptor],
+        qdb_meta: Option<&QdbMeta>,
+    ) -> crate::parquet::error::ParquetResult<RowGroupBlockBuilder> {
+        let col_type_tags: Vec<Option<ColumnTypeTag>> = (0..rg.columns.len())
+            .map(|i| {
+                qdb_meta
+                    .and_then(|m| {
+                        let code = m.schema.get(i)?.column_type.tag() as u8;
+                        ColumnTypeTag::try_from(code).ok()
+                    })
+                    .or_else(|| {
+                        schema_columns
+                            .get(i)
+                            .and_then(crate::parquet_read::meta::infer_column_type)
+                            .map(|ct| ct.tag())
+                    })
+            })
+            .collect();
+        build_row_group_block_from_thrift_with_types(rg, schema_columns, &col_type_tags)
+    }
+
+    #[test]
+    fn thrift_round_trip_matches_convert_from_parquet() {
+        // Write a multi-column parquet, then compare:
+        // 1. convert_from_parquet (high-level FileMetaData path)
+        // 2. build_row_group_block_from_thrift (thrift RowGroup path)
+        // Both should produce identical _pm row group blocks.
+        let parquet_data = write_multi_column_parquet(200);
+        let mut cursor = Cursor::new(&parquet_data);
+        let file_size = parquet_data.len() as u64;
+        let metadata = read_metadata_with_size(&mut cursor, file_size).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+
+        // Path 1: convert_from_parquet
+        let (pm_bytes_from_meta, footer_offset) =
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
+        let reader1 = ParquetMetaReader::new(&pm_bytes_from_meta, footer_offset).unwrap();
+
+        // Path 2: build from thrift via the writer's into_inner_and_metadata()
+        // We need the ThriftFileMetaData. Write again using ChunkedWriter to get it.
+        let parquet_data2 = write_multi_column_parquet(200);
+        let mut cursor2 = Cursor::new(&parquet_data2);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data2.len() as u64).unwrap();
+        let thrift_meta = metadata2.into_thrift();
+
+        // Build row group blocks from thrift row groups.
+        let schema_columns = metadata.schema_descr.columns();
+        for (rg_idx, thrift_rg) in thrift_meta.row_groups.iter().enumerate() {
+            let block =
+                build_row_group_block_from_thrift(thrift_rg, schema_columns, qdb_meta.as_ref())
+                    .unwrap();
+
+            // Compare against the convert_from_parquet result.
+            let rg1 = reader1.row_group(rg_idx).unwrap();
+            assert_eq!(
+                block.num_rows(),
+                rg1.num_rows(),
+                "num_rows mismatch at rg {rg_idx}"
+            );
+
+            for col_idx in 0..reader1.column_count() as usize {
+                let chunk1 = rg1.column_chunk(col_idx).unwrap();
+                let chunk2 = block.column_chunk_raw(col_idx);
+
+                assert_eq!(
+                    chunk1.codec, chunk2.codec,
+                    "codec mismatch rg={rg_idx} col={col_idx}"
+                );
+                assert_eq!(
+                    chunk1.encodings, chunk2.encodings,
+                    "encodings mismatch rg={rg_idx} col={col_idx}"
+                );
+                assert_eq!(
+                    chunk1.byte_range_start, chunk2.byte_range_start,
+                    "byte_range mismatch rg={rg_idx} col={col_idx}"
+                );
+                assert_eq!(
+                    chunk1.total_compressed, chunk2.total_compressed,
+                    "total_compressed mismatch rg={rg_idx} col={col_idx}"
+                );
+                assert_eq!(
+                    chunk1.num_values, chunk2.num_values,
+                    "num_values mismatch rg={rg_idx} col={col_idx}"
+                );
+                assert_eq!(
+                    chunk1.null_count, chunk2.null_count,
+                    "null_count mismatch rg={rg_idx} col={col_idx}"
+                );
+                assert_eq!(
+                    chunk1.stat_flags, chunk2.stat_flags,
+                    "stat_flags mismatch rg={rg_idx} col={col_idx}"
+                );
+                assert_eq!(
+                    chunk1.min_stat, chunk2.min_stat,
+                    "min_stat mismatch rg={rg_idx} col={col_idx}"
+                );
+                assert_eq!(
+                    chunk1.max_stat, chunk2.max_stat,
+                    "max_stat mismatch rg={rg_idx} col={col_idx}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn thrift_multi_column_with_stats() {
+        // write_multi_column_parquet produces: ts(Timestamp), int_val(Int), dbl_val(Double), flag(Boolean)
+        let parquet_data = write_multi_column_parquet(50);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        // Reload metadata for schema_columns (into_thrift consumed it).
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+
+        let block = build_row_group_block_from_thrift(
+            &thrift_meta.row_groups[0],
+            schema_columns,
+            qdb_meta.as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(block.num_rows(), 50);
+
+        // ts column (index 0): Timestamp = 8 bytes, stats should be inlined.
+        let ts_chunk = block.column_chunk_raw(0);
+        let ts_flags = StatFlags(ts_chunk.stat_flags);
+        assert!(ts_flags.has_min_stat(), "ts should have min stat");
+        assert!(ts_flags.is_min_inlined(), "ts min should be inlined");
+        assert!(ts_flags.has_max_stat(), "ts should have max stat");
+        assert!(ts_flags.is_max_inlined(), "ts max should be inlined");
+        assert!(ts_flags.has_null_count(), "ts should have null count");
+        assert_eq!(ts_chunk.null_count, 0);
+        // min=0, max=49 (microseconds)
+        assert_eq!(ts_chunk.min_stat, 0);
+        assert_eq!(ts_chunk.max_stat, 49);
+
+        // int_val column (index 1): Int = 4 bytes, stats inlined. Data: 0..49.
+        let int_chunk = block.column_chunk_raw(1);
+        let int_flags = StatFlags(int_chunk.stat_flags);
+        assert!(int_flags.has_min_stat());
+        assert!(int_flags.is_min_inlined());
+        assert_eq!(int_chunk.min_stat as i32, 0);
+        assert_eq!(int_chunk.max_stat as i32, 49);
+
+        // dbl_val column (index 2): Double = 8 bytes, stats inlined.
+        let dbl_chunk = block.column_chunk_raw(2);
+        let dbl_flags = StatFlags(dbl_chunk.stat_flags);
+        assert!(dbl_flags.has_min_stat());
+        assert!(dbl_flags.is_min_inlined());
+        // Double 0.0 and 49*1.5=73.5 as bits
+        assert_eq!(f64::from_le_bytes(dbl_chunk.min_stat.to_le_bytes()), 0.0);
+        assert_eq!(f64::from_le_bytes(dbl_chunk.max_stat.to_le_bytes()), 73.5);
+
+        // flag column (index 3): Boolean = 1 byte, stats inlined.
+        let flag_chunk = block.column_chunk_raw(3);
+        let flag_flags = StatFlags(flag_chunk.stat_flags);
+        assert!(flag_flags.has_min_stat());
+        assert!(flag_flags.is_min_inlined());
+    }
+
+    #[test]
+    fn thrift_with_compression() {
+        let parquet_data = write_test_parquet(100, CompressionOptions::Snappy);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+
+        let block = build_row_group_block_from_thrift(
+            &thrift_meta.row_groups[0],
+            metadata2.schema_descr.columns(),
+            qdb_meta.as_ref(),
+        )
+        .unwrap();
+
+        let chunk = block.column_chunk_raw(0);
+        assert_eq!(chunk.codec().unwrap(), Codec::Snappy);
+    }
+
+    #[test]
+    fn thrift_without_qdb_meta_infers_types() {
+        // Without QdbMeta, types should be inferred from parquet schema.
+        // write_multi_column_parquet: ts(Timestamp), int_val(Int), dbl_val(Double), flag(Boolean)
+        let parquet_data = write_multi_column_parquet(30);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+
+        // Pass None for QdbMeta — types should be inferred.
+        let block =
+            build_row_group_block_from_thrift(&thrift_meta.row_groups[0], schema_columns, None)
+                .unwrap();
+
+        // Stats should still be inlined for fixed-size types.
+        let ts_chunk = block.column_chunk_raw(0);
+        let ts_flags = StatFlags(ts_chunk.stat_flags);
+        assert!(ts_flags.has_min_stat(), "inferred ts should have min stat");
+        assert!(
+            ts_flags.is_min_inlined(),
+            "inferred ts min should be inlined"
+        );
+
+        // int_val (index 1): inferred as Int, 4 bytes, should inline.
+        let int_chunk = block.column_chunk_raw(1);
+        let int_flags = StatFlags(int_chunk.stat_flags);
+        assert!(
+            int_flags.has_min_stat(),
+            "inferred int should have min stat"
+        );
+        assert!(
+            int_flags.is_min_inlined(),
+            "inferred int min should be inlined"
+        );
+
+        // dbl_val (index 2): inferred as Double, 8 bytes, should inline.
+        let dbl_chunk = block.column_chunk_raw(2);
+        let dbl_flags = StatFlags(dbl_chunk.stat_flags);
+        assert!(
+            dbl_flags.has_min_stat(),
+            "inferred double should have min stat"
+        );
+        assert!(
+            dbl_flags.is_min_inlined(),
+            "inferred double min should be inlined"
+        );
+
+        // flag (index 3): inferred as Boolean, 1 byte, should inline.
+        let flag_chunk = block.column_chunk_raw(3);
+        let flag_flags = StatFlags(flag_chunk.stat_flags);
+        assert!(
+            flag_flags.has_min_stat(),
+            "inferred bool should have min stat"
+        );
+        assert!(
+            flag_flags.is_min_inlined(),
+            "inferred bool min should be inlined"
+        );
+    }
+
+    #[test]
+    fn thrift_multiple_row_groups() {
+        // Small row_group_size to force multiple row groups.
+        let ts_data: Vec<i64> = (0..100i64).collect();
+        let ts_bytes: &'static [u8] = Box::leak(
+            unsafe { std::slice::from_raw_parts(ts_data.as_ptr() as *const u8, ts_data.len() * 8) }
+                .to_vec()
+                .into_boxed_slice(),
+        );
+
+        let partition = Partition {
+            table: "test".to_string(),
+            columns: vec![Column {
+                name: "ts",
+                data_type: ColumnTypeTag::Timestamp.into_type(),
+                id: 0,
+                row_count: 100,
+                primary_data: ts_bytes,
+                secondary_data: &[],
+                symbol_offsets: &[],
+                column_top: 0,
+                designated_timestamp: true,
+                required: true,
+                designated_timestamp_ascending: true,
+                parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            }],
+        };
+
+        let mut buf = Vec::new();
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_version(Version::V1)
+            .with_row_group_size(Some(30)) // 100 rows / 30 = 4 row groups
+            .finish(partition)
+            .unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let metadata = read_metadata_with_size(&mut cursor, buf.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&buf);
+        let metadata2 = read_metadata_with_size(&mut cursor2, buf.len() as u64).unwrap();
+
+        assert_eq!(thrift_meta.row_groups.len(), 4);
+        let expected_rows = [30u64, 30, 30, 10];
+
+        for (i, thrift_rg) in thrift_meta.row_groups.iter().enumerate() {
+            let block = build_row_group_block_from_thrift(
+                thrift_rg,
+                metadata2.schema_descr.columns(),
+                qdb_meta.as_ref(),
+            )
+            .unwrap();
+            assert_eq!(
+                block.num_rows(),
+                expected_rows[i],
+                "row count mismatch at rg {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn generate_parquet_metadata_produces_valid_pm() {
+        let parquet_data = write_multi_column_parquet(80);
+        let file_size = parquet_data.len() as u64;
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, file_size).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        // Reload metadata for schema_columns.
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+
+        // Build column infos from QdbMeta (simulating what update.rs does).
+        let col_infos: Vec<ParquetMetaColumnInfo> = schema_columns
+            .iter()
+            .enumerate()
+            .map(|(i, col_desc)| {
+                let field_info = col_desc.base_type.get_field_info();
+                let cm = qdb_meta.as_ref().and_then(|m| m.schema.get(i));
+                let col_type_code = cm.map(|c| c.column_type.code()).unwrap_or_else(|| {
+                    crate::parquet_read::meta::infer_column_type(col_desc)
+                        .map(|ct| ct.code())
+                        .unwrap_or(-1)
+                });
+                let col_type_tag = cm.map(|c| c.column_type.tag()).or_else(|| {
+                    crate::parquet_read::meta::infer_column_type(col_desc).map(|ct| ct.tag())
+                });
+                let mut flags = ColumnFlags::new();
+                flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
+                ParquetMetaColumnInfo {
+                    name: &field_info.name,
+                    col_type_code,
+                    col_type_tag,
+                    id: field_info.id.unwrap_or(-1),
+                    flags,
+                    physical_type: physical_type_to_u8(
+                        col_desc.descriptor.primitive_type.physical_type,
+                    ),
+                    max_rep_level: col_desc.descriptor.max_rep_level as u8,
+                    max_def_level: col_desc.descriptor.max_def_level as u8,
+                }
+            })
+            .collect();
+
+        let footer_offset = 100u64;
+        let footer_length = 50u32;
+
+        let (pm_bytes, pm_footer_offset) = generate_parquet_metadata(
+            &col_infos,
+            schema_columns,
+            &thrift_meta.row_groups,
+            0,    // designated_timestamp = column 0
+            &[0], // sorting on column 0
+            footer_offset,
+            footer_length,
+        )
+        .unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_bytes.len() as u64).unwrap();
+        assert_eq!(reader.column_count(), 4);
+        assert_eq!(reader.row_group_count(), 1);
+        assert_eq!(reader.designated_timestamp(), Some(0));
+        assert_eq!(reader.sorting_column_count(), 1);
+        assert_eq!(reader.parquet_footer_offset(), footer_offset);
+        assert_eq!(reader.parquet_footer_length(), footer_length);
+        assert_eq!(reader.column_name(0).unwrap(), "ts");
+        assert_eq!(reader.column_name(1).unwrap(), "int_val");
+
+        let rg = reader.row_group(0).unwrap();
+        assert_eq!(rg.num_rows(), 80);
+        assert!(reader.verify_checksum().is_ok());
+        assert!(pm_footer_offset < pm_bytes.len() as u64);
+    }
+
+    #[test]
+    fn update_parquet_metadata_appends_new_row_group() {
+        // Create initial _pm with 1 row group.
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+
+        let col_infos: Vec<ParquetMetaColumnInfo> = schema_columns
+            .iter()
+            .enumerate()
+            .map(|(i, col_desc)| {
+                let field_info = col_desc.base_type.get_field_info();
+                let cm = qdb_meta.as_ref().and_then(|m| m.schema.get(i));
+                let col_type_tag = cm.map(|c| c.column_type.tag()).or_else(|| {
+                    crate::parquet_read::meta::infer_column_type(col_desc).map(|ct| ct.tag())
+                });
+                let mut flags = ColumnFlags::new();
+                flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
+                ParquetMetaColumnInfo {
+                    name: &field_info.name,
+                    col_type_code: cm.map(|c| c.column_type.code()).unwrap_or(-1),
+                    col_type_tag,
+                    id: field_info.id.unwrap_or(-1),
+                    flags,
+                    physical_type: physical_type_to_u8(
+                        col_desc.descriptor.primitive_type.physical_type,
+                    ),
+                    max_rep_level: col_desc.descriptor.max_rep_level as u8,
+                    max_def_level: col_desc.descriptor.max_def_level as u8,
+                }
+            })
+            .collect();
+
+        let (initial_pm, _) = generate_parquet_metadata(
+            &col_infos,
+            schema_columns,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+        )
+        .unwrap();
+
+        let initial_size = initial_pm.len() as u64;
+        let initial_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
+        assert_eq!(initial_reader.row_group_count(), 1);
+
+        // Now simulate adding a second row group (same columns, different data offset).
+        // Clone the first row group and change its data_page_offset to simulate a new one.
+        let mut extended_rgs = thrift_meta.row_groups.clone();
+        let mut new_rg = extended_rgs[0].clone();
+        for col in &mut new_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000; // Different fingerprint.
+            }
+        }
+        extended_rgs.push(new_rg);
+
+        let result = update_parquet_metadata(
+            &initial_pm,
+            initial_size,
+            &col_infos,
+            schema_columns,
+            &extended_rgs,
+            200,
+            60,
+        )
+        .unwrap();
+
+        assert!(result.is_append, "should be an incremental append");
+        assert!(!result.bytes.is_empty(), "should have append bytes");
+
+        // Build the full file: initial + append.
+        let mut full_file = initial_pm.clone();
+        full_file.extend_from_slice(&result.bytes);
+        assert_eq!(full_file.len() as u64, result.new_file_size);
+
+        // New reader should see 2 row groups.
+        let new_reader =
+            ParquetMetaReader::from_file_size(&full_file, result.new_file_size).unwrap();
+        assert_eq!(new_reader.row_group_count(), 2);
+        assert!(new_reader.verify_checksum().is_ok());
+
+        // Old reader at old size should still see 1 row group (MVCC).
+        let old_reader =
+            ParquetMetaReader::from_file_size(&full_file[..initial_size as usize], initial_size)
+                .unwrap();
+        assert_eq!(old_reader.row_group_count(), 1);
+    }
+
+    #[test]
+    fn thrift_missing_column_metadata_errors() {
+        // A ColumnChunk with meta_data = None should produce a clear error.
+        let rg = parquet2::thrift_format::RowGroup {
+            columns: vec![parquet2::thrift_format::ColumnChunk {
+                file_path: None,
+                file_offset: 0,
+                meta_data: None,
+                offset_index_offset: None,
+                offset_index_length: None,
+                column_index_offset: None,
+                column_index_length: None,
+                crypto_metadata: None,
+                encrypted_column_metadata: None,
+            }],
+            total_byte_size: 0,
+            num_rows: 10,
+            sorting_columns: None,
+            file_offset: None,
+            total_compressed_size: None,
+            ordinal: None,
+        };
+
+        let result = build_row_group_block_from_thrift(&rg, &[], None);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("no metadata"),
+            "expected 'no metadata' error, got: {err_msg}"
+        );
     }
 }

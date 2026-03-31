@@ -328,6 +328,23 @@ impl<W: Write> ChunkedWriter<W> {
         let size = self.writer.end(Some(additional_meta))?;
         Ok(size)
     }
+
+    /// Returns the byte offset of the parquet footer within the file.
+    /// Only valid after `finish()` has been called.
+    pub fn parquet_footer_offset(&self) -> u64 {
+        self.writer.parquet_footer_offset()
+    }
+
+    /// Returns the thrift row groups accumulated during writing.
+    /// Only valid after `finish()` has been called.
+    pub fn row_groups(&self) -> &[parquet2::thrift_format::RowGroup] {
+        self.writer.row_groups()
+    }
+
+    /// Returns the parquet schema descriptor.
+    pub fn schema(&self) -> &SchemaDescriptor {
+        self.writer.schema()
+    }
 }
 
 pub type BloomHashes = Vec<Option<Arc<Mutex<HashSet<u64>>>>>;

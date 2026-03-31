@@ -41,6 +41,14 @@ lto = true
 codegen-units = 1
 strip = "debuginfo"
 
+[[bin]]
+name = "pm_inspect"
+path = "src/bin/pm_inspect.rs"
+
+[[bin]]
+name = "pm_generate"
+path = "src/bin/pm_generate.rs"
+
 [[bench]]
 name = "decode_page"
 harness = false

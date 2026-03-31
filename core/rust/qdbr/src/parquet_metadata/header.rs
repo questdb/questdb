@@ -32,16 +32,22 @@ use crate::parquet_metadata::types::{
 
 // ── On-disk column descriptor (32 bytes) ───────────────────────────────
 
-/// On-disk layout of a column descriptor (32 bytes).
+/// On-disk layout of a column descriptor (28 bytes).
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]
 pub struct ColumnDescriptorRaw {
-    pub top: u64,
     pub name_offset: u64,
     pub name_length: u32,
     pub id: i32,
     pub col_type: i32,
     pub flags: i32,
+    /// Parquet physical type (0=BOOLEAN, 1=INT32, 2=INT64, 3=INT96, 4=FLOAT, 5=DOUBLE, 6=BYTE_ARRAY, 7=FIXED_LEN_BYTE_ARRAY).
+    pub physical_type: u8,
+    /// Maximum repetition level for this column (0 for non-nested).
+    pub max_rep_level: u8,
+    /// Maximum definition level for this column (0 for required, 1 for optional).
+    pub max_def_level: u8,
+    pub _reserved: u8,
 }
 
 const _: () = assert!(size_of::<ColumnDescriptorRaw>() == COLUMN_DESCRIPTOR_SIZE);
@@ -245,11 +251,13 @@ impl<'a> FileHeader<'a> {
 // ── FileHeaderBuilder ──────────────────────────────────────────────────
 
 struct ColumnEntry {
-    top: u64,
     name: String,
     id: i32,
     col_type: i32,
     flags: ColumnFlags,
+    physical_type: u8,
+    max_rep_level: u8,
+    max_def_level: u8,
 }
 
 /// Builds a `_pm` file header into a `Vec<u8>`.
@@ -268,16 +276,26 @@ impl FileHeaderBuilder {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_column(
         &mut self,
-        top: u64,
         name: &str,
         id: i32,
         col_type: i32,
         flags: ColumnFlags,
+        physical_type: u8,
+        max_rep_level: u8,
+        max_def_level: u8,
     ) -> &mut Self {
-        self.columns
-            .push(ColumnEntry { top, name: name.to_owned(), id, col_type, flags });
+        self.columns.push(ColumnEntry {
+            name: name.to_owned(),
+            id,
+            col_type,
+            flags,
+            physical_type,
+            max_rep_level,
+            max_def_level,
+        });
         self
     }
 
@@ -322,12 +340,15 @@ impl FileHeaderBuilder {
             let (name_offset, name_length) = name_offsets[i];
             let desc_offset = descriptors_start + i * COLUMN_DESCRIPTOR_SIZE;
             let desc = ColumnDescriptorRaw {
-                top: col.top,
                 name_offset,
                 name_length,
                 id: col.id,
                 col_type: col.col_type,
                 flags: col.flags.0,
+                physical_type: col.physical_type,
+                max_rep_level: col.max_rep_level,
+                max_def_level: col.max_def_level,
+                _reserved: 0,
             };
             // Safety: ColumnDescriptorRaw is #[repr(C)] and fully initialized.
             let bytes: &[u8; COLUMN_DESCRIPTOR_SIZE] = unsafe {
@@ -367,18 +388,22 @@ mod tests {
     fn header_round_trip_with_columns() {
         let mut builder = FileHeaderBuilder::new(0);
         builder.add_column(
-            100,
             "timestamp",
             0,
             8, // ColumnTypeTag::Timestamp
             ColumnFlags::new().with_repetition(FieldRepetition::Required),
+            0,
+            0,
+            0,
         );
         builder.add_column(
-            0,
             "value",
             1,
             10, // ColumnTypeTag::Double
             ColumnFlags::new().with_repetition(FieldRepetition::Optional),
+            0,
+            0,
+            0,
         );
         builder.add_sorting_column(0);
 
@@ -393,7 +418,6 @@ mod tests {
 
         // Column 0.
         let desc0 = hdr.column_descriptor(0).unwrap();
-        assert_eq!(desc0.top, 100);
         assert_eq!(desc0.id, 0);
         assert_eq!(desc0.col_type, 8);
         assert_eq!(hdr.column_name(desc0).unwrap(), "timestamp");
@@ -404,7 +428,6 @@ mod tests {
 
         // Column 1.
         let desc1 = hdr.column_descriptor(1).unwrap();
-        assert_eq!(desc1.top, 0);
         assert_eq!(desc1.id, 1);
         assert_eq!(desc1.col_type, 10);
         assert_eq!(hdr.column_name(desc1).unwrap(), "value");
@@ -419,11 +442,13 @@ mod tests {
         let mut builder = FileHeaderBuilder::new(-1);
         for i in 0..10 {
             builder.add_column(
-                i as u64,
                 &format!("col_{i}"),
                 i,
                 5, // Int
                 ColumnFlags::new(),
+                0,
+                0,
+                0,
             );
         }
 
@@ -434,7 +459,6 @@ mod tests {
         assert_eq!(hdr.column_count(), 10);
         for i in 0..10 {
             let desc = hdr.column_descriptor(i).unwrap();
-            assert_eq!(desc.top, i as u64);
             assert_eq!(desc.id, i as i32);
             assert_eq!(hdr.column_name(desc).unwrap(), format!("col_{i}"));
         }
@@ -490,7 +514,7 @@ mod tests {
         // Build a valid header, then manually corrupt a name_offset to point
         // past the end of the buffer.
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column(0, "ok", 0, 5, ColumnFlags::new());
+        builder.add_column("ok", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
@@ -508,7 +532,7 @@ mod tests {
     fn column_name_invalid_utf8() {
         // Build a header, then overwrite the name bytes with invalid UTF-8.
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column(0, "ab", 0, 5, ColumnFlags::new());
+        builder.add_column("ab", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
@@ -528,8 +552,8 @@ mod tests {
     #[test]
     fn sorting_columns_end_offset_value() {
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column(0, "a", 0, 5, ColumnFlags::new());
-        builder.add_column(0, "b", 1, 6, ColumnFlags::new());
+        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0);
         builder.add_sorting_column(0);
         builder.add_sorting_column(1);
         let mut buf = Vec::new();

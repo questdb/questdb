@@ -113,6 +113,7 @@ impl<'a> RowGroupBlockReader<'a> {
 // ── RowGroupBlockBuilder ───────────────────────────────────────────────
 
 /// Builds a row group block into a `Vec<u8>`.
+#[derive(Debug)]
 pub struct RowGroupBlockBuilder {
     pub(crate) num_rows: u64,
     pub(crate) chunks: Vec<ColumnChunkRaw>,
@@ -127,6 +128,14 @@ impl RowGroupBlockBuilder {
             chunks: vec![ColumnChunkRaw::zeroed(); column_count as usize],
             out_of_line: Vec::new(),
         }
+    }
+
+    pub fn num_rows(&self) -> u64 {
+        self.num_rows
+    }
+
+    pub fn column_chunk_raw(&self, index: usize) -> &ColumnChunkRaw {
+        &self.chunks[index]
     }
 
     pub fn set_num_rows(&mut self, rows: u64) -> &mut Self {

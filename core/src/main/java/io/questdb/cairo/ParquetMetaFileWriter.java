@@ -40,7 +40,7 @@ public class ParquetMetaFileWriter {
 
     public static native void setDesignatedTimestamp(long writerPtr, int index);
 
-    public static native void addColumn(long writerPtr, long top, long namePtr, int nameLen, int id, int colType, int flags);
+    public static native void addColumn(long writerPtr, long namePtr, int nameLen, int id, int colType, int flags, int physicalType, int maxRepLevel, int maxDefLevel);
 
     public static native void addSortingColumn(long writerPtr, int index);
 

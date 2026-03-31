@@ -1497,7 +1497,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
 
         LOG.info().$("converting partition to parquet [path=").$substr(pathRootSize, path).I$();
-        long parquetFileLength;
         final long partitionRowCount = getPartitionSize(partitionIndex);
         long parquetMetadataFileSize;
         try {
@@ -1672,6 +1671,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 int bloomFilterColumnCount = 0;
                 double fpp = Double.isNaN(bloomFilterFpp) ? config.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
+                // Open _pm file for the Rust encoder to write simultaneously.
+                other.trimTo(newPartitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
+                long parquetMetaFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
                 try {
                     bloomFilterIndexes.reopen();
                     if (useMetadataBloomFilters) {
@@ -1696,7 +1698,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         bloomFilterColumnCount = (int) bloomFilterIndexes.size();
                     }
 
-                    PartitionEncoder.encodeWithOptions(
+                    // Restore parquet file path for encoding.
+                    setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
+
+                    parquetMetadataFileSize = PartitionEncoder.encodeWithOptions(
                             partitionDescriptor,
                             other,
                             ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
@@ -1708,25 +1713,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             bloomFilterColumnIndexesPtr,
                             bloomFilterColumnCount,
                             fpp,
-                            minCompressionRatio
+                            minCompressionRatio,
+                            Files.toOsFd(parquetMetaFd)
                     );
                 } finally {
                     Misc.free(bloomFilterIndexes);
-                }
-                parquetFileLength = ff.length(other.$());
-
-                // Generate _pm metadata file from the new parquet file.
-                int parquetFd = (int) ff.openRO(other.$());
-                try {
-                    other.trimTo(newPartitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
-                    int parquetMetaFd = (int) ff.openRW(other.$(), CairoConfiguration.O_NONE);
-                    try {
-                        parquetMetadataFileSize = ParquetMetadataWriter.generate(parquetFd, parquetFileLength, parquetMetaFd);
-                    } finally {
-                        ff.close(parquetMetaFd);
-                    }
-                } finally {
-                    ff.close(parquetFd);
+                    ff.close(parquetMetaFd);
                 }
             }
 

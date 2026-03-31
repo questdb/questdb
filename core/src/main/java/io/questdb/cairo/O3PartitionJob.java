@@ -109,6 +109,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long parquetMetaFileSize = tableWriter.getPartitionParquetMetaFileSize(partitionIndex);
         long duplicateCount = 0;
         long newParquetSize;
+        long newParquetMetaFileSize = -1;
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
@@ -227,9 +228,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // They must be distinct OS fds even when pointing to the same file,
                 // because the reader and writer maintain independent cursor positions.
                 // Rust closes both fds when the ParquetUpdater is dropped.
-                int readerFdOs = -1, writerFdOs = -1;
-                long readerFd = -1, writerFd = -1;
+                int readerFdOs = -1, writerFdOs = -1, parquetMetaFdOs = -1;
+                long readerFd = -1, writerFd = -1, parquetMetaFd = -1;
                 final long writeFileSize;
+                long updaterParquetMetaFileSize = 0;
                 try {
                     readerFd = TableUtils.openRONoCache(ff, path.$(), LOG);
                     readerFdOs = Files.detach(readerFd);
@@ -245,11 +247,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         writerFdOs = Files.detach(writerFd);
                         writerFd = -1;
                         writeFileSize = 0;
+                        // Open _pm in the new directory.
+                        newPath.parent().concat(PARQUET_METADATA_FILE_NAME).$();
+                        parquetMetaFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
+                        parquetMetaFdOs = Files.detach(parquetMetaFd);
+                        parquetMetaFd = -1;
+                        updaterParquetMetaFileSize = 0;
                     } else {
                         writerFd = TableUtils.openRW(ff, path.$(), LOG, opts);
                         writerFdOs = Files.detach(writerFd);
                         writerFd = -1;
                         writeFileSize = parquetSize;
+                        // Open existing _pm for update.
+                        path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
+                        parquetMetaFd = TableUtils.openRW(ff, path.$(), LOG, opts);
+                        parquetMetaFdOs = Files.detach(parquetMetaFd);
+                        parquetMetaFd = -1;
+                        updaterParquetMetaFileSize = parquetMetaFileSize;
+                        // Restore path to parquet file.
+                        path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
                     }
                 } catch (Throwable e) {
                     O3Utils.close(ff, readerFd);
@@ -257,14 +273,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         Files.closeDetached(readerFdOs);
                     }
                     O3Utils.close(ff, writerFd);
-                    // writerFdOs is not closed on error because in this catch is always -1;
-                    //noinspection ConstantValue
-                    assert writerFdOs == -1;
+                    if (writerFdOs != -1) {
+                        Files.closeDetached(writerFdOs);
+                    }
+                    O3Utils.close(ff, parquetMetaFd);
+                    if (parquetMetaFdOs != -1) {
+                        Files.closeDetached(parquetMetaFdOs);
+                    }
                     throw e;
                 }
 
                 // partitionUpdater.of() transfers fd ownership to Rust.
-                // Rust closes both fds when destroy() is called (via close()).
+                // Rust closes all fds when destroy() is called (via close()).
                 // The outer catch calls partitionUpdater.close() on error.
                 partitionUpdater.of(
                         path.$(),
@@ -279,7 +299,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         rowGroupSize,
                         dataPageSize,
                         bloomFilterFpp,
-                        minCompressionRatio
+                        minCompressionRatio,
+                        parquetMetaFdOs,
+                        updaterParquetMetaFileSize,
+                        parquetMetaFileSize
                 );
 
                 if (hasSchemaChange) {
@@ -495,6 +518,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
                 newParquetSize = partitionUpdater.updateFileMetadata();
+                newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
                 final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
                 LOG.info()
                         .$("parquet o3 partition [table=").$(tableWriter.getTableToken())
@@ -552,27 +576,43 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // and on Windows the file is not locked by stale fds.
             partitionUpdater.close();
             if (!isRewrite) {
-                // Update mode: truncate to the previous uncorrupted size.
+                // Update mode: truncate both parquet and _pm to their pre-merge sizes.
                 path.of(pathToTable);
                 setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                final long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
+                long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
                 if (!ff.truncate(fd, parquetSize)) {
                     LOG.error().$("could not truncate partition file [path=").$(path).I$();
                 }
                 ff.close(fd);
+
+                if (parquetMetaFileSize > 0) {
+                    path.of(pathToTable);
+                    setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                    fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
+                    if (!ff.truncate(fd, parquetMetaFileSize)) {
+                        LOG.error().$("could not truncate _pm file [path=").$(path).I$();
+                    }
+                    ff.close(fd);
+                }
             }
             // Rewrite mode: original is intact, new dir already removed by the inner catch.
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
             ctx.releaseResources();
-            // Determine the _pm metadata file size from the correct path.
-            path.of(pathToTable);
-            if (isRewrite) {
-                setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, txn);
+            // Use the _pm file size from the Rust result if available (success path).
+            // Fall back to reading from disk (error path — the file may have been truncated).
+            final long finalPmFileSize;
+            if (newParquetMetaFileSize > 0) {
+                finalPmFileSize = newParquetMetaFileSize;
             } else {
-                setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                path.of(pathToTable);
+                if (isRewrite) {
+                    setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, txn);
+                } else {
+                    setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                }
+                finalPmFileSize = Files.length(path.$());
             }
-            final long fileSize = Files.length(path.$());
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - duplicateCount);
@@ -580,8 +620,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // flags: lowInt = partitionMutates (0 when rewritten, 1 when mutated in place)
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(isRewrite ? 0 : 1, 0));
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // _pm file size
-
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, finalPmFileSize); // _pm file size
 
             tableWriter.o3CountDownDoneLatch();
             tableWriter.o3ClockDownPartitionUpdateCount();

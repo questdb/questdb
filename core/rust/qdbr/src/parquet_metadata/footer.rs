@@ -33,16 +33,13 @@ use crate::parquet_metadata::types::{
 
 // ── On-disk footer fixed portion (16 bytes) ─────────────────────────────
 
-/// On-disk layout of the fixed portion of the footer (16 bytes).
+/// Parsed fixed portion of the footer (16 bytes on disk, read field-by-field).
 #[derive(Debug, Copy, Clone)]
-#[repr(C)]
 pub struct FooterRaw {
     pub parquet_footer_offset: u64,
     pub parquet_footer_length: u32,
     pub row_group_count: u32,
 }
-
-const _: () = assert!(size_of::<FooterRaw>() == FOOTER_FIXED_SIZE);
 
 // ── Footer (zero-copy reader) ──────────────────────────────────────────
 
@@ -68,9 +65,12 @@ impl<'a> Footer<'a> {
                 "footer too small"
             ));
         }
-        // Safety: FooterRaw is #[repr(C)], Copy, and we checked data.len() >= 20.
-        // The footer may not be 8-byte aligned, so we use read_unaligned.
-        let raw = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const FooterRaw) };
+        // Read fields individually to avoid repr(C) padding issues.
+        let raw = FooterRaw {
+            parquet_footer_offset: u64::from_le_bytes(data[0..8].try_into().unwrap()),
+            parquet_footer_length: u32::from_le_bytes(data[8..12].try_into().unwrap()),
+            row_group_count: u32::from_le_bytes(data[12..16].try_into().unwrap()),
+        };
 
         let required = Self::total_size(raw.row_group_count)?;
         if data.len() < required {
@@ -87,19 +87,8 @@ impl<'a> Footer<'a> {
 
     /// Total byte size of the footer including entries, checksum, and trailer.
     pub fn total_size(row_group_count: u32) -> ParquetResult<usize> {
-        FOOTER_FIXED_SIZE
-            .checked_add(
-                (row_group_count as usize)
-                    .checked_mul(ROW_GROUP_ENTRY_SIZE)
-                    .ok_or_else(|| {
-                        parquet_meta_err!(
-                            ParquetMetaErrorKind::Truncated,
-                            "row_group_count overflow"
-                        )
-                    })?,
-            )
-            .and_then(|s| s.checked_add(FOOTER_CHECKSUM_SIZE))
-            .and_then(|s| s.checked_add(FOOTER_TRAILER_SIZE))
+        Self::size_through_crc(row_group_count)?
+            .checked_add(FOOTER_TRAILER_SIZE)
             .ok_or_else(|| {
                 parquet_meta_err!(ParquetMetaErrorKind::Truncated, "footer size overflow")
             })
@@ -108,17 +97,13 @@ impl<'a> Footer<'a> {
     /// Byte size of the footer from its start through the CRC (inclusive),
     /// excluding the trailer. This is the value stored in the trailer.
     pub fn size_through_crc(row_group_count: u32) -> ParquetResult<usize> {
+        let rg_entries = (row_group_count as usize)
+            .checked_mul(ROW_GROUP_ENTRY_SIZE)
+            .ok_or_else(|| {
+                parquet_meta_err!(ParquetMetaErrorKind::Truncated, "row_group_count overflow")
+            })?;
         FOOTER_FIXED_SIZE
-            .checked_add(
-                (row_group_count as usize)
-                    .checked_mul(ROW_GROUP_ENTRY_SIZE)
-                    .ok_or_else(|| {
-                        parquet_meta_err!(
-                            ParquetMetaErrorKind::Truncated,
-                            "row_group_count overflow"
-                        )
-                    })?,
-            )
+            .checked_add(rg_entries)
             .and_then(|s| s.checked_add(FOOTER_CHECKSUM_SIZE))
             .ok_or_else(|| {
                 parquet_meta_err!(ParquetMetaErrorKind::Truncated, "footer size overflow")
@@ -225,7 +210,7 @@ impl FooterBuilder {
         buf.extend_from_slice(&0u32.to_le_bytes());
 
         // Footer length trailer: total bytes from footer start through CRC (inclusive).
-        let footer_length_through_crc = (buf.len() - footer_start) as u32; // includes fixed + entries + CRC
+        let footer_length_through_crc = (buf.len() - footer_start) as u32;
         buf.extend_from_slice(&footer_length_through_crc.to_le_bytes());
 
         footer_start
@@ -304,8 +289,7 @@ mod tests {
         buf.extend_from_slice(&0u64.to_le_bytes()); // parquet_footer_offset
         buf.extend_from_slice(&0u32.to_le_bytes()); // parquet_footer_length
         buf.extend_from_slice(&5u32.to_le_bytes()); // row_group_count = 5
-        buf.extend_from_slice(&0u32.to_le_bytes()); // checksum only, no entries
-                                                    // Need 16 + 5*4 + 4 = 40 bytes, but only have 20.
+                                                    // Need 16 + 5*4 + 4 = 40 bytes, but only have 16.
         assert!(Footer::new(&buf).is_err());
     }
 

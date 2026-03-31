@@ -19,7 +19,7 @@ pub mod statistics;
 pub mod types;
 pub mod write;
 
-use parquet_format_safe as thrift_format;
+pub use parquet_format_safe as thrift_format;
 
 pub use streaming_decompression::fallible_streaming_iterator;
 pub use streaming_decompression::FallibleStreamingIterator;

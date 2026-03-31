@@ -21,12 +21,13 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use std::collections::HashSet;
-
-use rapidhash::RapidHashMap;
-use std::fs::File;
-use std::io::{Read as _, Seek, SeekFrom};
-
+use crate::allocator::QdbAllocator;
+use crate::parquet::error::{
+    fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult,
+};
+use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
+use crate::parquet_write::file::{create_row_group, WriteOptions};
+use crate::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Partition};
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::uleb128;
 use parquet2::metadata::{FileMetaData, KeyValue, SchemaDescriptor, SortingColumn};
@@ -42,14 +43,10 @@ use parquet_format_safe::{
     Encoding as ThriftEncoding, PageHeader, PageType, RowGroup, Type,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
-
-use crate::allocator::QdbAllocator;
-use crate::parquet::error::{
-    fmt_err, ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult,
-};
-use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
-use crate::parquet_write::file::{create_row_group, WriteOptions};
-use crate::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Partition};
+use rapidhash::RapidHashMap;
+use std::collections::HashSet;
+use std::fs::File;
+use std::io::{Read as _, Seek, SeekFrom, Write as _};
 
 /// Computes the contiguous byte range [start, end) of a row group's column
 /// data, including the last column's bloom filter when present.  Non-last
@@ -122,6 +119,10 @@ pub struct ParquetUpdater {
     result_unused_bytes: u64,
     target_qdb_meta: Option<QdbMeta>,
     target_col_id_to_pos: Option<RapidHashMap<i32, usize>>,
+    parquet_meta_fd: Option<File>,
+    parquet_meta_file_size: u64,
+    existing_parquet_meta_file_size: i64,
+    result_parquet_meta_size: i64,
 }
 
 impl ParquetUpdater {
@@ -140,6 +141,9 @@ impl ParquetUpdater {
         data_page_size: Option<usize>,
         bloom_filter_fpp: f64,
         min_compression_ratio: f64,
+        parquet_meta_fd: Option<File>,
+        parquet_meta_file_size: u64,
+        existing_parquet_meta_file_size: i64,
     ) -> ParquetResult<Self> {
         fn version_from(value: i32) -> ParquetResult<Version> {
             match value {
@@ -291,6 +295,10 @@ impl ParquetUpdater {
             result_unused_bytes: 0,
             target_qdb_meta: None,
             target_col_id_to_pos: None,
+            parquet_meta_fd,
+            parquet_meta_file_size,
+            existing_parquet_meta_file_size,
+            result_parquet_meta_size: -1,
         })
     }
 
@@ -767,6 +775,93 @@ impl ParquetUpdater {
             )
         })?;
         self.result_file_size = file_size;
+
+        // Generate _pm metadata from the in-memory thrift row groups.
+        if let Some(ref mut pm_file) = self.parquet_meta_fd {
+            let footer_offset = self.parquet_file.parquet_footer_offset();
+            let footer_length = file_size
+                .checked_sub(footer_offset)
+                .and_then(|v| v.checked_sub(8))
+                .ok_or_else(|| {
+                    fmt_err!(
+                        InvalidLayout,
+                        "parquet footer offset {} exceeds file size {}",
+                        footer_offset,
+                        file_size
+                    )
+                })? as u32;
+            let thrift_row_groups = self.parquet_file.row_groups();
+            let schema_columns = self.file_metadata.schema_descr.columns();
+
+            let sorting_cols: Vec<parquet2::metadata::SortingColumn> = self
+                .file_metadata
+                .row_groups
+                .first()
+                .and_then(|rg| rg.sorting_columns().as_ref())
+                .cloned()
+                .unwrap_or_default();
+            let col_infos =
+                build_column_infos_from_qdb_meta(&qdb_meta, schema_columns, &sorting_cols);
+            let sorting_indices: Vec<u32> =
+                sorting_cols.iter().map(|sc| sc.column_idx as u32).collect();
+            let designated_ts = qdb_meta
+                .schema
+                .iter()
+                .position(|cm| cm.column_type.is_designated())
+                .map(|i| i as i32)
+                .unwrap_or(-1);
+
+            if self.is_rewrite || self.existing_parquet_meta_file_size <= 0 {
+                // Full create: rewrite or first-time generation.
+                let (pm_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
+                    &col_infos,
+                    schema_columns,
+                    thrift_row_groups,
+                    designated_ts,
+                    &sorting_indices,
+                    footer_offset,
+                    footer_length,
+                )?;
+                self.result_parquet_meta_size = pm_bytes.len() as i64;
+                pm_file
+                    .write_all(&pm_bytes)
+                    .map_err(ParquetError::from)
+                    .context("could not write _pm file")?;
+            } else {
+                // Incremental update: read existing _pm, append new/changed blocks.
+                let existing_size = self.parquet_meta_file_size;
+                let mut existing_pm = vec![0u8; existing_size as usize];
+                pm_file
+                    .seek(SeekFrom::Start(0))
+                    .map_err(ParquetError::from)?;
+                pm_file
+                    .read_exact(&mut existing_pm)
+                    .map_err(ParquetError::from)
+                    .context("could not read existing _pm file")?;
+
+                let result = crate::parquet_metadata::update_parquet_metadata(
+                    &existing_pm,
+                    existing_size,
+                    &col_infos,
+                    schema_columns,
+                    thrift_row_groups,
+                    footer_offset,
+                    footer_length,
+                )?;
+
+                // Write: append after existing data, or full rewrite from offset 0.
+                let write_offset = if result.is_append { existing_size } else { 0 };
+                pm_file
+                    .seek(SeekFrom::Start(write_offset))
+                    .map_err(ParquetError::from)?;
+                pm_file
+                    .write_all(&result.bytes)
+                    .map_err(ParquetError::from)
+                    .context("could not write _pm file")?;
+                self.result_parquet_meta_size = result.new_file_size as i64;
+            }
+        }
+
         Ok(file_size)
     }
 
@@ -827,6 +922,10 @@ impl ParquetUpdater {
             SchemaDescriptor::new(self.parquet_file.schema().name().to_string(), new_fields);
         self.parquet_file.set_schema(schema);
         Ok(())
+    }
+
+    pub fn result_parquet_meta_size(&self) -> i64 {
+        self.result_parquet_meta_size
     }
 
     fn row_group_options(&self) -> WriteOptions {
@@ -1157,6 +1256,59 @@ fn generate_required_zero_page(
     Ok(vec![0u8; row_count * value_size])
 }
 
+fn build_column_infos_from_qdb_meta<'a>(
+    qdb_meta: &'a QdbMeta,
+    schema_columns: &'a [parquet2::metadata::ColumnDescriptor],
+    sorting_columns: &[SortingColumn],
+) -> Vec<crate::parquet_metadata::ParquetMetaColumnInfo<'a>> {
+    schema_columns
+        .iter()
+        .enumerate()
+        .map(|(i, col_desc)| {
+            let field_info = col_desc.base_type.get_field_info();
+            let cm = qdb_meta.schema.get(i);
+            let col_type_code = cm.map(|c| c.column_type.code()).unwrap_or_else(|| {
+                crate::parquet_read::meta::infer_column_type(col_desc)
+                    .map(|ct| ct.code())
+                    .unwrap_or(-1)
+            });
+            let col_type_tag = cm.map(|c| c.column_type.tag()).or_else(|| {
+                crate::parquet_read::meta::infer_column_type(col_desc).map(|ct| ct.tag())
+            });
+            let mut flags = crate::parquet_metadata::types::ColumnFlags::new();
+            let repetition =
+                crate::parquet_metadata::types::FieldRepetition::from(field_info.repetition);
+            flags = flags.with_repetition(repetition);
+            if let Some(c) = cm {
+                if c.format == Some(QdbMetaColFormat::LocalKeyIsGlobal) {
+                    flags = flags.with_local_key_is_global();
+                }
+                if c.ascii == Some(true) {
+                    flags = flags.with_ascii();
+                }
+            }
+            if let Some(sc) = sorting_columns.iter().find(|sc| sc.column_idx == i as i32) {
+                if sc.descending {
+                    flags = flags.with_descending();
+                }
+            }
+
+            crate::parquet_metadata::ParquetMetaColumnInfo {
+                name: &field_info.name,
+                col_type_code,
+                col_type_tag,
+                id: field_info.id.unwrap_or(-1),
+                flags,
+                physical_type: crate::parquet_metadata::physical_type_to_u8(
+                    col_desc.descriptor.primitive_type.physical_type,
+                ),
+                max_rep_level: col_desc.descriptor.max_rep_level as u8,
+                max_def_level: col_desc.descriptor.max_def_level as u8,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::parquet::tests::ColumnTypeTagExt;
@@ -1411,6 +1563,9 @@ mod tests {
                 None,                           // data_page_size
                 DEFAULT_BLOOM_FILTER_FPP,       // bloom_filter_fpp
                 100.0,                          // min_compression_ratio (impossibly high)
+                None,                           // parquet_meta_fd
+                0,                              // parquet_meta_file_size
+                -1,                             // existing_parquet_meta_file_size
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;
@@ -1467,7 +1622,10 @@ mod tests {
                 None,
                 None,
                 DEFAULT_BLOOM_FILTER_FPP,
-                0.5, // min_compression_ratio: ratio check active but easily met
+                0.5,  // min_compression_ratio: ratio check active but easily met
+                None, // parquet_meta_fd
+                0,    // parquet_meta_file_size
+                -1,   // existing_parquet_meta_file_size
             )?;
 
             updater.insert_row_group(&new_partition, 1)?;

@@ -257,6 +257,7 @@ pub struct FileWriter<W: Write> {
     state: State,
     // when the file is written, metadata becomes available
     metadata: Option<ThriftFileMetaData>,
+    parquet_footer_offset: u64,
 }
 
 /// Writes a parquet file containing only the header and footer
@@ -315,6 +316,7 @@ impl<W: Write> FileWriter<W> {
             page_specs: vec![],
             state: State::Initialised,
             metadata: None,
+            parquet_footer_offset: 0,
         }
     }
 
@@ -336,6 +338,7 @@ impl<W: Write> FileWriter<W> {
             page_specs: vec![],
             state: State::Initialised,
             metadata: None,
+            parquet_footer_offset: 0,
         }
     }
 
@@ -468,10 +471,22 @@ impl<W: Write> FileWriter<W> {
             None,
         );
 
+        self.parquet_footer_offset = self.offset;
         let len = end_file(&mut self.writer, &metadata)?;
         self.state = State::Finished;
         self.metadata = Some(metadata);
         Ok(self.offset + len)
+    }
+
+    pub fn parquet_footer_offset(&self) -> u64 {
+        self.parquet_footer_offset
+    }
+
+    pub fn row_groups(&self) -> &[RowGroup] {
+        if let Some(meta) = &self.metadata {
+            return &meta.row_groups;
+        }
+        &self.row_groups
     }
 
     /// Returns the underlying writer.
@@ -501,6 +516,7 @@ pub struct ParquetFile<W: Write> {
     metadata: Option<ThriftFileMetaData>,
     mode: Mode,
     is_insert: Vec<bool>,
+    parquet_footer_offset: u64,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -529,6 +545,7 @@ impl<W: Write> ParquetFile<W> {
             metadata: None,
             mode: Mode::Write,
             is_insert: vec![],
+            parquet_footer_offset: 0,
         }
     }
 
@@ -552,6 +569,7 @@ impl<W: Write> ParquetFile<W> {
             metadata: None,
             mode: Mode::Write,
             is_insert: vec![],
+            parquet_footer_offset: 0,
         }
     }
 
@@ -575,9 +593,10 @@ impl<W: Write> ParquetFile<W> {
             row_groups: vec![],
             page_specs: vec![],
             state: State::Initialised,
-            metadata: Some(metadata.clone()), //TODO: do we need to keep it here?
+            metadata: None, // Set by end() after merging row groups.
             mode: Mode::Update(metadata, footer_cache),
             is_insert: vec![],
+            parquet_footer_offset: 0,
         }
     }
 
@@ -687,7 +706,7 @@ impl<W: Write> ParquetFile<W> {
                             "Row group ordinal must be non-negative, got {}",
                             ordinal
                         ))
-                            .into());
+                        .into());
                     }
                     let num_row_groups = metadata.row_groups.len();
                     let ordinal = ordinal as usize;
@@ -727,7 +746,7 @@ impl<W: Write> ParquetFile<W> {
                 "Insert position must be non-negative, got {}",
                 position
             ))
-                .into());
+            .into());
         }
         match &self.mode {
             Mode::Update(_, _) => {
@@ -765,6 +784,17 @@ impl<W: Write> ParquetFile<W> {
     /// Returns the current write offset in the file.
     pub fn current_offset(&self) -> u64 {
         self.offset
+    }
+
+    pub fn parquet_footer_offset(&self) -> u64 {
+        self.parquet_footer_offset
+    }
+
+    pub fn row_groups(&self) -> &[RowGroup] {
+        if let Some(meta) = &self.metadata {
+            return &meta.row_groups;
+        }
+        &self.row_groups
     }
 
     /// Write raw (pre-encoded) row group bytes and register the row group metadata.
@@ -809,6 +839,7 @@ impl<W: Write> ParquetFile<W> {
                     None,
                 );
 
+                self.parquet_footer_offset = self.offset;
                 let len = end_file(&mut self.writer, &metadata)?;
                 self.state = State::Finished;
                 self.metadata = Some(metadata);
@@ -895,8 +926,10 @@ impl<W: Write> ParquetFile<W> {
                     }
                 }
 
+                self.parquet_footer_offset = self.offset;
                 let len = end_file_incremental(&mut self.writer, metadata, footer_cache, &sources)?;
                 self.state = State::Finished;
+                self.metadata = Some(metadata.clone());
                 Ok(self.offset + len)
             }
         }

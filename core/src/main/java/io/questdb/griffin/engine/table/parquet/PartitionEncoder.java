@@ -104,11 +104,12 @@ public class PartitionEncoder {
                 0,
                 0,
                 DEFAULT_BLOOM_FILTER_FPP,
-                minCompressionRatio
+                minCompressionRatio,
+                -1
         );
     }
 
-    public static void encodeWithOptions(
+    public static long encodeWithOptions(
             PartitionDescriptor descriptor,
             Path destPath,
             long compressionCodec,
@@ -120,7 +121,8 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            int parquetMetaFd
     ) {
         assert bloomFilterColumnCount >= 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
@@ -131,7 +133,7 @@ public class PartitionEncoder {
         final long partitionSize = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
         try {
-            encodePartition(  // throws CairoException on error
+            return encodePartition(  // throws CairoException on error
                     tableName.ptr(),
                     tableName.size(),
                     columnCount,
@@ -152,7 +154,8 @@ public class PartitionEncoder {
                     bloomFilterColumnIndexesPtr,
                     bloomFilterColumnCount,
                     bloomFilterFpp,
-                    minCompressionRatio
+                    minCompressionRatio,
+                    parquetMetaFd
             );
         } finally {
             descriptor.clear();
@@ -285,7 +288,7 @@ public class PartitionEncoder {
             int rowGroupHi
     ) throws CairoException;
 
-    private static native void encodePartition(
+    private static native long encodePartition(
             long tableNamePtr,
             int tableNameSize,
             int columnCount,
@@ -306,7 +309,8 @@ public class PartitionEncoder {
             long bloomFilterColumnIndexesPtr,
             int bloomFilterColumnCount,
             double bloomFilterFpp,
-            double minCompressionRatio
+            double minCompressionRatio,
+            int parquetMetaFd
     ) throws CairoException;
 
     static {
