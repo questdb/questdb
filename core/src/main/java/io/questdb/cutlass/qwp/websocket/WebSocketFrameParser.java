@@ -245,9 +245,10 @@ public class WebSocketFrameParser {
 
         headerSize = offset;
 
-        // Check if we have the complete payload
+        // Check if we have the complete payload.
+        // The totalFrameSize < 0 check is there for the edge case of long overflow.
         long totalFrameSize = headerSize + payloadLength;
-        if (available < totalFrameSize) {
+        if (totalFrameSize < 0 || available < totalFrameSize) {
             state = STATE_NEED_PAYLOAD;
             return headerSize;
         }
