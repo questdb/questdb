@@ -1339,7 +1339,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
 
         for (int i = 1, j = joinModels.size(); i < j; i++) {
-            QueryModel m = joinModels.get(i);
+            QueryModel m = joinModels.getQuick(i);
             if (m != null) {
                 if (m.isCorrelatedAtDepth(depth)) {
                     return true;

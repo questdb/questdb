@@ -2241,6 +2241,59 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testT110LargeDatasetLimitPerGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE large_orders AS (
+                        SELECT x::INT AS id,
+                               ('2024-01-01T00:00:00.000000Z'::TIMESTAMP + x * 3_600_000_000L) AS ts
+                        FROM long_sequence(1000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    CREATE TABLE large_trades AS (
+                        SELECT x::INT AS id,
+                               ((x - 1) % 1000 + 1)::INT AS order_id,
+                               x * 1.5 AS qty,
+                               ('2024-01-01T00:00:00.000000Z'::TIMESTAMP + x * 60_000_000L) AS ts
+                        FROM long_sequence(10_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            count
+                            3000
+                            """,
+                    """
+                            SELECT count(*) AS count
+                            FROM large_orders o
+                            JOIN LATERAL (
+                                SELECT qty FROM large_trades WHERE order_id = o.id ORDER BY qty LIMIT 3
+                            ) t
+                            """,
+                    null, false, true
+            );
+
+            // LEFT JOIN with GROUP BY: every order gets a sum
+            assertQueryNoLeakCheck(
+                    """
+                            count
+                            1000
+                            """,
+                    """
+                            SELECT count(*) AS count
+                            FROM large_orders o
+                            LEFT JOIN LATERAL (
+                                SELECT sum(qty) AS total FROM large_trades WHERE order_id = o.id
+                            ) t
+                            """,
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testT110OuterAliasSaveStackTwoBranches() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -5442,7 +5495,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Ignored: mat views do not support window functions on the base table
+    // TODO: mat views do not support window functions on the base table
     @Ignore
     @Test
     public void testT63bMmComplianceMatView() throws Exception {
