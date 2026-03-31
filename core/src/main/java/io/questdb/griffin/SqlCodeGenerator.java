@@ -1620,8 +1620,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && writeSymbolAsString.get(masterColIndex)
                     && writeSymbolAsString.get(slaveColIndex)) {
                 // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
-                writeSymbolAsString.unset(slaveColIndex);
                 writeSymbolAsString.unset(masterColIndex);
+                writeSymbolAsString.unset(slaveColIndex);
                 keyTypes.set(k, ColumnType.INT);
                 if (masterSymbolKeyCols == null) {
                     masterSymbolKeyCols = new IntList();
