@@ -36,7 +36,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
@@ -58,7 +57,7 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  * locking with acquire/release fences via {@link IntList#getVolatile(int)}
  * and {@link IntList#setOrdered(int, int)}.
  */
-public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
+public class ConcurrentTimeFrameState implements QuietCloseable {
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final LongList columnTops = new LongList();
     private final DirectIntList framePartitionIndexes;
@@ -66,6 +65,8 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
     private final Object openLock = new Object();
     private final LongList partitionCeilings = new LongList();
     private final IntList partitionFirstFrame = new IntList();
+    // IntList (not BitSet) because we need getVolatile()/setOrdered() for
+    // thread-safe double-checked locking in ensurePartitionOpened().
     private final IntList partitionOpened = new IntList();
     private final LongList partitionTimestamps = new LongList();
     private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
@@ -81,12 +82,6 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
             close();
             throw th;
         }
-    }
-
-    @Override
-    public void clear() {
-        addressCache.clear();
-        frameCursor = null;
     }
 
     @Override
