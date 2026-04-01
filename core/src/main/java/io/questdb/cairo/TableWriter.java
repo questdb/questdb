@@ -139,9 +139,9 @@ import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -1264,10 +1264,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
     }
 
-    public boolean isCheckpointInProgress() {
-        return engine.getCheckpointStatus().isInProgress();
-    }
-
     @Override
     public void close() {
         if (lifecycleManager.close() && isOpen()) {
@@ -1437,58 +1433,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition is already in Parquet format.
         }
 
-        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
-        squashPartitionForce(partitionIndex);
-
-        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        final int partitionDirLen = path.size();
-        if (!ff.exists(path.$())) {
-            throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
-        }
-
-        // upgrade partition version
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-        createDirsOrFail(ff, other, configuration.getMkDirMode());
-        final int newPartitionDirLen = other.size();
-
-        // set the parquet file full path
-        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
-
-        LOG.info().$("converting native partition to parquet [path=").$substr(pathRootSize, path).I$();
-        long parquetFileLength = produceParquetFromNative(path, other, partitionTimestamp, partitionIndex, partitionNameTxn, getTxn(), bloomFilterColumns, bloomFilterFpp);
-
-        LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
-        linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
-
+        int newPartitionDirLen = 0;
         try {
-            final long originalSize = txWriter.getPartitionSize(partitionIndex);
-            // used to update txn and bump recordStructureVersion
-            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
-            txWriter.setPartitionParquetGenerated(partitionIndex, true);
-            txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
-            txWriter.bumpPartitionTableVersion();
-            txWriter.commit(denseSymbolMapWriters);
+            lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+            boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+            squashPartitionForce(partitionIndex);
 
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            final int partitionDirLen = path.size();
+            if (!ff.exists(path.$())) {
+                throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
             }
+
+            // upgrade partition version
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
+            createDirsOrFail(ff, other, configuration.getMkDirMode());
+            newPartitionDirLen = other.size();
+
+            // set the parquet file full path
+            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
+
+            LOG.info().$("converting native partition to parquet [path=").$substr(pathRootSize, path).I$();
+            long parquetFileLength = produceParquetFromNative(path, other, partitionTimestamp, partitionIndex, partitionNameTxn, getTxn(), bloomFilterColumns, bloomFilterFpp);
+
+            LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
+            linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
+
+            try {
+                final long originalSize = txWriter.getPartitionSize(partitionIndex);
+                // used to update txn and bump recordStructureVersion
+                txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+                txWriter.setPartitionParquetGenerated(partitionIndex, true);
+                txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
+                txWriter.bumpPartitionTableVersion();
+                txWriter.commit(denseSymbolMapWriters);
+
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+                }
+            } catch (Throwable th) {
+                if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                    LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
+                }
+                throw th;
+            }
+
+            if (lastPartitionConverted) {
+                closeActivePartition(false);
+            }
+
+            // remove old partition dir
+            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+            return true;
         } catch (Throwable th) {
-            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
             }
             throw th;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
         }
-
-        if (lastPartitionConverted) {
-            closeActivePartition(false);
-        }
-
-        // remove old partition dir
-        safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
-        return true;
     }
 
     @Override
@@ -2133,15 +2140,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, -1L);
     }
 
-    public long getPartitionRowCountByPartitionTimestamp(long partitionTimestamp) {
-        return txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
-    }
-
-    public int getPartitionSquashCountByPartitionTimestamp(long partitionTimestamp) {
-        final int index = txWriter.getPartitionIndex(partitionTimestamp);
-        return index >= 0 ? txWriter.getPartitionSquashCount(index) : -1;
-    }
-
     public long getPartitionO3SplitThreshold() {
         long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
         return splitMinSizeBytes /
@@ -2152,11 +2150,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionParquetFileSize(partitionIndex);
     }
 
+    public long getPartitionRowCountByPartitionTimestamp(long partitionTimestamp) {
+        return txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+    }
+
     public long getPartitionSize(int partitionIndex) {
         if (partitionIndex == txWriter.getPartitionCount() - 1 || !PartitionBy.isPartitioned(partitionBy)) {
             return txWriter.getTransientRowCount();
         }
         return txWriter.getPartitionSize(partitionIndex);
+    }
+
+    public int getPartitionSquashCountByPartitionTimestamp(long partitionTimestamp) {
+        final int index = txWriter.getPartitionIndex(partitionTimestamp);
+        return index >= 0 ? txWriter.getPartitionSquashCount(index) : -1;
     }
 
     public long getPartitionTimestamp(int partitionIndex) {
@@ -2271,6 +2278,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
+    }
+
+    public boolean isCheckpointInProgress() {
+        return engine.getCheckpointStatus().isInProgress();
     }
 
     public boolean isCommitDedupMode() {
@@ -4310,60 +4321,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return res;
     }
 
-    private void linkPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
-        try {
-            final int columnCount = metadata.getColumnCount();
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                final String columnName = metadata.getColumnName(columnIndex);
-                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
-                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-
-                    // no data in partition for this column
-                    if (columnTop == -1) {
-                        continue;
-                    }
-
-                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
-
-                    BitmapIndexUtils.keyFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
-                    BitmapIndexUtils.keyFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
-                    if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not hard link index key file [table=")
-                                .put(tableToken.getTableName())
-                                .put(", column=")
-                                .put(columnName)
-                                .put(']');
-                    }
-
-                    BitmapIndexUtils.valueFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
-                    BitmapIndexUtils.valueFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
-                    if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not hard link index value file [table=")
-                                .put(tableToken.getTableName())
-                                .put(", column=")
-                                .put(columnName)
-                                .put(']');
-                    }
-                }
-            }
-        } catch (CairoException e) {
-            LOG.error().$("could not link index files [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .$(", error=").$safe(e.getMessage()).I$();
-
-            // rollback
-            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                LOG.error().$("could not remove partition dir [path=").$(other).I$();
-            }
-            throw e;
-        } finally {
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
-    }
-
     /**
      * Creates bitmap index files for a column. This method uses primary column instance as a temporary tool to
      * append index data. Therefore, it must be called before the primary column is initialized.
@@ -6067,6 +6024,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
     }
 
+    private void linkPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
+        try {
+            final int columnCount = metadata.getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final String columnName = metadata.getColumnName(columnIndex);
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
+                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+
+                    // no data in partition for this column
+                    if (columnTop == -1) {
+                        continue;
+                    }
+
+                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+
+                    BitmapIndexUtils.keyFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
+                    BitmapIndexUtils.keyFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
+                    if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not hard link index key file [table=")
+                                .put(tableToken.getTableName())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
+
+                    BitmapIndexUtils.valueFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
+                    BitmapIndexUtils.valueFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
+                    if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not hard link index value file [table=")
+                                .put(tableToken.getTableName())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not link index files [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", error=").$safe(e.getMessage()).I$();
+
+            // rollback
+            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove partition dir [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+    }
 
     private void lock() {
         try {
