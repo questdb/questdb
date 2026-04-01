@@ -1171,6 +1171,93 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryWithBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ts_table (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ts_table VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_153_600_000_000L); // 2024-01-02T00:00:00Z
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM ts_table WHERE ts <= $1) TO 'bind_output' WITH FORMAT parquet PARTITION_BY DAY",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bind_output" + File.separator + "\t2\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x\tts
+                                        1\t2024-01-01T00:00:00.000000Z
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-01.parquet')"
+                        );
+                        assertSql("""
+                                        x\tts
+                                        2\t2024-01-02T00:00:00.000000Z
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-02.parquet')"
+                        );
+                        Assert.assertFalse("excluded partition should not exist",
+                                exportFileExists("bind_output" + File.separator + "2024-01-03"));
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithBindVariableStreaming() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ts_table2 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ts_table2 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 2);
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM ts_table2 WHERE x <= $1) TO 'bind_streaming' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bind_streaming.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x\tts
+                                        1\t2024-01-01T00:00:00.000000Z
+                                        2\t2024-01-02T00:00:00.000000Z
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_streaming.parquet') ORDER BY x"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyQueryToParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table source_table (id int, value double, name string)");

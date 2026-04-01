@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -53,7 +52,6 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
@@ -83,7 +81,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final int masterTimestampColumnIndex;
     protected final long masterTimestampScale;
     protected final long offsetCount;
-    protected final LongList offsets;
+    protected final long[] offsets;
     protected final GroupByAllocator ownerAllocator;
     protected final Map ownerAsOfJoinMap;
     protected final HorizonJoinRecord ownerCombinedRecord;
@@ -117,19 +115,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory slaveFactory,
             int masterTimestampColumnIndex,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
-            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
-            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
-            @Transient @Nullable BitSet asOfWriteSymbolAsString,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
-            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
-            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -156,7 +145,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
         this.masterTimestampColumnIndex = masterTimestampColumnIndex;
         this.offsets = offsets;
-        this.offsetCount = offsets.size();
+        this.offsetCount = offsets.length;
         this.horizonJoinSymbolTableSource = new HorizonJoinSymbolTableSource(columnSources, columnIndexes);
 
         // Filter and memory pool resources (ownership transferred from caller)
@@ -181,49 +170,13 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         try {
             // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types)
             if (masterAsOfJoinMapSinkClass != null || slaveAsOfJoinMapSinkClass != null) {
-                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                        masterAsOfJoinMapSinkClass,
-                        masterAsOfJoinColumnTypes,
-                        masterAsOfJoinColumnFilter,
-                        null,
-                        null,
-                        asOfWriteSymbolAsString,
-                        asOfWriteStringAsVarcharMaster,
-                        writeTimestampAsNanosMaster
-                );
-                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                        slaveAsOfJoinMapSinkClass,
-                        slaveAsOfJoinColumnTypes,
-                        slaveAsOfJoinColumnFilter,
-                        null,
-                        null,
-                        asOfWriteSymbolAsString,
-                        asOfWriteStringAsVarcharSlave,
-                        writeTimestampAsNanosSlave
-                );
+                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
+                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
                 this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(workerCount);
                 this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
-                            masterAsOfJoinMapSinkClass,
-                            masterAsOfJoinColumnTypes,
-                            masterAsOfJoinColumnFilter,
-                            null,
-                            null,
-                            asOfWriteSymbolAsString,
-                            asOfWriteStringAsVarcharMaster,
-                            writeTimestampAsNanosMaster
-                    ));
-                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
-                            slaveAsOfJoinMapSinkClass,
-                            slaveAsOfJoinColumnTypes,
-                            slaveAsOfJoinColumnFilter,
-                            null,
-                            null,
-                            asOfWriteSymbolAsString,
-                            asOfWriteStringAsVarcharSlave,
-                            writeTimestampAsNanosSlave
-                    ));
+                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
+                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
                 }
             } else {
                 this.ownerMasterAsOfJoinMapSink = null;
@@ -241,12 +194,24 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             // Create time frame cursors from slave factory - one per worker + owner
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
-            this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale);
+            this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
+                    lookahead,
+                    slaveTsScale,
+                    bwdScanAbsoluteThreshold,
+                    bwdScanMinGap,
+                    bwdScanSwitchFactor
+            );
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
-                perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale));
+                perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
+                        lookahead,
+                        slaveTsScale,
+                        bwdScanAbsoluteThreshold,
+                        bwdScanMinGap,
+                        bwdScanSwitchFactor
+                ));
             }
 
             // Per-worker ASOF maps and SingleRecordSink targets for key comparison
@@ -359,7 +324,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     public void close() {
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
-        Misc.freeObjList(ownerGroupByFunctions);
+        // ownerGroupByFunctions are freed by the owning factory via
+        // recordFunctions/groupByFunctions field, so we only free per-worker clones here.
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
@@ -387,18 +353,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             return ownerAsOfJoinMap;
         }
         return perWorkerAsOfJoinMaps != null ? perWorkerAsOfJoinMaps.getQuick(slotId) : null;
-    }
-
-    public long getBwdScanAbsoluteThreshold() {
-        return bwdScanAbsoluteThreshold;
-    }
-
-    public long getBwdScanMinGap() {
-        return bwdScanMinGap;
-    }
-
-    public long getBwdScanSwitchFactor() {
-        return bwdScanSwitchFactor;
     }
 
     public AsyncFilterContext getFilterContext() {
@@ -460,7 +414,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
      * Get the offset value at the given index. Offsets are in master's scale.
      */
     public long getOffset(int index) {
-        return offsets.getQuick(index);
+        return offsets[index];
     }
 
     public long getOffsetCount() {
