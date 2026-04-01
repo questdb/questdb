@@ -1592,6 +1592,26 @@ public final class TableUtils {
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
+    /**
+     * Packs per-column Parquet encoding, compression codec, and compression level
+     * into a single 32-bit integer. Layout:
+     * <ul>
+     *   <li>bits 0-7: encoding id ({@code ParquetEncoding.ENCODING_*})</li>
+     *   <li>bits 8-15: compression codec id ({@code ParquetCompression} constants)</li>
+     *   <li>bits 16-23: compression level with +1 encoding (0 = not set, 1 = level 0, 2 = level 1, etc.)</li>
+     *   <li>bit 24: explicit flag (always set by this method)</li>
+     * </ul>
+     * A packed value of 0 means "use defaults for everything".
+     * Both compression and level use +1 encoding so that 0 can serve as a "not set" sentinel
+     * while still allowing the user to specify level 0 (e.g., gzip store mode).
+     */
+    public static int packParquetConfig(int encoding, int compression, int level) {
+        return (encoding & PARQUET_CONFIG_ENCODING_MASK)
+                | ((compression & PARQUET_CONFIG_COMPRESSION_MASK) << PARQUET_CONFIG_COMPRESSION_SHIFT)
+                | ((level & PARQUET_CONFIG_LEVEL_MASK) << PARQUET_CONFIG_LEVEL_SHIFT)
+                | PARQUET_CONFIG_EXPLICIT_FLAG;
+    }
+
     public static void parseBloomFilterColumnIndexes(RecordMetadata metadata, CharSequence bloomFilterColumns, DirectIntList indexes) {
         int start = 0;
         int len = bloomFilterColumns.length();
@@ -1634,28 +1654,27 @@ public final class TableUtils {
         }
     }
 
-
     /**
      * Produces a Parquet file from a native partition. Core method used by both TableReader and TableWriter callers.
      *
-     * @param path                    Path to the native partition directory (will be modified during execution)
-     * @param other                   Path for the output parquet file (will be modified during execution)
-     * @param pathSize                Root path size for restoring paths after modifications
-     * @param partitionTimestamp      Timestamp of the partition
-     * @param partitionNameTxn        Partition name txn for the native source partition
-     * @param parquetNameTxn          Partition name txn for the parquet destination (may differ from partitionNameTxn
-     *                                when the partition version is upgraded during conversion)
-     * @param tableName               Name of the table
-     * @param partitionRowCount       Number of rows in the partition
-     * @param metadata                Table metadata
-     * @param columnVersionReader     Column version reader (or writer, which extends reader)
-     * @param symbolTableProvider     Symbol table provider
-     * @param configuration           Cairo configuration for parquet encoder options
-     * @param bloomFilterColumns      Comma-separated column names for bloom filters, or null
-     * @param bloomFilterFpp          Bloom filter false-positive probability, or NaN for default
-     * @param bloomFilterIndexes      Reusable DirectIntList for bloom filter column indexes. Must be non-null when
-     *                                bloomFilterColumns is set. Callers should keep a single instance and pass it
-     *                                on every call to avoid per-invocation allocation.
+     * @param path                Path to the native partition directory (will be modified during execution)
+     * @param other               Path for the output parquet file (will be modified during execution)
+     * @param pathSize            Root path size for restoring paths after modifications
+     * @param partitionTimestamp  Timestamp of the partition
+     * @param partitionNameTxn    Partition name txn for the native source partition
+     * @param parquetNameTxn      Partition name txn for the parquet destination (may differ from partitionNameTxn
+     *                            when the partition version is upgraded during conversion)
+     * @param tableName           Name of the table
+     * @param partitionRowCount   Number of rows in the partition
+     * @param metadata            Table metadata
+     * @param columnVersionReader Column version reader (or writer, which extends reader)
+     * @param symbolTableProvider Symbol table provider
+     * @param configuration       Cairo configuration for parquet encoder options
+     * @param bloomFilterColumns  Comma-separated column names for bloom filters, or null
+     * @param bloomFilterFpp      Bloom filter false-positive probability, or NaN for default
+     * @param bloomFilterIndexes  Reusable DirectIntList for bloom filter column indexes. Must be non-null when
+     *                            bloomFilterColumns is set. Callers should keep a single instance and pass it
+     *                            on every call to avoid per-invocation allocation.
      * @return The length of the produced Parquet file
      */
     public static long produceParquetFromNative(
@@ -1873,26 +1892,6 @@ public final class TableUtils {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
-    }
-
-    /**
-     * Packs per-column Parquet encoding, compression codec, and compression level
-     * into a single 32-bit integer. Layout:
-     * <ul>
-     *   <li>bits 0-7: encoding id ({@code ParquetEncoding.ENCODING_*})</li>
-     *   <li>bits 8-15: compression codec id ({@code ParquetCompression} constants)</li>
-     *   <li>bits 16-23: compression level with +1 encoding (0 = not set, 1 = level 0, 2 = level 1, etc.)</li>
-     *   <li>bit 24: explicit flag (always set by this method)</li>
-     * </ul>
-     * A packed value of 0 means "use defaults for everything".
-     * Both compression and level use +1 encoding so that 0 can serve as a "not set" sentinel
-     * while still allowing the user to specify level 0 (e.g., gzip store mode).
-     */
-    public static int packParquetConfig(int encoding, int compression, int level) {
-        return (encoding & PARQUET_CONFIG_ENCODING_MASK)
-                | ((compression & PARQUET_CONFIG_COMPRESSION_MASK) << PARQUET_CONFIG_COMPRESSION_SHIFT)
-                | ((level & PARQUET_CONFIG_LEVEL_MASK) << PARQUET_CONFIG_LEVEL_SHIFT)
-                | PARQUET_CONFIG_EXPLICIT_FLAG;
     }
 
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
