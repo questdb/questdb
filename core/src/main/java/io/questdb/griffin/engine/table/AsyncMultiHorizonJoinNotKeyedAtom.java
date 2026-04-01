@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -43,30 +42,27 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Atom for non-keyed HORIZON JOIN GROUP BY that uses SimpleMapValue for aggregation.
+ * Atom for non-keyed multi-slave HORIZON JOIN GROUP BY that uses SimpleMapValue for aggregation.
  * <p>
- * This class extends {@link BaseAsyncHorizonJoinAtom} and adds:
+ * This class extends {@link BaseAsyncMultiHorizonJoinAtom} and adds:
  * - Per-worker SimpleMapValue instances (single aggregation slot, no keys)
  * <p>
  * Used when there are no GROUP BY keys, producing a single output row.
  */
-public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
+public class AsyncMultiHorizonJoinNotKeyedAtom extends BaseAsyncMultiHorizonJoinAtom {
     private final SimpleMapValue ownerMapValue;
     private final ObjList<SimpleMapValue> perWorkerMapValues;
 
-    public AsyncHorizonJoinNotKeyedAtom(
+    public AsyncMultiHorizonJoinNotKeyedAtom(
             @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
-            @NotNull RecordCursorFactory slaveFactory,
+            @NotNull ObjList<HorizonJoinSlaveState> slaveStates,
+            @Nullable ColumnTypes[] perSlaveAsOfJoinKeyTypes,
+            @Nullable Class<RecordSink> @NotNull [] masterAsOfJoinMapSinkClasses,
+            @Nullable Class<RecordSink> @NotNull [] slaveAsOfJoinMapSinkClasses,
             int masterTimestampColumnIndex,
             long @NotNull [] offsets,
             int valueCount,
-            @Nullable ColumnTypes asOfJoinKeyTypes,
-            @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
-            @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
-            int masterColumnCount,
-            int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
@@ -77,22 +73,17 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
             @Nullable Function ownerFilter,
             @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
-            long masterTsScale,
-            long slaveTsScale,
             int workerCount
     ) {
         super(
                 asm,
                 configuration,
-                slaveFactory,
+                slaveStates,
+                perSlaveAsOfJoinKeyTypes,
+                masterAsOfJoinMapSinkClasses,
+                slaveAsOfJoinMapSinkClasses,
                 masterTimestampColumnIndex,
                 offsets,
-                asOfJoinKeyTypes,
-                masterAsOfJoinMapSinkClass,
-                slaveAsOfJoinMapSinkClass,
-                masterColumnCount,
-                masterSymbolKeyColumnIndices,
-                slaveSymbolKeyColumnIndices,
                 columnSources,
                 columnIndexes,
                 ownerGroupByFunctions,
@@ -103,8 +94,6 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
                 ownerFilter,
                 filterUsedColumnIndexes,
                 perWorkerFilters,
-                masterTsScale,
-                slaveTsScale,
                 workerCount
         );
 
@@ -150,7 +139,7 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("AsyncHorizonGroupByNotKeyedAtom");
+        sink.val("AsyncMultiHorizonNotKeyedAtom");
     }
 
     private void resetMapValues() {

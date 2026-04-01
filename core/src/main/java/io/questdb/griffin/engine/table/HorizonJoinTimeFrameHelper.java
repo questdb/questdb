@@ -49,29 +49,46 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  */
 public class HorizonJoinTimeFrameHelper {
     private static final int LINEAR_SCAN_LIMIT = 64;
+    // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
+    private final long bwdScanAbsoluteThreshold;
+    private final long bwdScanMinGap;
+    private final long bwdScanSwitchFactor;
     private final long lookahead;
     // Scale factor for slave timestamps to normalize to nanoseconds (1 if no scaling needed)
     private final long slaveTsScale;
-    // Backward scan row counter, used by the adaptive switching logic in AsyncHorizonJoinRecordCursorFactory
+    // Backward scan row counter, used by the adaptive switching logic
     private long backwardScanRows;
     // Backward watermark: lowest rowId we've backward-scanned (inclusive)
     private long backwardWatermark = Long.MAX_VALUE;
     // Bookmark position: where to start the next findAsOfRow search (optimization for sequential access)
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
+    // Adaptive scan state (managed by findKeyedAsOfMatch, reset by toTop)
+    private long bwdScanRowsAtPositionStart;
     // Cached findAsOfRow result: valid while target timestamp < cachedNextRowTs
     private long cachedAsOfRowId = Long.MIN_VALUE;
     private long cachedNextRowTs = Long.MIN_VALUE;
     // Forward watermark: highest rowId we've forward-scanned (inclusive)
     private long forwardWatermark = Long.MIN_VALUE;
+    private boolean isForwardScanMode;
+    private long prevAsOfRowId = Long.MIN_VALUE;
     private Record record;
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
     private int timestampIndex;
 
-    public HorizonJoinTimeFrameHelper(long lookahead, long slaveTsScale) {
+    public HorizonJoinTimeFrameHelper(
+            long lookahead,
+            long slaveTsScale,
+            long bwdScanAbsoluteThreshold,
+            long bwdScanMinGap,
+            long bwdScanSwitchFactor
+    ) {
         this.lookahead = lookahead;
         this.slaveTsScale = slaveTsScale;
+        this.bwdScanAbsoluteThreshold = bwdScanAbsoluteThreshold;
+        this.bwdScanMinGap = bwdScanMinGap;
+        this.bwdScanSwitchFactor = bwdScanSwitchFactor;
     }
 
     /**
@@ -456,6 +473,70 @@ public class HorizonJoinTimeFrameHelper {
     }
 
     /**
+     * Keyed ASOF match with adaptive backward/forward scanning.
+     * <p>
+     * Manages position tracking and scan mode switching internally.
+     * Call {@link #toTop()} before processing a new frame to reset state.
+     *
+     * @param asOfRowId               the ASOF position (from {@link #findAsOfRow}), or Long.MIN_VALUE if none
+     * @param masterKeyRecord         master record containing the target key
+     * @param masterAsOfJoinMapSink   copier for master's join key columns
+     * @param slaveAsOfJoinMapSink    copier for slave's join key columns
+     * @param keyToRowIdMap           map to update with (key -> rowId) entries
+     * @param symbolTranslatingRecord nullable; when non-null, used to skip scan for non-existent slave symbols
+     * @return the rowId where the target key was found, or Long.MIN_VALUE if not found
+     */
+    public long findKeyedAsOfMatch(
+            long asOfRowId,
+            Record masterKeyRecord,
+            RecordSink masterAsOfJoinMapSink,
+            RecordSink slaveAsOfJoinMapSink,
+            Map keyToRowIdMap,
+            @Nullable SymbolTranslatingRecord symbolTranslatingRecord
+    ) {
+        if (asOfRowId == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+
+        if (asOfRowId != prevAsOfRowId) {
+            if (!isForwardScanMode) {
+                long bwdScanCost = backwardScanRows - bwdScanRowsAtPositionStart;
+                if (prevAsOfRowId != Long.MIN_VALUE) {
+                    long gap = asOfRowId - prevAsOfRowId;
+                    if (shouldSwitchToForwardScan(
+                            bwdScanCost,
+                            gap,
+                            bwdScanMinGap,
+                            bwdScanSwitchFactor,
+                            bwdScanAbsoluteThreshold
+                    )) {
+                        isForwardScanMode = true;
+                        initForwardWatermark(prevAsOfRowId);
+                    }
+                }
+                if (!isForwardScanMode) {
+                    keyToRowIdMap.clear();
+                    resetBackwardWatermark();
+                    bwdScanRowsAtPositionStart = backwardScanRows;
+                }
+            }
+            if (isForwardScanMode) {
+                forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, keyToRowIdMap);
+            }
+            prevAsOfRowId = asOfRowId;
+        }
+
+        return backwardScanForKeyMatch(
+                asOfRowId,
+                masterKeyRecord,
+                masterAsOfJoinMapSink,
+                slaveAsOfJoinMapSink,
+                keyToRowIdMap,
+                symbolTranslatingRecord
+        );
+    }
+
+    /**
      * Forward scan from current forward watermark to targetRowId, updating the map with all keys encountered.
      * <p>
      * This method is used for efficient sorted horizon timestamp processing. Since horizon
@@ -643,11 +724,14 @@ public class HorizonJoinTimeFrameHelper {
         }
         bookmarkedFrameIndex = -1;
         bookmarkedRowIndex = Long.MIN_VALUE;
+        bwdScanRowsAtPositionStart = 0;
         forwardWatermark = Long.MIN_VALUE;
         backwardWatermark = Long.MAX_VALUE;
         cachedAsOfRowId = Long.MIN_VALUE;
         cachedNextRowTs = Long.MIN_VALUE;
         backwardScanRows = 0;
+        isForwardScanMode = false;
+        prevAsOfRowId = Long.MIN_VALUE;
     }
 
     /**
