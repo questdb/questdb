@@ -78,7 +78,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final DirectLongList frameTimestampCache;
     private final RecordMetadata metadata;
     private final LongList partitionCeilings = new LongList();
-    // Per-partition: first global frame index (populated during buildFrameCache())
+    // Per-partition: first global frame index.
+    // Only populated in the non-eager (lazy) path. Not valid after
+    // buildFrameCacheEagerly(); safe to read only when partitionOpened is unset.
     private final IntList partitionFirstFrame = new IntList();
     private final BitSet partitionOpened = new BitSet();
     private final LongList partitionTimestamps = new LongList();
@@ -423,10 +425,10 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             return;
         }
 
+        partitionCount = tableReader.getPartitionCount();
+
         framePartitionIndexes.reopen();
         frameRowCounts.reopen();
-
-        partitionCount = tableReader.getPartitionCount();
 
         if (frameCursor.hasIntervalFilter()) {
             // Interval filtering makes frame counts unpredictable from metadata.

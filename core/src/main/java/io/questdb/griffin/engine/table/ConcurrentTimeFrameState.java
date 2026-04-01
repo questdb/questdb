@@ -64,6 +64,9 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
     private final DirectLongList frameRowCounts;
     private final Object openLock = new Object();
     private final LongList partitionCeilings = new LongList();
+    // Per-partition: first global frame index.
+    // Only populated in the non-eager (lazy) path. Not valid after
+    // buildFrameCacheEagerly(); safe to read only when partitionOpened is unset.
     private final IntList partitionFirstFrame = new IntList();
     // IntList (not BitSet) because we need getVolatile()/setOrdered() for
     // thread-safe double-checked locking in ensurePartitionOpened().
