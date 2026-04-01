@@ -1090,19 +1090,21 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 Ok(true)
             }
             (Encoding::RleDictionary | Encoding::PlainDictionary, 16, ColumnTypeTag::Long128) => {
-                let dict_page = dict.ok_or_else(|| {
-                    fmt_err!(Layout, "missing dictionary page for RleDictionary Long128")
-                })?;
-                let dict_decoder =
-                    BasePrimitiveDictDecoder::<Long128, Long128>::try_new(dict_page)?;
-                let row_hi = mode.source_row_count();
+                let dict_decoder = BasePrimitiveDictDecoder::<Long128, Long128>::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                )?;
                 decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
                     mode,
                     &mut RleDictionaryDecoder::try_new(
                         values_buffer,
                         dict_decoder,
-                        row_hi,
+                        mode.source_row_count(),
                         Long128::NULL,
                         bufs,
                     )?,
@@ -1240,25 +1242,6 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
-                    ColumnTypeTag::String,
-                ) => {
-                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
-                    let mut slicer = RleDictionarySlicer::try_new(
-                        values_buffer,
-                        dict_decoder,
-                        row_hi,
-                        row_count,
-                    )?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
-                        page,
-                        mode,
-                        &mut StringColumnSink::new(&mut slicer, bufs),
-                    )?;
-                    Ok(true)
-                }
-                (
-                    Encoding::RleDictionary | Encoding::PlainDictionary,
-                    Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
                     let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
@@ -1272,6 +1255,31 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         page,
                         mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
+                    )?;
+                    Ok(true)
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    dict_page,
+                    ColumnTypeTag::String,
+                ) => {
+                    let dict_page = dict_page.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_hi,
+                        row_count,
+                    )?;
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(true)
                 }
