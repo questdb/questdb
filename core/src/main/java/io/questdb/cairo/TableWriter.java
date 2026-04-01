@@ -941,7 +941,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         path.trimTo(partitionPathLen);
                         if (ff.exists(path.concat(PARQUET_PARTITION_NAME).$())) {
                             // No _pm but the partition is a parquet one.
-                            int parquetFd = (int) ff.openRO(path.$());
+                            long parquetFd = ff.openRO(path.$());
                             if (parquetFd < 0) {
                                 LOG.error().$("could not open parquet file [path=").$(path).$(", errno=").$(ff.errno()).I$();
                                 return AttachDetachStatus.ATTACH_ERR_READ_PARTITION;
@@ -949,7 +949,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             long parquetFileSize = ff.length(path.$());
                             path.trimTo(partitionPathLen).concat(PARQUET_METADATA_FILE_NAME);
-                            int parquetMetaFd = (int) ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                            long parquetMetaFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
                             if (parquetMetaFd < 0) {
                                 LOG.error().$("could not create parquet metadata file [path=").$(path).$(", errno=").$(ff.errno()).I$();
                                 ff.close(parquetFd);
@@ -957,7 +957,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
 
                             try {
-                                parquetMetadataFileSize = ParquetMetadataWriter.generate(parquetFd, parquetFileSize, parquetMetaFd);
+                                parquetMetadataFileSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
                                 LOG.info().$("generated parquet metadata [path=").$(path).$(", parquetMetadataFileSize=").$(parquetMetadataFileSize).I$();
                             } catch (Throwable t) {
                                 LOG.error().$("failed to generate parquet metadata [path=").$(path).$(", error=").$(t.getMessage()).I$();
