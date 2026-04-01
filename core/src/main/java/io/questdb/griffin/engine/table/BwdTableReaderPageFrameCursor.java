@@ -199,7 +199,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException {
         this.partitionFrameCursor = partitionFrameCursor;
-        reader = partitionFrameCursor.getTableReader();
+        this.reader = partitionFrameCursor.getTableReader();
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
         this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {

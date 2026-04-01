@@ -129,7 +129,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                         columnIndexes,
                         columnSizeShifts,
                         partitionFrameCursorFactory.getPushdownFilterConditions(),
-                        1 // used for single-threaded exec plans,
+                        1 // used for single-threaded exec plans
                 );
             } else {
                 pageFrameCursor = new BwdTableReaderPageFrameCursor(

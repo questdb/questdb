@@ -61,6 +61,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final LongList pageSizes = new LongList();
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
+    private final int sharedQueryWorkerCount;
     private int cachedRowGroupIndex;
     private long cachedRowGroupStartRow;
     private long filterBufEnd = -1;
@@ -78,7 +79,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private int reenterPartitionIndex;
     private long reenterPartitionLo;
     private long remainingRowsInInterval;
-    private int sharedQueryWorkerCount;
 
     public FwdTableReaderPageFrameCursor(
             IntList columnIndexes,
@@ -197,9 +197,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException {
-        reader = partitionFrameCursor.getTableReader();
         this.partitionFrameCursor = partitionFrameCursor;
-        this.sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();
+        this.reader = partitionFrameCursor.getTableReader();
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
         this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
