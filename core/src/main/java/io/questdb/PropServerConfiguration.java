@@ -402,6 +402,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int queryCacheEventQueueCapacity;
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int qwpMaxRowsPerTable;
+    private final int qwpMaxSchemasPerConnection;
     private final int qwpUdpCommitRate;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
@@ -1754,6 +1755,18 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.qwpUdpPort = p;
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
+            this.qwpMaxSchemasPerConnection = getInt(
+                    properties,
+                    env,
+                    PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION,
+                    QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
+            );
+            if (qwpMaxSchemasPerConnection < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
             this.qwpMaxRowsPerTable = getInt(properties, env, PropertyKey.QWP_MAX_ROWS_PER_TABLE, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
             if (qwpMaxRowsPerTable < 1 || qwpMaxRowsPerTable > QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE) {
                 throw new ServerConfigurationException(
@@ -5507,6 +5520,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQwpMaxRowsPerTable() {
             return qwpMaxRowsPerTable;
+        }
+
+        @Override
+        public int getQwpMaxSchemasPerConnection() {
+            return qwpMaxSchemasPerConnection;
         }
 
         @Override

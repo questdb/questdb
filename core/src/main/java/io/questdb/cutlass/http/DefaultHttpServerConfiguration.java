@@ -250,6 +250,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
+        public int getQwpMaxSchemasPerConnection() {
+            return QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION;
+        }
+
+        @Override
         public int getQwpMaxRowsPerTable() {
             return QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
         }

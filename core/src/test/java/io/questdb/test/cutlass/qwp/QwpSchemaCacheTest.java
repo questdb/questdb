@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSchema;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
 import org.junit.Assert;
@@ -34,7 +35,7 @@ import org.junit.Test;
 public class QwpSchemaCacheTest {
 
     @Test
-    public void testCacheClear() {
+    public void testCacheClear() throws Exception {
         QwpSchemaCache cache = new QwpSchemaCache();
 
         for (int i = 0; i < 10; i++) {
@@ -58,7 +59,7 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
-    public void testCacheHit() {
+    public void testCacheHit() throws Exception {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
 
@@ -81,7 +82,7 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
-    public void testCacheMetrics() {
+    public void testCacheMetrics() throws Exception {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
 
@@ -102,7 +103,7 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
-    public void testCacheMiss() {
+    public void testCacheMiss() throws Exception {
         QwpSchemaCache cache = new QwpSchemaCache();
         cache.put(0, createTestSchema("col1", QwpConstants.TYPE_INT));
 
@@ -114,7 +115,7 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
-    public void testCacheNegativeIdMiss() {
+    public void testCacheNegativeIdMiss() throws Exception {
         QwpSchemaCache cache = new QwpSchemaCache();
         cache.put(0, createTestSchema("col1", QwpConstants.TYPE_INT));
 
@@ -123,7 +124,7 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
-    public void testCachePutAndGet() {
+    public void testCachePutAndGet() throws Exception {
         QwpSchemaCache cache = new QwpSchemaCache();
         QwpSchema schema = createTestSchema("col1", QwpConstants.TYPE_INT);
 
@@ -136,7 +137,7 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
-    public void testMultipleSchemas() {
+    public void testMultipleSchemas() throws Exception {
         QwpSchemaCache cache = new QwpSchemaCache();
 
         QwpSchema schema0 = createTestSchema("col_a", QwpConstants.TYPE_INT);
@@ -153,16 +154,40 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
-    public void testOverwriteSchema() {
+    public void testCacheClearResetsExpectedSchemaId() throws Exception {
         QwpSchemaCache cache = new QwpSchemaCache();
 
-        QwpSchema schema1 = createTestSchema("col_old", QwpConstants.TYPE_INT);
-        QwpSchema schema2 = createTestSchema("col_new", QwpConstants.TYPE_DOUBLE);
+        cache.put(0, createTestSchema("col_old", QwpConstants.TYPE_INT));
+        cache.clear();
+        cache.put(0, createTestSchema("col_new", QwpConstants.TYPE_DOUBLE));
 
-        cache.put(0, schema1);
-        cache.put(0, schema2);
+        Assert.assertNotNull(cache.get(0));
+    }
 
-        Assert.assertSame(schema2, cache.get(0));
+    @Test
+    public void testSchemaIdMustNotSkip() throws Exception {
+        QwpSchemaCache cache = new QwpSchemaCache();
+        cache.put(0, createTestSchema("col0", QwpConstants.TYPE_INT));
+
+        assertInvalidSchemaId(cache, 2, "expectedSchemaId=1");
+    }
+
+    @Test
+    public void testSchemaIdMustIncreaseMonotonically() throws Exception {
+        QwpSchemaCache cache = new QwpSchemaCache();
+        cache.put(0, createTestSchema("col0", QwpConstants.TYPE_INT));
+        cache.put(1, createTestSchema("col1", QwpConstants.TYPE_DOUBLE));
+
+        assertInvalidSchemaId(cache, 1, "expectedSchemaId=2");
+    }
+
+    @Test
+    public void testSchemaCountPerConnectionIsBounded() throws Exception {
+        QwpSchemaCache cache = new QwpSchemaCache(2);
+        cache.put(0, createTestSchema("col0", QwpConstants.TYPE_INT));
+        cache.put(1, createTestSchema("col1", QwpConstants.TYPE_DOUBLE));
+
+        assertInvalidSchemaId(cache, 2, "maxSchemasPerConnection=2");
     }
 
     private QwpSchema createTestSchema(String columnName, byte typeCode) {
@@ -170,5 +195,15 @@ public class QwpSchemaCacheTest {
                 new QwpColumnDef(columnName, typeCode)
         };
         return QwpSchema.create(columns);
+    }
+
+    private static void assertInvalidSchemaId(QwpSchemaCache cache, int schemaId, String expectedMessagePart) {
+        try {
+            cache.put(schemaId, QwpSchema.create(new QwpColumnDef[]{new QwpColumnDef("x", QwpConstants.TYPE_INT)}));
+            Assert.fail("Expected QwpParseException");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_SCHEMA_ID, e.getErrorCode());
+            Assert.assertTrue(e.getMessage().contains(expectedMessagePart));
+        }
     }
 }

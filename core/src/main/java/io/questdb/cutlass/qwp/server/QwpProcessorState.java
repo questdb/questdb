@@ -100,7 +100,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         this.maxBufferSize = Math.min(configuration.getMaxRecvBufferSize(), Integer.MAX_VALUE);
         this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
         try {
-            this.streamingDecoder = new QwpStreamingDecoder(new QwpSchemaCache(), configuration.getQwpMaxRowsPerTable());
+            this.streamingDecoder = new QwpStreamingDecoder(
+                    new QwpSchemaCache(configuration.getQwpMaxSchemasPerConnection()),
+                    configuration.getQwpMaxRowsPerTable()
+            );
             this.walAppender = new QwpWalAppender(
                     configuration.autoCreateNewColumns(),
                     engine.getConfiguration().getMaxFileNameLength(),
@@ -260,6 +263,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     @Override
     public void onDisconnected() {
         clear();
+        streamingDecoder.resetConnectionState();
         tudCache.reset();
         connectionSymbolDict.clear();  // Reset delta symbol dictionary on disconnect
 

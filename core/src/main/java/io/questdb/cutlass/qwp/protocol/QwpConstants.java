@@ -51,6 +51,10 @@ public final class QwpConstants {
      */
     public static final int DEFAULT_MAX_ROWS_PER_TABLE = 1_000_000;
     /**
+     * Default maximum number of distinct schemas allowed on a single connection.
+     */
+    public static final int DEFAULT_MAX_SCHEMAS_PER_CONNECTION = 65_535;
+    /**
      * Flag bit: Delta symbol dictionary encoding enabled.
      * When set, symbol columns use global IDs and send only new dictionary entries.
      */

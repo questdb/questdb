@@ -43,6 +43,8 @@ public interface LineHttpProcessorConfiguration {
 
     int getDefaultTimestampColumnType();
 
+    int getQwpMaxSchemasPerConnection();
+
     int getQwpMaxRowsPerTable();
 
     CharSequence getInfluxPingVersion();

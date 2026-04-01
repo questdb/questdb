@@ -35,14 +35,25 @@ import io.questdb.std.ObjList;
  */
 public class QwpSchemaCache {
 
+    private final int maxSchemasPerConnection;
+    private int nextExpectedSchemaId;
     private final ObjList<QwpSchema> schemas = new ObjList<>();
     private long hits;
     private long misses;
+
+    public QwpSchemaCache() {
+        this(QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION);
+    }
+
+    public QwpSchemaCache(int maxSchemasPerConnection) {
+        this.maxSchemasPerConnection = maxSchemasPerConnection;
+    }
 
     public void clear() {
         schemas.clear();
         hits = 0;
         misses = 0;
+        nextExpectedSchemaId = 0;
     }
 
     public QwpSchema get(int schemaId) {
@@ -70,8 +81,23 @@ public class QwpSchemaCache {
         return misses;
     }
 
-    public void put(int schemaId, QwpSchema schema) {
+    public void put(int schemaId, QwpSchema schema) throws QwpParseException {
+        if (schemaId >= maxSchemasPerConnection) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_SCHEMA_ID,
+                    "schema ID exceeds per-connection limit [schemaId=" + schemaId
+                            + ", maxSchemasPerConnection=" + maxSchemasPerConnection + ']'
+            );
+        }
+        if (schemaId != nextExpectedSchemaId) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_SCHEMA_ID,
+                    "schema ID out of sequence [schemaId=" + schemaId
+                            + ", expectedSchemaId=" + nextExpectedSchemaId + ']'
+            );
+        }
         schemas.extendAndSet(schemaId, schema);
+        nextExpectedSchemaId++;
     }
 
     public int size() {

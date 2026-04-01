@@ -154,4 +154,11 @@ public class QwpStreamingDecoder implements QuietCloseable {
     public void reset() {
         messageCursor.clear();
     }
+
+    public void resetConnectionState() {
+        reset();
+        if (schemaCache != null) {
+            schemaCache.clear();
+        }
+    }
 }

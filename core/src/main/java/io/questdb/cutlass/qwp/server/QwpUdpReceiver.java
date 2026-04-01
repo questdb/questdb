@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpMessageHeader;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
@@ -168,6 +169,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                         @Override
                         public int getDefaultTimestampColumnType() {
                             return ColumnType.UNDEFINED;
+                        }
+
+                        @Override
+                        public int getQwpMaxSchemasPerConnection() {
+                            return QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION;
                         }
 
                         @Override
