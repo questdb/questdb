@@ -127,21 +127,23 @@ For a column to be the designated timestamp it must comply to these rules:
 - The column type must be `timestamp`
 - The column repetition must be `required` (no nulls allowed)
 
-### Column descriptor (32 bytes)
+### Column descriptor (40 bytes)
 
 Per-column metadata. Written once in the header, applies across all row groups.
 
-| offset | size | field         | type | description                                                                                                  |
-| ------ | ---- | ------------- | ---- | ------------------------------------------------------------------------------------------------------------ |
-| 0      | 8    | NAME_OFFSET   | u64  | offset from the file start to column name utf-8 encoded prefixed by the name length as an u32                |
-| 8      | 8    | TOP           | u64  | column top value, exists for legacy purposes, this field won't be modified by incremental updates            |
-| 16     | 4    | ID            | i32  | index of the column related to QuestDB schema (or -1)                                                        |
-| 20     | 4    | TYPE          | i32  | QuestDB column type code                                                                                     |
-| 24     | 4    | FLAGS         | i32  | Column flags                                                                                                 |
-| 28     | 1    | PHYSICAL_TYPE | u8   | Parquet physical type: 0=BOOLEAN, 1=INT32, 2=INT64, 3=INT96, 4=FLOAT, 5=DOUBLE, 6=BYTE_ARRAY, 7=FIXED_LEN_BA |
-| 29     | 1    | MAX_REP_LEVEL | u8   | Maximum repetition level (0 for non-nested columns)                                                          |
-| 30     | 1    | MAX_DEF_LEVEL | u8   | Maximum definition level (0 for required, 1 for optional)                                                    |
-| 31     | 1    | RESERVED      | u8   | Reserved, must be 0                                                                                          |
+| offset | size | field          | type | description                                                                                                   |
+| ------ | ---- | -------------- | ---- | ------------------------------------------------------------------------------------------------------------- |
+| 0      | 8    | NAME_OFFSET    | u64  | offset from the file start to column name (utf-8 encoded, not null-terminated)                                |
+| 8      | 8    | TOP            | u64  | column top value, exists for legacy purposes, this field won't be modified by incremental updates             |
+| 16     | 4    | ID             | i32  | index of the column related to QuestDB schema (or -1)                                                         |
+| 20     | 4    | TYPE           | i32  | QuestDB column type code                                                                                      |
+| 24     | 4    | FLAGS          | i32  | Column flags                                                                                                  |
+| 28     | 4    | FIXED_BYTE_LEN | i32  | For FIXED_LEN_BYTE_ARRAY physical type: the fixed length in bytes (matches parquet type_length). 0 otherwise. |
+| 32     | 4    | NAME_LENGTH    | u32  | length of the column name in bytes                                                                            |
+| 36     | 1    | PHYSICAL_TYPE  | u8   | Parquet physical type: 0=BOOLEAN, 1=INT32, 2=INT64, 3=INT96, 4=FLOAT, 5=DOUBLE, 6=BYTE_ARRAY, 7=FIXED_LEN_BA  |
+| 37     | 1    | MAX_REP_LEVEL  | u8   | Maximum repetition level (0 for non-nested columns)                                                           |
+| 38     | 1    | MAX_DEF_LEVEL  | u8   | Maximum definition level (0 for required, 1 for optional)                                                     |
+| 39     | 1    | RESERVED       | u8   | Reserved, must be 0                                                                                           |
 
 #### Column flags
 
@@ -151,7 +153,7 @@ Per-column metadata. Written once in the header, applies across all row groups.
 | 1          | 1        | IS_ASCII            | i1   | Varchar                                  |
 | 2          | 2        | FIELD_REPETITION    | u2   | 0 = Required, 1 = Optional, 2 = Repeated | // TODO: CAN CHANGE BETWEEN VERSIONS - MOVE AWAY |
 | 4          | 1        | DESCENDING          | i1   | For sorted column, 1 = Descending        |
-| 5          | 27       | RESERVED            |      |                                          |
+| 5          | 27       | RESERVED            |      | Reserved, must be 0                      |
 
 ### Sorting column (4 bytes)
 
@@ -207,7 +209,7 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 | 5          | 1        | MAX_STAT_VALUE_EXACT   | i1   | Indicates if MAX_STAT value is exact   |
 | 6          | 1        | DISTINCT_COUNT_PRESENT | i1   | Indicates if DISTINCT_COUNT is present |
 | 7          | 1        | NULL_COUNT_PRESENT     | i1   | Indicates if NULL_COUNT is present     |
-| 8          | 24       | RESERVED               |      |                                        |
+| 8          | 24       | RESERVED               |      | Reserved, must be 0                    |
 
 Column types with fixed size that are <= 8 bytes (BOOLEAN, BYTE, SHORT, CHAR, INT/FLOAT/IPv4, LONG/DOUBLE/DATE/TIMESTAMP) MUST have their min/max stats inlined in the column chunk. For variable-length types (VARCHAR/STRING) and fixed-size types > 8 bytes (LONG128, UUID, LONG256), min/max stats MAY be stored out-of-line immediately after the row group blocks that references them.
 
