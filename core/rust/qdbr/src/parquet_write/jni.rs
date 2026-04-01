@@ -118,7 +118,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             && !null_col_desc_ptr.is_null()
         {
             let desc =
-                unsafe { slice::from_raw_parts(null_col_desc_ptr, (null_col_count * 2) as usize) };
+                unsafe { slice::from_raw_parts(null_col_desc_ptr, (null_col_count as usize) * 2) };
             (0..null_col_count as usize)
                 .map(|i| {
                     let target_pos = desc[i * 2] as usize;

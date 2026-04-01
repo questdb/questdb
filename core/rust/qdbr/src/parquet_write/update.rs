@@ -21,7 +21,9 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+use rapidhash::RapidHashMap;
 use std::fs::File;
 use std::io::{Read as _, Seek, SeekFrom};
 
@@ -119,7 +121,7 @@ pub struct ParquetUpdater {
     result_file_size: u64,
     result_unused_bytes: u64,
     target_qdb_meta: Option<QdbMeta>,
-    target_col_id_to_pos: Option<HashMap<i32, usize>>,
+    target_col_id_to_pos: Option<RapidHashMap<i32, usize>>,
 }
 
 impl ParquetUpdater {
@@ -488,7 +490,7 @@ impl ParquetUpdater {
 
         // Build column_id → old schema index from the old file's parquet field_ids.
         let old_fields = self.file_metadata.schema_descr.fields();
-        let old_col_id_to_idx: HashMap<i32, usize> = old_fields
+        let old_col_id_to_idx: RapidHashMap<i32, usize> = old_fields
             .iter()
             .enumerate()
             .filter_map(|(i, f)| f.get_field_info().id.map(|id| (id, i)))

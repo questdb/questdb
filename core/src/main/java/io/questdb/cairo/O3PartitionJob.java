@@ -271,9 +271,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // so the output file footer, column remapping, and null column
                     // chunks use the new schema.
                     // For SYMBOL columns, set the high bit on the column type
-                    // when the symbol map has no null flag — this propagates to
-                    // Repetition::Required in the Parquet schema, matching how
-                    // the original file encoded the column (no definition levels).
+                    // when the symbol map has no null flag — this is a write-time
+                    // hint for the Rust encoder to emit a fast all-ones RLE run
+                    // for definition levels (symbols are always Optional in the schema).
                     final PartitionDescriptor schemaDesc = ctx.getChunkDescriptor();
                     schemaDesc.of(tableWriter.getTableToken().getTableName(), 0, timestampIndex);
                     for (int i = 0; i < columnCount; i++) {
