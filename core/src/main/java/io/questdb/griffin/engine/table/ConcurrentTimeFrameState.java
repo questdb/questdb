@@ -263,27 +263,15 @@ public class ConcurrentTimeFrameState implements QuietCloseable, Mutable {
                 workerCount
         );
 
-        // Pre-fetch column tops for this partition from column version metadata.
-        // A column top > partitionLo and < adjustedHi causes a frame split.
-        // Columns that don't exist in this partition have top = partitionRowCount
-        // (all-null, no constraint on frame boundary).
-        // Use reader metadata (not factory metadata) for writer index lookup,
-        // because factory metadata (e.g. SelectedRecordCursorFactory) may not
-        // implement getWriterIndex().
-        final RecordMetadata readerMetadata = tableReader.getMetadata();
-        columnTops.clear();
-        for (int i = 0; i < columnCount; i++) {
-            final int readerColumnIndex = columnIndexes.getQuick(i);
-            final int writerIndex = readerMetadata.getWriterIndex(readerColumnIndex);
-            final int recordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
-            if (recordIndex > -1) {
-                columnTops.add(columnVersionReader.getColumnTopByIndex(recordIndex));
-            } else if (columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp) {
-                columnTops.add(0); // column exists from start, no top
-            } else {
-                columnTops.add(partitionRowCount); // column doesn't exist — all-null
-            }
-        }
+        FwdTableReaderPageFrameCursor.populateColumnTops(
+                columnTops,
+                tableReader,
+                columnVersionReader,
+                columnIndexes,
+                columnCount,
+                partitionTimestamp,
+                partitionRowCount
+        );
 
         long lo = 0;
         while (lo < partitionRowCount) {
