@@ -4132,7 +4132,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     denseSymbolKeyIndices != null ? denseSymbolKeyIndices[1] : null
                             );
                         }
-                        RecordSink recordCopierMaster;
                         if (isSingleSymbolJoin) {
                             SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -4171,39 +4170,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                             // For that to work, we need code that maps master symbol key to slave symbol key.
                             writeSymbolAsString.unset(slaveSymbolColumnIndex);
-                            recordCopierMaster = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
-                        } else {
-                            int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
-                            recordCopierMaster = createRecordCopierMaster(masterMetadata);
                             return new AsOfJoinFastRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
                                     master,
-                                    recordCopierMaster,
+                                    new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit),
                                     slave,
                                     createRecordCopierSlave(slaveMetadata),
                                     joinColumnSplit,
                                     symbolShortCircuit,
                                     slaveContext,
                                     toleranceInterval,
+                                    null,
+                                    null
+                            );
+                        } else {
+                            int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                            return new AsOfJoinFastRecordCursorFactory(
+                                    configuration,
+                                    joinMetadata,
+                                    master,
+                                    createRecordCopierMaster(masterMetadata),
+                                    slave,
+                                    createRecordCopierSlave(slaveMetadata),
+                                    joinColumnSplit,
+                                    fastSymbolKeyIndices != null ? NoopSymbolShortCircuit.INSTANCE : symbolShortCircuit,
+                                    slaveContext,
+                                    toleranceInterval,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[0] : null,
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[1] : null
                             );
                         }
-                        return new AsOfJoinFastRecordCursorFactory(
-                                configuration,
-                                joinMetadata,
-                                master,
-                                recordCopierMaster,
-                                slave,
-                                createRecordCopierSlave(slaveMetadata),
-                                joinColumnSplit,
-                                symbolShortCircuit,
-                                slaveContext,
-                                toleranceInterval,
-                                null,
-                                null
-                        );
                     } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                         RecordCursorFactory slaveBase = slave.getBaseFactory();
                         int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);

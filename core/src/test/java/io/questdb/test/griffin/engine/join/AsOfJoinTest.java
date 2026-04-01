@@ -38,6 +38,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -165,9 +166,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinForSelectWithTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-
-            final String expected = String.format("""
+            final String expected = getString("""
                     tag\thi\tlo\tts\tts1
                     AA\t315515118\t315515118\t1970-01-03T00:00:00.000000%1$s\t1970-01-03T00:00:00.000000%1$s
                     BB\t-727724771\t-727724771\t1970-01-03T00:06:00.000000%1$s\t1970-01-03T00:06:00.000000%1$s
@@ -179,7 +178,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     BB\t1545253512\t1545253512\t1970-01-03T00:42:00.000000%1$s\t1970-01-03T00:42:00.000000%1$s
                     AA\t1573662097\t1573662097\t1970-01-03T00:48:00.000000%1$s\t1970-01-03T00:48:00.000000%1$s
                     AA\t339631474\t339631474\t1970-01-03T00:54:00.000000%1$s\t1970-01-03T00:54:00.000000%1$s
-                    """, leftSuffix);
+                    """);
 
             assertQuery(
                     "tag\thi\tlo\tts\tts1\n",
@@ -1006,7 +1005,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
-
             String expected = String.format("""
                     timebid\ttimeask\tb\ta
                     1970-01-01T00:00:00.000001%2$s\t1970-01-01T00:00:00.000000%1$s\t101\t100
@@ -1923,6 +1921,145 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody, "", "Fast", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysMultiPartition() throws Exception {
+        // Data spans multiple days/partitions to verify SymbolTranslatingRecord
+        // works correctly when the time-frame cursor advances across partitions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-02T10:00:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-03T10:00:00.000000Z'),
+                        ('A', 'X', 4.0, '2024-01-04T10:00:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', 'Y', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('B', 'X', 30.0, '2024-01-02T09:00:00.000000Z'),
+                        ('A', 'X', 40.0, '2024-01-03T09:00:00.000000Z')
+                    """);
+
+            // (A,X) at day1 matches slave (A,X) at day1
+            // (A,Y) at day2 matches slave (A,Y) at day1
+            // (B,X) at day3 matches slave (B,X) at day2
+            // (A,X) at day4 matches slave (A,X) at day3 (most recent)
+            String expected = """
+                    sym1\tsym2\tval\tprice
+                    A\tX\t1.0\t10.0
+                    A\tY\t2.0\t20.0
+                    B\tX\t3.0\t30.0
+                    A\tX\t4.0\t40.0
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysNotUsedForNonStaticSymbol() throws Exception {
+        // Negative EXPLAIN test: symbolKeyJoin must NOT appear when one side
+        // has a non-static symbol table (e.g., produced by a subquery).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('B', 'Y', 2.0, '2024-01-01T10:01:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', 'X', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 'Y', 20.0, '2024-01-01T09:30:00.000000Z')
+                    """);
+
+            // Slave wrapped in a subquery that casts both symbols — produces non-static symbol tables
+            String query = "SELECT m.sym1, m.sym2, m.val, s.price FROM master m "
+                    + "ASOF JOIN (SELECT sym1::STRING::SYMBOL AS sym1, sym2::STRING::SYMBOL AS sym2, price, ts FROM slave) s "
+                    + "ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinTwoSymbolKeysNotUsedForSelfJoin() throws Exception {
+        // Negative EXPLAIN test: symbolKeyJoin must NOT appear for multi-symbol
+        // self-joins, since master and slave share the same symbol table.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('BTC-USD', 'sell', '2024-01-01T00:00:00.000000Z', 1),
+                        ('BTC-USD', 'buy', '2024-01-01T00:00:01.000000Z', 2),
+                        ('ETH-USD', 'sell', '2024-01-01T00:00:02.000000Z', 3)
+                    """);
+
+            // ASOF self-join on two symbol keys
+            String query = "SELECT * FROM trades t1 ASOF JOIN trades t2 ON(pair, side)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+
+            // LT self-join on two symbol keys
+            query = "SELECT * FROM trades t1 LT JOIN trades t2 ON(pair, side)";
+            printSql("EXPLAIN " + query);
+            TestUtils.assertNotContains(sink, "symbolKeyJoin");
         });
     }
 
@@ -2857,8 +2994,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                           ) ON (Ticker)
                         ) ON (Ticker)
                         """;
-                String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-                String expected = String.format("""
+                String expected = getString("""
                         Ticker\tts\tTicker1\tts1\tTicker11\tts11\tTicker111\tts111
                         AAPL\t2000-01-01T00:00:00.000000%1$s\t\t\t\t\t\t
                         AAPL\t2001-01-01T00:00:00.000000%1$s\tAAPL\t2000-01-01T00:00:00.000000%1$s\t\t\t\t
@@ -2866,7 +3002,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         AAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s\tAAPL\t2001-01-01T00:00:00.000000%1$s\tAAPL\t2000-01-01T00:00:00.000000%1$s
                         AAPL\t2004-01-01T00:00:00.000000%1$s\tAAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s\tAAPL\t2001-01-01T00:00:00.000000%1$s
                         AAPL\t2005-01-01T00:00:00.000000%1$s\tAAPL\t2004-01-01T00:00:00.000000%1$s\tAAPL\t2003-01-01T00:00:00.000000%1$s\tAAPL\t2002-01-01T00:00:00.000000%1$s
-                        """, leftSuffix);
+                        """);
                 assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
@@ -3182,9 +3318,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
             execute("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
 
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-
-            String expected = String.format("""
+            String expected = getString("""
                     ts\tSequenceNumber\tSequenceNumber1\tcolumn
                     2021-07-26T02:36:02.566000%1$s\t1\tnull\tnull
                     2021-07-26T02:36:03.094000%1$s\t2\t1\t1
@@ -3194,7 +3328,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     2021-07-26T02:36:03.097000%1$s\t6\t2\t4
                     2021-07-26T02:36:03.098000%1$s\t7\t6\t1
                     2021-07-26T02:36:03.098000%1$s\t8\t6\t2
-                    """, leftSuffix);
+                    """);
             String query = "select w1.ts ts, w1.SequenceNumber, w2.SequenceNumber, w1.SequenceNumber - w2.SequenceNumber from tank w1 lt join tank w2";
             printSqlResult(expected, query, "ts", false, true);
         });
@@ -3386,8 +3520,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLtJoinKeyed() throws Exception {
-        String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-        final String expected = String.format("""
+        final String expected = getString("""
                 tag\thi\tlo\tts\tts1
                 AA\t315515118\tnull\t1970-01-03T00:00:00.000000%1$s\t
                 BB\t-727724771\tnull\t1970-01-03T00:06:00.000000%1$s\t
@@ -3399,7 +3532,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 BB\t1545253512\t-1575378703\t1970-01-03T00:42:00.000000%1$s\t1970-01-03T00:36:00.000000%1$s
                 AA\t1573662097\t-847531048\t1970-01-03T00:48:00.000000%1$s\t1970-01-03T00:24:00.000000%1$s
                 AA\t339631474\t1573662097\t1970-01-03T00:54:00.000000%1$s\t1970-01-03T00:48:00.000000%1$s
-                """, leftSuffix);
+                """);
         executeWithRewriteTimestamp(
                 """
                         create table tab (
@@ -3461,7 +3594,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
             String rightSuffix = getTimestampSuffix(rightTableTimestampType.getTypeName());
-
             String expected = String.format("""
                     timebid\ttimeask\tb\ta
                     1970-01-01T00:00:00.000000%2$s\t\t101\tnull
@@ -3911,8 +4043,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // insert
             execute("insert into tab values ('CC', 24, 210000::timestamp)");
             execute("insert into tab values ('CC', 25, 220000::timestamp)");
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-            String ex = String.format("""
+            String ex = getString("""
                     tag\tx\tts
                     AA\t1\t1970-01-01T00:00:00.000000%1$s
                     AA\t2\t1970-01-01T00:00:00.010000%1$s
@@ -3936,7 +4067,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     AA\t20\t1970-01-01T00:00:00.190000%1$s
                     CC\t24\t1970-01-01T00:00:00.210000%1$s
                     CC\t25\t1970-01-01T00:00:00.220000%1$s
-                    """, leftSuffix);
+                    """);
             String query = "tab";
             printSqlResult(ex, query, "ts", true, true);
             // test
@@ -3968,8 +4099,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // insert
             execute("insert into tab values ('CC', 24, 210000::timestamp)");
             execute("insert into tab values ('CC', 25, 220000::timestamp)");
-            String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
-            String ex = String.format("""
+            String ex = getString("""
                     tag\tx\tts
                     AA\t1\t1970-01-01T00:00:00.000000%1$s
                     AA\t2\t1970-01-01T00:00:00.010000%1$s
@@ -3993,7 +4123,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     AA\t20\t1970-01-01T00:00:00.190000%1$s
                     CC\t24\t1970-01-01T00:00:00.210000%1$s
                     CC\t25\t1970-01-01T00:00:00.220000%1$s
-                    """, leftSuffix);
+                    """);
             String query = "tab";
             printSqlResult(ex, query, "ts", true, true);
             // test
@@ -5066,6 +5196,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
         printSql("select * from " + leftTable + " asof join " + rightTable + " on s", actualSink);
 
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private @NotNull String getString(String format) {
+        String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());
+        return String.format(format, leftSuffix);
     }
 
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
