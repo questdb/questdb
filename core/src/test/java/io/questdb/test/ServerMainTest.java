@@ -500,7 +500,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "'cairo.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', 'cairo.sql.copy.export.root', " +
                                     "'wal.apply.worker.count', 'export.worker.count', 'mat.view.refresh.worker.count', 'view.compiler.worker.count', " +
-                                    "'http.export.connection.limit'" +
+                                    "'http.export.connection.limit', 'cairo.mat.view.parallel.sql.enabled'" +
                                     ") order by 1",
                             actualSink
                     );
@@ -899,7 +899,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.mat.view.refresh.oom.retry.timeout\tQDB_CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.insert.as.select.batch.size\tQDB_CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE\t1000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.rows.per.query.estimate\tQDB_CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE\t1000000\tdefault\tfalse\ttrue\n" +
-                                    "cairo.mat.view.parallel.sql.enabled\tQDB_CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.max.refresh.intervals\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS\t100\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.max.refresh.step\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_STEP\t31536000000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.refresh.intervals.update.period\tQDB_CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD\t15000\tdefault\tfalse\tfalse\n" +
@@ -959,9 +958,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.select.cache.enabled\tQDB_PG_SELECT_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "pg.select.cache.row.count\tQDB_PG_SELECT_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.send.buffer.size\tQDB_PG_SEND_BUFFER_SIZE\t1048576\tdefault\tfalse\ttrue\n" +
-                                    "pg.update.cache.block.count\tQDB_PG_UPDATE_CACHE_BLOCK_COUNT\t4\tdefault\tfalse\tfalse\n" +
-                                    "pg.update.cache.enabled\tQDB_PG_UPDATE_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
-                                    "pg.update.cache.row.count\tQDB_PG_UPDATE_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.user\tQDB_PG_USER\tadmin\tdefault\tfalse\ttrue\n" +
                                     "pg.worker.affinity\tQDB_PG_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.count\tQDB_PG_WORKER_COUNT\t0\tdefault\tfalse\tfalse\n" +

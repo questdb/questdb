@@ -3,18 +3,20 @@ mod common;
 use arrow::array::{Array, StringArray};
 use common::encode::{
     build_qdb_string_data, generate_nulls, make_string_column, read_parquet_batches, write_parquet,
-    EncodeEncoding, ALL_NULL_PATTERNS,
+    ALL_NULL_PATTERNS,
 };
 use common::types::strings::expected_str_value;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::schema::Partition;
 
+use crate::common::Encoding;
+
 const COUNT: usize = 1_000;
 
-const STRING_ENCODINGS: [EncodeEncoding; 3] = [
-    EncodeEncoding::Plain,
-    EncodeEncoding::RleDictionary,
-    EncodeEncoding::DeltaLengthByteArray,
+const STRING_ENCODINGS: [Encoding; 3] = [
+    Encoding::Plain,
+    Encoding::RleDictionary,
+    Encoding::DeltaLengthByteArray,
 ];
 
 #[test]

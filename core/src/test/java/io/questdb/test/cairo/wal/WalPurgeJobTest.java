@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
@@ -56,6 +58,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
@@ -338,6 +341,152 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             removePendingFile(tableToken);
             drainPurgeJob();
             assertExistence(false, tableToken);
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataNpeForDroppedTable() throws Exception {
+        // Regression test for a race where WalPurgeJob calls getTableMetadata()
+        // for a table that is concurrently dropped. A concurrent drop can close
+        // the metadata pool tenant's txFile during refresh, causing NPE rather
+        // than CairoException. fetchSequencerPairs() must catch NPE for dropped
+        // tables and return gracefully.
+        //
+        // We simulate this by clearing the metadata pool cache and intercepting
+        // FilesFacade.openRO: when the pool tries to re-create the metadata
+        // tenant, we drop the table and throw NPE.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldFail = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldFail.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    // Simulate concurrent drop: drop the table, then throw NPE
+                    // like what happens when the metadata pool tenant's txFile
+                    // is closed during a concurrent drop's notifyDropped().
+                    try {
+                        execute("drop table " + testName.getMethodName());
+                    } catch (Exception ignored) {
+                    }
+                    throw new NullPointerException("simulated: txFile is null during concurrent drop");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+
+            // Clear metadata pool so next getTableMetadata() creates a fresh tenant,
+            // which goes through FilesFacade (openRO for _meta file) where we intercept.
+            engine.releaseAllReaders();
+
+            shouldFail.set(true);
+
+            // This should not throw despite the NPE during metadata access:
+            // fetchSequencerPairs catches NPE, detects the table is dropped, and returns.
+            drainPurgeJob();
+            drainWalQueue();
+            engine.releaseAllWalWriters();
+            drainPurgeJob();
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataNpeForNonDroppedTableRethrows() throws Exception {
+        // When getTableMetadata() throws NPE and the table is NOT dropped,
+        // fetchSequencerPairs() re-throws. NPE bypasses the CairoException
+        // catch in forAllWalTables(), so it propagates to the caller.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldFail = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldFail.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    throw new NullPointerException("simulated: non-drop-related NPE");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+            engine.releaseAllReaders();
+            shouldFail.set(true);
+
+            // NPE must propagate because the table is not dropped.
+            try {
+                drainPurgeJob();
+                Assert.fail("Expected NullPointerException to propagate");
+            } catch (NullPointerException e) {
+                TestUtils.assertContains(e.getMessage(), "simulated");
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableMetadataPoolSlotReleasedAfterNpe() throws Exception {
+        // When newTenant() in AbstractMultiTenantPool.get0() throws a
+        // non-CairoException, the pool slot must be released so subsequent
+        // getTableMetadata() calls can succeed.
+        String tableDirName = testName.getMethodName() + "~1";
+        AtomicBoolean shouldThrowNpe = new AtomicBoolean(false);
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ path) {
+                if (shouldThrowNpe.compareAndSet(true, false)
+                        && Utf8s.containsAscii(path, tableDirName)
+                        && Utf8s.endsWithAscii(path, META_FILE_NAME)) {
+                    throw new NullPointerException("simulated: pool slot leak test");
+                }
+                return super.openRO(path);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(5)" +
+                    ") timestamp(ts) partition by DAY WAL");
+
+            drainWalQueue();
+            engine.releaseAllReaders();
+            shouldThrowNpe.set(true);
+
+            // First call throws NPE during tenant creation in get0().
+            TableToken tableToken = engine.verifyTableName(tableName);
+            try {
+                engine.getTableMetadata(tableToken).close();
+                Assert.fail("Expected NullPointerException");
+            } catch (NullPointerException e) {
+                Assert.assertTrue(e.getMessage().contains("simulated"));
+            }
+
+            // Second call must succeed, proving the pool slot was released
+            // by the Throwable catch in get0() and not permanently leaked.
+            try (var metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertTrue(metadata.getColumnCount() > 0);
+            }
         });
     }
 
@@ -1234,7 +1383,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     static void addColumn(WalWriter writer, String columnName) {
-        writer.addColumn(columnName, ColumnType.INT);
+        writer.addColumn(columnName, ColumnType.INT, AllowAllSecurityContext.INSTANCE);
     }
 
     private static class DeletionEvent {
@@ -1253,8 +1402,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
         @Override
         public boolean equals(Object obj) {
-            if (obj instanceof DeletionEvent) {
-                DeletionEvent other = (DeletionEvent) obj;
+            if (obj instanceof DeletionEvent other) {
                 return walId == other.walId && Objects.equals(segmentId, other.segmentId);
             }
             return false;

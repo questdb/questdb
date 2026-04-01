@@ -706,9 +706,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgSelectCacheEnabled;
     private int pgSelectCacheRowCount;
     private int pgSendBufferSize;
-    private int pgUpdateCacheBlockCount;
-    private boolean pgUpdateCacheEnabled;
-    private int pgUpdateCacheRowCount;
     private String pgUsername;
     private int[] pgWorkerAffinity;
     private int pgWorkerCount;
@@ -1415,9 +1412,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
-                this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
-                this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 4);
-                this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 4);
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
@@ -1968,7 +1962,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);
-            this.matViewParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, true);
+            this.matViewParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, cpuAvailable >= 4);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
@@ -3067,6 +3061,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL);
             registerDeprecated(PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE);
             registerDeprecated(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED);
+            registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ENABLED);
+            registerDeprecated(PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT);
+            registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ROW_COUNT);
         }
 
         public ValidationResult validate(Properties properties) {
@@ -6261,16 +6258,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getUpdateCacheBlockCount() {
-            return pgUpdateCacheBlockCount;
-        }
-
-        @Override
-        public int getUpdateCacheRowCount() {
-            return pgUpdateCacheRowCount;
-        }
-
-        @Override
         public int[] getWorkerAffinity() {
             return pgWorkerAffinity;
         }
@@ -6313,11 +6300,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSelectCacheEnabled() {
             return pgSelectCacheEnabled;
-        }
-
-        @Override
-        public boolean isUpdateCacheEnabled() {
-            return pgUpdateCacheEnabled;
         }
 
         @Override

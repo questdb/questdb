@@ -81,6 +81,14 @@ public class WalLockerFuzzTest {
             tables[t] = createToken("fuzz_table_" + t);
         }
 
+        // Pre-generate per-thread seeds on the main thread to avoid a data
+        // race on the shared Rnd (Rnd is not thread-safe).
+        final long[][] threadSeeds = new long[numThreads][2];
+        for (int i = 0; i < numThreads; i++) {
+            threadSeeds[i][0] = rnd.nextLong();
+            threadSeeds[i][1] = rnd.nextLong();
+        }
+
         final CountDownLatch startLatch = new CountDownLatch(1);
         final CountDownLatch doneLatch = new CountDownLatch(numThreads);
         final AtomicReference<Throwable> error = new AtomicReference<>();
@@ -90,7 +98,7 @@ public class WalLockerFuzzTest {
             new Thread(() -> {
                 try {
                     startLatch.await();
-                    Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
+                    Rnd threadRnd = new Rnd(threadSeeds[threadId][0], threadSeeds[threadId][1]);
 
                     for (int op = 0; op < operationsPerThread && error.get() == null; op++) {
                         int tableIdx = threadRnd.nextInt(numTables);

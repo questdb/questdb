@@ -1,0 +1,20 @@
+# name: test/parquet/stale_qdb_metadata.test
+# description: read_parquet discards stale QDB metadata when schema length mismatches data columns
+# group: [parquet]
+
+require parquet
+
+# The file has 2 data columns (ts, value) but 3-column QDB metadata
+# [ts(timestamp), category(varchar), value(double)]. Without the fix,
+# column 1 (value/Double) would be decoded as Varchar from stale
+# metadata, causing "encoding not supported" error.
+
+query TR
+SELECT * FROM read_parquet('data/parquet-testing/stale_qdb_meta.parquet')
+----
+2024-01-01 00:00:00 42.500000
+
+query I
+SELECT count() FROM read_parquet('data/parquet-testing/stale_qdb_meta.parquet')
+----
+1

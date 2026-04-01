@@ -232,36 +232,41 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             boolean symbolCacheFlag,
             byte indexType,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            SecurityContext securityContext
     ) {
-        addColumn(
+        alterOp.clear();
+        alterOp.ofAddColumn(
+                getMetadata().getTableId(),
+                tableToken,
+                0,
                 columnName,
+                0,
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
                 indexType,
                 indexValueBlockCapacity,
-                isDedupKey,
-                null
+                isDedupKey
         );
+        alterOp.withSecurityContext(securityContext);
+        apply(alterOp, true);
     }
 
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        try {
-            if (alterOp.isStructural()) {
-                return applyStructural(alterOp);
-            } else {
-                return applyNonStructural(alterOp, false);
-            }
-        } finally {
-            alterOp.clearSecurityContext();
+        alterOp.authorize();
+        if (alterOp.isStructural()) {
+            return applyStructural(alterOp);
+        } else {
+            return applyNonStructural(alterOp, false);
         }
     }
 
     // Returns table transaction number
     @Override
     public long apply(UpdateOperation operation) {
+        operation.authorize();
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot update table with uncommitted inserts [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -456,12 +461,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    public long renameTable(@NotNull CharSequence oldName, String newTableName) {
+    public long renameTable(@NotNull CharSequence oldName, String newTableName, SecurityContext securityContext) {
         if (!Chars.equalsIgnoreCaseNc(oldName, tableToken.getTableName())) {
             throw CairoException.tableDoesNotExist(oldName);
         }
         alterOp.clear();
         alterOp.ofRenameTable(tableToken, newTableName);
+        alterOp.withSecurityContext(securityContext);
         long txn = apply(alterOp, true);
         assert Chars.equals(newTableName, tableToken.getTableName());
         return txn;
@@ -662,34 +668,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private static int getDataColumnOffset(int columnIndex) {
         return columnIndex * 2;
-    }
-
-    private void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            byte indexType,
-            int indexValueBlockCapacity,
-            boolean isDedupKey,
-            SecurityContext securityContext
-    ) {
-        alterOp.clear();
-        alterOp.ofAddColumn(
-                getMetadata().getTableId(),
-                tableToken,
-                0,
-                columnName,
-                0,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                indexType,
-                indexValueBlockCapacity,
-                isDedupKey
-        );
-        alterOp.withSecurityContext(securityContext);
-        apply(alterOp, true);
     }
 
     private void applyMetadataChangeLog(long structureVersionHi) {

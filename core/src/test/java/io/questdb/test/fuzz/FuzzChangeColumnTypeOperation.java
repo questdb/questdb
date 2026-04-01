@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -87,7 +88,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         return switch (columnType) {
             case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR, ColumnType.BYTE, ColumnType.BOOLEAN,
                  ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE,
-                 ColumnType.DATE, ColumnType.TIMESTAMP -> true;
+                 ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO -> true;
             default -> false;
         };
     }
@@ -104,7 +105,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                     throw new UnsupportedOperationException("Unsupported column type to generate type change: " + columnType);
         };
     }
-
 
     public static RecordMetadata generateColumnTypeChange(
             ObjList<FuzzTransaction> transactionList,
@@ -176,7 +176,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         builder.addColumnToList(columName, 0, newColumnType, symbolCapacity, cacheSymbolMap,
                 indexType, indexValueBlockCapacity, false);
         AlterOperation alterOp = builder.build();
-        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)
+        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {
             alterOp.withContext(context);
             wApi.apply(alterOp, true);

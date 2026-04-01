@@ -51,6 +51,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
@@ -2360,7 +2361,7 @@ public class CheckpointTest extends AbstractCairoTest {
             // WalWriter.applyMetadataChangeLog should be triggered
             try (WalWriter walWriter1 = getWalWriter(tableName)) {
                 try (WalWriter walWriter2 = getWalWriter(tableName)) {
-                    walWriter1.addColumn("C", ColumnType.INT);
+                    walWriter1.addColumn("C", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                     walWriter1.commit();
 
                     TableWriter.Row row = walWriter1.newRow(MicrosFormatUtils.parseTimestamp("2022-02-24T06:00:00.000000Z"));

@@ -46,6 +46,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -72,6 +73,7 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.jit.JitUtil;
@@ -1042,9 +1044,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
-        AlterOperationBuilder addColumnC = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
-        addColumnC.ofAddColumn(columnName, 1, columnType, 0, false, IndexType.NONE, 0);
-        writer.apply(addColumnC.build(), true);
+        AlterOperationBuilder addColumnBuilder = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
+        addColumnBuilder.ofAddColumn(columnName, 1, columnType, 0, false, IndexType.NONE, 0);
+        AlterOperation addColumnOp = addColumnBuilder.build();
+        addColumnOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+        writer.apply(addColumnOp, true);
     }
 
     protected static void assertCursor(

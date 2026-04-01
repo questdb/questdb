@@ -38,6 +38,7 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
@@ -292,9 +293,9 @@ public class ReaderPoolTest extends AbstractCairoTest {
                                 columnTypeChanged = false;
                                 columnRenamed = false;
                             } else if (prob >= 90 && !columnsAdded) {
-                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, IndexType.BITMAP, 256, false);
-                                writer.addColumn("int2", ColumnType.INT);
-                                writer.addColumn("bool2", ColumnType.BOOLEAN);
+                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, IndexType.BITMAP, 256, false, AllowAllSecurityContext.INSTANCE);
+                                writer.addColumn("int2", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                                writer.addColumn("bool2", ColumnType.BOOLEAN, AllowAllSecurityContext.INSTANCE);
                                 columnsAdded = true;
                             } else if (prob >= 85 && columnsAdded && !columnTypeChanged) {
                                 writer.changeColumnType("sym2", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, null);

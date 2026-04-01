@@ -40,6 +40,7 @@ import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.ConcurrentBitmapIndexFwdReader;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
@@ -760,8 +761,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         true,
                         IndexType.BITMAP,
                         indexBlockCapacity,
-                        false
-                );
+                        false,
+                        AllowAllSecurityContext.INSTANCE);
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += timestampIncrement);
                     row.putStr(0, rnd.nextChars(20));

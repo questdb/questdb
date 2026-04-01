@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalListener;
@@ -197,7 +198,7 @@ public class WalListenerTest extends AbstractCairoTest {
             );
 
             try (WalWriter walWriter2 = engine.getWalWriter(tableToken2.get())) {
-                walWriter2.addColumn("c", ColumnType.INT);
+                walWriter2.addColumn("c", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
 
                 Assert.assertEquals(
                         new WalListenerEvent(

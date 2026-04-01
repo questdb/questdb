@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalWriter;
@@ -81,7 +82,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         commitWalRows(tableToken, 200, "2022-02-24T08:00", "2022-02-24T13");
         commitWalRows(tableToken, 200, "2022-02-24T09:00", "2022-02-24T13");
-        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalPartitionDrop(tableToken);
         commitWalRows(tableToken, 200, "2022-02-24T10:00", "2022-02-24T15");
         commitWalRows(tableToken, 200, "2022-02-24T12:05", "2022-02-24T16");
         commitWalRows(tableToken, 200, "2022-02-24T13:00", "2022-02-24T18");
@@ -108,7 +109,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         commitWalRows(tableToken, 2, "2022-02-24T02:00", "2022-02-24T12");
         commitWalRows(tableToken, 3, "2022-02-24T10:00", "2022-02-24T11");
-        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalPartitionDrop(tableToken);
         commitWalRows(tableToken, 4, "2022-02-24T09:00", "2022-02-24T13"); // 4
         commitWalRows(tableToken, 5, "2022-02-24T10:00", "2022-02-24T12"); // 5
         commitWalRows(tableToken, 6, "2022-02-24T13:00", "2022-02-24T14"); // 6
@@ -174,7 +175,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         for (int i = 0; i < txnCount; i++) {
             boolean isDdl = rnd.nextDouble() < ddlProb;
             if (isDdl) {
-                commitWalPartitionDrop(tableToken, "2022-01-01");
+                commitWalPartitionDrop(tableToken);
                 minMaxTimestamps.add(Long.MAX_VALUE);
                 minMaxTimestamps.add(Long.MAX_VALUE);
             } else {
@@ -233,7 +234,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         commitWalRows(tableToken, 200, "2022-02-24T08", "2022-02-24T13");
         commitWalRows(tableToken, 200, "2022-02-24T09", "2022-02-24T13");
         commitWalRows(tableToken, 200, "2022-02-24T10", "2022-02-24T15");
-        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalPartitionDrop(tableToken);
         commitWalRows(tableToken, 200, "2022-02-24T12:05", "2022-02-24T16");
         commitWalRows(tableToken, 200, "2022-02-24T13", "2022-02-24T18");
         int startTxn;
@@ -283,7 +284,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
 
         commitWalRows(tableToken, 200, "2022-02-24T08", "2022-02-24T13");
         commitWalRows(tableToken, 200, "2022-02-24T09", "2022-02-24T13");
-        commitWalPartitionDrop(tableToken, "2022-01-01");
+        commitWalPartitionDrop(tableToken);
         commitWalRows(tableToken, 200, "2022-02-24T10", "2022-02-24T15");
         commitWalRows(tableToken, 200, "2022-02-24T12:05", "2022-02-24T16");
         commitWalRows(tableToken, 200, "2022-02-24T13", "2022-02-24T18");
@@ -348,14 +349,14 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void commitWalPartitionDrop(TableToken tableToken, String partition) {
+    private void commitWalPartitionDrop(TableToken tableToken) {
         try (WalWriter ww = engine.getWalWriter(tableToken)) {
             AlterOperationBuilder builder = new AlterOperationBuilder();
             builder.ofDropPartition(0, tableToken, tableToken.getTableId())
-                    .addPartitionToList(parseFloorPartialTimestamp(partition), 0);
+                    .addPartitionToList(parseFloorPartialTimestamp("2022-01-01"), 0);
 
             AlterOperation alterOp = builder.build();
-            alterOp.withContext(new SqlExecutionContextImpl(engine, 1));
+            alterOp.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
             ww.apply(alterOp, true);
         }
     }

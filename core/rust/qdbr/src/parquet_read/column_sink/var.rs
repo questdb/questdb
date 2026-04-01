@@ -106,7 +106,6 @@ impl<'a, T: DataPageSlicer> VarcharColumnSink<'a, T> {
 pub struct StringColumnSink<'a, T: DataPageSlicer> {
     slicer: &'a mut T,
     buffers: &'a mut ColumnChunkBuffers,
-    error: ParquetResult<()>,
 }
 
 impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
@@ -152,8 +151,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
                     .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref())?;
             }
             Err(utf8_str_err) => {
-                self.error = Err(ParquetErrorReason::Utf8Decode(utf8_str_err).into_err());
-                self.push_null()?;
+                return Err(ParquetErrorReason::Utf8Decode(utf8_str_err).into_err());
             }
         }
         Ok(())
@@ -232,7 +230,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
 
 impl<'a, T: DataPageSlicer> StringColumnSink<'a, T> {
     pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
-        Self { slicer, buffers, error: Ok(()) }
+        Self { slicer, buffers }
     }
 }
 

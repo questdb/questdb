@@ -38,6 +38,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -2031,7 +2032,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.BITMAP, 8, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.BITMAP, 8, false, AllowAllSecurityContext.INSTANCE);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2094,8 +2095,8 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                             true,
                             IndexType.BITMAP,
                             Numbers.ceilPow2(N / 4),
-                            false
-                    );
+                            false,
+                            AllowAllSecurityContext.INSTANCE);
 
                     Assert.assertTrue(reader.reload());
 
@@ -2126,7 +2127,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.BITMAP, 8, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.BITMAP, 8, false, AllowAllSecurityContext.INSTANCE);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2196,7 +2197,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertSymbolFoundInIndex(cursor, record, 4, M);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL);
+                    writer.addColumn("c", ColumnType.SYMBOL, AllowAllSecurityContext.INSTANCE);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2266,7 +2267,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     assertNoIndex(cursor, record);
 
                     writer.removeColumn("c");
-                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.BITMAP, 8, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, IndexType.BITMAP, 8, false, AllowAllSecurityContext.INSTANCE);
 
                     for (int i = 0; i < M; i++) {
                         TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2460,7 +2461,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     row.append();
                 }
 
-                writer.addColumn("a", ColumnType.SYMBOL, Numbers.ceilPow2(N / 4), true, IndexType.NONE, configuration.getIndexValueBlockSize(), false);
+                writer.addColumn("a", ColumnType.SYMBOL, Numbers.ceilPow2(N / 4), true, IndexType.NONE, configuration.getIndexValueBlockSize(), false, AllowAllSecurityContext.INSTANCE);
 
                 for (int i = 0; i < M / 2; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
