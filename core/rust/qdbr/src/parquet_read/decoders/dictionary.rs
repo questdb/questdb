@@ -219,8 +219,7 @@ impl PrimitiveDictDecoder<i32> for RleLocalIsGlobalSymbolDictDecoder {
 pub struct ConvertablePrimitiveDictDecoder<'a, U, T, V> {
     dict_page: &'a [u8],
     converter: V,
-    _u: std::marker::PhantomData<U>,
-    _t: std::marker::PhantomData<T>,
+    _phantom: std::marker::PhantomData<(U, T)>,
 }
 
 impl<U, T, V> PrimitiveDictDecoder<T> for ConvertablePrimitiveDictDecoder<'_, U, T, V>
@@ -256,8 +255,7 @@ impl<'a, U, T, V> ConvertablePrimitiveDictDecoder<'a, U, T, V> {
         Ok(Self {
             dict_page: dict_page.buffer,
             converter,
-            _u: std::marker::PhantomData,
-            _t: std::marker::PhantomData,
+            _phantom: std::marker::PhantomData,
         })
     }
 }

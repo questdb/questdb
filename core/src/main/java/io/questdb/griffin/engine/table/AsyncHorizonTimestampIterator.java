@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.std.DirectLongList;
-import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
@@ -48,7 +47,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     private final int[] heapOffsetIdx;
     private final long[] heapPos;
     private final long[] heapTs;
-    private final LongList offsets;
+    private final long[] offsets;
     private long currentHorizonTs;
     private long currentIndex;
     // Position within the filtered rows list, i.e., the compact buffer index
@@ -65,9 +64,9 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
     private long tsColumnAddress;
     private long tupleCount;
 
-    public AsyncHorizonTimestampIterator(LongList offsets) {
+    public AsyncHorizonTimestampIterator(long[] offsets) {
         this.offsets = offsets;
-        int k = offsets.size();
+        int k = offsets.length;
         this.heapTs = new long[k];
         this.heapPos = new long[k];
         this.heapOffsetIdx = new int[k];
@@ -128,7 +127,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         long nextPos = pos + 1;
         if (nextPos < masterRowCount) {
             long nextRowIdx = isFiltered ? filteredRows.get(nextPos) : (frameRowLo + nextPos);
-            long nextHorizonTs = Math.addExact(readTimestamp(nextRowIdx), offsets.getQuick(offsetIdx));
+            long nextHorizonTs = Math.addExact(readTimestamp(nextRowIdx), offsets[offsetIdx]);
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -160,7 +159,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         this.masterRowCount = frameRowCount;
         this.isFiltered = false;
         this.filteredRows = null;
-        this.tupleCount = Math.multiplyExact(frameRowCount, offsets.size());
+        this.tupleCount = Math.multiplyExact(frameRowCount, offsets.length);
         this.currentIndex = 0;
         initHeap(frameRowCount > 0 ? frameRowLo : -1, frameRowCount > 0);
     }
@@ -176,7 +175,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         this.masterRowCount = filteredRows.size();
         this.filteredRows = filteredRows;
         this.isFiltered = true;
-        this.tupleCount = Math.multiplyExact(filteredRows.size(), offsets.size());
+        this.tupleCount = Math.multiplyExact(filteredRows.size(), offsets.length);
         this.currentIndex = 0;
         initHeap(filteredRows.size() > 0 ? filteredRows.get(0) : -1, filteredRows.size() > 0);
     }
@@ -193,8 +192,8 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         heapSize = 0;
         if (hasRows) {
             long firstMasterTs = readTimestamp(firstRowIdx);
-            for (int k = 0, n = offsets.size(); k < n; k++) {
-                long horizonTs = Math.addExact(firstMasterTs, offsets.getQuick(k));
+            for (int k = 0, n = offsets.length; k < n; k++) {
+                long horizonTs = Math.addExact(firstMasterTs, offsets[k]);
                 heapInsert(horizonTs, k);
             }
         }
