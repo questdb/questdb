@@ -1673,7 +1673,8 @@ public final class TableUtils {
             CairoConfiguration configuration,
             @Nullable CharSequence bloomFilterColumns,
             double bloomFilterFpp,
-            @Nullable DirectIntList bloomFilterIndexes
+            @Nullable DirectIntList bloomFilterIndexes,
+            long squashTracker
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
@@ -1854,7 +1855,8 @@ public final class TableUtils {
                         bloomFilterColumnIndexesPtr,
                         bloomFilterColumnCount,
                         fpp,
-                        minCompressionRatio
+                        minCompressionRatio,
+                        squashTracker
                 );
                 return ff.length(other.$());
             }

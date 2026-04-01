@@ -92,6 +92,8 @@ pub struct ParquetWriter<W: Write> {
     bloom_filter_fpp: f64,
     /// Minimum compression ratio to keep compressed output
     min_compression_ratio: f64,
+    /// Partition squash tracker value to embed in QdbMeta footer (-1 = not set)
+    squash_tracker: i64,
 }
 
 impl<W: Write> ParquetWriter<W> {
@@ -113,6 +115,7 @@ impl<W: Write> ParquetWriter<W> {
             bloom_filter_columns: HashSet::new(),
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
             min_compression_ratio: 0.0,
+            squash_tracker: -1,
         }
     }
 
@@ -189,6 +192,11 @@ impl<W: Write> ParquetWriter<W> {
         self
     }
 
+    pub fn with_squash_tracker(mut self, squash_tracker: i64) -> Self {
+        self.squash_tracker = squash_tracker;
+        self
+    }
+
     fn write_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.statistics,
@@ -246,7 +254,8 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
-        let (schema, additional_meta) = to_parquet_schema(&partition, self.raw_array_encoding)?;
+        let (schema, additional_meta) =
+            to_parquet_schema(&partition, self.raw_array_encoding, self.squash_tracker)?;
         let encodings = to_encodings(&partition);
         let compressions = to_compressions(&partition);
         let mut chunked = self.chunked_with_compressions(schema, encodings, compressions)?;

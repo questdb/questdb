@@ -771,3 +771,41 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
 ) -> usize {
     offset_of!(ColumnChunkStats, max_value_size)
 }
+
+/// Reads partition metadata (row_count and squash_tracker) from a parquet file's footer.
+/// Writes row_count (i64) at dest_addr and squash_tracker (i64) at dest_addr+8.
+/// Returns JNI_TRUE on success, JNI_FALSE on error (file not found, corrupt footer, etc.).
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readPartitionMeta(
+    _env: JNIEnv,
+    _class: JClass,
+    file_path_ptr: *const u8,
+    file_path_len: i32,
+    dest_addr: i64,
+) -> jni::sys::jboolean {
+    let result = (|| -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let path_bytes = unsafe { slice::from_raw_parts(file_path_ptr, file_path_len as usize) };
+        let path_str = std::str::from_utf8(path_bytes)?;
+        let mut file = std::fs::File::open(path_str)?;
+        let file_size = file.metadata()?.len();
+        let file_metadata = parquet2::read::read_metadata_with_size(&mut file, file_size)?;
+
+        let row_count = file_metadata.num_rows as i64;
+        let squash_tracker = match crate::parquet_read::meta::extract_qdb_meta(&file_metadata) {
+            Ok(Some(meta)) => meta.squash_tracker,
+            _ => -1i64,
+        };
+
+        let dest = dest_addr as *mut i64;
+        unsafe {
+            dest.write(row_count);
+            dest.add(1).write(squash_tracker);
+        }
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => 1, // JNI_TRUE
+        Err(_) => 0, // JNI_FALSE
+    }
+}

@@ -634,7 +634,7 @@ mod tests {
         let orig_offset = buf.position();
         let metadata = read_metadata_with_size(&mut buf, orig_offset)?;
 
-        let (schema, _) = to_parquet_schema(&new_partition, false)?;
+        let (schema, _) = to_parquet_schema(&new_partition, false, -1)?;
 
         let foptions = WriteOptions {
             write_statistics: true,
@@ -908,7 +908,8 @@ mod tests {
             ],
         };
 
-        let (schema, _) = crate::parquet_write::schema::to_parquet_schema(&partition_rg0, false)?;
+        let (schema, _) =
+            crate::parquet_write::schema::to_parquet_schema(&partition_rg0, false, -1)?;
         let encodings = to_encodings(&partition_rg0);
 
         let mut bloom_cols = HashSet::new();

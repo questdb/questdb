@@ -2309,7 +2309,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.distressed = true;
     }
 
-    public boolean markPartitionParquetReady(long partitionTimestamp) {
+    public boolean markPartitionParquetReady(long partitionTimestamp, long parquetFileSize) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
@@ -2340,9 +2340,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (!ff.exists(path.$())) {
                 return false;
             }
-            final long parquetFileLength = ff.length(path.$());
-
-            txWriter.setPartitionParquetGenerated(partitionIndex, parquetFileLength);
+            txWriter.setPartitionParquetGenerated(partitionIndex, parquetFileSize);
             txWriter.bumpPartitionTableVersion();
             txWriter.commit(denseSymbolMapWriters);
             return true;
@@ -2933,7 +2931,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
     // skipped (active or already parquet), SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
-    public int switchNativePartitionWithParquet(long partitionTimestamp) {
+    public int switchNativePartitionWithParquet(long partitionTimestamp, long parquetFileSize) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
@@ -3007,7 +3005,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(", to=").put(other)
                         .put(']');
             }
-            final long parquetFileLength = ff.length(other.$());
 
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
             linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
@@ -3015,7 +3012,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion
             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
-            txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
+            txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
             txWriter.bumpPartitionTableVersion();
             txWriter.commit(denseSymbolMapWriters);
         } catch (CairoException e) {
@@ -9000,7 +8997,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 configuration,
                 bloomFilterColumns,
                 bloomFilterFpp,
-                parquetBloomFilterIndexes
+                parquetBloomFilterIndexes,
+                -1L
         );
     }
 

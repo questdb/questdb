@@ -2951,7 +2951,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
                 // switchNativePartitionWithParquet on the active partition should return SWITCH_SKIPPED
                 // without throwing an exception
-                Assert.assertEquals(TableWriter.SWITCH_SKIPPED, writer.switchNativePartitionWithParquet(activePartitionTimestamp));
+                Assert.assertEquals(TableWriter.SWITCH_SKIPPED, writer.switchNativePartitionWithParquet(activePartitionTimestamp, -1));
 
                 // Partition should remain native (not converted)
                 TxWriter txWriter = writer.getTxWriter();
