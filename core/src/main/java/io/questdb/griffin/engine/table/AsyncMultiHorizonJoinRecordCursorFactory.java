@@ -84,7 +84,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
     private final RecordCursorFactory masterFactory;
     private final long[] offsets;
     private final ObjList<Function> recordFunctions;
-    private final RecordCursorFactory[] slaveFactories;
+    private final ObjList<RecordCursorFactory> slaveFactories;
     private final int workerCount;
 
     public AsyncMultiHorizonJoinRecordCursorFactory(
@@ -127,9 +127,9 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
             this.recordFunctions = recordFunctions;
             this.workerCount = workerCount;
 
-            this.slaveFactories = new RecordCursorFactory[slaveStates.size()];
+            this.slaveFactories = new ObjList<>(slaveStates.size());
             for (int i = 0; i < slaveStates.size(); i++) {
-                slaveFactories[i] = slaveStates.getQuick(i).getFactory();
+                slaveFactories.add(slaveStates.getQuick(i).getFactory());
             }
 
             final AsyncMultiHorizonJoinAtom atom = new AsyncMultiHorizonJoinAtom(
@@ -203,14 +203,14 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         sink.type("Async Multi Horizon Join");
         sink.meta("workers").val(workerCount);
         sink.meta("offsets").val(offsets.length);
-        sink.meta("tables").val(slaveFactories.length);
+        sink.meta("tables").val(slaveFactories.size());
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
         sink.child(masterFactory);
-        for (int i = 0, n = slaveFactories.length; i < n; i++) {
-            sink.child(slaveFactories[i]);
+        for (int i = 0, n = slaveFactories.size(); i < n; i++) {
+            sink.child(slaveFactories.getQuick(i));
         }
     }
 
@@ -555,7 +555,7 @@ public class AsyncMultiHorizonJoinRecordCursorFactory extends AbstractRecordCurs
         Misc.free(frameSequence);
         Misc.free(cursor);
         Misc.free(masterFactory);
-        Misc.free(slaveFactories);
+        Misc.freeObjList(slaveFactories);
         Misc.free(horizonJoinMetadata);
         // recordFunctions includes groupByFunctions (same object references)
         Misc.freeObjList(recordFunctions);
