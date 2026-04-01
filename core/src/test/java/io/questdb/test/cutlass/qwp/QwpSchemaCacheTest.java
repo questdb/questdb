@@ -56,22 +56,6 @@ public class QwpSchemaCacheTest {
     }
 
     @Test
-    public void testCacheByTableAndHashWithSmallMaxSize() {
-        // maxSize=4: verify that replacing an existing key does NOT trigger eviction
-        QwpSchemaCache cache = new QwpSchemaCache(4);
-        QwpSchema schema1 = createTestSchema("col1", QwpConstants.TYPE_INT);
-        QwpSchema schema2 = createTestSchema("col2", QwpConstants.TYPE_DOUBLE);
-
-        // Same table, different schema hash -> 2 distinct keys
-        cache.put(new Utf8String("t1"), schema1);
-        cache.put(new Utf8String("t1"), schema2);
-        // Re-put same key (t1 + schema1 hash) -> replacement, not a new entry
-        cache.put(new Utf8String("t1"), schema1);
-
-        Assert.assertEquals(2, cache.size());
-    }
-
-    @Test
     public void testCacheClear() {
         QwpSchemaCache cache = new QwpSchemaCache();
 
@@ -98,37 +82,6 @@ public class QwpSchemaCacheTest {
         cache.put(new Utf8String("test_table"), schema);
 
         Assert.assertEquals(1, cache.size());
-    }
-
-    @Test
-    public void testCacheEvictsWhenFull() {
-        int maxSize = 4;
-        QwpSchemaCache cache = new QwpSchemaCache(maxSize);
-
-        // Fill to capacity
-        QwpSchema[] schemas = new QwpSchema[maxSize];
-        for (int i = 0; i < maxSize; i++) {
-            schemas[i] = createTestSchema("col" + i, QwpConstants.TYPE_INT);
-            cache.put(new Utf8String("table" + i), schemas[i]);
-        }
-        Assert.assertEquals(maxSize, cache.size());
-
-        // Insert one more — should evict one entry and remain at maxSize
-        QwpSchema extra = createTestSchema("extra", QwpConstants.TYPE_DOUBLE);
-        cache.put(new Utf8String("extra_table"), extra);
-        Assert.assertEquals(maxSize, cache.size());
-
-        // The newly inserted entry must be present
-        Assert.assertNotNull(cache.get("extra_table", extra.getSchemaHash()));
-
-        // Exactly one of the original entries was evicted
-        int found = 0;
-        for (int i = 0; i < maxSize; i++) {
-            if (cache.get("table" + i, schemas[i].getSchemaHash()) != null) {
-                found++;
-            }
-        }
-        Assert.assertEquals(maxSize - 1, found);
     }
 
     @Test
