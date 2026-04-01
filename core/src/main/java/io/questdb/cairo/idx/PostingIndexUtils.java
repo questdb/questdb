@@ -1061,6 +1061,8 @@ public final class PostingIndexUtils {
                 ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, columnVersion, c));
             }
         }
+        // Remove distinct keys file (.pd) if present
+        ff.removeQuiet(distinctKeysFileName(path.trimTo(pathTrimTo), columnName, columnVersion));
     }
 
     public static int readCoverCountFromInfoFile(FilesFacade ff, LPSZ pciFilePath) {
@@ -1127,4 +1129,17 @@ public final class PostingIndexUtils {
         }
         return path.$();
     }
+
+    public static LPSZ distinctKeysFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pd");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
+    // .pd file header
+    public static final int PD_MAGIC = 0x5044_5f50; // "PD_P"
+    public static final int PD_VERSION = 1;
+    public static final int PD_HEADER_SIZE = 16; // magic(4) + version(4) + keyCount(4) + bitmapBytes(4)
 }

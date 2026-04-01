@@ -69,6 +69,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     // drop column, column indices will shift.
     private final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<ObjList<CharSequence>> augmentedCoveringNames = new LowerCaseCharSequenceObjHashMap<>();
+    private final boolean autoIncludeTimestamp;
     private final LowerCaseCharSequenceIntHashMap colNameToCastClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToDedupClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToIndexClausePos = new LowerCaseCharSequenceIntHashMap();
@@ -116,6 +117,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             String sqlText,
             boolean needRegister
     ) {
+        this.autoIncludeTimestamp = false;
         this.selectText = selectText;
         this.tableName = tableName;
         this.partitionBy = partitionBy;
@@ -144,6 +146,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.partitionByPosition = partitionByPosition;
         this.volumeAlias = volumeAlias;
         this.volumePosition = volumePosition;
+        this.autoIncludeTimestamp = false;
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
         this.ignoreIfExists = ignoreIfExists;
@@ -171,8 +174,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int maxUncommittedRows,
             int ttlHoursOrMonths,
             int ttlPosition,
-            boolean walEnabled
+            boolean walEnabled,
+            boolean autoIncludeTimestamp
     ) throws SqlException {
+        this.autoIncludeTimestamp = autoIncludeTimestamp;
         this.sqlText = sqlText;
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
@@ -198,7 +203,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     model.getParquetEncodingConfig()
             );
         }
-        resolveCoveringColumnIndices(columnNames, createColumnModelMap);
+        resolveCoveringColumnIndices(columnNames, createColumnModelMap, timestampIndex);
         // this is a vanilla "create table" with fixed columns and fixed timestamp index
         this.timestampColumnName = null;
         this.timestampColumnNamePosition = 0;
@@ -265,8 +270,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             long batchSize,
             long batchO3MaxLag,
-            int tableKind
+            int tableKind,
+            boolean autoIncludeTimestamp
     ) {
+        this.autoIncludeTimestamp = autoIncludeTimestamp;
         this.sqlText = sqlText;
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
@@ -812,6 +819,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 for (int j = 0, m = coverNames.size(); j < m; j++) {
                     indices[j] = metadata.getColumnIndexQuiet(coverNames.get(j));
                 }
+                if (autoIncludeTimestamp && timestampIndex >= 0
+                        && getIndexType(i) == IndexType.POSTING) {
+                    indices = maybeAppendTimestamp(indices, timestampIndex);
+                }
                 coveringColumnIndicesList.add(indices);
             } else {
                 coveringColumnIndicesList.add(null);
@@ -819,9 +830,22 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         }
     }
 
+    private static int[] maybeAppendTimestamp(int[] indices, int timestampIndex) {
+        for (int idx : indices) {
+            if (idx == timestampIndex) {
+                return indices;
+            }
+        }
+        int[] extended = new int[indices.length + 1];
+        System.arraycopy(indices, 0, extended, 0, indices.length);
+        extended[indices.length] = timestampIndex;
+        return extended;
+    }
+
     private void resolveCoveringColumnIndices(
             ObjList<CharSequence> allColumnNames,
-            LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> modelMap
+            LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> modelMap,
+            int timestampIndex
     ) throws SqlException {
         coveringColumnIndicesList.clear();
         LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
@@ -834,21 +858,27 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             if (coverNames.size() > 0) {
                 int[] indices = new int[coverNames.size()];
                 for (int j = 0, m = coverNames.size(); j < m; j++) {
-                    int idx = nameToIndex.get(coverNames.get(j));
+                    CharSequence covName = coverNames.get(j);
+                    int idx = nameToIndex.get(covName);
                     if (idx < 0) {
                         throw SqlException.position(0)
-                                .put("INCLUDE column doesn't exist [column=").put(coverNames.get(j)).put(']');
+                                .put("INCLUDE column doesn't exist [column=").put(covName).put(']');
                     }
-                    CreateTableColumnModel covModel = modelMap.get(coverNames.get(j));
-                    int covType = covModel.getColumnType();
-                    int covTag = ColumnType.tagOf(covType);
-                    if (covTag == ColumnType.BINARY || covTag == ColumnType.LONG256
-                            || covTag == ColumnType.UUID || ColumnType.isArray(covType)) {
+                    if (idx == i) {
                         throw SqlException.position(0)
-                                .put("INCLUDE column type is not supported [column=")
-                                .put(coverNames.get(j)).put(", type=").put(ColumnType.nameOf(covTag)).put(']');
+                                .put("INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                    }
+                    for (int k = 0; k < j; k++) {
+                        if (indices[k] == idx) {
+                            throw SqlException.position(0)
+                                    .put("duplicate column in INCLUDE [column=").put(covName).put(']');
+                        }
                     }
                     indices[j] = idx;
+                }
+                if (autoIncludeTimestamp && timestampIndex >= 0
+                        && model.getIndexType() == IndexType.POSTING) {
+                    indices = maybeAppendTimestamp(indices, timestampIndex);
                 }
                 coveringColumnIndicesList.add(indices);
             } else {

@@ -95,4 +95,21 @@ public interface BitmapIndexReader extends Closeable {
     );
 
     void reloadConditionally();
+
+    /**
+     * Returns the native address of the delta-encoded distinct key IDs for this partition,
+     * or 0 if unavailable. Each entry is a 4-byte int delta from the previous key.
+     * Reconstruct absolute key IDs via prefix-sum.
+     * The buffer contains {@link #getDistinctKeyCount()} entries.
+     */
+    default long getDistinctKeysAddr() {
+        return 0;
+    }
+
+    /**
+     * Returns the number of distinct keys, or -1 if unavailable.
+     */
+    default int getDistinctKeyCount() {
+        return -1;
+    }
 }

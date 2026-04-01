@@ -90,6 +90,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             SqlExecutionContext sqlExecutionContext,
             CharSequence sqlText
     ) throws SqlException {
+        boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -113,7 +114,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     columnModels,
                     batchSize,
                     batchO3MaxLag,
-                    tableKind
+                    tableKind,
+                    autoIncludeTs
             );
         }
 
@@ -152,7 +154,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
-                walEnabled
+                walEnabled,
+                autoIncludeTs
         );
     }
 

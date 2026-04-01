@@ -24,7 +24,9 @@
 
 package io.questdb.cairo.idx;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -32,6 +34,18 @@ import io.questdb.std.str.Utf8Sequence;
  * stored in sidecar files alongside the posting list.
  */
 public interface CoveringRowCursor extends RowCursor {
+
+    default ArrayView getCoveredArray(int includeIdx, int columnType) {
+        return null;
+    }
+
+    default BinarySequence getCoveredBin(int includeIdx) {
+        return null;
+    }
+
+    default long getCoveredBinLen(int includeIdx) {
+        return -1;
+    }
 
     byte getCoveredByte(int includeIdx);
 
@@ -42,6 +56,30 @@ public interface CoveringRowCursor extends RowCursor {
     int getCoveredInt(int includeIdx);
 
     long getCoveredLong(int includeIdx);
+
+    default long getCoveredLong128Lo(int includeIdx) {
+        return Long.MIN_VALUE;
+    }
+
+    default long getCoveredLong128Hi(int includeIdx) {
+        return Long.MIN_VALUE;
+    }
+
+    default long getCoveredLong256_0(int includeIdx) {
+        return Long.MIN_VALUE;
+    }
+
+    default long getCoveredLong256_1(int includeIdx) {
+        return Long.MIN_VALUE;
+    }
+
+    default long getCoveredLong256_2(int includeIdx) {
+        return Long.MIN_VALUE;
+    }
+
+    default long getCoveredLong256_3(int includeIdx) {
+        return Long.MIN_VALUE;
+    }
 
     short getCoveredShort(int includeIdx);
 
@@ -104,4 +142,13 @@ public interface CoveringRowCursor extends RowCursor {
      * Returns -1 if the cursor has no rows.
      */
     long seekToLast();
+
+    /**
+     * Iterates backward from the last row, checking the filter on covered
+     * values via the record, and returns the first matching row ID (the
+     * latest matching row). Returns -1 if no rows match.
+     */
+    default long seekToLastMatching(io.questdb.cairo.sql.Function filter, io.questdb.cairo.sql.Record record) {
+        return seekToLast();
+    }
 }

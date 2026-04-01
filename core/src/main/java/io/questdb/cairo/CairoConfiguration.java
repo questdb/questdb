@@ -490,6 +490,10 @@ public interface CairoConfiguration {
         return 0.0;
     }
 
+    default boolean isPostingIndexAutoIncludeTimestamp() {
+        return true;
+    }
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();

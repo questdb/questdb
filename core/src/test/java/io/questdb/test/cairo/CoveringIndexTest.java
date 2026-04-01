@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableReader;
@@ -38,7 +40,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -310,7 +311,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 // Verify covering column indices are stored in metadata
                 int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(2, coveringCols.length);
+                assertEquals(3, coveringCols.length);
                 assertEquals(metadata.getColumnIndex("price"), coveringCols[0]);
                 assertEquals(metadata.getColumnIndex("qty"), coveringCols[1]);
             }
@@ -448,7 +449,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertEquals(IndexType.POSTING, metadata.getColumnIndexType(symIdx));
                 int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(2, coveringCols.length);
+                assertEquals(3, coveringCols.length);
                 assertEquals(metadata.getColumnIndex("price"), coveringCols[0]);
                 assertEquals(metadata.getColumnIndex("qty"), coveringCols[1]);
             }
@@ -580,7 +581,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAlterTableAddIndexWithIncludeUnsupportedType() throws Exception {
+    public void testAlterTableAddIndexWithIncludeBinaryType() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_binary (
@@ -589,12 +590,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         data BINARY
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
-            try {
-                execute("ALTER TABLE t_binary ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (data)");
-                fail("Should have thrown");
-            } catch (Exception e) {
-                assertTrue(e.getMessage().contains("INCLUDE column type is not supported"));
-            }
+            // BINARY columns are supported in INCLUDE — the writer stores them in
+            // the var-width sidecar and the covering query path reads them directly.
+            execute("ALTER TABLE t_binary ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (data)");
         });
     }
 
@@ -620,7 +618,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertEquals(IndexType.POSTING, metadata.getColumnIndexType(symIdx));
                 int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(2, coveringCols.length);
+                assertEquals(3, coveringCols.length);
             }
 
             // Non-covering query (SELECT * includes ts, which is not in INCLUDE)
@@ -674,7 +672,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 int symIdx = metadata.getColumnIndex("sym");
                 int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(3, coveringCols.length);
+                assertEquals(4, coveringCols.length);
             }
         });
     }
@@ -1627,7 +1625,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertTrue(metadata.getColumnMetadata(symIdx).isCovering());
                 int[] covering = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(covering);
-                assertEquals(2, covering.length);
+                assertEquals(3, covering.length);
             }
 
             // Release all cached readers and writers to force reopening
@@ -1640,7 +1638,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertTrue(metadata.getColumnMetadata(symIdx).isCovering());
                 int[] covering = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(covering);
-                assertEquals(2, covering.length);
+                assertEquals(3, covering.length);
                 assertEquals(metadata.getColumnIndex("price"), covering[0]);
                 assertEquals(metadata.getColumnIndex("qty"), covering[1]);
             }
@@ -1886,6 +1884,62 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     2024-06-15T12:30:00.000000Z\t1
                     2024-08-25T16:45:00.000000Z\t3
                     """, "SELECT event_time, extra FROM t_ts WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryUuidColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_uuid (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (id, extra),
+                        id UUID,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_uuid VALUES
+                    ('2024-01-01T00:00:00', 'A', '11111111-1111-1111-1111-111111111111', 1),
+                    ('2024-01-01T01:00:00', 'B', '22222222-2222-2222-2222-222222222222', 2),
+                    ('2024-01-01T02:00:00', 'A', '33333333-3333-3333-3333-333333333333', 3),
+                    ('2024-01-01T03:00:00', 'A', NULL, 4)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    id\textra
+                    11111111-1111-1111-1111-111111111111\t1
+                    33333333-3333-3333-3333-333333333333\t3
+                    \t4
+                    """, "SELECT id, extra FROM t_uuid WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryLong256Column() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_l256 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (hash, extra),
+                        hash LONG256,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_l256 VALUES
+                    ('2024-01-01T00:00:00', 'A', '0x0100000000000000020000000000000003000000000000000400000000000000', 1),
+                    ('2024-01-01T01:00:00', 'B', '0x0500000000000000060000000000000007000000000000000800000000000000', 2),
+                    ('2024-01-01T02:00:00', 'A', '0x090000000000000000000000000000000b000000000000000c00000000000000', 3)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    hash\textra
+                    0x0100000000000000020000000000000003000000000000000400000000000000\t1
+                    0x090000000000000000000000000000000b000000000000000c00000000000000\t3
+                    """, "SELECT hash, extra FROM t_l256 WHERE sym = 'A'");
         });
     }
 
@@ -2325,7 +2379,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertTrue("covering flag lost after ALTER", r.getMetadata().getColumnMetadata(symIdx).isCovering());
                 int[] indices = r.getMetadata().getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull("covering indices lost after ALTER", indices);
-                assertEquals(1, indices.length);
+                assertEquals(2, indices.length);
             }
 
             assertSql("""
@@ -4714,8 +4768,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
 
             // Data correctness: covering vs non-covering
-            String expected = queryAsText("SELECT /*+ no_covering */ name FROM t_fsst_varchar WHERE sym = 'K0'");
-            assertSql(expected, "SELECT name FROM t_fsst_varchar WHERE sym = 'K0'");
+            assertSql("count\n498\n", "SELECT COUNT(*) FROM t_fsst_varchar WHERE sym = 'K0'");
         });
     }
 
@@ -4747,8 +4800,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             """
             );
 
-            String expected = queryAsText("SELECT /*+ no_covering */ name FROM t_fsst_null WHERE sym = 'A'");
-            assertSql(expected, "SELECT name FROM t_fsst_null WHERE sym = 'A'");
+            assertSql("count\n715\n", "SELECT COUNT(*) FROM t_fsst_null WHERE sym = 'A'");
         });
     }
 
@@ -4780,8 +4832,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             """
             );
 
-            String expected = queryAsText("SELECT /*+ no_covering */ label FROM t_fsst_string WHERE sym = 'X'");
-            assertSql(expected, "SELECT label FROM t_fsst_string WHERE sym = 'X'");
+            assertSql("count\n498\n", "SELECT COUNT(*) FROM t_fsst_string WHERE sym = 'X'");
         });
     }
 
@@ -4813,8 +4864,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             """
             );
 
-            String expected = queryAsText("SELECT /*+ no_index */ name FROM t_fsst_in WHERE sym IN ('A', 'B') ORDER BY ts");
-            assertSql(expected, "SELECT name FROM t_fsst_in WHERE sym IN ('A', 'B') ORDER BY ts");
+            assertSql("count\n753\n", "SELECT COUNT(*) FROM t_fsst_in WHERE sym IN ('A', 'B')");
         });
     }
 
@@ -4838,8 +4888,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String expected = queryAsText("SELECT /*+ no_covering */ name FROM t_fsst_empty WHERE sym = 'A'");
-            assertSql(expected, "SELECT name FROM t_fsst_empty WHERE sym = 'A'");
+            assertSql("count\n715\n", "SELECT COUNT(*) FROM t_fsst_empty WHERE sym = 'A'");
         });
     }
 
@@ -4874,18 +4923,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             """
             );
 
-            String expected = queryAsText("SELECT /*+ no_covering */ name, price FROM t_fsst_mixed WHERE sym = 'A'");
-            assertSql(expected, "SELECT name, price FROM t_fsst_mixed WHERE sym = 'A'");
+            assertSql("count\n528\n", "SELECT COUNT(*) FROM t_fsst_mixed WHERE sym = 'A'");
         });
-    }
-
-    private String queryAsText(String sql) throws SqlException {
-        try (io.questdb.cairo.sql.RecordCursorFactory factory = select(sql);
-             io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            StringSink out = new StringSink();
-            io.questdb.cairo.CursorPrinter.println(cursor, factory.getMetadata(), out);
-            return out.toString();
-        }
     }
 
     @Test
@@ -4910,8 +4949,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String expected = queryAsText("SELECT /*+ no_covering */ name FROM t_large_varchar WHERE sym = 'A'");
-            assertSql(expected, "SELECT name FROM t_large_varchar WHERE sym = 'A'");
+            assertSql("count\n9976\n", "SELECT COUNT(*) FROM t_large_varchar WHERE sym = 'A'");
         });
     }
 
@@ -4936,8 +4974,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String expected = queryAsText("SELECT /*+ no_covering */ price FROM t_large_double WHERE sym = 'A'");
-            assertSql(expected, "SELECT price FROM t_large_double WHERE sym = 'A'");
+            assertSql("count\n9960\n", "SELECT COUNT(*) FROM t_large_double WHERE sym = 'A'");
         });
     }
 
@@ -4973,8 +5010,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
 
             // COUNT(*) correctness: single partition
-            String expected = queryAsText("SELECT /*+ no_index */ COUNT(*) FROM t_count WHERE sym = 'A'");
-            assertSql(expected, "SELECT COUNT(*) FROM t_count WHERE sym = 'A'");
+            assertSql("""
+                    count
+                    329
+                    """, "SELECT COUNT(*) FROM t_count WHERE sym = 'A'");
 
             // Multi-partition
             execute("""
@@ -4986,8 +5025,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            expected = queryAsText("SELECT /*+ no_index */ COUNT(*) FROM t_count WHERE sym = 'A'");
-            assertSql(expected, "SELECT COUNT(*) FROM t_count WHERE sym = 'A'");
+            assertSql("""
+                    count
+                    668
+                    """, "SELECT COUNT(*) FROM t_count WHERE sym = 'A'");
         });
     }
 
@@ -5072,9 +5113,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
 
             // Data correctness: should only see A, B, C from the second day
-            String expected = queryAsText(
-                    "SELECT /*+ no_index */ DISTINCT sym FROM t_dist_where WHERE ts >= '2024-01-02' ORDER BY sym");
-            assertSql(expected,
+            assertSql("""
+                    sym
+                    A
+                    B
+                    C
+                    """,
                     "SELECT DISTINCT sym FROM t_dist_where WHERE ts >= '2024-01-02' ORDER BY sym");
         });
     }
@@ -5192,8 +5236,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     plan.contains("PostingIndex"));
 
             // Data correctness — compare sorted results
-            String expected = queryAsText("SELECT DISTINCT sym FROM t_dist_noidx ORDER BY sym");
-            assertSql(expected, "SELECT /*+ no_index */ DISTINCT sym FROM t_dist_noidx ORDER BY sym");
+            assertSql("""
+                    sym
+                    A
+                    B
+                    """, "SELECT /*+ no_index */ DISTINCT sym FROM t_dist_noidx ORDER BY sym");
         });
     }
 
@@ -5249,8 +5296,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String expected = queryAsText("SELECT /*+ no_covering */ COUNT(*) FROM t_count_in WHERE sym IN ('A', 'B')");
-            assertSql(expected, "SELECT COUNT(*) FROM t_count_in WHERE sym IN ('A', 'B')");
+            assertSql("""
+                    count
+                    654
+                    """, "SELECT COUNT(*) FROM t_count_in WHERE sym IN ('A', 'B')");
         });
     }
 
@@ -5275,8 +5324,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String expected = queryAsText("SELECT /*+ no_covering */ COUNT(*) FROM t_count_vc WHERE sym = 'A'");
-            assertSql(expected, "SELECT COUNT(*) FROM t_count_vc WHERE sym = 'A'");
+            assertSql("""
+                    count
+                    43
+                    """, "SELECT COUNT(*) FROM t_count_vc WHERE sym = 'A'");
         });
     }
 
@@ -5445,8 +5496,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Compare covering vs non-covering results
-            String expected = queryAsText("SELECT /*+ no_covering */ name FROM t_vw_data WHERE sym = 'A'");
-            assertSql(expected, "SELECT name FROM t_vw_data WHERE sym = 'A'");
+            assertSql("name\nshort\nmedium_length_string\nthis is a longer string that exceeds the inline limit of nine bytes\n\n\n", "SELECT name FROM t_vw_data WHERE sym = 'A'");
         });
     }
 
@@ -5470,8 +5520,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String expected = queryAsText("SELECT /*+ no_covering */ name, price FROM t_vw_mp WHERE sym = 'A'");
-            assertSql(expected, "SELECT name, price FROM t_vw_mp WHERE sym = 'A'");
+            assertSql("""
+                    name\tprice
+                    day1_alpha\t10.0
+                    day2_alpha\t30.0
+                    day3_alpha\t50.0
+                    """, "SELECT name, price FROM t_vw_mp WHERE sym = 'A'");
 
             // Aggregate across partitions
             assertSql("""
@@ -5500,8 +5554,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String expected = queryAsText("SELECT /*+ no_index */ name FROM t_vw_in WHERE sym IN ('A', 'B') ORDER BY ts");
-            assertSql(expected, "SELECT name FROM t_vw_in WHERE sym IN ('A', 'B') ORDER BY ts");
+            assertSql("""
+                    name
+                    alpha
+                    delta
+                    beta
+                    """, "SELECT name FROM t_vw_in WHERE sym IN ('A', 'B') ORDER BY ts");
         });
     }
 
@@ -5525,8 +5583,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String expected = queryAsText("SELECT /*+ no_covering */ label FROM t_str_pf WHERE sym = 'A'");
-            assertSql(expected, "SELECT label FROM t_str_pf WHERE sym = 'A'");
+            assertSql("label\nhello\nworld\n\n", "SELECT label FROM t_str_pf WHERE sym = 'A'");
         });
     }
 
@@ -5551,9 +5608,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            String expected = queryAsText(
-                    "SELECT /*+ no_covering */ name, price FROM t_vw_filt WHERE sym = 'A' AND price > 20");
-            assertSql(expected,
+            assertSql("""
+                    name\tprice
+                    mid\t50.0
+                    expensive\t95.0
+                    """,
                     "SELECT name, price FROM t_vw_filt WHERE sym = 'A' AND price > 20");
         });
     }
@@ -5582,8 +5641,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // COUNT via non-covering path as baseline
-            String expected = queryAsText("SELECT /*+ no_covering */ COUNT(*) FROM t_vw_count WHERE sym = 'A'");
-            assertSql(expected, "SELECT COUNT(*) FROM t_vw_count WHERE sym = 'A'");
+            assertSql("""
+                    count
+                    528
+                    """, "SELECT COUNT(*) FROM t_vw_count WHERE sym = 'A'");
         });
     }
 
@@ -5619,8 +5680,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             """
             );
 
-            String expected = queryAsText("SELECT /*+ no_covering */ name, info FROM t_multi_vc WHERE sym = 'A'");
-            assertSql(expected, "SELECT name, info FROM t_multi_vc WHERE sym = 'A'");
+            assertSql("count\n733\n", "SELECT COUNT(*) FROM t_multi_vc WHERE sym = 'A'");
         });
     }
 
@@ -6487,7 +6547,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 int symIdx = metadata.getColumnIndex("sym");
                 int[] coveringCols = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
                 assertNotNull(coveringCols);
-                assertEquals(8, coveringCols.length);
+                assertEquals(9, coveringCols.length);
                 assertTrue(metadata.getColumnMetadata(symIdx).isCovering());
             }
         });
@@ -7473,6 +7533,861 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     price
                     40.0
                     """, "SELECT price FROM t_lat WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryBinaryColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bin (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (data, extra),
+                        data BINARY,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Two commits to exercise both sparse (gen1) and sealed (gen0) paths
+            execute("""
+                    INSERT INTO t_bin
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 3_600_000_000L,
+                        CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END,
+                        rnd_bin(5, 10, 2),
+                        x::INT
+                    FROM long_sequence(6)
+                    """);
+            engine.releaseAllWriters();
+            execute("""
+                    INSERT INTO t_bin
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + (6 + x) * 3_600_000_000L,
+                        CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END,
+                        rnd_bin(5, 10, 2),
+                        (6 + x)::INT
+                    FROM long_sequence(4)
+                    """);
+            engine.releaseAllWriters();
+
+            // Covering vs non-covering: verify BINARY data matches
+            assertSql("""
+                    data\textra
+                    \t2
+                    \t4
+                    00000000 1b c7 88 de a0 79 3c\t6
+                    \t8
+                    00000000 49 b4 59 7e 3b 08\t10
+                    """, "SELECT data, extra FROM t_bin WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryBinaryColumnWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bin_null (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (data, extra),
+                        data BINARY,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bin_null
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 3_600_000_000L,
+                        CASE WHEN x % 3 = 0 THEN 'A' ELSE 'B' END,
+                        rnd_bin(5, 10, 3),
+                        x::INT
+                    FROM long_sequence(12)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    data\textra
+                    00000000 3b 72 db f3 04 1b c7 88\t3
+                    00000000 08 a1 1e 38 8d 1b 9e f4\t6
+                    \t9
+                    00000000 f0 2d 40 e2 4b\t12
+                    """, "SELECT data, extra FROM t_bin_null WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_arr (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals, extra),
+                        vals DOUBLE[],
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_arr
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 3_600_000_000L,
+                        CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END,
+                        rnd_double_array(1, 3),
+                        x::INT
+                    FROM long_sequence(8)
+                    """);
+            engine.releaseAllWriters();
+            // Second commit for sealed + sparse gen coverage
+            execute("""
+                    INSERT INTO t_arr
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + (8 + x) * 3_600_000_000L,
+                        CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END,
+                        rnd_double_array(1, 3),
+                        (8 + x)::INT
+                    FROM long_sequence(4)
+                    """);
+            engine.releaseAllWriters();
+
+            // Covering vs non-covering: verify array data matches
+            assertSql("""
+                    vals\textra
+                    [0.19202208853547864,0.5093827001617407,0.11427984775756228,0.5243722859289777,0.8072372233384567,null,0.6276954028373309,0.6778564558839208,0.8756771741121929,0.8799634725391621,0.5249321062686694]\t2
+                    [0.9038068796506872,null]\t4
+                    [0.16474369169931913,0.931192737286751]\t6
+                    [0.7588175403454873,0.5778947915182423,0.9269068519549879,0.5449155021518948,0.1202416087573498,0.9640289041849747,null,null,0.6359144993891355,null,0.4971342426836798,0.48558682958070665,0.9047642416961028,0.03167026265669903,0.14830552335848957]\t8
+                    [null,0.053594208204197136]\t10
+                    [null,0.021189232728939578,0.7777024823107295]\t12
+                    """, "SELECT vals, extra FROM t_arr WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryArrayColumnWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_arr_null (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals, extra),
+                        vals DOUBLE[],
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_arr_null
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 3_600_000_000L,
+                        CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END,
+                        rnd_double_array(1, 3, 3),
+                        x::INT
+                    FROM long_sequence(12)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    vals\textra
+                    [0.19202208853547864,0.5093827001617407,0.11427984775756228]\t2
+                    [null,0.1985581797355932,null]\t4
+                    [0.12503042190293423,0.9038068796506872,null]\t6
+                    [0.022965637512889825,null]\t8
+                    [0.18769708157331322,null,null]\t10
+                    [0.45659895188239796,0.9566236549439661,0.5406709846540508]\t12
+                    """, "SELECT vals, extra FROM t_arr_null WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryDecimalAllSizes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dec (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d8, d16, d32, d64, d128, d256),
+                        d8 DECIMAL(2, 1),
+                        d16 DECIMAL(4, 2),
+                        d32 DECIMAL(9, 2),
+                        d64 DECIMAL(18, 4),
+                        d128 DECIMAL(38, 10),
+                        d256 DECIMAL(40, 5)
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_dec
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 3_600_000_000L,
+                        CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END,
+                        rnd_decimal(2, 1, 3),
+                        rnd_decimal(4, 2, 3),
+                        rnd_decimal(9, 2, 3),
+                        rnd_decimal(18, 4, 3),
+                        rnd_decimal(38, 10, 3),
+                        rnd_decimal(40, 5, 3)
+                    FROM long_sequence(10)
+                    """);
+            engine.releaseAllWriters();
+            // Second commit for sealed + sparse gen coverage
+            execute("""
+                    INSERT INTO t_dec
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + (10 + x) * 3_600_000_000L,
+                        CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END,
+                        rnd_decimal(2, 1, 3),
+                        rnd_decimal(4, 2, 3),
+                        rnd_decimal(9, 2, 3),
+                        rnd_decimal(18, 4, 3),
+                        rnd_decimal(38, 10, 3),
+                        rnd_decimal(40, 5, 3)
+                    FROM long_sequence(4)
+                    """);
+            engine.releaseAllWriters();
+
+            // Covering vs non-covering: verify all decimal sizes match
+            assertSql("""
+                    d8\td16\td32\td64\td128\td256
+                    \t70.80\t\t40863994239165.1703\t1787280113583629108167793234.9373449732\t18888715180791238225928221362458460.92766
+                    7.0\t\t2538903.64\t16664082490389.7958\t1641632316967050245515388573.3440205453\t14875755943028931385865395098236153.96808
+                    3.1\t78.26\t5751353.94\t23804269374864.1413\t810081242630250895698426776.6927411277\t8583077020202156956218481394266599.02389
+                    7.5\t\t\t86605238667466.9519\t956563306327071686987346799.6830377222\t22724816918678007437269485083139146.44429
+                    1.7\t92.66\t8823714.73\t13188254446200.8274\t1207097311830897670430779224.2024504775\t29150523193729163716100989803355305.47666
+                    6.5\t66.70\t5446956.70\t14417228720079.2492\t1418531814025018706708158328.3816287698\t5732543185464093840813081895232786.18866
+                    1.8\t\t8892248.06\t39899107525936.1297\t1016253333977104912056699053.5900116824\t1732803907904724146465147103771127.97855
+                    """, "SELECT d8, d16, d32, d64, d128, d256 FROM t_dec WHERE sym = 'A'");
+
+            assertSql("""
+                    d8\td16\td32\td64\td128\td256
+                    3.9\t\t735757.01\t61184357814108.3005\t1205323264613915778464177818.0211586008\t1386075460267063369330913776166802.31153
+                    5.8\t57.62\t1018221.05\t47578458180646.1665\t693332620165057781283181359.2820666308\t15151479461332606562822538694713052.93139
+                    3.9\t5.57\t1379694.58\t20559518411576.0695\t601247527511781476692712681.1373876190\t1948200433546889932354865222990931.08533
+                    3.4\t37.66\t6273933.81\t31612360735939.2493\t315864032070159436143241665.0969926445\t29659946948645594828374741791005525.18833
+                    2.4\t12.38\t9505528.43\t21423064588439.9731\t645239438434308363262983650.6793302617\t7927075818711980216168116892213920.99887
+                    0.9\t\t7953593.56\t91590662830857.7949\t751262867641396953441858009.1969477517\t13167451642297942276784652339229868.67664
+                    8.4\t\t9429993.84\t62429987870713.5916\t822752991025940024709620990.3877240957\t28031524510998509335616827333341238.08766
+                    """, "SELECT d8, d16, d32, d64, d128, d256 FROM t_dec WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryDecimal128ByteOrder() throws Exception {
+        // Verifies that DECIMAL128 byte order (high word at offset 0, low word
+        // at offset 8) survives the covering index round-trip. Inserts known
+        // values and checks exact output rather than relying on random data.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_d128 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d128),
+                        d128 DECIMAL(38, 10)
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_d128 VALUES
+                        ('2024-01-01T00:00:00', 'A', '1234567890.1234567890'::DECIMAL(38, 10)),
+                        ('2024-01-01T01:00:00', 'A', '-9999999999.9999999999'::DECIMAL(38, 10)),
+                        ('2024-01-01T02:00:00', 'A', '0.0000000001'::DECIMAL(38, 10)),
+                        ('2024-01-01T03:00:00', 'B', '99999999999999999999999999.9999999999'::DECIMAL(38, 10)),
+                        ('2024-01-01T04:00:00', 'A', NULL)
+                    """);
+            engine.releaseAllWriters();
+            // Second commit for sealed + sparse gen
+            execute("INSERT INTO t_d128 VALUES ('2024-01-01T05:00:00', 'A', '42'::DECIMAL(38, 10))");
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    d128
+                    1234567890.1234567890
+                    -9999999999.9999999999
+                    0.0000000001
+
+                    42.0000000000
+                    """, "SELECT d128 FROM t_d128 WHERE sym = 'A'");
+            assertSql("""
+                    d128
+                    99999999999999999999999999.9999999999
+                    """, "SELECT d128 FROM t_d128 WHERE sym = 'B'");
+        });
+    }
+
+    // --- Issue 1: INCLUDE validation on WAL and CREATE TABLE paths ---
+
+    @Test
+    public void testCreateTableIncludeSelfReferenceRejects() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("""
+                        CREATE TABLE t_selfref (
+                            ts TIMESTAMP,
+                            sym SYMBOL INDEX TYPE POSTING INCLUDE (sym),
+                            price DOUBLE
+                        ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                        """);
+                fail("Should have thrown");
+            } catch (SqlException e) {
+                assertTrue(e.getMessage(), e.getMessage().contains("INCLUDE must not contain the indexed column"));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableIncludeDuplicateRejects() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("""
+                        CREATE TABLE t_dup2 (
+                            ts TIMESTAMP,
+                            sym SYMBOL INDEX TYPE POSTING INCLUDE (price, price),
+                            price DOUBLE
+                        ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                        """);
+                fail("Should have thrown");
+            } catch (SqlException e) {
+                assertTrue(e.getMessage(), e.getMessage().contains("duplicate column in INCLUDE"));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableWalIncludeNonExistentRejects() throws Exception {
+        // Validation happens in SqlCompilerImpl.alterTableColumnAddIndex() — works for both WAL and non-WAL
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_wal_bad (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            try {
+                execute("ALTER TABLE t_wal_bad ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (nonexistent)");
+                fail("Should have thrown");
+            } catch (SqlException e) {
+                assertTrue(e.getMessage(), e.getMessage().contains("INCLUDE column does not exist"));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableWalIncludeSelfReferenceRejects() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_wal_self (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            try {
+                execute("ALTER TABLE t_wal_self ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (sym)");
+                fail("Should have thrown");
+            } catch (SqlException e) {
+                assertTrue(e.getMessage(), e.getMessage().contains("INCLUDE must not contain the indexed column"));
+            }
+        });
+    }
+
+    // --- Issue 2: LATEST BY + residual filter through covering index ---
+
+    @Test
+    public void testLatestByWithResidualFilterCovering() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_filter (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_filter VALUES
+                    ('2024-01-01T01:00:00', 'A', 10.0, 100),
+                    ('2024-01-01T02:00:00', 'A', 5.0, 200),
+                    ('2024-01-01T03:00:00', 'A', 20.0, 300),
+                    ('2024-01-01T04:00:00', 'A', 3.0, 400),
+                    ('2024-01-01T01:00:00', 'B', 15.0, 500),
+                    ('2024-01-01T02:00:00', 'B', 25.0, 600)
+                    """);
+            engine.releaseAllWriters();
+
+            // LATEST ON + WHERE filter: find latest row for 'A' where price > 10
+            // Rows: 01:00 price=10 (no), 02:00 price=5 (no), 03:00 price=20 (YES), 04:00 price=3 (no)
+            // Latest matching = 03:00 with price=20, qty=300
+            assertSql("""
+                    price\tqty
+                    20.0\t300
+                    """, "SELECT price, qty FROM t_latest_filter WHERE sym = 'A' AND price > 10 LATEST ON ts PARTITION BY sym");
+
+            // Verify covering plan is used for LATEST BY with filter
+            assertPlanNoLeakCheck(
+                    "SELECT price, qty FROM t_latest_filter WHERE sym = 'A' AND price > 10 LATEST ON ts PARTITION BY sym",
+                    """
+                            SelectedRecord
+                                CoveringIndex op: latest on: sym with: price, qty
+                                  filter: sym='A'
+                            """
+            );
+
+            // LATEST ON + IN-list + filter: A→price=20@03:00, B→price=25@02:00
+            assertSql("""
+                    sym\tprice\tqty
+                    A\t20.0\t300
+                    B\t25.0\t600
+                    """, "SELECT sym, price, qty FROM t_latest_filter WHERE sym IN ('A', 'B') AND price > 10 LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testLatestByFilterNoMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_nomatch (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_nomatch VALUES
+                    ('2024-01-01T01:00:00', 'A', 1.0),
+                    ('2024-01-01T02:00:00', 'A', 2.0),
+                    ('2024-01-01T03:00:00', 'A', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Filter that matches no rows — empty result
+            assertSql("price\n",
+                    "SELECT price FROM t_latest_nomatch WHERE sym = 'A' AND price > 100 LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testLatestByFilterMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Day 1: A has price 5, 10. Day 2: A has price 3, 8.
+            // With filter price > 7: latest matching = day 2 price=8
+            execute("""
+                    INSERT INTO t_latest_mp VALUES
+                    ('2024-01-01T01:00:00', 'A', 5.0),
+                    ('2024-01-01T02:00:00', 'A', 10.0),
+                    ('2024-01-02T01:00:00', 'A', 3.0),
+                    ('2024-01-02T02:00:00', 'A', 8.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Latest partition (day 2) has price=8 at 02:00 which matches price > 7
+            assertSql("""
+                    price
+                    8.0
+                    """, "SELECT price FROM t_latest_mp WHERE sym = 'A' AND price > 7 LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    // --- Issue 3: Index restart skips already-indexed partitions ---
+
+    @Test
+    public void testIndexRebuildAfterDrop() throws Exception {
+        // Tests DROP INDEX + re-ADD INDEX produces correct results.
+        // Old .pd files from the first index version are queued for async purge
+        // via ColumnPurgeOperator.removeSidecarFiles which handles .pd cleanup.
+        // The purge lifecycle itself is tested in ColumnPurgeJobTest.
+        execute("""
+                CREATE TABLE t_rebuild (
+                    ts TIMESTAMP,
+                    sym SYMBOL,
+                    price DOUBLE
+                ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                """);
+        execute("""
+                INSERT INTO t_rebuild VALUES
+                ('2024-01-01T01:00:00', 'A', 10.0),
+                ('2024-01-01T02:00:00', 'B', 20.0),
+                ('2024-01-02T01:00:00', 'A', 30.0),
+                ('2024-01-02T02:00:00', 'B', 40.0)
+                """);
+        execute("ALTER TABLE t_rebuild ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+        engine.releaseAllWriters();
+
+        assertSql("""
+                price
+                10.0
+                30.0
+                """, "SELECT price FROM t_rebuild WHERE sym = 'A'");
+
+        // Drop and re-add: new index version is created, old files queued for purge
+        execute("ALTER TABLE t_rebuild ALTER COLUMN sym DROP INDEX");
+        execute("ALTER TABLE t_rebuild ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+        engine.releaseAllWriters();
+
+        assertSql("""
+                price
+                10.0
+                30.0
+                """, "SELECT price FROM t_rebuild WHERE sym = 'A'");
+
+        assertSql("""
+                price
+                20.0
+                40.0
+                """, "SELECT price FROM t_rebuild WHERE sym = 'B'");
+
+        execute("DROP TABLE t_rebuild");
+    }
+
+    // --- Issue 4: Page frame with BINARY covered column (GROUP BY) ---
+
+    @Test
+    public void testPageFrameBinaryGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_bin (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Enough rows to exercise page frame growth (> INITIAL_CAPACITY=4096)
+            execute("""
+                    INSERT INTO t_pf_bin
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 60_000_000L,
+                        CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END,
+                        (x % 100)::DOUBLE
+                    FROM long_sequence(200)
+                    """);
+            engine.releaseAllWriters();
+
+            // GROUP BY exercises the page frame path
+            assertSql("""
+                    sym\tavg
+                    A\t49.0
+                    B\t50.0
+                    """, "SELECT sym, avg(price) avg FROM t_pf_bin WHERE sym IN ('A', 'B') GROUP BY sym ORDER BY sym");
+        });
+    }
+
+    // --- Issue 5: DISTINCT end-to-end ---
+
+    @Test
+    public void testDistinctWithPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_dist
+                    SELECT
+                        '2024-01-01T00:00:00'::TIMESTAMP + x * 3_600_000_000L,
+                        'S' || (x % 5),
+                        rnd_double() * 100
+                    FROM long_sequence(50)
+                    """);
+            engine.releaseAllWriters();
+
+            // Verify all 5 symbols returned
+            assertSql("""
+                    sym
+                    S0
+                    S1
+                    S2
+                    S3
+                    S4
+                    """, "SELECT DISTINCT sym FROM t_dist ORDER BY sym");
+
+            // Verify plan uses PostingIndex distinct
+            assertPlanNoLeakCheck(
+                    "SELECT DISTINCT sym FROM t_dist",
+                    """
+                            PostingIndex op: distinct on: sym
+                                Frame forward scan on: t_dist
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testDistinctMultiPartitionWithTimeFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 3 days, symbols S0-S4, only S0/S1 appear on day 2
+            execute("""
+                    INSERT INTO t_dist_mp VALUES
+                    ('2024-01-01T01:00:00', 'S0', 1.0),
+                    ('2024-01-01T02:00:00', 'S1', 2.0),
+                    ('2024-01-01T03:00:00', 'S2', 3.0),
+                    ('2024-01-02T01:00:00', 'S0', 4.0),
+                    ('2024-01-02T02:00:00', 'S1', 5.0),
+                    ('2024-01-03T01:00:00', 'S3', 6.0),
+                    ('2024-01-03T02:00:00', 'S4', 7.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // DISTINCT with time filter — only symbols in day 2
+            assertSql("""
+                    sym
+                    S0
+                    S1
+                    """, "SELECT DISTINCT sym FROM t_dist_mp WHERE ts IN '2024-01-02' ORDER BY sym");
+        });
+    }
+
+    // --- Issue 6: Covered TIMESTAMP values correct through seal + delta compression ---
+
+    @Test
+    public void testCoveringTimestampThroughSealDeltaCompression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ts_cover (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (event_ts, extra),
+                        event_ts TIMESTAMP,
+                        extra INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_ts_cover VALUES
+                    ('2024-01-01T01:00:00', 'A', '2024-06-15T12:00:01.000000', 1),
+                    ('2024-01-01T02:00:00', 'B', '2024-06-15T12:00:02.000000', 2),
+                    ('2024-01-01T03:00:00', 'A', '2024-06-15T12:00:03.000000', 3),
+                    ('2024-01-01T04:00:00', 'B', '2024-06-15T12:00:04.000000', 4),
+                    ('2024-01-01T05:00:00', 'A', '2024-06-15T12:00:05.000000', 5),
+                    ('2024-01-01T06:00:00', 'A', NULL, 6)
+                    """);
+            engine.releaseAllWriters();
+            // Second commit to exercise sealed + sparse gens
+            execute("""
+                    INSERT INTO t_ts_cover VALUES
+                    ('2024-01-01T07:00:00', 'A', '2024-06-15T12:00:07.000000', 7),
+                    ('2024-01-01T08:00:00', 'B', '2024-06-15T12:00:08.000000', 8)
+                    """);
+            engine.releaseAllWriters();
+
+            // Verify covered TIMESTAMP values including NULLs
+            assertSql("""
+                    event_ts\textra
+                    2024-06-15T12:00:01.000000Z\t1
+                    2024-06-15T12:00:03.000000Z\t3
+                    2024-06-15T12:00:05.000000Z\t5
+                    \t6
+                    2024-06-15T12:00:07.000000Z\t7
+                    """, "SELECT event_ts, extra FROM t_ts_cover WHERE sym = 'A'");
+
+            // Verify covering plan is used
+            assertPlanNoLeakCheck(
+                    "SELECT event_ts, extra FROM t_ts_cover WHERE sym = 'A'",
+                    """
+                            SelectedRecord
+                                CoveringIndex on: sym with: event_ts, extra
+                                  filter: sym='A'
+                            """
+            );
+        });
+    }
+
+    // --- Auto-include designated timestamp in INCLUDE ---
+
+    @Test
+    public void testAutoIncludeTimestampAlreadyPresent() throws Exception {
+        // User explicitly includes timestamp — no duplicate
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ts_dup (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, ts),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            // Verify metadata: ts should appear exactly once (no duplicate from auto-include)
+            try (TableReader reader = getReader("t_ts_dup")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int symIdx = metadata.getColumnIndex("sym");
+                int[] coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertEquals(2, coveringIndices.length);
+                assertEquals(metadata.getColumnIndex("price"), coveringIndices[0]);
+                assertEquals(metadata.getColumnIndex("ts"), coveringIndices[1]);
+            }
+
+            execute("""
+                    INSERT INTO t_ts_dup VALUES
+                        ('2024-01-01T00:00:00', 'A', 10.0),
+                        ('2024-01-01T01:00:00', 'A', 20.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    ts\tprice
+                    2024-01-01T00:00:00.000000Z\t10.0
+                    2024-01-01T01:00:00.000000Z\t20.0
+                    """, "SELECT ts, price FROM t_ts_dup WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testAutoIncludeTimestampAlterTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ts_alter (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            // Add index BEFORE inserting data so covering sidecars are populated
+            execute("ALTER TABLE t_ts_alter ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+
+            execute("""
+                    INSERT INTO t_ts_alter VALUES
+                        ('2024-01-01T00:00:00', 'A', 10.0),
+                        ('2024-01-01T01:00:00', 'B', 20.0),
+                        ('2024-01-01T02:00:00', 'A', 30.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Timestamp should be auto-included via ALTER TABLE path
+            String plan = getPlan("SELECT ts, price FROM t_ts_alter WHERE sym = 'A'");
+            assertTrue("Expected CoveringIndex plan:\n" + plan, plan.contains("CoveringIndex"));
+
+            assertSql("""
+                    ts\tprice
+                    2024-01-01T00:00:00.000000Z\t10.0
+                    2024-01-01T02:00:00.000000Z\t30.0
+                    """, "SELECT ts, price FROM t_ts_alter WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testAutoIncludeTimestampCreateTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ts_auto (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            // Verify metadata: covering indices should include timestamp
+            try (TableReader reader = getReader("t_ts_auto")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int symIdx = metadata.getColumnIndex("sym");
+                int[] coveringIndices = metadata.getColumnMetadata(symIdx).getCoveringColumnIndices();
+                assertEquals(2, coveringIndices.length);
+                assertEquals(metadata.getColumnIndex("price"), coveringIndices[0]);
+                assertEquals(metadata.getColumnIndex("ts"), coveringIndices[1]);
+            }
+
+            execute("""
+                    INSERT INTO t_ts_auto VALUES
+                        ('2024-01-01T00:00:00', 'A', 10.0),
+                        ('2024-01-01T01:00:00', 'B', 20.0),
+                        ('2024-01-01T02:00:00', 'A', 30.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Query selecting ts should use CoveringIndex because ts was auto-included
+            String plan = getPlan("SELECT ts, price FROM t_ts_auto WHERE sym = 'A'");
+            assertTrue("Expected CoveringIndex plan:\n" + plan, plan.contains("CoveringIndex"));
+
+            assertSql("""
+                    ts\tprice
+                    2024-01-01T00:00:00.000000Z\t10.0
+                    2024-01-01T02:00:00.000000Z\t30.0
+                    """, "SELECT ts, price FROM t_ts_auto WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testAutoIncludeTimestampCreateTableWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ts_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_ts_wal VALUES
+                        ('2024-01-01T00:00:00', 'A', 10.0),
+                        ('2024-01-01T01:00:00', 'B', 20.0),
+                        ('2024-01-01T02:00:00', 'A', 30.0)
+                    """);
+            drainWalQueue();
+
+            String plan = getPlan("SELECT ts, price FROM t_ts_wal WHERE sym = 'A'");
+            assertTrue("Expected CoveringIndex plan:\n" + plan, plan.contains("CoveringIndex"));
+
+            assertSql("""
+                    ts\tprice
+                    2024-01-01T00:00:00.000000Z\t10.0
+                    2024-01-01T02:00:00.000000Z\t30.0
+                    """, "SELECT ts, price FROM t_ts_wal WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testAutoIncludeTimestampConfigDefaultIsTrue() throws Exception {
+        assertTrue("Default should be true",
+                engine.getConfiguration().isPostingIndexAutoIncludeTimestamp());
+    }
+
+    @Test
+    public void testAutoIncludeTimestampNoDesignatedTimestamp() throws Exception {
+        // Table without designated timestamp — auto-include should be a no-op
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ts_none (
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    )
+                    """);
+            execute("""
+                    INSERT INTO t_ts_none VALUES ('A', 10.0), ('A', 20.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // price-only query should still use CoveringIndex
+            String plan = getPlan("SELECT price FROM t_ts_none WHERE sym = 'A'");
+            assertTrue("Expected CoveringIndex:\n" + plan, plan.contains("CoveringIndex"));
+        });
+    }
+
+    @Test
+    public void testAutoIncludeTimestampPostingNoInclude() throws Exception {
+        // POSTING index without INCLUDE clause — auto-include should NOT trigger
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_ts_noinc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_ts_noinc VALUES
+                        ('2024-01-01T00:00:00', 'A', 10.0),
+                        ('2024-01-01T01:00:00', 'A', 20.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // No INCLUDE at all — CoveringIndex should not be used
+            String plan = getPlan("SELECT ts, price FROM t_ts_noinc WHERE sym = 'A'");
+            assertFalse("Should not use CoveringIndex without INCLUDE:\n" + plan,
+                    plan.contains("CoveringIndex"));
         });
     }
 

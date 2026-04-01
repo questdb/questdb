@@ -85,7 +85,7 @@ public class PostingIndexWriter implements IndexWriter {
     private int blockCapacity;
     private long columnNameTxn;
     private long sidecarTxn; // txn for sidecar file naming (.pk's txn, before VALUE_FILE_TXN override)
-    private boolean sealBumpedTxn;
+    private boolean hasSealBumpedTxn;
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     private int coverCount;
     private long[] coveredColumnAddrs;
@@ -272,7 +272,7 @@ public class PostingIndexWriter implements IndexWriter {
                     hasPendingData = false;
                     activeKeyCount = 0;
                     coverCount = 0;
-                    sealBumpedTxn = false;
+                    hasSealBumpedTxn = false;
                     sealTarget = null;
                 }
             }
@@ -1119,6 +1119,69 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.getUnsafe().copyMemory(localHeaderBuf, headerAddr, deltaHeaderSize);
     }
 
+    private void writeDistinctKeysFile(long totalCountsAddr, int keyCount) {
+        if (partitionPath == null) {
+            return;
+        }
+        // Collect sorted list of keys with count > 0
+        int distinctCount = 0;
+        for (int key = 0; key < keyCount; key++) {
+            if (Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES) > 0) {
+                distinctCount++;
+            }
+        }
+        if (distinctCount == 0) {
+            return;
+        }
+        // Delta-encode sorted key IDs and write raw (uncompressed) to .pd file.
+        // The file is mmap'd on read and the deltas are accessed directly — no
+        // decompression buffer needed, which avoids native memory management.
+        int dataSize = distinctCount * Integer.BYTES;
+        try (Path p = new Path().of(partitionPath)) {
+            LPSZ pdFile = PostingIndexUtils.distinctKeysFileName(p, indexName, columnNameTxn);
+            long fd = ff.openRW(pdFile, configuration.getWriterFileOpenOpts());
+            if (fd < 0) {
+                LOG.error().$("could not create .pd file [path=").$(pdFile)
+                        .$(", errno=").$(ff.errno()).I$();
+                return;
+            }
+            try {
+                int totalSize = PostingIndexUtils.PD_HEADER_SIZE + dataSize;
+                if (!ff.truncate(fd, totalSize)) {
+                    LOG.error().$("could not truncate .pd file [path=").$(pdFile)
+                            .$(", errno=").$(ff.errno()).I$();
+                    return;
+                }
+                long addr = ff.mmap(fd, totalSize, 0, Files.MAP_RW, MemoryTag.MMAP_INDEX_WRITER);
+                if (addr == -1) {
+                    LOG.error().$("could not mmap .pd file [path=").$(pdFile).I$();
+                    return;
+                }
+                try {
+                    Unsafe.getUnsafe().putInt(addr, PostingIndexUtils.PD_MAGIC);
+                    Unsafe.getUnsafe().putInt(addr + 4, PostingIndexUtils.PD_VERSION);
+                    Unsafe.getUnsafe().putInt(addr + 8, distinctCount);
+                    Unsafe.getUnsafe().putInt(addr + 12, dataSize);
+                    long dataAddr = addr + PostingIndexUtils.PD_HEADER_SIZE;
+                    int idx = 0;
+                    int prev = 0;
+                    for (int key = 0; key < keyCount; key++) {
+                        if (Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES) > 0) {
+                            Unsafe.getUnsafe().putInt(dataAddr + (long) idx * Integer.BYTES, key - prev);
+                            prev = key;
+                            idx++;
+                        }
+                    }
+                    ff.msync(addr, totalSize, false);
+                } finally {
+                    ff.munmap(addr, totalSize, MemoryTag.MMAP_INDEX_WRITER);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
     private void switchToSealedValueFile(long newTxn) {
         // Close old .pv (leave on disk for concurrent readers)
         // Reopen valueMem on the new sealed .pv file
@@ -1136,7 +1199,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
         }
         columnNameTxn = newTxn;
-        sealBumpedTxn = true;
+        hasSealBumpedTxn = true;
     }
 
     private void openSealValueFile(long newTxn) {
@@ -1339,7 +1402,7 @@ public class PostingIndexWriter implements IndexWriter {
             int keyOffsetsSize = ks * Integer.BYTES;
 
             // Pre-allocate compress buffer for the largest key in this column type
-            int compressBufSize = maxKeyCount > 0 ? AlpCompression.maxCompressedSize(maxKeyCount, colType) : 0;
+            int compressBufSize = maxKeyCount > 0 ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
             long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_INDEX_READER) : 0;
 
             try {
@@ -1409,11 +1472,15 @@ public class PostingIndexWriter implements IndexWriter {
                                               long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
         return switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE ->
-                    AlpCompression.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
-                    AlpCompression.compressLongs(rawBuf, valueCount, destBuf);
+                    CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+            case ColumnType.TIMESTAMP ->
+                    // Delta FoR for timestamps — values are in row-ID order within each key,
+                    // so they're monotonically increasing with small regular deltas.
+                    CoveringCompressor.compressLongsDelta(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
+                    CoveringCompressor.compressLongs(rawBuf, valueCount, destBuf);
             case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                    AlpCompression.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+                    CoveringCompressor.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
             default -> {
                 // Raw copy for all other fixed-width types: BYTE, SHORT, CHAR, BOOLEAN,
                 // GEOBYTE, GEOSHORT, UUID, LONG256, DECIMAL8/16/128/256, etc.
@@ -1902,7 +1969,7 @@ public class PostingIndexWriter implements IndexWriter {
 
                                 // Write sidecar covered values for this stride
                                 if (coverCount > 0 && sidecarMems != null && totalStrideValues > 0) {
-                                    long neededBuf = (long) totalStrideValues * Long.BYTES;
+                                    long neededBuf = (long) totalStrideValues * maxCoveredValueSize();
                                     if (neededBuf > sidecarBufSize) {
                                         if (sidecarBuf != 0) {
                                             Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
@@ -1967,6 +2034,7 @@ public class PostingIndexWriter implements IndexWriter {
                             sealValueMem.sync(false);
                             switchToSealedValueFile(newTxn);
                         }
+                        writeDistinctKeysFile(totalCountsAddr, keyCount);
                         Unsafe.getUnsafe().storeFence();
                         writeMetadataPage(genCount, maxValue,
                                 0, sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
@@ -2076,11 +2144,11 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     public boolean hasPendingSealTxn() {
-        return sealBumpedTxn;
+        return hasSealBumpedTxn;
     }
 
     public void clearPendingSealTxn() {
-        sealBumpedTxn = false;
+        hasSealBumpedTxn = false;
     }
 
     @TestOnly
@@ -2345,7 +2413,6 @@ public class PostingIndexWriter implements IndexWriter {
             MemoryMARW mem, int covIdx, long colTop, int colType,
             int ks, int[] keyCounts, long[] keyOffsets, long mergedValuesAddr
     ) {
-        boolean isVarchar = ColumnType.tagOf(colType) == ColumnType.VARCHAR;
         int totalCount = 0;
         for (int j = 0; j < ks; j++) {
             totalCount += keyCounts[j];
@@ -2368,13 +2435,7 @@ public class PostingIndexWriter implements IndexWriter {
                 long rowId = Unsafe.getUnsafe().getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
                 int off = (int) (mem.getAppendOffset() - dataStart);
                 mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
-                if (rowId >= colTop) {
-                    if (isVarchar) {
-                        writeVarcharValue(mem, covIdx, rowId - colTop);
-                    } else {
-                        writeStringValue(mem, covIdx, rowId - colTop);
-                    }
-                }
+                writeVarValue(mem, covIdx, colTop, rowId, colType);
                 valueOrdinal++;
             }
         }
@@ -2463,7 +2524,6 @@ public class PostingIndexWriter implements IndexWriter {
         long dataStart = mem.getAppendOffset();
 
         int valueOrdinal = 0;
-        boolean isVarchar = ColumnType.tagOf(colType) == ColumnType.VARCHAR;
 
         for (int idx = 0; idx < activeKeyCount; idx++) {
             int key = activeKeyIds[idx];
@@ -2476,7 +2536,7 @@ public class PostingIndexWriter implements IndexWriter {
                     long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
                     int off = (int) (mem.getAppendOffset() - dataStart);
                     mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
-                    writeVarValue(mem, covIdx, colTop, rowId, isVarchar);
+                    writeVarValue(mem, covIdx, colTop, rowId, colType);
                     valueOrdinal++;
                 }
             }
@@ -2486,7 +2546,7 @@ public class PostingIndexWriter implements IndexWriter {
                 long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
                 int off = (int) (mem.getAppendOffset() - dataStart);
                 mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
-                writeVarValue(mem, covIdx, colTop, rowId, isVarchar);
+                writeVarValue(mem, covIdx, colTop, rowId, colType);
                 valueOrdinal++;
             }
         }
@@ -2495,14 +2555,15 @@ public class PostingIndexWriter implements IndexWriter {
         mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, endOff);
     }
 
-    private void writeVarValue(MemoryMARW mem, int covIdx, long colTop, long rowId, boolean isVarchar) {
+    private void writeVarValue(MemoryMARW mem, int covIdx, long colTop, long rowId, int colType) {
         if (rowId < colTop) {
             return; // NULL — zero-length (offset[i] == offset[i+1])
         }
-        if (isVarchar) {
-            writeVarcharValue(mem, covIdx, rowId - colTop);
-        } else {
-            writeStringValue(mem, covIdx, rowId - colTop);
+        long row = rowId - colTop;
+        switch (ColumnType.tagOf(colType)) {
+            case ColumnType.VARCHAR -> writeVarcharValue(mem, covIdx, row);
+            case ColumnType.STRING -> writeStringValue(mem, covIdx, row);
+            default -> writeBinaryLikeValue(mem, covIdx, row);
         }
     }
 
@@ -2632,6 +2693,45 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    private void writeBinaryLikeValue(MemoryMARW mem, int covIdx, long row) {
+        if (coveredColumnAuxMems == null || coveredColumnAuxMems[covIdx] == null
+                || coveredColumnMems == null || coveredColumnMems[covIdx] == null) {
+            return;
+        }
+        int colType = coveredColumnTypes[covIdx];
+        int tag = ColumnType.tagOf(colType);
+        if (tag == ColumnType.BINARY) {
+            // BINARY aux: 8-byte offset per row. Data: [8-byte length][raw bytes]
+            long auxAddr = getCoveredAuxReadAddr(covIdx, row << 3, Long.BYTES);
+            if (auxAddr == 0) return;
+            long dataOffset = Unsafe.getUnsafe().getLong(auxAddr);
+
+            long lenAddr = getCoveredDataReadAddr(covIdx, dataOffset, Long.BYTES);
+            if (lenAddr == 0) return;
+            long len = Unsafe.getUnsafe().getLong(lenAddr);
+            if (len < 0) return; // NULL
+
+            long totalBytes = Long.BYTES + len;
+            long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, totalBytes);
+            if (dataAddr != 0) {
+                mem.putBlockOfBytes(dataAddr, totalBytes);
+            }
+        } else {
+            // Arrays: aux is ARRAY_AUX_WIDTH_BYTES per row [8-byte offset][8-byte size]
+            long auxOffset = (long) io.questdb.cairo.arr.ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES * row;
+            long auxAddr = getCoveredAuxReadAddr(covIdx, auxOffset, io.questdb.cairo.arr.ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
+            if (auxAddr == 0) return;
+            long dataOffset = Unsafe.getUnsafe().getLong(auxAddr);
+            long size = Unsafe.getUnsafe().getLong(auxAddr + Long.BYTES);
+            if (size <= 0) return; // NULL or empty
+
+            long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, size);
+            if (dataAddr != 0) {
+                mem.putBlockOfBytes(dataAddr, size);
+            }
+        }
+    }
+
     private void writeStringValue(MemoryMARW mem, int covIdx, long row) {
         if (coveredColumnAuxMems == null || coveredColumnAuxMems[covIdx] == null
                 || coveredColumnMems == null || coveredColumnMems[covIdx] == null) {
@@ -2653,21 +2753,28 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    private static void putFixedValue(MemoryMARW mem, long addr, int valueSize) {
+        if (valueSize == Long.BYTES) {
+            mem.putLong(Unsafe.getUnsafe().getLong(addr));
+        } else if (valueSize == Integer.BYTES) {
+            mem.putInt(Unsafe.getUnsafe().getInt(addr));
+        } else if (valueSize == Short.BYTES) {
+            mem.putShort(Unsafe.getUnsafe().getShort(addr));
+        } else if (valueSize == Byte.BYTES) {
+            mem.putByte(Unsafe.getUnsafe().getByte(addr));
+        } else {
+            // Multi-long types: UUID (16B), LONG256 (32B), DECIMAL128 (16B), DECIMAL256 (32B)
+            mem.putBlockOfBytes(addr, valueSize);
+        }
+    }
+
     private void writeSidecarValue(MemoryMARW mem, long colAddr, long colTop, long rowId,
                                     int shift, int valueSize, int colType) {
         if (rowId < colTop) {
             writeNullSentinel(mem, valueSize, colType);
         } else {
             long srcOffset = (rowId - colTop) << shift;
-            if (valueSize == Long.BYTES) {
-                mem.putLong(Unsafe.getUnsafe().getLong(colAddr + srcOffset));
-            } else if (valueSize == Integer.BYTES) {
-                mem.putInt(Unsafe.getUnsafe().getInt(colAddr + srcOffset));
-            } else if (valueSize == Short.BYTES) {
-                mem.putShort(Unsafe.getUnsafe().getShort(colAddr + srcOffset));
-            } else {
-                mem.putByte(Unsafe.getUnsafe().getByte(colAddr + srcOffset));
-            }
+            putFixedValue(mem, colAddr + srcOffset, valueSize);
         }
     }
 
@@ -2683,28 +2790,22 @@ public class PostingIndexWriter implements IndexWriter {
                     writeNullSentinel(mem, valueSize, colType);
                     return;
                 }
-                if (valueSize == Long.BYTES) {
-                    mem.putLong(Unsafe.getUnsafe().getLong(addr));
-                } else if (valueSize == Integer.BYTES) {
-                    mem.putInt(Unsafe.getUnsafe().getInt(addr));
-                } else if (valueSize == Short.BYTES) {
-                    mem.putShort(Unsafe.getUnsafe().getShort(addr));
-                } else {
-                    mem.putByte(Unsafe.getUnsafe().getByte(addr));
-                }
+                putFixedValue(mem, addr, valueSize);
             } else {
-                long addr = colAddr + srcOffset;
-                if (valueSize == Long.BYTES) {
-                    mem.putLong(Unsafe.getUnsafe().getLong(addr));
-                } else if (valueSize == Integer.BYTES) {
-                    mem.putInt(Unsafe.getUnsafe().getInt(addr));
-                } else if (valueSize == Short.BYTES) {
-                    mem.putShort(Unsafe.getUnsafe().getShort(addr));
-                } else {
-                    mem.putByte(Unsafe.getUnsafe().getByte(addr));
-                }
+                putFixedValue(mem, colAddr + srcOffset, valueSize);
             }
         }
+    }
+
+    private int maxCoveredValueSize() {
+        int max = Long.BYTES;
+        for (int c = 0; c < coverCount; c++) {
+            int shift = coveredColumnShifts[c];
+            if (shift >= 0) {
+                max = Math.max(max, 1 << shift);
+            }
+        }
+        return max;
     }
 
     private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {

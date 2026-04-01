@@ -39,7 +39,7 @@ import io.questdb.std.Unsafe;
  * Based on "ALP: Adaptive Lossless floating-Point Compression" (Afroozeh &
  * Boncz, SIGMOD 2024).
  */
-public class AlpCompression {
+public class CoveringCompressor {
 
     static final int MAX_EXPONENT = 18;
     // 2^52 + 2^51: forces rounding in IEEE 754 double arithmetic
@@ -66,6 +66,10 @@ public class AlpCompression {
     // FLOAT is compressed via compressInts (INT_HEADER_SIZE)
     // LONG: valueCount(4) + bitWidth(1) + forBase(8) = 13
     static final int LONG_HEADER_SIZE = 13;
+    // LONG delta: valueCount(4) + bitWidth|0x80(1) + deltaBase(8) + firstValue(8) = 21
+    static final int LONG_DELTA_HEADER_SIZE = 21;
+    // Bit 7 of the bitWidth byte indicates delta encoding
+    static final int DELTA_FLAG = 0x80;
     // INT: valueCount(4) + bitWidth(1) + forBase(4) = 9
     static final int INT_HEADER_SIZE = 9;
     // SHORT: valueCount(4) + bitWidth(1) + forBase(2) = 7
@@ -392,7 +396,63 @@ public class AlpCompression {
     }
 
     /**
-     * Decompress FoR-encoded longs.
+     * Compress longs using delta + FoR. Stores first value in the header, then
+     * FoR-compresses the deltas between consecutive values. Effective for
+     * sorted/monotonic data like timestamps.
+     * <p>
+     * Header: count(4B) + bitWidth|DELTA_FLAG(1B) + deltaBase(8B) + firstValue(8B) = 21 bytes.
+     * Bit 7 of the bitWidth byte distinguishes delta from plain FoR.
+     * Reuses {@link BitpackUtils#packValues} for the FoR step.
+     *
+     * @param longWorkspaceAddr workspace for count longs (used to store deltas)
+     * @return number of bytes written
+     */
+    public static int compressLongsDelta(long srcAddr, int count, long destAddr, long longWorkspaceAddr) {
+        if (count <= 1) {
+            return compressLongs(srcAddr, count, destAddr);
+        }
+        long firstValue = Unsafe.getUnsafe().getLong(srcAddr);
+        int deltaCount = count - 1;
+
+        // Compute deltas into workspace and find min/max
+        long deltaBase = Long.MAX_VALUE;
+        long deltaMax = Long.MIN_VALUE;
+        long prev = firstValue;
+        for (int i = 0; i < deltaCount; i++) {
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) (i + 1) * Long.BYTES);
+            long delta = val - prev;
+            prev = val;
+            Unsafe.getUnsafe().putLong(longWorkspaceAddr + (long) i * Long.BYTES, delta);
+            deltaBase = Math.min(deltaBase, delta);
+            deltaMax = Math.max(deltaMax, delta);
+        }
+        if (deltaBase == Long.MAX_VALUE) {
+            deltaBase = 0;
+        }
+        int bw = (deltaMax == deltaBase) ? 0 : 64 - Long.numberOfLeadingZeros(deltaMax - deltaBase);
+
+        // Write header: count + bitWidth|flag + deltaBase + firstValue
+        long pos = destAddr;
+        Unsafe.getUnsafe().putInt(pos, count);
+        pos += 4;
+        Unsafe.getUnsafe().putByte(pos++, (byte) (bw | DELTA_FLAG));
+        Unsafe.getUnsafe().putLong(pos, deltaBase);
+        pos += 8;
+        Unsafe.getUnsafe().putLong(pos, firstValue);
+        pos += 8;
+
+        // FoR-pack deltas using existing infrastructure
+        if (bw > 0) {
+            BitpackUtils.packValues(longWorkspaceAddr, deltaCount, deltaBase, bw, pos);
+        }
+        pos += BitpackUtils.packedDataSize(deltaCount, bw);
+
+        return (int) (pos - destAddr);
+    }
+
+    /**
+     * Decompress FoR-encoded longs (allocates workspace internally).
+     * Transparently handles both plain FoR and delta FoR.
      */
     public static int decompressLongs(long srcAddr, long[] output) {
         int count = Unsafe.getUnsafe().getInt(srcAddr);
@@ -407,34 +467,57 @@ public class AlpCompression {
     /**
      * Decompress FoR-encoded longs using a pre-allocated native workspace to avoid allocation.
      * The workspace must have room for count longs (read from the header at srcAddr).
+     * Transparently handles both plain FoR and delta FoR (detected via bit 7 of bitWidth at offset 4).
      */
     public static int decompressLongs(long srcAddr, long[] output, long workspaceAddr) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
-        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int rawBw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        boolean isDelta = (rawBw & DELTA_FLAG) != 0;
+        int bw = rawBw & 0x7F;
         long forBase = Unsafe.getUnsafe().getLong(pos);
         pos += 8;
 
-        int packedBytes = BitpackUtils.packedDataSize(count, bw);
-        if (bw > 0) {
-            BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
+        long firstValue = 0;
+        int packedCount;
+        if (isDelta) {
+            firstValue = Unsafe.getUnsafe().getLong(pos);
+            pos += 8;
+            packedCount = count - 1;
         } else {
-            for (int i = 0; i < count; i++) {
+            packedCount = count;
+        }
+
+        int packedBytes = BitpackUtils.packedDataSize(packedCount, bw);
+        if (bw > 0) {
+            BitpackUtils.unpackAllValues(pos, packedCount, bw, forBase, workspaceAddr);
+        } else {
+            for (int i = 0; i < packedCount; i++) {
                 Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
             }
         }
-        for (int i = 0; i < count; i++) {
-            output[i] = Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
+
+        if (isDelta) {
+            output[0] = firstValue;
+            long current = firstValue;
+            for (int i = 0; i < packedCount; i++) {
+                current += Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
+                output[i + 1] = current;
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                output[i] = Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
+            }
         }
         pos += packedBytes;
-
         return (int) (pos - srcAddr);
     }
 
     /**
      * Decompress FoR-encoded longs directly to native memory.
      * The workspace must have room for count longs (read from the header at srcAddr).
+     * Transparently handles both plain FoR and delta FoR.
      *
      * @return number of values decoded
      */
@@ -442,18 +525,39 @@ public class AlpCompression {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
-        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int rawBw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        boolean isDelta = (rawBw & DELTA_FLAG) != 0;
+        int bw = rawBw & 0x7F;
         long forBase = Unsafe.getUnsafe().getLong(pos);
         pos += 8;
 
-        int packedBytes = BitpackUtils.packedDataSize(count, bw);
-        if (bw > 0) {
-            BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
-            Unsafe.getUnsafe().copyMemory(workspaceAddr, outputAddr, (long) count * Long.BYTES);
+        long firstValue = 0;
+        int packedCount;
+        if (isDelta) {
+            firstValue = Unsafe.getUnsafe().getLong(pos);
+            pos += 8;
+            packedCount = count - 1;
         } else {
-            for (int i = 0; i < count; i++) {
-                Unsafe.getUnsafe().putLong(outputAddr + (long) i * Long.BYTES, forBase);
+            packedCount = count;
+        }
+
+        if (bw > 0) {
+            BitpackUtils.unpackAllValues(pos, packedCount, bw, forBase, workspaceAddr);
+        } else {
+            for (int i = 0; i < packedCount; i++) {
+                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
             }
+        }
+
+        if (isDelta) {
+            Unsafe.getUnsafe().putLong(outputAddr, firstValue);
+            long current = firstValue;
+            for (int i = 0; i < packedCount; i++) {
+                current += Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
+                Unsafe.getUnsafe().putLong(outputAddr + (long) (i + 1) * Long.BYTES, current);
+            }
+        } else {
+            Unsafe.getUnsafe().copyMemory(workspaceAddr, outputAddr, (long) count * Long.BYTES);
         }
 
         return count;
@@ -590,21 +694,28 @@ public class AlpCompression {
                         + count * (4 + 8); // worst case: all exceptions (4B pos + 8B value)
             case ColumnType.LONG:
             case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
             case ColumnType.GEOLONG:
+            case ColumnType.DECIMAL64:
                 return LONG_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
+            case ColumnType.TIMESTAMP:
+                // May use delta encoding (8B extra for firstValue)
+                return LONG_DELTA_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
             case ColumnType.INT:
             case ColumnType.IPv4:
             case ColumnType.FLOAT:
             case ColumnType.GEOINT:
+            case ColumnType.SYMBOL:
+            case ColumnType.DECIMAL32:
                 return INT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 32);
             case ColumnType.CHAR:
             case ColumnType.SHORT:
             case ColumnType.GEOSHORT:
+            case ColumnType.DECIMAL16:
                 return SHORT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 16);
             default:
-                // BYTE, BOOLEAN, GEOBYTE: count header (4B) + 1 byte each
-                return 4 + count;
+                // BYTE, BOOLEAN, GEOBYTE, DECIMAL8, UUID, DECIMAL128, LONG256, DECIMAL256:
+                // raw copy with count header (4B) + valueSize each
+                return 4 + count * ColumnType.sizeOf(columnType);
         }
     }
 

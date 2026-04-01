@@ -786,13 +786,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         throw CairoException.invalidMetadataRecoverable("duplicate column in INCLUDE", covName);
                     }
                 }
-                int covType = ColumnType.tagOf(metadata.getColumnType(covIdx));
-                if (covType == ColumnType.BINARY || covType == ColumnType.LONG256
-                        || covType == ColumnType.UUID
-                        || covType == ColumnType.DECIMAL128 || covType == ColumnType.DECIMAL256
-                        || ColumnType.isArray(metadata.getColumnType(covIdx))) {
-                    throw CairoException.invalidMetadataRecoverable("INCLUDE column type is not supported", covName);
-                }
+                // All column types are supported in INCLUDE.
+                // Fixed-width types are stored as raw bytes in the sidecar.
+                // Variable-width types (VARCHAR, STRING, BINARY, arrays) use
+                // the offset-based var-width sidecar format.
                 coveringColumnIndices[i] = covIdx;
             }
         }
@@ -4483,6 +4480,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param indexType               the type of index to create
      * @param plen                    path length. This is used to trim the shared path object to.
      */
+    private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
+        keyFileName(IndexType.POSTING, path.trimTo(plen), columnName, columnNameTxn);
+        if (!ff.exists(path.$()) || ff.length(path.$()) < io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED) {
+            return false;
+        }
+        // Read the key file header to check seqlock validity and genCount.
+        // Use ddlMem for temporary read — it's not in use during indexing.
+        long fd = ff.openRO(path.$());
+        if (fd < 0) {
+            return false;
+        }
+        try {
+            long addr = ff.mmap(fd, io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+            if (addr == -1) {
+                return false;
+            }
+            try {
+                // Check both pages, use the one with the higher valid sequence
+                long seqA = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                long seqEndA = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                long seqB = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                long seqEndB = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                long validA = (seqA == seqEndA) ? seqA : 0;
+                long validB = (seqB == seqEndB) ? seqB : 0;
+                long activePage = (validB > validA)
+                        ? io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET
+                        : io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET;
+                long activeSeq = Math.max(validA, validB);
+
+                if (activeSeq <= 0) {
+                    return false; // no valid page
+                }
+
+                int genCount = Unsafe.getUnsafe().getInt(addr + activePage + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+                return genCount > 0; // sealed if at least one generation exists
+            } finally {
+                ff.munmap(addr, io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED, MemoryTag.MMAP_DEFAULT);
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force) {
         try {
             keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
@@ -6089,6 +6130,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int plen,
             long timestamp
     ) {
+        // Skip partitions that already have a fully-sealed posting index (resume after restart).
+        // A partition is fully indexed when the .pk key file has a valid seqlock (seq_start == seq_end)
+        // AND genCount > 0 (at least one generation was sealed). Partially-written files from a crash
+        // will have genCount == 0 or a broken seqlock, so they are safely rebuilt.
+        if (indexType == IndexType.POSTING && isPostingIndexSealed(plen, columnName, columnNameTxn)) {
+            path.trimTo(plen);
+            LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
+            return;
+        }
         path.trimTo(plen);
         LOG.info().$("indexing [path=").$substr(pathRootSize, path).I$();
 

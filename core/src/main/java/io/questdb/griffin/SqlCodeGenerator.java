@@ -5527,28 +5527,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ? SymbolTable.VALUE_NOT_FOUND
                                 : symbolMapReader.keyOf(symbolValueFunc.getStrA(null));
 
-                        if (filter == null) {
-                            if (!SqlHints.hasNoCoveringHint(model)) {
-                                // Check if covering index can serve LATEST ON
-                                int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
-                                int[] coveringMapping = buildCoveringIndexMapping(
-                                        reader, keyReaderColIdx, columnIndexes, metadata
+                        if (!SqlHints.hasNoCoveringHint(model)) {
+                            // Check if covering index can serve LATEST ON (with or without filter)
+                            int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
+                            int[] coveringMapping = buildCoveringIndexMapping(
+                                    reader, keyReaderColIdx, columnIndexes, metadata
+                            );
+                            if (coveringMapping != null) {
+                                return new CoveringIndexRecordCursorFactory(
+                                        metadata,
+                                        partitionFrameCursorFactory,
+                                        keyReaderColIdx,
+                                        symbol,
+                                        symbolValueFunc,
+                                        columnIndexes,
+                                        columnSizeShifts,
+                                        coveringMapping,
+                                        true,
+                                        filter
                                 );
-                                if (coveringMapping != null) {
-                                    return new CoveringIndexRecordCursorFactory(
-                                            metadata,
-                                            partitionFrameCursorFactory,
-                                            keyReaderColIdx,
-                                            symbol,
-                                            symbolValueFunc,
-                                            columnIndexes,
-                                            columnSizeShifts,
-                                            coveringMapping,
-                                            true
-                                    );
-                                }
                             }
+                        }
 
+                        if (filter == null) {
                             if (symbol == SymbolTable.VALUE_NOT_FOUND) {
                                 rcf = new LatestByValueDeferredIndexedRowCursorFactory(
                                         latestByIndex,
@@ -5601,8 +5602,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
 
-                    // Check if covering index can serve LATEST ON multi-key
-                    if (filter == null && !SqlHints.hasNoCoveringHint(model)) {
+                    // Check if covering index can serve LATEST ON multi-key (with or without filter)
+                    if (!SqlHints.hasNoCoveringHint(model)) {
                         int keyReaderColIdx = columnIndexes.getQuick(latestByIndex);
                         int[] coveringMapping = buildCoveringIndexMapping(
                                 reader, keyReaderColIdx, columnIndexes, metadata
@@ -5619,7 +5620,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     coveringMapping,
                                     intrinsicModel.keyValueFuncs,
                                     reader,
-                                    true
+                                    true,
+                                    filter
                             );
                         }
                     }

@@ -1158,6 +1158,43 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(columnNamePosition).put("indexes are only supported for symbol type [column=").put(columnName).put(", type=").put(ColumnType.nameOf(type)).put(']');
         }
 
+        if (coveringColumnNames != null) {
+            for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                CharSequence covName = coveringColumnNames.get(i);
+                int covIdx = metadata.getColumnIndexQuiet(covName);
+                if (covIdx == -1) {
+                    throw SqlException.$(0, "INCLUDE column does not exist [column=").put(covName).put(']');
+                }
+                if (covIdx == columnIndex) {
+                    throw SqlException.$(0, "INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                }
+                for (int j = 0; j < i; j++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(j)) == covIdx) {
+                        throw SqlException.$(0, "duplicate column in INCLUDE [column=").put(covName).put(']');
+                    }
+                }
+            }
+        }
+
+        if (coveringColumnNames != null && coveringColumnNames.size() > 0
+                && indexType == IndexType.POSTING
+                && configuration.isPostingIndexAutoIncludeTimestamp()) {
+            int tsIndex = metadata.getTimestampIndex();
+            if (tsIndex >= 0) {
+                CharSequence tsName = metadata.getColumnName(tsIndex);
+                boolean isTimestampAlreadyIncluded = false;
+                for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
+                    if (metadata.getColumnIndexQuiet(coveringColumnNames.get(i)) == tsIndex) {
+                        isTimestampAlreadyIncluded = true;
+                        break;
+                    }
+                }
+                if (!isTimestampAlreadyIncluded) {
+                    coveringColumnNames.add(tsName);
+                }
+            }
+        }
+
         if (indexValueBlockSize == -1) {
             indexValueBlockSize = configuration.getIndexValueBlockSize();
         }

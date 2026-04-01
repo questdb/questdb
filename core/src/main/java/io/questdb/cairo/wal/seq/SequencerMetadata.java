@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
@@ -108,8 +109,20 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         if (coveringColumnNames != null && coveringColumnNames.size() > 0) {
             int[] coveringIndices = new int[coveringColumnNames.size()];
             for (int i = 0, n = coveringColumnNames.size(); i < n; i++) {
-                int covIdx = columnNameIndexMap.get(coveringColumnNames.get(i));
-                coveringIndices[i] = covIdx >= 0 ? covIdx : -1;
+                CharSequence covName = coveringColumnNames.get(i);
+                int covIdx = columnNameIndexMap.get(covName);
+                if (covIdx < 0) {
+                    throw CairoException.nonCritical().put("INCLUDE column does not exist [column=").put(covName).put(']');
+                }
+                if (covIdx == colIdx) {
+                    throw CairoException.nonCritical().put("INCLUDE must not contain the indexed column [column=").put(covName).put(']');
+                }
+                for (int j = 0; j < i; j++) {
+                    if (coveringIndices[j] == covIdx) {
+                        throw CairoException.nonCritical().put("duplicate column in INCLUDE [column=").put(covName).put(']');
+                    }
+                }
+                coveringIndices[i] = covIdx;
             }
             colMeta.setCoveringColumnIndices(coveringIndices);
         }
