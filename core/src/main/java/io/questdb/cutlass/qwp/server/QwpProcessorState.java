@@ -167,13 +167,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             tudCache.commitAll();
         } catch (Throwable th) {
             tudCache.setDistressed();
-            currentStatus = Status.INTERNAL_ERROR;
-            String msg = th.getMessage();
-            error.put("commit error: ");
-            if (msg != null) {
-                error.put(msg, 0, Math.min(msg.length(), maxResponseErrorMessageLength));
-            }
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
+            rejectCommitError(th);
         }
     }
 
@@ -369,19 +364,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         } catch (CommitFailedException e) {
             LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
             tudCache.setDistressed();
-            rejectMsg.clear();
-            rejectMsg.put("commit failed: ").put(e.getMessage());
-            reject(Status.INTERNAL_ERROR, rejectMsg, fd);
+            rejectCommitError(e.getReason());
         } catch (CairoException e) {
             LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
-            if (e.isAuthorizationError()) {
-                reject(Status.SECURITY_ERROR, e.getFlyweightMessage(), fd);
-            } else if (e.isCritical()) {
-                tudCache.setDistressed();
-                reject(Status.INTERNAL_ERROR, e.getFlyweightMessage(), fd);
-            } else {
-                reject(Status.NOT_ACCEPTING_WRITES, e.getFlyweightMessage(), fd);
-            }
+            reject(cairoExceptionStatus(e), e.getFlyweightMessage(), fd);
         } catch (Throwable e) {
             LOG.critical().$('[').$(fd).$("] unexpected error: ").$(e).$();
             tudCache.setDistressed();
@@ -434,6 +420,13 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         deferredErrorStatus = 0;
     }
 
+    private static Status cairoExceptionStatus(CairoException e) {
+        if (e.isAuthorizationError()) {
+            return Status.SECURITY_ERROR;
+        }
+        return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
+    }
+
     private void ensureCapacity(int required) {
         if (required > bufferSize) {
             int cappedDoubling = (int) Math.min(bufferSize * 2L, Integer.MAX_VALUE);
@@ -441,6 +434,20 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             bufferAddress = Unsafe.realloc(bufferAddress, bufferSize, newSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferSize = newSize;
         }
+    }
+
+    private void rejectCommitError(Throwable th) {
+        if (th instanceof CairoException e) {
+            reject(cairoExceptionStatus(e), e.getFlyweightMessage(), fd);
+            return;
+        }
+
+        rejectMsg.clear();
+        rejectMsg.put("commit error: ");
+        if (th != null && th.getMessage() != null) {
+            rejectMsg.put(th.getMessage(), 0, Math.min(th.getMessage().length(), maxResponseErrorMessageLength));
+        }
+        reject(Status.INTERNAL_ERROR, rejectMsg, fd);
     }
 
     public enum Status {
