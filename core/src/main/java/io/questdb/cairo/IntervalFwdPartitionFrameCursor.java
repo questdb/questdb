@@ -256,15 +256,6 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
     }
 
     @Override
-    public void toPartition(int targetPartitionIndex) {
-        partitionLo = targetPartitionIndex;
-        partitionHi = targetPartitionIndex + 1;
-        intervalsLo = initialIntervalsLo;
-        intervalsHi = initialIntervalsHi;
-        partitionLimit = 0;
-    }
-
-    @Override
     public void toTop() {
         super.toTop();
         partitionLimit = 0;
