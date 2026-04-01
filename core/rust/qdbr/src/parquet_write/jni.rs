@@ -691,6 +691,7 @@ fn build_column_infos_from_partition<'a>(
 
             crate::parquet_metadata::ParquetMetaColumnInfo {
                 name: col.name,
+                top: col.column_top as u64,
                 col_type_code: col_type.code(),
                 col_type_tag: Some(col.data_type.tag()),
                 id: col.id,

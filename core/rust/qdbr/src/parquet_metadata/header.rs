@@ -32,20 +32,20 @@ use crate::parquet_metadata::types::{
 
 // ── On-disk column descriptor (32 bytes) ───────────────────────────────
 
-/// On-disk layout of a column descriptor (28 bytes).
+/// On-disk layout of a column descriptor (32 bytes).
+///
+/// The column name is stored externally as a length-prefixed string at
+/// `name_offset`: `[u32 length][utf8 bytes][padding to 4-byte alignment]`.
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]
 pub struct ColumnDescriptorRaw {
     pub name_offset: u64,
-    pub name_length: u32,
+    pub top: u64,
     pub id: i32,
     pub col_type: i32,
     pub flags: i32,
-    /// Parquet physical type (0=BOOLEAN, 1=INT32, 2=INT64, 3=INT96, 4=FLOAT, 5=DOUBLE, 6=BYTE_ARRAY, 7=FIXED_LEN_BYTE_ARRAY).
     pub physical_type: u8,
-    /// Maximum repetition level for this column (0 for non-nested).
     pub max_rep_level: u8,
-    /// Maximum definition level for this column (0 for required, 1 for optional).
     pub max_def_level: u8,
     pub _reserved: u8,
 }
@@ -175,31 +175,47 @@ impl<'a> FileHeader<'a> {
     }
 
     /// Returns the UTF-8 column name for the given descriptor.
+    /// Reads the column name from the length-prefixed string at `desc.name_offset`.
+    ///
+    /// On-disk format: `[u32 length][utf8 bytes][padding to 4-byte alignment]`.
     pub fn column_name(&self, desc: &ColumnDescriptorRaw) -> ParquetResult<&'a str> {
-        let start = desc.name_offset as usize;
-        let len = desc.name_length as usize;
-        let end = start.checked_add(len).ok_or_else(|| {
+        let prefix_start = desc.name_offset as usize;
+        if prefix_start + 4 > self.data.len() {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "column name length prefix at offset {} exceeds file size {}",
+                prefix_start,
+                self.data.len()
+            ));
+        }
+        let len = u32::from_le_bytes(
+            self.data[prefix_start..prefix_start + 4]
+                .try_into()
+                .expect("slice is 4 bytes"),
+        ) as usize;
+        let str_start = prefix_start + 4;
+        let str_end = str_start.checked_add(len).ok_or_else(|| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
                 "column name offset {}+{} overflows",
-                start,
+                str_start,
                 len
             )
         })?;
-        if end > self.data.len() {
+        if str_end > self.data.len() {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
-                "column name offset {}+{} exceeds file size {}",
-                start,
+                "column name at offset {} length {} exceeds file size {}",
+                prefix_start,
                 len,
                 self.data.len()
             ));
         }
-        std::str::from_utf8(&self.data[start..start + len]).map_err(|e| {
+        std::str::from_utf8(&self.data[str_start..str_end]).map_err(|e| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
                 "invalid UTF-8 in column name at offset {}: {}",
-                start,
+                prefix_start,
                 e
             )
         })
@@ -252,6 +268,7 @@ impl<'a> FileHeader<'a> {
 
 struct ColumnEntry {
     name: String,
+    top: u64,
     id: i32,
     col_type: i32,
     flags: ColumnFlags,
@@ -279,6 +296,7 @@ impl FileHeaderBuilder {
     #[allow(clippy::too_many_arguments)]
     pub fn add_column(
         &mut self,
+        top: u64,
         name: &str,
         id: i32,
         col_type: i32,
@@ -289,6 +307,7 @@ impl FileHeaderBuilder {
     ) -> &mut Self {
         self.columns.push(ColumnEntry {
             name: name.to_owned(),
+            top,
             id,
             col_type,
             flags,
@@ -326,22 +345,28 @@ impl FileHeaderBuilder {
             buf.extend_from_slice(&idx.to_le_bytes());
         }
 
-        // Name strings area.
-        let mut name_offsets: Vec<(u64, u32)> = Vec::with_capacity(self.columns.len());
+        // Name strings area: each name is [u32 length][utf8 bytes][pad to 4B].
+        let mut name_offsets: Vec<u64> = Vec::with_capacity(self.columns.len());
         for col in &self.columns {
             let offset = buf.len() as u64;
-            let len = col.name.len() as u32;
-            buf.extend_from_slice(col.name.as_bytes());
-            name_offsets.push((offset, len));
+            let name_bytes = col.name.as_bytes();
+            let len = name_bytes.len() as u32;
+            buf.extend_from_slice(&len.to_le_bytes());
+            buf.extend_from_slice(name_bytes);
+            // Pad to 4-byte alignment.
+            let total = 4 + name_bytes.len();
+            let padding = (4 - (total % 4)) % 4;
+            buf.extend(std::iter::repeat_n(0u8, padding));
+            name_offsets.push(offset);
         }
 
         // Backpatch column descriptors.
         for (i, col) in self.columns.iter().enumerate() {
-            let (name_offset, name_length) = name_offsets[i];
+            let name_offset = name_offsets[i];
             let desc_offset = descriptors_start + i * COLUMN_DESCRIPTOR_SIZE;
             let desc = ColumnDescriptorRaw {
                 name_offset,
-                name_length,
+                top: col.top,
                 id: col.id,
                 col_type: col.col_type,
                 flags: col.flags.0,
@@ -388,6 +413,7 @@ mod tests {
     fn header_round_trip_with_columns() {
         let mut builder = FileHeaderBuilder::new(0);
         builder.add_column(
+            0,
             "timestamp",
             0,
             8, // ColumnTypeTag::Timestamp
@@ -397,6 +423,7 @@ mod tests {
             0,
         );
         builder.add_column(
+            0,
             "value",
             1,
             10, // ColumnTypeTag::Double
@@ -442,6 +469,7 @@ mod tests {
         let mut builder = FileHeaderBuilder::new(-1);
         for i in 0..10 {
             builder.add_column(
+                0,
                 &format!("col_{i}"),
                 i,
                 5, // Int
@@ -514,14 +542,14 @@ mod tests {
         // Build a valid header, then manually corrupt a name_offset to point
         // past the end of the buffer.
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column("ok", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        builder.add_column(0, "ok", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
         // Corrupt name_offset of the first descriptor to point far beyond file.
         let desc_offset = HEADER_FIXED_SIZE;
         let bad_name_offset = 99999u64;
-        buf[desc_offset + 8..desc_offset + 16].copy_from_slice(&bad_name_offset.to_le_bytes());
+        buf[desc_offset..desc_offset + 8].copy_from_slice(&bad_name_offset.to_le_bytes());
 
         let hdr = FileHeader::new(&buf).unwrap();
         let desc = hdr.column_descriptor(0).unwrap();
@@ -532,16 +560,16 @@ mod tests {
     fn column_name_invalid_utf8() {
         // Build a header, then overwrite the name bytes with invalid UTF-8.
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column("ab", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        builder.add_column(0, "ab", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
         let hdr = FileHeader::new(&buf).unwrap();
         let desc = hdr.column_descriptor(0).unwrap();
         let name_start = desc.name_offset as usize;
-        // Overwrite with invalid UTF-8.
-        buf[name_start] = 0xFF;
-        buf[name_start + 1] = 0xFE;
+        // Overwrite actual string bytes (after the 4-byte length prefix) with invalid UTF-8.
+        buf[name_start + 4] = 0xFF;
+        buf[name_start + 5] = 0xFE;
 
         // Re-parse (the header struct references the same buffer).
         let hdr = FileHeader::new(&buf).unwrap();
@@ -552,8 +580,8 @@ mod tests {
     #[test]
     fn sorting_columns_end_offset_value() {
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0);
-        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0);
+        builder.add_column(0, "a", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        builder.add_column(0, "b", 1, 6, ColumnFlags::new(), 0, 0, 0);
         builder.add_sorting_column(0);
         builder.add_sorting_column(1);
         let mut buf = Vec::new();

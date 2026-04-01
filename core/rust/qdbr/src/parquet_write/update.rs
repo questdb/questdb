@@ -1295,6 +1295,7 @@ fn build_column_infos_from_qdb_meta<'a>(
 
             crate::parquet_metadata::ParquetMetaColumnInfo {
                 name: &field_info.name,
+                top: cm.map(|c| c.column_top as u64).unwrap_or(0),
                 col_type_code,
                 col_type_tag,
                 id: field_info.id.unwrap_or(-1),

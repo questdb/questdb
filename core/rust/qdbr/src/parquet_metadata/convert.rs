@@ -146,10 +146,14 @@ pub fn convert_from_parquet(
             }
         }
 
+        let top = qdb_meta
+            .map(|meta| meta.schema[i].column_top as u64)
+            .unwrap_or(0);
         let physical_type = physical_type_to_u8(col_desc.descriptor.primitive_type.physical_type);
         let max_rep_level = col_desc.descriptor.max_rep_level as u8;
         let max_def_level = col_desc.descriptor.max_def_level as u8;
         writer.add_column(
+            top,
             name,
             id,
             col_type_code,
@@ -625,6 +629,7 @@ fn build_column_chunk_from_thrift(
 /// so that `parquet_metadata` doesn't depend on `parquet_write`.
 pub struct ParquetMetaColumnInfo<'a> {
     pub name: &'a str,
+    pub top: u64,
     pub col_type_code: i32,
     pub col_type_tag: Option<ColumnTypeTag>,
     pub id: i32,
@@ -669,6 +674,7 @@ pub fn generate_parquet_metadata(
 
     for col in columns {
         writer.add_column(
+            col.top,
             col.name,
             col.id,
             col.col_type_code,
@@ -987,7 +993,7 @@ mod tests {
             symbol_offsets: &[],
             column_top: 0,
             designated_timestamp: true,
-            required: true,
+            not_null_hint: true,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
         };
@@ -1137,7 +1143,7 @@ mod tests {
                 symbol_offsets: &[],
                 column_top: 0,
                 designated_timestamp: true,
-                required: true,
+                not_null_hint: true,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
             },
@@ -1151,7 +1157,7 @@ mod tests {
                 symbol_offsets: &[],
                 column_top: 0,
                 designated_timestamp: false,
-                required: false,
+                not_null_hint: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
             },
@@ -1165,7 +1171,7 @@ mod tests {
                 symbol_offsets: &[],
                 column_top: 0,
                 designated_timestamp: false,
-                required: false,
+                not_null_hint: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
             },
@@ -1179,7 +1185,7 @@ mod tests {
                 symbol_offsets: &[],
                 column_top: 0,
                 designated_timestamp: false,
-                required: false,
+                not_null_hint: false,
                 designated_timestamp_ascending: false,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
             },
@@ -1326,7 +1332,7 @@ mod tests {
             symbol_offsets: &[],
             column_top: 0,
             designated_timestamp: true,
-            required: true,
+            not_null_hint: true,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
         };
@@ -1378,7 +1384,7 @@ mod tests {
             symbol_offsets: &[],
             column_top: 0,
             designated_timestamp: false,
-            required: false,
+            not_null_hint: false,
             designated_timestamp_ascending: false,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
         };
@@ -2132,7 +2138,7 @@ mod tests {
                 symbol_offsets: &[],
                 column_top: 0,
                 designated_timestamp: true,
-                required: true,
+                not_null_hint: true,
                 designated_timestamp_ascending: true,
                 parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
             }],
@@ -2205,6 +2211,7 @@ mod tests {
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
+                    top: cm.map(|c| c.column_top as u64).unwrap_or(0),
                     col_type_code,
                     col_type_tag,
                     id: field_info.id.unwrap_or(-1),
@@ -2274,6 +2281,7 @@ mod tests {
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
+                    top: cm.map(|c| c.column_top as u64).unwrap_or(0),
                     col_type_code: cm.map(|c| c.column_type.code()).unwrap_or(-1),
                     col_type_tag,
                     id: field_info.id.unwrap_or(-1),

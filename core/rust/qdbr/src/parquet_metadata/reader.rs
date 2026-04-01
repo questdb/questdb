@@ -242,7 +242,7 @@ mod tests {
         let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(5); // ts_col
         for (type_code, name) in types {
-            w.add_column(name, -1, *type_code, ColumnFlags::new(), 0, 0, 0);
+            w.add_column(0, name, -1, *type_code, ColumnFlags::new(), 0, 0, 0);
         }
         let (bytes, footer_offset) = w.finish().unwrap();
 
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn crc_corruption_detected() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let (mut bytes, footer_offset) = w.finish().unwrap();
 
         // Corrupt one byte in the header.
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn crc_corrupted_in_body() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(42);
         w.add_row_group(rg);
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn verify_checksum_passes_on_valid_file() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
 
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
@@ -301,6 +301,7 @@ mod tests {
     fn multiple_row_groups_with_stats() {
         let mut w = ParquetMetaWriter::new();
         w.add_column(
+            0,
             "ts",
             0,
             8,
@@ -339,7 +340,7 @@ mod tests {
     #[test]
     fn footer_offset_accessor() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
 
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
@@ -351,7 +352,7 @@ mod tests {
         // Build a valid file, then manually corrupt a row group entry
         // to point past the end of the file.
         let mut w = ParquetMetaWriter::new();
-        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(10);
         w.add_row_group(rg);
@@ -380,7 +381,7 @@ mod tests {
         // is truncated so the checksum field falls outside the slice.
         // Simplest: just truncate a valid file at the footer.
         let mut w = ParquetMetaWriter::new();
-        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
 
         // Truncate the file to cut off the last byte (the CRC).
@@ -392,7 +393,7 @@ mod tests {
     #[test]
     fn footer_offset_out_of_bounds() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
         let (bytes, _) = w.finish().unwrap();
 
         // Use a footer offset past the end of the file.
@@ -403,7 +404,7 @@ mod tests {
     fn from_file_size_round_trip() {
         let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(0);
-        w.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "ts", 0, 8, ColumnFlags::new(), 0, 0, 0);
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(42);
         w.add_row_group(rg);
@@ -437,8 +438,8 @@ mod tests {
     fn sorting_columns_round_trip() {
         let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(0);
-        w.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0);
-        w.add_column("key", 1, 12, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "ts", 0, 8, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "key", 1, 12, ColumnFlags::new(), 0, 0, 0);
         w.add_sorting_column(0);
         w.add_sorting_column(1);
 

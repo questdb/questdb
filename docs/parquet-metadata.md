@@ -131,14 +131,17 @@ For a column to be the designated timestamp it must comply to these rules:
 
 Per-column metadata. Written once in the header, applies across all row groups.
 
-| offset | size | field       | type | description                                             |
-| ------ | ---- | ----------- | ---- | ------------------------------------------------------- |
-| 0      | 8    | TOP         | u64  | number of null values at the top of the column          |
-| 8      | 8    | NAME_OFFSET | u64  | offset from the file start to column name utf-8 encoded |
-| 16     | 4    | NAME_LENGTH | u32  | length of the column name                               |
-| 20     | 4    | ID          | i32  | index of the column related to QuestDB schema (or -1)   |
-| 24     | 4    | TYPE        | i32  | QuestDB column type code                                |
-| 28     | 4    | FLAGS       | i32  | Column flags                                            |
+| offset | size | field         | type | description                                                                                                  |
+| ------ | ---- | ------------- | ---- | ------------------------------------------------------------------------------------------------------------ |
+| 0      | 8    | NAME_OFFSET   | u64  | offset from the file start to column name utf-8 encoded prefixed by the name length as an u32                |
+| 8      | 8    | TOP           | u64  | column top value, exists for legacy purposes, this field won't be modified by incremental updates            |
+| 16     | 4    | ID            | i32  | index of the column related to QuestDB schema (or -1)                                                        |
+| 20     | 4    | TYPE          | i32  | QuestDB column type code                                                                                     |
+| 24     | 4    | FLAGS         | i32  | Column flags                                                                                                 |
+| 28     | 1    | PHYSICAL_TYPE | u8   | Parquet physical type: 0=BOOLEAN, 1=INT32, 2=INT64, 3=INT96, 4=FLOAT, 5=DOUBLE, 6=BYTE_ARRAY, 7=FIXED_LEN_BA |
+| 29     | 1    | MAX_REP_LEVEL | u8   | Maximum repetition level (0 for non-nested columns)                                                          |
+| 30     | 1    | MAX_DEF_LEVEL | u8   | Maximum definition level (0 for required, 1 for optional)                                                    |
+| 31     | 1    | RESERVED      | u8   | Reserved, must be 0                                                                                          |
 
 #### Column flags
 
@@ -146,7 +149,7 @@ Per-column metadata. Written once in the header, applies across all row groups.
 | ---------- | -------- | ------------------- | ---- | ---------------------------------------- |
 | 0          | 1        | LOCAL_KEY_IS_GLOBAL | i1   | Symbol                                   |
 | 1          | 1        | IS_ASCII            | i1   | Varchar                                  |
-| 2          | 2        | FIELD_REPETITION    | u2   | 0 = Required, 1 = Optional, 2 = Repeated |
+| 2          | 2        | FIELD_REPETITION    | u2   | 0 = Required, 1 = Optional, 2 = Repeated | // TODO: CAN CHANGE BETWEEN VERSIONS - MOVE AWAY |
 | 4          | 1        | DESCENDING          | i1   | For sorted column, 1 = Descending        |
 | 5          | 27       | RESERVED            |      |                                          |
 
@@ -223,13 +226,13 @@ At the start of the bloom filter bitset, there is a 4-byte `BLOOM_FILTER_LEN` fi
 
 The `_pm` file size is stored in `_txn` field 3. The reader locates the footer by reading the 4-byte FOOTER_LENGTH trailer at the end of the file: `footer_offset = file_size - 4 - FOOTER_LENGTH`. This mirrors how parquet files store `footer_length + PAR1` at the end.
 
-| offset | size | field                 | type | description                                                           |
-| ------ | ---- | --------------------- | ---- | --------------------------------------------------------------------- |
-| 0      | 8    | PARQUET_FOOTER_OFFSET | u64  | byte offset in the parquet file where the parquet footer starts       |
-| 8      | 4    | PARQUET_FOOTER_LENGTH | u32  | length of the parquet footer in bytes                                 |
-| 12     | 4    | ROW_GROUP_COUNT       | u32  |                                                                       |
-| 16     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                           |
-| ..     | 4    | CHECKSUM              | u32  | CRC32 from the start of the file to this field (exclusive)            |
+| offset | size | field                 | type | description                                                                         |
+| ------ | ---- | --------------------- | ---- | ----------------------------------------------------------------------------------- |
+| 0      | 8    | PARQUET_FOOTER_OFFSET | u64  | byte offset in the parquet file where the parquet footer starts                     |
+| 8      | 4    | PARQUET_FOOTER_LENGTH | u32  | length of the parquet footer in bytes                                               |
+| 12     | 4    | ROW_GROUP_COUNT       | u32  |                                                                                     |
+| 16     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
+| ..     | 4    | CHECKSUM              | u32  | CRC32 from the start of the file to this field (exclusive)                          |
 | ..     | 4    | FOOTER_LENGTH         | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM |
 
 The parquet file size is derived from the footer metadata: `parquet_file_size = PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8` (4B parquet footer length field + 4B PAR1 magic). This eliminates the need to store the parquet file size separately.
