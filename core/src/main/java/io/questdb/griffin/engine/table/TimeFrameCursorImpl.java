@@ -517,6 +517,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             frameAddressCache.updateAddresses(globalFrame, frame);
             globalFrame++;
         }
+        int expectedEnd = (partitionIndex + 1 < partitionCount) ? partitionFirstFrame.getQuick(partitionIndex + 1) : frameCount;
+        assert globalFrame == expectedEnd : "frame count mismatch for partition " + partitionIndex + ": expected " + expectedEnd + " but got " + globalFrame;
         partitionOpened.set(partitionIndex);
     }
 
