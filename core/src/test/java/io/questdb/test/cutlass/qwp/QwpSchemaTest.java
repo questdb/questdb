@@ -38,6 +38,8 @@ import java.nio.charset.StandardCharsets;
 
 public class QwpSchemaTest {
 
+    private static final int TEST_SCHEMA_ID = 42;
+
     @Test
     public void testColumnDefEquality() {
         QwpColumnDef col1 = new QwpColumnDef("name", QwpConstants.TYPE_STRING);
@@ -97,12 +99,14 @@ public class QwpSchemaTest {
         byte[] buf = new byte[10];
         int offset = 0;
         buf[offset++] = QwpSchema.SCHEMA_MODE_FULL;
+        offset = QwpVarint.encode(buf, offset, 0); // schemaId = 0
         offset = QwpVarint.encode(buf, offset, 0); // empty name length
         buf[offset++] = QwpConstants.TYPE_TIMESTAMP;
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, offset, 1);
         Assert.assertEquals("", result.schema.getColumn(0).getName());
         Assert.assertEquals(QwpConstants.TYPE_TIMESTAMP, result.schema.getColumn(0).getTypeCode());
+        Assert.assertEquals(0, result.schemaId);
     }
 
     @Test
@@ -119,11 +123,12 @@ public class QwpSchemaTest {
         };
 
         QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 1);
         Assert.assertEquals(longName, result.schema.getColumn(0).getName());
+        Assert.assertEquals(TEST_SCHEMA_ID, result.schemaId);
     }
 
     @Test
@@ -135,6 +140,7 @@ public class QwpSchemaTest {
         byte[] buf = new byte[256];
         int offset = 0;
         buf[offset++] = QwpSchema.SCHEMA_MODE_FULL;
+        offset = QwpVarint.encode(buf, offset, 0); // schemaId
         offset = QwpVarint.encode(buf, offset, nameBytes.length);
         System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
         offset += nameBytes.length;
@@ -156,8 +162,8 @@ public class QwpSchemaTest {
         };
 
         QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 2);
 
@@ -175,12 +181,13 @@ public class QwpSchemaTest {
         };
 
         QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 4);
 
-        Assert.assertEquals(original.getSchemaHash(), result.schema.getSchemaHash());
+        Assert.assertFalse(result.isReference);
+        Assert.assertEquals(TEST_SCHEMA_ID, result.schemaId);
         Assert.assertEquals(original.getColumnCount(), result.schema.getColumnCount());
 
         for (int i = 0; i < original.getColumnCount(); i++) {
@@ -197,15 +204,16 @@ public class QwpSchemaTest {
         };
 
         QwpSchema original = QwpSchema.create(columns);
-        int size = original.encodedSize();
+        int size = original.encodedSize(TEST_SCHEMA_ID);
 
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            long endAddress = original.encode(address);
+            long endAddress = original.encode(address, TEST_SCHEMA_ID);
             Assert.assertEquals(size, endAddress - address);
 
             QwpSchema.ParseResult result = QwpSchema.parse(address, size, 1);
             Assert.assertEquals("value", result.schema.getColumn(0).getName());
+            Assert.assertEquals(TEST_SCHEMA_ID, result.schemaId);
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
@@ -213,17 +221,17 @@ public class QwpSchemaTest {
 
     @Test
     public void testEncodeReferenceDirectMemory() throws QwpParseException {
-        long schemaHash = 0xDEADBEEFCAFEBABEL;
-        int size = 9; // mode byte + 8-byte hash
+        int schemaId = 7;
+        int size = 1 + QwpVarint.encodedLength(schemaId); // mode byte + varint
 
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
-            long endAddress = QwpSchema.encodeReference(address, schemaHash);
+            long endAddress = QwpSchema.encodeReference(address, schemaId);
             Assert.assertEquals(size, endAddress - address);
 
             QwpSchema.ParseResult result = QwpSchema.parse(address, size, 0);
             Assert.assertTrue(result.isReference);
-            Assert.assertEquals(schemaHash, result.schemaHash);
+            Assert.assertEquals(schemaId, result.schemaId);
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
@@ -235,6 +243,7 @@ public class QwpSchemaTest {
         byte[] buf = new byte[10];
         int offset = 0;
         buf[offset++] = QwpSchema.SCHEMA_MODE_FULL;
+        offset = QwpVarint.encode(buf, offset, 0); // schemaId
         buf[offset++] = 3; // name length
         buf[offset++] = 'c';
         buf[offset++] = 'o';
@@ -276,8 +285,8 @@ public class QwpSchemaTest {
         }
 
         QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, types.length);
 
@@ -295,8 +304,8 @@ public class QwpSchemaTest {
         };
 
         QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
 
         long address = Unsafe.malloc(buf.length, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -324,8 +333,8 @@ public class QwpSchemaTest {
         };
 
         QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 3);
 
@@ -344,8 +353,8 @@ public class QwpSchemaTest {
         }
 
         QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 10);
 
@@ -362,8 +371,8 @@ public class QwpSchemaTest {
         };
 
         QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 1);
 
@@ -377,8 +386,8 @@ public class QwpSchemaTest {
         };
 
         QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize()];
-        original.encode(buf, 0);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 1);
 
@@ -388,40 +397,42 @@ public class QwpSchemaTest {
     }
 
     @Test
-    public void testSchemaHashExtraction() throws QwpParseException {
+    public void testSchemaIdPreservedInParse() throws QwpParseException {
         QwpColumnDef[] columns = {
                 new QwpColumnDef("col1", QwpConstants.TYPE_INT),
                 new QwpColumnDef("col2", QwpConstants.TYPE_DOUBLE)
         };
 
         QwpSchema schema = QwpSchema.create(columns);
-        long hash1 = schema.getSchemaHash();
 
-        // Same columns should produce same hash
-        QwpSchema schema2 = QwpSchema.create(columns);
-        Assert.assertEquals(hash1, schema2.getSchemaHash());
+        // Encode with schemaId=5
+        byte[] buf = new byte[schema.encodedSize(5)];
+        schema.encode(buf, 0, 5);
 
-        // Different columns should produce different hash
-        QwpColumnDef[] columns2 = {
-                new QwpColumnDef("col1", QwpConstants.TYPE_INT),
-                new QwpColumnDef("col3", QwpConstants.TYPE_DOUBLE)
-        };
-        QwpSchema schema3 = QwpSchema.create(columns2);
-        Assert.assertNotEquals(hash1, schema3.getSchemaHash());
+        QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 2);
+        Assert.assertFalse(result.isReference);
+        Assert.assertEquals(5, result.schemaId);
+
+        // Encode with schemaId=200 (larger varint)
+        byte[] buf2 = new byte[schema.encodedSize(200)];
+        schema.encode(buf2, 0, 200);
+
+        QwpSchema.ParseResult result2 = QwpSchema.parse(buf2, 0, buf2.length, 2);
+        Assert.assertEquals(200, result2.schemaId);
     }
 
     @Test
     public void testSchemaReferenceMode() throws QwpParseException {
-        long schemaHash = 0x123456789ABCDEF0L;
-        byte[] buf = new byte[9];
-        QwpSchema.encodeReference(buf, 0, schemaHash);
+        int schemaId = 13;
+        byte[] buf = new byte[1 + QwpVarint.encodedLength(schemaId)];
+        QwpSchema.encodeReference(buf, 0, schemaId);
 
         QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 0);
 
         Assert.assertTrue(result.isReference);
         Assert.assertNull(result.schema);
-        Assert.assertEquals(schemaHash, result.schemaHash);
-        Assert.assertEquals(9, result.bytesConsumed);
+        Assert.assertEquals(schemaId, result.schemaId);
+        Assert.assertEquals(buf.length, result.bytesConsumed);
     }
 
     @Test

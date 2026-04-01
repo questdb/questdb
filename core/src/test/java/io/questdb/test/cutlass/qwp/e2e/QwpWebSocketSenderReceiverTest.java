@@ -2857,9 +2857,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
     /**
      * Sends 5 batches with the same schema on a single connection. Batch 1 sends
-     * the full schema; batches 2-5 implicitly use schema reference mode (8-byte
-     * hash only) because the client's sentSchemaHashes set already contains the
-     * hash after the first successful ACK.
+     * the full schema; batches 2-5 implicitly use schema reference mode (varint
+     * schemaId only) because the schema ID is already below maxSentSchemaId
+     * after the first successful ACK.
      */
     @Test
     public void testSchemaReference_cacheHitAfterMultipleBatches() throws Exception {
@@ -2891,7 +2891,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
     /**
      * Opens two successive connections to the same server. Each connection
-     * clears the client's sentSchemaHashes set, so the second sender must
+     * resets the client's maxSentSchemaId, so the second sender must
      * re-send the full schema (not a reference) on its first batch. This
      * verifies that the reset-on-reconnect logic works end-to-end.
      */

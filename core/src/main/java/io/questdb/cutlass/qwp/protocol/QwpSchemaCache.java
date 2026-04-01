@@ -24,59 +24,34 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
-import io.questdb.std.LongObjHashMap;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8String;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.ObjList;
 
 /**
- * Simple cache for QWP v1 schemas.
+ * Simple cache for QWP v1 schemas, keyed by client-assigned schema ID.
  * <p>
- * Keyed by combined hash of (tableName, schemaHash).
+ * Schema IDs are dense, monotonically increasing integers starting at 0,
+ * so the cache uses a plain list where the index is the schema ID.
  * Single-threaded, zero-allocation on lookups.
- * <p>
- * Each entry stores the table name alongside the schema to guard against
- * hash collisions: two tables whose name hashes collide will not return
- * each other's schemas.
  */
 public class QwpSchemaCache {
 
-    private final LongObjHashMap<Entry> cache;
-    private final Utf8StringSink lookupSink = new Utf8StringSink();
+    private final ObjList<QwpSchema> schemas = new ObjList<>();
     private long hits;
     private long misses;
 
-    public QwpSchemaCache() {
-        this.cache = new LongObjHashMap<>();
-    }
-
     public void clear() {
-        cache.clear();
+        schemas.clear();
         hits = 0;
         misses = 0;
     }
 
-    public QwpSchema get(DirectUtf8Sequence tableName, long schemaHash) {
-        long key = combineKey(Utf8s.hashCode(tableName), schemaHash);
-        Entry entry = cache.get(key);
-        if (entry != null && Utf8s.equals(tableName, entry.tableName)) {
-            hits++;
-            return entry.schema;
-        }
-        misses++;
-        return null;
-    }
-
-    public QwpSchema get(String tableName, long schemaHash) {
-        lookupSink.clear();
-        lookupSink.put(tableName);
-        long key = combineKey(Utf8s.hashCode(lookupSink), schemaHash);
-        Entry entry = cache.get(key);
-        if (entry != null && Utf8s.equals(lookupSink, entry.tableName)) {
-            hits++;
-            return entry.schema;
+    public QwpSchema get(int schemaId) {
+        if (schemaId >= 0 && schemaId < schemas.size()) {
+            QwpSchema schema = schemas.getQuick(schemaId);
+            if (schema != null) {
+                hits++;
+                return schema;
+            }
         }
         misses++;
         return null;
@@ -95,20 +70,11 @@ public class QwpSchemaCache {
         return misses;
     }
 
-    public void put(Utf8Sequence tableName, QwpSchema schema) {
-        long key = combineKey(Utf8s.hashCode(tableName), schema.getSchemaHash());
-        cache.put(key, new Entry(Utf8String.newInstance(tableName), schema));
+    public void put(int schemaId, QwpSchema schema) {
+        schemas.extendAndSet(schemaId, schema);
     }
 
     public int size() {
-        return cache.size();
-    }
-
-    private static long combineKey(int tableNameHash, long schemaHash) {
-        long key = ((long) tableNameHash << 32) ^ schemaHash;
-        return key != -1L ? key : -2L;
-    }
-
-    private record Entry(Utf8String tableName, QwpSchema schema) {
+        return schemas.size();
     }
 }

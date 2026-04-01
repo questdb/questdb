@@ -345,7 +345,7 @@ public class QwpTableBlockCursor implements Mutable {
             schema = parseResult.schema;
             // Cache the schema if caching is enabled
             if (schemaCache != null) {
-                schemaCache.put(tableHeader.getTableNameUtf8(), schema);
+                schemaCache.put(parseResult.schemaId, schema);
             }
         } else {
             // Schema reference mode - look up in cache
@@ -355,7 +355,7 @@ public class QwpTableBlockCursor implements Mutable {
                         "schema reference mode requires schema cache"
                 );
             }
-            schema = schemaCache.get(tableHeader.getTableNameUtf8(), parseResult.schemaHash);
+            schema = schemaCache.get(parseResult.schemaId);
             if (schema == null) {
                 throw QwpParseException.create(
                         QwpParseException.ErrorCode.SCHEMA_NOT_FOUND,
