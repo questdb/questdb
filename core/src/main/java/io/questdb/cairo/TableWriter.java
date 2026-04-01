@@ -1433,13 +1433,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition is already in Parquet format.
         }
 
+        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+        squashPartitionForce(partitionIndex);
+        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;
         try {
-            lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-            boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
-            squashPartitionForce(partitionIndex);
-
-            long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             final int partitionDirLen = path.size();
@@ -1461,32 +1460,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
             linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
-            try {
-                final long originalSize = txWriter.getPartitionSize(partitionIndex);
-                // used to update txn and bump recordStructureVersion
-                txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
-                txWriter.setPartitionParquetGenerated(partitionIndex, true);
-                txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
-                txWriter.bumpPartitionTableVersion();
-                txWriter.commit(denseSymbolMapWriters);
+            final long originalSize = txWriter.getPartitionSize(partitionIndex);
+            // used to update txn and bump recordStructureVersion
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+            txWriter.setPartitionParquetGenerated(partitionIndex, true);
+            txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
+            txWriter.bumpPartitionTableVersion();
+            txWriter.commit(denseSymbolMapWriters);
 
-                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
-                }
-            } catch (Throwable th) {
-                if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                    LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
-                }
-                throw th;
-            }
-
-            if (lastPartitionConverted) {
-                closeActivePartition(false);
-            }
-
-            // remove old partition dir
-            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
-            return true;
         } catch (Throwable th) {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
@@ -1496,6 +1477,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
+
+        // Post-commit: the conversion is logically complete. Everything below
+        // is best-effort cleanup. Failures must not roll back the committed
+        // transaction (e.g. by deleting the new partition dir the TxReader
+        // already points to).
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+
+            if (lastPartitionConverted) {
+                closeActivePartition(false);
+            }
+
+            // remove old partition dir
+            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+
+        return true;
     }
 
     @Override
@@ -1525,11 +1527,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition already has a Native format
         }
 
+        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        int newPartitionDirLen = 0;
         try {
-            lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-            boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
-
-            long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             final int partitionDirLen = path.size();
             // set the parquet file full path
@@ -1541,7 +1543,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // upgrade partition version
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
             createDirsOrFail(ff, other, configuration.getMkDirMode());
-            final int newPartitionDirLen = other.size();
+            newPartitionDirLen = other.size();
 
             LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
             long parquetRowCount = produceNativeFromParquet(path, other, partitionTimestamp, partitionIndex);
@@ -1549,22 +1551,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("linking index files to native [path=").$substr(pathRootSize, path).I$();
             linkPartitionIndexFiles(partitionTimestamp, partitionDirLen, newPartitionDirLen);
 
-            try {
-                // used to update txn and bump recordStructureVersion
-                txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
-                txWriter.resetPartitionParquetFormat(partitionTimestamp);
-                txWriter.resetPartitionParquetGenerated(partitionIndex);
-                txWriter.bumpPartitionTableVersion();
-                txWriter.commit(denseSymbolMapWriters);
+            // used to update txn and bump recordStructureVersion
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
+            txWriter.resetPartitionParquetFormat(partitionTimestamp);
+            txWriter.resetPartitionParquetGenerated(partitionIndex);
+            txWriter.bumpPartitionTableVersion();
+            txWriter.commit(denseSymbolMapWriters);
 
-                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
-                }
-            } catch (Throwable th) {
-                if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                    LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
-                }
-                throw th;
+        } catch (Throwable th) {
+            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
+            }
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // Post-commit: the conversion is logically complete. Everything below
+        // is best-effort cleanup. Failures must not roll back the committed
+        // transaction (e.g. by deleting the new partition dir the TxReader
+        // already points to).
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
             }
 
             if (lastPartitionConverted) {
@@ -1579,11 +1589,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 openPartition(partitionTimestamp, txWriter.getTransientRowCount());
                 setAppendPosition(txWriter.getTransientRowCount(), false);
             }
-            return true;
-        } finally {
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
         }
+
+        return true;
     }
 
     public void destroy() {
