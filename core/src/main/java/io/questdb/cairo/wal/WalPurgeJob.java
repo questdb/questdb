@@ -402,9 +402,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
                     txReader.ofRO(path.$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
                     TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                } catch (CairoException ex) {
+                } catch (CairoException | NullPointerException ex) {
                     if (engine.isTableDropped(tableToken)) {
-                        // This is ok, table dropped while we tried to read the txn
+                        // This is ok, table dropped while we tried to read the txn.
+                        // A concurrent drop can cause CairoException or NPE (when the
+                        // metadata pool tenant's txFile is closed during refresh).
                         return false;
                     }
                     throw ex;
