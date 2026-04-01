@@ -304,7 +304,10 @@ public class ColumnPurgeOperator implements Closeable {
                     }
 
                     if (columnVersion < minUnlockedTxnRangeStarts) {
-                        if (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task)) {
+                        // When a backup checkpoint is in progress, defer column purge — the
+                        // checkpoint may reference these column versions via snapshotted metadata.
+                        if (engine.getCheckpointStatus().isInProgress()
+                                || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;
                             LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
