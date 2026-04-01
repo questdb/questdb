@@ -1267,6 +1267,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCairoMetadataCacheSnapshotOrdered() {
+        return getDelegate().isCairoMetadataCacheSnapshotOrdered();
+    }
+
+    @Override
     public long getTableRegistryAutoReloadFrequency() {
         return getDelegate().getTableRegistryAutoReloadFrequency();
     }

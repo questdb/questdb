@@ -128,6 +128,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -4414,7 +4415,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final CairoException ex = CairoException.nonCritical().put("Failures while dropping tables, views and materialized views [");
             CharSequence tableName;
             String message;
-            final ObjList<CharSequence> keys = dropAllTablesFailures.keys();
+            final ReadOnlyObjList<CharSequence> keys = dropAllTablesFailures.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 tableName = keys.get(i);
                 message = dropAllTablesFailures.get(tableName);
