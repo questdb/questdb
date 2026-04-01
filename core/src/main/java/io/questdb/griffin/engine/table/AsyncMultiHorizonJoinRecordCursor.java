@@ -295,7 +295,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
         DirectIntList partIndexes = slaveTimeFramePartitionIndexes[slaveIndex];
         LongList rowCounts = slaveTimeFrameRowCounts[slaveIndex];
 
-        cache.of(slaveMetadata, cursor.getColumnIndexes(), cursor.isExternal());
+        cache.of(slaveMetadata, cursor.getColumnMapping(), cursor.isExternal());
         partIndexes.reopen();
         partIndexes.clear();
         rowCounts.clear();
