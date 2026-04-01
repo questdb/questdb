@@ -37,7 +37,7 @@ import java.util.Arrays;
 
 /**
  * A record wrapper that translates master symbol IDs to slave symbol IDs
- * for efficient integer-based key comparison in HORIZON JOIN.
+ * for efficient integer-based key comparison in HORIZON and ASOF JOINs.
  * <p>
  * Instead of resolving symbol IDs to strings for comparison, this record
  * intercepts {@link #getInt(int)} calls for symbol join key columns and
