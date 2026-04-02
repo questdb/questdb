@@ -28,6 +28,10 @@
 //! that accompanies each `data.parquet` partition file. The format stores
 //! column descriptors, per-row-group column chunk metadata (byte ranges,
 //! encodings, statistics), and a footer whose offset is tracked in `_txn`.
+//!
+//! The format specification lives in `docs/parquet-metadata.md`.
+//! Any change to the binary layout, field semantics, or feature flags
+//! must be reflected there.
 
 pub mod column_chunk;
 pub mod convert;

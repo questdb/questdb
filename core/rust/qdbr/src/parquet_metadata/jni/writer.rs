@@ -98,7 +98,6 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
     mut env: JNIEnv,
     _class: JClass,
     ptr: *mut JniParquetMetaWriter,
-    top: u64,
     name_ptr: *const u8,
     name_len: jint,
     id: jint,
@@ -128,7 +127,6 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
         }
     };
     wrapper.writer.add_column(
-        top,
         name,
         id,
         col_type,
@@ -140,6 +138,8 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
     );
     wrapper.column_count += 1;
 }
+
+
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addSortingColumn(

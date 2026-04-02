@@ -27,12 +27,12 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::types::{
-    ColumnFlags, COLUMN_DESCRIPTOR_SIZE, FILE_FORMAT_VERSION, HEADER_FIXED_SIZE,
+    ColumnFlags, HeaderFeatureFlags, COLUMN_DESCRIPTOR_SIZE, FILE_FORMAT_VERSION, HEADER_FIXED_SIZE,
 };
 
-// ── On-disk column descriptor (40 bytes) ───────────────────────────────
+// ── On-disk column descriptor (32 bytes) ───────────────────────────────
 
-/// On-disk layout of a column descriptor (40 bytes).
+/// On-disk layout of a column descriptor (32 bytes).
 ///
 /// The column name is stored externally as a length-prefixed string at
 /// `name_offset`: `[u32 length][utf8 bytes][padding to 4-byte alignment]`.
@@ -40,7 +40,6 @@ use crate::parquet_metadata::types::{
 #[repr(C)]
 pub struct ColumnDescriptorRaw {
     pub name_offset: u64,
-    pub top: u64,
     pub id: i32,
     pub col_type: i32,
     pub flags: i32,
@@ -60,33 +59,36 @@ impl ColumnDescriptorRaw {
     }
 }
 
-// ── On-disk header fixed portion (16 bytes) ─────────────────────────────
+// ── On-disk header fixed portion (24 bytes) ────────────────────────────
 
-/// On-disk layout of the fixed portion of the file header (16 bytes).
+/// On-disk layout of the fixed portion of the file header (24 bytes).
+///
+/// Read field-by-field rather than via pointer cast because
+/// `feature_flags: u64` at offset 4 is not 8-byte aligned.
 #[derive(Debug, Copy, Clone)]
-#[repr(C)]
 pub struct FileHeaderRaw {
     pub format_version: u32,
+    pub feature_flags: HeaderFeatureFlags,
     pub designated_timestamp: i32,
     pub sorting_column_count: u32,
     pub column_count: u32,
 }
 
-const _: () = assert!(size_of::<FileHeaderRaw>() == HEADER_FIXED_SIZE);
-
 // ── FileHeader (zero-copy reader) ──────────────────────────────────────
 
 /// Zero-copy reader over the file header region of a `_pm` file.
 pub struct FileHeader<'a> {
-    raw: &'a FileHeaderRaw,
+    raw: FileHeaderRaw,
     data: &'a [u8],
+    column_tops: Option<&'a [u8]>,
 }
 
 impl<'a> FileHeader<'a> {
     /// Creates a `FileHeader` reader over the given byte slice.
     ///
     /// The slice must start at byte 0 of the `_pm` file and be large enough
-    /// to contain the full header (fixed fields + descriptors + sorting columns).
+    /// to contain the full header (fixed fields + descriptors + sorting columns
+    /// + name strings + feature sections).
     pub fn new(data: &'a [u8]) -> ParquetResult<Self> {
         if data.len() < HEADER_FIXED_SIZE {
             return Err(parquet_meta_err!(
@@ -94,17 +96,29 @@ impl<'a> FileHeader<'a> {
                 "file too small for header"
             ));
         }
-        let ptr = data.as_ptr() as *const FileHeaderRaw;
-        // Safety: FileHeaderRaw is #[repr(C)] with 4-byte max alignment.
-        // The slice starts at file offset 0 (page-aligned from mmap).
-        debug_assert_eq!(ptr.align_offset(align_of::<FileHeaderRaw>()), 0);
-        let raw = unsafe { &*ptr };
+
+        // Parse fixed header fields individually (feature_flags at offset 4
+        // is not 8-byte aligned, so we cannot use a repr(C) pointer cast).
+        let raw = FileHeaderRaw {
+            format_version: u32::from_le_bytes(data[0..4].try_into().unwrap()),
+            feature_flags: HeaderFeatureFlags::from_le_bytes(data[4..12].try_into().unwrap()),
+            designated_timestamp: i32::from_le_bytes(data[12..16].try_into().unwrap()),
+            sorting_column_count: u32::from_le_bytes(data[16..20].try_into().unwrap()),
+            column_count: u32::from_le_bytes(data[20..24].try_into().unwrap()),
+        };
 
         if raw.format_version != FILE_FORMAT_VERSION {
             return Err(parquet_meta_err!(ParquetMetaErrorKind::VersionMismatch {
                 found: raw.format_version,
                 expected: FILE_FORMAT_VERSION,
             }));
+        }
+
+        let unknown_required = raw.feature_flags.unknown_required(0);
+        if unknown_required != 0 {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::UnsupportedFeature { flags: unknown_required }
+            ));
         }
 
         let min_size = Self::min_size(raw.column_count, raw.sorting_column_count)?;
@@ -116,11 +130,39 @@ impl<'a> FileHeader<'a> {
                 raw.sorting_column_count
             ));
         }
-        Ok(Self { raw, data })
+
+        // Locate the end of the name strings area to find feature sections.
+        let names_area_end = Self::compute_names_area_end(data, raw.column_count)?;
+
+        // Parse header feature sections (ascending bit order).
+        let mut column_tops = None;
+        if raw.feature_flags.has_column_tops() {
+            let section_size = (raw.column_count as usize).checked_mul(8).ok_or_else(|| {
+                parquet_meta_err!(ParquetMetaErrorKind::Truncated, "column_tops size overflow")
+            })?;
+            let section_end = names_area_end.checked_add(section_size).ok_or_else(|| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "column_tops section overflow"
+                )
+            })?;
+            if section_end > data.len() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "column_tops section at offset {} length {} exceeds file size {}",
+                    names_area_end,
+                    section_size,
+                    data.len()
+                ));
+            }
+            column_tops = Some(&data[names_area_end..section_end]);
+        }
+
+        Ok(Self { raw, data, column_tops })
     }
 
     /// Minimum byte size required for the header with the given column counts
-    /// (not including name string data).
+    /// (not including name string data or feature sections).
     fn min_size(column_count: u32, sorting_column_count: u32) -> ParquetResult<usize> {
         HEADER_FIXED_SIZE
             .checked_add(
@@ -136,8 +178,37 @@ impl<'a> FileHeader<'a> {
             })
     }
 
+    /// Computes the byte offset past the last name string entry.
+    fn compute_names_area_end(data: &[u8], column_count: u32) -> ParquetResult<usize> {
+        let mut end = HEADER_FIXED_SIZE + (column_count as usize) * COLUMN_DESCRIPTOR_SIZE;
+        // We don't know sorting_column_count here from just column_count,
+        // but name_offsets are absolute, so we just find the max end.
+        for i in 0..column_count as usize {
+            let offset = HEADER_FIXED_SIZE + i * COLUMN_DESCRIPTOR_SIZE;
+            let ptr = data[offset..].as_ptr();
+            debug_assert_eq!(ptr.align_offset(align_of::<ColumnDescriptorRaw>()), 0);
+            let desc = unsafe { &*(ptr as *const ColumnDescriptorRaw) };
+            let entry_size = (4 + desc.name_length as usize).next_multiple_of(4);
+            let entry_end = (desc.name_offset as usize)
+                .checked_add(entry_size)
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::Truncated,
+                        "name entry overflow at column {}",
+                        i
+                    )
+                })?;
+            end = end.max(entry_end);
+        }
+        Ok(end)
+    }
+
     pub fn format_version(&self) -> u32 {
         self.raw.format_version
+    }
+
+    pub fn feature_flags(&self) -> HeaderFeatureFlags {
+        self.raw.feature_flags
     }
 
     /// Index of the designated timestamp column, or `None` if not set (-1).
@@ -171,7 +242,7 @@ impl<'a> FileHeader<'a> {
         let offset = HEADER_FIXED_SIZE + index * COLUMN_DESCRIPTOR_SIZE;
         let ptr = self.data[offset..].as_ptr();
         // Safety: ColumnDescriptorRaw is #[repr(C)] with 8-byte natural alignment.
-        // offset = 16 + index * 40, which is always 8-byte aligned.
+        // offset = 24 + index * 32, which is always 8-byte aligned.
         debug_assert_eq!(ptr.align_offset(align_of::<ColumnDescriptorRaw>()), 0);
         Ok(unsafe { &*(ptr as *const ColumnDescriptorRaw) })
     }
@@ -223,6 +294,31 @@ impl<'a> FileHeader<'a> {
         })
     }
 
+    /// Returns the column top for the column at `index`.
+    ///
+    /// Returns 0 when the `FEATURE_COLUMN_TOPS` flag is not set.
+    pub fn column_top(&self, index: usize) -> ParquetResult<u64> {
+        if index >= self.raw.column_count as usize {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "column top index {} out of range [0, {})",
+                index,
+                self.raw.column_count
+            ));
+        }
+        match self.column_tops {
+            Some(tops_data) => {
+                let offset = index * 8;
+                Ok(u64::from_le_bytes(
+                    tops_data[offset..offset + 8]
+                        .try_into()
+                        .expect("slice is 8 bytes"),
+                ))
+            }
+            None => Ok(0),
+        }
+    }
+
     /// Returns a zero-copy slice of all sorting column indices.
     ///
     /// The required bounds were validated in [`FileHeader::new`].
@@ -236,7 +332,7 @@ impl<'a> FileHeader<'a> {
         let end = offset + (self.raw.sorting_column_count as usize) * 4;
         debug_assert!(end <= self.data.len());
         let ptr = self.data[offset..end].as_ptr() as *const u32;
-        // Safety: u32 requires 4-byte alignment. offset = 16 + n*40 is always 4-byte aligned.
+        // Safety: u32 requires 4-byte alignment. offset = 24 + n*32 is always 4-byte aligned.
         // Bounds checked: min_size() validated offset + sorting_column_count * 4 <= data.len().
         debug_assert_eq!(ptr.align_offset(align_of::<u32>()), 0);
         unsafe { std::slice::from_raw_parts(ptr, self.raw.sorting_column_count as usize) }
@@ -270,7 +366,6 @@ impl<'a> FileHeader<'a> {
 
 struct ColumnEntry {
     name: String,
-    top: u64,
     id: i32,
     col_type: i32,
     flags: ColumnFlags,
@@ -285,6 +380,7 @@ pub struct FileHeaderBuilder {
     designated_timestamp: i32,
     columns: Vec<ColumnEntry>,
     sorting_columns: Vec<u32>,
+    column_tops: Vec<u64>,
 }
 
 impl FileHeaderBuilder {
@@ -293,13 +389,13 @@ impl FileHeaderBuilder {
             designated_timestamp,
             columns: Vec::new(),
             sorting_columns: Vec::new(),
+            column_tops: Vec::new(),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn add_column(
         &mut self,
-        top: u64,
         name: &str,
         id: i32,
         col_type: i32,
@@ -311,7 +407,6 @@ impl FileHeaderBuilder {
     ) -> &mut Self {
         self.columns.push(ColumnEntry {
             name: name.to_owned(),
-            top,
             id,
             col_type,
             flags,
@@ -323,19 +418,35 @@ impl FileHeaderBuilder {
         self
     }
 
+    pub fn set_column_top(&mut self, index: usize, top: u64) -> &mut Self {
+        if self.column_tops.len() <= index {
+            self.column_tops.resize(index + 1, 0);
+        }
+        self.column_tops[index] = top;
+        self
+    }
+
     pub fn add_sorting_column(&mut self, index: u32) -> &mut Self {
         self.sorting_columns.push(index);
         self
     }
 
     /// Serializes the header into `buf`. Returns the byte offset past the end
-    /// of the header (including name strings).
+    /// of the header (including name strings and feature sections).
     pub fn write_to(&self, buf: &mut Vec<u8>) -> usize {
         let column_count = self.columns.len() as u32;
         let sorting_count = self.sorting_columns.len() as u32;
 
-        // Fixed header fields.
+        // Compute feature flags.
+        let has_column_tops = self.column_tops.iter().any(|&t| t != 0);
+        let mut feature_flags = HeaderFeatureFlags::new();
+        if has_column_tops {
+            feature_flags = feature_flags.with_column_tops();
+        }
+
+        // Fixed header fields (24 bytes, field-by-field for alignment safety).
         buf.extend_from_slice(&FILE_FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&feature_flags.0.to_le_bytes());
         buf.extend_from_slice(&self.designated_timestamp.to_le_bytes());
         buf.extend_from_slice(&sorting_count.to_le_bytes());
         buf.extend_from_slice(&column_count.to_le_bytes());
@@ -371,7 +482,6 @@ impl FileHeaderBuilder {
             let desc_offset = descriptors_start + i * COLUMN_DESCRIPTOR_SIZE;
             let desc = ColumnDescriptorRaw {
                 name_offset,
-                top: col.top,
                 id: col.id,
                 col_type: col.col_type,
                 flags: col.flags.0,
@@ -389,6 +499,14 @@ impl FileHeaderBuilder {
             buf[desc_offset..desc_offset + COLUMN_DESCRIPTOR_SIZE].copy_from_slice(bytes);
         }
 
+        // Header feature sections (ascending bit order).
+        if has_column_tops {
+            for i in 0..self.columns.len() {
+                let top = self.column_tops.get(i).copied().unwrap_or(0);
+                buf.extend_from_slice(&top.to_le_bytes());
+            }
+        }
+
         buf.len()
     }
 }
@@ -399,8 +517,8 @@ mod tests {
     use crate::parquet_metadata::types::FieldRepetition;
 
     #[test]
-    fn descriptor_size_is_40() {
-        assert_eq!(size_of::<ColumnDescriptorRaw>(), 40);
+    fn descriptor_size_is_32() {
+        assert_eq!(size_of::<ColumnDescriptorRaw>(), 32);
     }
 
     #[test]
@@ -411,6 +529,7 @@ mod tests {
 
         let hdr = FileHeader::new(&buf).unwrap();
         assert_eq!(hdr.format_version(), FILE_FORMAT_VERSION);
+        assert_eq!(hdr.feature_flags(), HeaderFeatureFlags::new());
         assert_eq!(hdr.designated_timestamp(), None);
         assert_eq!(hdr.column_count(), 0);
         assert_eq!(hdr.sorting_column_count(), 0);
@@ -420,7 +539,6 @@ mod tests {
     fn header_round_trip_with_columns() {
         let mut builder = FileHeaderBuilder::new(0);
         builder.add_column(
-            0,
             "timestamp",
             0,
             8, // ColumnTypeTag::Timestamp
@@ -431,7 +549,6 @@ mod tests {
             0,
         );
         builder.add_column(
-            0,
             "value",
             1,
             10, // ColumnTypeTag::Double
@@ -471,6 +588,10 @@ mod tests {
             desc1.flags().repetition().unwrap(),
             FieldRepetition::Optional
         );
+
+        // Column tops default to 0 when flag is not set.
+        assert_eq!(hdr.column_top(0).unwrap(), 0);
+        assert_eq!(hdr.column_top(1).unwrap(), 0);
     }
 
     #[test]
@@ -478,7 +599,6 @@ mod tests {
         let mut builder = FileHeaderBuilder::new(-1);
         for i in 0..10 {
             builder.add_column(
-                0,
                 &format!("col_{i}"),
                 i,
                 5, // Int
@@ -540,19 +660,18 @@ mod tests {
         // Write a header claiming 10 columns but truncate the buffer.
         let mut buf = vec![0u8; HEADER_FIXED_SIZE];
         buf[0..4].copy_from_slice(&FILE_FORMAT_VERSION.to_le_bytes());
-        buf[4..8].copy_from_slice(&(-1i32).to_le_bytes()); // designated_ts
-        buf[8..12].copy_from_slice(&0u32.to_le_bytes()); // sorting count
-        buf[12..16].copy_from_slice(&10u32.to_le_bytes()); // claim 10 columns
-                                                           // Buffer is only 16 bytes but needs 16 + 10*40 = 416.
+        buf[4..12].copy_from_slice(&0u64.to_le_bytes()); // feature_flags
+        buf[12..16].copy_from_slice(&(-1i32).to_le_bytes()); // designated_ts
+        buf[16..20].copy_from_slice(&0u32.to_le_bytes()); // sorting count
+        buf[20..24].copy_from_slice(&10u32.to_le_bytes()); // claim 10 columns
+                                                           // Buffer is only 24 bytes but needs 24 + 10*32 = 344.
         assert!(FileHeader::new(&buf).is_err());
     }
 
     #[test]
     fn column_name_out_of_bounds() {
-        // Build a valid header, then manually corrupt a name_offset to point
-        // past the end of the buffer.
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column(0, "ok", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("ok", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
@@ -568,9 +687,8 @@ mod tests {
 
     #[test]
     fn column_name_invalid_utf8() {
-        // Build a header, then overwrite the name bytes with invalid UTF-8.
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column(0, "ab", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("ab", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
@@ -590,8 +708,8 @@ mod tests {
     #[test]
     fn sorting_columns_end_offset_value() {
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column(0, "a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        builder.add_column(0, "b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
         builder.add_sorting_column(0);
         builder.add_sorting_column(1);
         let mut buf = Vec::new();
@@ -600,5 +718,84 @@ mod tests {
         let hdr = FileHeader::new(&buf).unwrap();
         let expected = HEADER_FIXED_SIZE + 2 * COLUMN_DESCRIPTOR_SIZE + 2 * 4;
         assert_eq!(hdr.sorting_columns_end_offset(), expected);
+    }
+
+    #[test]
+    fn column_tops_round_trip() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("c", 2, 7, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.set_column_top(1, 42);
+        builder.set_column_top(2, 100);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(hdr.feature_flags().has_column_tops());
+        assert_eq!(hdr.column_top(0).unwrap(), 0);
+        assert_eq!(hdr.column_top(1).unwrap(), 42);
+        assert_eq!(hdr.column_top(2).unwrap(), 100);
+    }
+
+    #[test]
+    fn column_tops_all_zero_no_flag() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
+        // No set_column_top calls — all zeros.
+
+        let mut buf = Vec::new();
+        let end = builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(!hdr.feature_flags().has_column_tops());
+        assert_eq!(hdr.column_top(0).unwrap(), 0);
+        assert_eq!(hdr.column_top(1).unwrap(), 0);
+
+        // No column tops section written — header end is right after names.
+        let names_end = FileHeader::compute_names_area_end(&buf, 2).unwrap();
+        assert_eq!(end, names_end);
+    }
+
+    #[test]
+    fn column_top_out_of_range() {
+        let builder = FileHeaderBuilder::new(-1);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(hdr.column_top(0).is_err());
+    }
+
+    #[test]
+    fn unknown_optional_header_flags_ignored() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        // Set unknown optional flag bits (bits 1-31).
+        let flags_with_unknown = 0x0000_0000_FFFF_FFFEu64;
+        buf[4..12].copy_from_slice(&flags_with_unknown.to_le_bytes());
+
+        // Reader should accept the file (ignores unknown optional flags).
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert_eq!(hdr.column_count(), 1);
+    }
+
+    #[test]
+    fn unknown_required_header_flags_rejected() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        // Set an unknown required flag (bit 32).
+        let flags_with_required = 1u64 << 32;
+        buf[4..12].copy_from_slice(&flags_with_required.to_le_bytes());
+
+        assert!(FileHeader::new(&buf).is_err());
     }
 }

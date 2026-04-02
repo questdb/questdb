@@ -158,7 +158,6 @@ pub fn convert_from_parquet(
         let max_rep_level = col_desc.descriptor.max_rep_level as u8;
         let max_def_level = col_desc.descriptor.max_def_level as u8;
         writer.add_column(
-            top,
             name,
             id,
             col_type_code,
@@ -168,6 +167,9 @@ pub fn convert_from_parquet(
             max_rep_level,
             max_def_level,
         );
+        if top != 0 {
+            writer.set_column_top(i, top);
+        }
     }
 
     // Add row groups.
@@ -679,9 +681,8 @@ pub fn generate_parquet_metadata(
         writer.add_sorting_column(sc_idx);
     }
 
-    for col in columns {
+    for (i, col) in columns.iter().enumerate() {
         writer.add_column(
-            col.top,
             col.name,
             col.id,
             col.col_type_code,
@@ -691,6 +692,9 @@ pub fn generate_parquet_metadata(
             col.max_rep_level,
             col.max_def_level,
         );
+        if col.top != 0 {
+            writer.set_column_top(i, col.top);
+        }
     }
 
     let col_type_tags: Vec<Option<ColumnTypeTag>> =

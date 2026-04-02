@@ -43,6 +43,8 @@ pub enum ParquetMetaErrorKind {
     SchemaMismatch,
     /// Parquet-to-pm conversion failed (unsupported feature, stat type, etc.).
     Conversion,
+    /// File requires feature flags that this reader does not support.
+    UnsupportedFeature { flags: u64 },
 }
 
 impl fmt::Display for ParquetMetaErrorKind {
@@ -62,6 +64,9 @@ impl fmt::Display for ParquetMetaErrorKind {
             Self::InvalidValue => write!(f, "invalid value"),
             Self::SchemaMismatch => write!(f, "schema mismatch"),
             Self::Conversion => write!(f, "conversion error"),
+            Self::UnsupportedFeature { flags } => {
+                write!(f, "unsupported required feature flags: 0x{flags:016X}")
+            }
         }
     }
 }
@@ -121,6 +126,10 @@ mod tests {
         assert_eq!(
             ParquetMetaErrorKind::Conversion.to_string(),
             "conversion error"
+        );
+        assert_eq!(
+            ParquetMetaErrorKind::UnsupportedFeature { flags: 0x1_0000_0000 }.to_string(),
+            "unsupported required feature flags: 0x0000000100000000"
         );
     }
 }

@@ -33,19 +33,98 @@ use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 // ── File format constants ──────────────────────────────────────────────
 
 /// Current file format version.
-pub const FILE_FORMAT_VERSION: u32 = 2;
+pub const FILE_FORMAT_VERSION: u32 = 1;
 
-/// Fixed portion of the file header (version + designated_ts + sorting_col_count + col_count).
-pub const HEADER_FIXED_SIZE: usize = 16;
+/// Fixed portion of the file header (version(4) + feature_flags(8) + designated_ts(4)
+/// + sorting_col_count(4) + col_count(4)).
+pub const HEADER_FIXED_SIZE: usize = 24;
 
 /// Size of a single column descriptor in the header.
-pub const COLUMN_DESCRIPTOR_SIZE: usize = 40;
+pub const COLUMN_DESCRIPTOR_SIZE: usize = 32;
 
 /// Size of a single column chunk inside a row group block.
 pub const COLUMN_CHUNK_SIZE: usize = 64;
 
-/// Fixed portion of the footer (parquet_footer_offset(8) + parquet_footer_length(4) + row_group_count(4)).
-pub const FOOTER_FIXED_SIZE: usize = 16;
+/// Fixed portion of the footer (parquet_footer_offset(8) + parquet_footer_length(4)
+/// + row_group_count(4) + footer_feature_flags(8)).
+pub const FOOTER_FIXED_SIZE: usize = 24;
+
+// ── Feature flags ─────────────────────────────────────────────────────
+
+/// Required flag bits occupy the upper 32 bits (bits 32-63).
+/// The reader rejects the file if any unknown required bits are set.
+const REQUIRED_FLAG_MASK: u64 = 0xFFFF_FFFF_0000_0000;
+
+/// Returns the unknown required bits given the raw flags and a mask of
+/// known required bits. Non-zero means the reader must reject the file.
+const fn unknown_required(raw: u64, known_required: u64) -> u64 {
+    raw & REQUIRED_FLAG_MASK & !known_required
+}
+
+// ── HeaderFeatureFlags ───────────────────────────────────────────────
+
+/// Feature flags stored in the file header.
+///
+/// Bits 0-31 are optional (reader ignores unknown bits).
+/// Bits 32-63 are required (reader rejects the file if unknown bits are set).
+///
+/// Header feature sections are immutable (written once with the header).
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct HeaderFeatureFlags(pub u64);
+
+impl HeaderFeatureFlags {
+    const COLUMN_TOPS_BIT: u64 = 1 << 0;
+
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    pub const fn from_le_bytes(bytes: [u8; 8]) -> Self {
+        Self(u64::from_le_bytes(bytes))
+    }
+
+    /// Column tops are stored in a file-level section (`[u64; column_count]`).
+    pub const fn has_column_tops(self) -> bool {
+        self.0 & Self::COLUMN_TOPS_BIT != 0
+    }
+
+    pub const fn with_column_tops(self) -> Self {
+        Self(self.0 | Self::COLUMN_TOPS_BIT)
+    }
+
+    /// Returns the unknown required bits given a mask of known required bits.
+    /// Non-zero means the reader must reject the file.
+    pub const fn unknown_required(self, known_required: u64) -> u64 {
+        unknown_required(self.0, known_required)
+    }
+}
+
+// ── FooterFeatureFlags ───────────────────────────────────────────────
+
+/// Feature flags stored in the footer.
+///
+/// Bits 0-31 are optional (reader ignores unknown bits).
+/// Bits 32-63 are required (reader rejects the file if unknown bits are set).
+///
+/// Footer feature sections are rewritten on each incremental update.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct FooterFeatureFlags(pub u64);
+
+impl FooterFeatureFlags {
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    pub const fn from_le_bytes(bytes: [u8; 8]) -> Self {
+        Self(u64::from_le_bytes(bytes))
+    }
+
+    /// Returns the unknown required bits given a mask of known required bits.
+    /// Non-zero means the reader must reject the file.
+    pub const fn unknown_required(self, known_required: u64) -> u64 {
+        unknown_required(self.0, known_required)
+    }
+}
 
 /// Size of the CRC32 checksum appended after the footer entries.
 pub const FOOTER_CHECKSUM_SIZE: usize = 4;

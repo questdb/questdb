@@ -972,8 +972,10 @@ fn pm_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
         ));
     }
 
-    let parquet_meta_data = unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
-    let parquet_meta_reader = ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
+    let parquet_meta_data =
+        unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
+    let parquet_meta_reader =
+        ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
     let file_data = unsafe { slice::from_raw_parts(parquet_file_ptr, parquet_file_size as usize) };
     let ctx = unsafe { &mut *ctx };
     let row_group_bufs = unsafe { &mut *row_group_bufs };
@@ -1023,7 +1025,9 @@ fn pm_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
             .repetition()
             .unwrap_or(crate::parquet_metadata::types::FieldRepetition::Optional);
         let repetition: Repetition = field_rep.into();
-        let column_name = parquet_meta_reader.column_name(column_idx).unwrap_or("<unknown>");
+        let column_name = parquet_meta_reader
+            .column_name(column_idx)
+            .unwrap_or("<unknown>");
         let format = if flags.is_local_key_global() {
             Some(QdbMetaColFormat::LocalKeyIsGlobal)
         } else {
@@ -1051,7 +1055,7 @@ fn pm_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
 
         let col_info = QdbMetaCol {
             column_type,
-            column_top: col_desc.top as usize,
+            column_top: parquet_meta_reader.column_top(column_idx)? as usize,
             format,
             ascii,
         };
@@ -1132,8 +1136,10 @@ fn pm_decode_row_group_impl(
         ));
     }
 
-    let parquet_meta_data = unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
-    let parquet_meta_reader = ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
+    let parquet_meta_data =
+        unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
+    let parquet_meta_reader =
+        ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
 
     let rg_count = parquet_meta_reader.row_group_count();
     if row_group_index >= rg_count {
@@ -1192,7 +1198,9 @@ fn pm_decode_row_group_impl(
             .unwrap_or(crate::parquet_metadata::types::FieldRepetition::Optional);
         let repetition: Repetition = field_rep.into();
 
-        let column_name = parquet_meta_reader.column_name(column_idx).unwrap_or("<unknown>");
+        let column_name = parquet_meta_reader
+            .column_name(column_idx)
+            .unwrap_or("<unknown>");
 
         let format = if flags.is_local_key_global() {
             Some(QdbMetaColFormat::LocalKeyIsGlobal)
@@ -1201,9 +1209,11 @@ fn pm_decode_row_group_impl(
         };
         let ascii = if flags.is_ascii() { Some(true) } else { None };
 
-        let column_top = col_desc.top as usize;
+        let column_top = parquet_meta_reader.column_top(column_idx)? as usize;
         let accumulated_size = (0..row_group_index as usize).try_fold(0usize, |acc, rg| {
-            parquet_meta_reader.row_group(rg).map(|b| acc + b.num_rows() as usize)
+            parquet_meta_reader
+                .row_group(rg)
+                .map(|b| acc + b.num_rows() as usize)
         })?;
 
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
@@ -1317,8 +1327,10 @@ fn pm_find_row_group_by_timestamp_impl(
         ));
     }
 
-    let parquet_meta_data = unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
-    let parquet_meta_reader = ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
+    let parquet_meta_data =
+        unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
+    let parquet_meta_reader =
+        ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
 
     let row_group_count = parquet_meta_reader.row_group_count() as usize;
     let col_count = parquet_meta_reader.column_count() as usize;
@@ -1614,8 +1626,10 @@ fn pm_can_skip_row_group_impl(
         return Ok(false);
     }
 
-    let parquet_meta_data = unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
-    let parquet_meta_reader = ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
+    let parquet_meta_data =
+        unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_size as usize) };
+    let parquet_meta_reader =
+        ParquetMetaReader::from_file_size(parquet_meta_data, parquet_meta_size)?;
 
     if row_group_index >= parquet_meta_reader.row_group_count() {
         return Err(fmt_err!(

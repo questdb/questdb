@@ -32,40 +32,51 @@ import io.questdb.std.Unsafe;
  * <p>
  * Binary format (little-endian):
  * <pre>
- * HEADER (16 bytes fixed):
- *   [0]  FORMAT_VERSION  u32
- *   [4]  DESIGNATED_TS   i32
- *   [8]  SORTING_COL_CNT u32
- *   [12] COLUMN_COUNT    u32
- *   [16..] column descriptors (40B each), sorting columns (4B each), name strings
+ * HEADER (24 bytes fixed):
+ *   [0]  FORMAT_VERSION    u32
+ *   [4]  FEATURE_FLAGS     u64
+ *   [12] DESIGNATED_TS     i32
+ *   [16] SORTING_COL_CNT   u32
+ *   [20] COLUMN_COUNT      u32
+ *   [24..] column descriptors (32B each), sorting columns (4B each), name strings
+ *   [..] header feature sections (if any feature flags set)
  *
  * ROW GROUP BLOCK (8-byte aligned, per row group):
  *   [0]  NUM_ROWS        u64
  *   [8..] column chunks (64B each), then optional out-of-line stats
  *
  * FOOTER (offset derived from trailer at end of file):
- *   [0]  PARQUET_FOOTER_OFFSET u64
- *   [8]  PARQUET_FOOTER_LENGTH u32
- *   [12] ROW_GROUP_COUNT       u32
- *   [16..] row group entries (4B each, u32 block offset >> 3)
- *   [..]  CRC32                u32
- *   [..]  FOOTER_LENGTH        u32  (total bytes from footer start through CRC)
+ *   [0]  PARQUET_FOOTER_OFFSET   u64
+ *   [8]  PARQUET_FOOTER_LENGTH   u32
+ *   [12] ROW_GROUP_COUNT         u32
+ *   [16] FOOTER_FEATURE_FLAGS    u64
+ *   [24..] row group entries (4B each, u32 block offset >> 3)
+ *   [..]  footer feature sections (if any footer feature flags set)
+ *   [..]  CRC32                  u32
+ *   [..]  FOOTER_LENGTH          u32  (total bytes from footer start through CRC)
  * </pre>
  */
 public class ParquetMetaFileReader {
 
-    private static final int EXPECTED_FORMAT_VERSION = 2;
+    private static final int EXPECTED_FORMAT_VERSION = 1;
+
+    // Feature flags
+    private static final long FEATURE_COLUMN_TOPS = 1L;
 
     // Header offsets
     private static final int HEADER_FORMAT_VERSION_OFF = 0;
-    private static final int HEADER_DESIGNATED_TS_OFF = 4;
-    private static final int HEADER_COLUMN_COUNT_OFF = 12;
+    private static final int HEADER_FEATURE_FLAGS_OFF = 4;
+    private static final int HEADER_DESIGNATED_TS_OFF = 12;
+    private static final int HEADER_SORTING_COL_CNT_OFF = 16;
+    private static final int HEADER_COLUMN_COUNT_OFF = 20;
+    private static final int HEADER_FIXED_SIZE = 24;
 
     // Footer offsets (relative to footer start)
     private static final int FOOTER_PARQUET_FOOTER_OFFSET_OFF = 0;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
-    private static final int FOOTER_FIXED_SIZE = 16;
     private static final int FOOTER_ROW_GROUP_COUNT_OFF = 12;
+    private static final int FOOTER_FEATURE_FLAGS_OFF = 16;
+    private static final int FOOTER_FIXED_SIZE = 24;
 
     // Footer trailer size (appended after CRC)
     private static final int FOOTER_TRAILER_SIZE = 4;
@@ -73,19 +84,17 @@ public class ParquetMetaFileReader {
     // Row group block offsets are stored right-shifted by this amount
     private static final int BLOCK_ALIGNMENT_SHIFT = 3;
 
-    // Column descriptor layout (40B each, starting at header offset 16)
-    private static final int COLUMN_DESCRIPTOR_SIZE = 40;
+    // Column descriptor layout (32B each, starting at header offset 24)
+    private static final int COLUMN_DESCRIPTOR_SIZE = 32;
     private static final int COL_DESC_NAME_OFFSET_OFF = 0;
-    private static final int COL_DESC_TOP_OFF = 8;
-    private static final int COL_DESC_ID_OFF = 16;
-    private static final int COL_DESC_COL_TYPE_OFF = 20;
-    private static final int COL_DESC_FLAGS_OFF = 24;
-    private static final int COL_DESC_FIXED_BYTE_LEN_OFF = 28;
-    private static final int COL_DESC_NAME_LENGTH_OFF = 32;
-    private static final int COL_DESC_PHYSICAL_TYPE_OFF = 36;
-    private static final int COL_DESC_MAX_REP_LEVEL_OFF = 37;
-    private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 38;
-    private static final int HEADER_FIXED_SIZE = 16;
+    private static final int COL_DESC_ID_OFF = 8;
+    private static final int COL_DESC_COL_TYPE_OFF = 12;
+    private static final int COL_DESC_FLAGS_OFF = 16;
+    private static final int COL_DESC_FIXED_BYTE_LEN_OFF = 20;
+    private static final int COL_DESC_NAME_LENGTH_OFF = 24;
+    private static final int COL_DESC_PHYSICAL_TYPE_OFF = 28;
+    private static final int COL_DESC_MAX_REP_LEVEL_OFF = 29;
+    private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 30;
 
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
@@ -104,6 +113,9 @@ public class ParquetMetaFileReader {
     private long footerAddr;
     private int columnCount;
     private int rowGroupCount;
+    private long featureFlags;
+    // Address of the column tops section (valid only when FEATURE_COLUMN_TOPS is set).
+    private long columnTopsAddr;
 
     /**
      * Initializes (or reinitializes) the reader with the given mmap address and file size.
@@ -140,8 +152,16 @@ public class ParquetMetaFileReader {
         this.addr = addr;
         this.fileSize = fileSize;
         this.footerAddr = addr + footerOffset;
+        this.featureFlags = Unsafe.getUnsafe().getLong(addr + HEADER_FEATURE_FLAGS_OFF);
         this.columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
         this.rowGroupCount = Unsafe.getUnsafe().getInt(this.footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
+
+        // Locate column tops section if the feature flag is set.
+        if ((featureFlags & FEATURE_COLUMN_TOPS) != 0) {
+            this.columnTopsAddr = computeNamesAreaEnd(addr, columnCount);
+        } else {
+            this.columnTopsAddr = 0;
+        }
     }
 
     public void clear() {
@@ -150,6 +170,8 @@ public class ParquetMetaFileReader {
         this.footerAddr = 0;
         this.columnCount = 0;
         this.rowGroupCount = 0;
+        this.featureFlags = 0;
+        this.columnTopsAddr = 0;
     }
 
     public long getAddr() {
@@ -248,8 +270,16 @@ public class ParquetMetaFileReader {
         return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_ID_OFF);
     }
 
+    /**
+     * Returns the column top for the given column.
+     * Reads from the column tops feature section when the FEATURE_COLUMN_TOPS
+     * flag is set. Returns 0 otherwise (all columns start at row 0).
+     */
     public long getColumnTop(int columnIndex) {
-        return Unsafe.getUnsafe().getLong(columnDescriptorAddr(columnIndex) + COL_DESC_TOP_OFF);
+        if (columnTopsAddr != 0) {
+            return Unsafe.getUnsafe().getLong(columnTopsAddr + (long) columnIndex * 8);
+        }
+        return 0;
     }
 
     public int getColumnFlags(int columnIndex) {
@@ -358,7 +388,7 @@ public class ParquetMetaFileReader {
 
     /**
      * Computes the absolute memory address of a column descriptor in the header.
-     * Descriptors start at offset 16 (after fixed header) and are 40 bytes each.
+     * Descriptors start at offset 24 (after fixed header) and are 32 bytes each.
      */
     private long columnDescriptorAddr(int columnIndex) {
         assert columnIndex >= 0 && columnIndex < columnCount;
@@ -381,5 +411,25 @@ public class ParquetMetaFileReader {
         long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupIndex * 4;
         int stored = Unsafe.getUnsafe().getInt(entryAddr);
         return addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT);
+    }
+
+    /**
+     * Computes the byte offset past the last name string entry.
+     * Name entries are stored as [u32 length][utf8 bytes][padding to 4B].
+     * The end of the names area is where header feature sections begin.
+     */
+    private static long computeNamesAreaEnd(long baseAddr, int columnCount) {
+        long end = baseAddr + HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
+        for (int i = 0; i < columnCount; i++) {
+            long descAddr = baseAddr + HEADER_FIXED_SIZE + (long) i * COLUMN_DESCRIPTOR_SIZE;
+            long nameOffset = Unsafe.getUnsafe().getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
+            int nameLength = Unsafe.getUnsafe().getInt(descAddr + COL_DESC_NAME_LENGTH_OFF);
+            int entrySize = ((4 + nameLength + 3) & ~3); // round up to 4-byte alignment
+            long entryEnd = baseAddr + nameOffset + entrySize;
+            if (entryEnd > end) {
+                end = entryEnd;
+            }
+        }
+        return end;
     }
 }

@@ -115,22 +115,37 @@ impl<'a> ParquetMetaReader<'a> {
                 footer_offset
             )
         })?;
-        let footer = Footer::new(footer_data)?;
+
+        // Read footer_length from the trailer at the end of the footer region.
+        if footer_data.len() < FOOTER_TRAILER_SIZE {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "footer region too small for trailer"
+            ));
+        }
+        let trailer_start = footer_data.len() - FOOTER_TRAILER_SIZE;
+        let footer_length = u32::from_le_bytes(
+            footer_data[trailer_start..trailer_start + FOOTER_TRAILER_SIZE]
+                .try_into()
+                .expect("slice is 4 bytes"),
+        );
+
+        let footer = Footer::new(footer_data, footer_length)?;
 
         Ok(Self { data, header, footer, footer_offset })
     }
 
     /// Verifies the CRC32 checksum stored in the footer against the file contents.
+    /// Verifies the CRC32 checksum stored in the footer against the file contents.
+    ///
+    /// The CRC covers bytes `[0, crc_field_offset)` of the entire file.
+    /// The CRC field offset is determined from `footer_length` via the trailer,
+    /// which handles unknown footer feature sections.
     pub fn verify_checksum(&self) -> ParquetResult<()> {
         let footer_usize = self.footer_offset as usize;
-        let size_through_crc = Footer::size_through_crc(self.footer.row_group_count())?;
-        let checksum_abs = footer_usize
-            .checked_add(size_through_crc)
-            .and_then(|s| s.checked_sub(FOOTER_CHECKSUM_SIZE))
-            .ok_or_else(|| {
-                parquet_meta_err!(ParquetMetaErrorKind::Truncated, "checksum offset overflow")
-            })?;
-        if checksum_abs > self.data.len() {
+        let crc_rel_offset = self.footer.crc_offset();
+        let checksum_abs = footer_usize + crc_rel_offset;
+        if checksum_abs + FOOTER_CHECKSUM_SIZE > self.data.len() {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
                 "checksum field out of bounds"
@@ -169,6 +184,12 @@ impl<'a> ParquetMetaReader<'a> {
     pub fn column_name(&self, index: usize) -> ParquetResult<&'a str> {
         let desc = self.header.column_descriptor(index)?;
         self.header.column_name(desc)
+    }
+
+    /// Returns the column top for the column at `index`.
+    /// Returns 0 when the FEATURE_COLUMN_TOPS flag is not set.
+    pub fn column_top(&self, index: usize) -> ParquetResult<u64> {
+        self.header.column_top(index)
     }
 
     /// Returns the sorting column index at position `i`.
@@ -242,7 +263,7 @@ mod tests {
         let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(5); // ts_col
         for (type_code, name) in types {
-            w.add_column(0, name, -1, *type_code, ColumnFlags::new(), 0, 0, 0, 0);
+            w.add_column(name, -1, *type_code, ColumnFlags::new(), 0, 0, 0, 0);
         }
         let (bytes, footer_offset) = w.finish().unwrap();
 
@@ -260,7 +281,7 @@ mod tests {
     #[test]
     fn crc_corruption_detected() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (mut bytes, footer_offset) = w.finish().unwrap();
 
         // Corrupt one byte in the header.
@@ -272,7 +293,7 @@ mod tests {
     #[test]
     fn crc_corrupted_in_body() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(42);
         w.add_row_group(rg);
@@ -290,7 +311,7 @@ mod tests {
     #[test]
     fn verify_checksum_passes_on_valid_file() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
 
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
@@ -301,7 +322,6 @@ mod tests {
     fn multiple_row_groups_with_stats() {
         let mut w = ParquetMetaWriter::new();
         w.add_column(
-            0,
             "ts",
             0,
             8,
@@ -341,7 +361,7 @@ mod tests {
     #[test]
     fn footer_offset_accessor() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
 
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
@@ -353,7 +373,7 @@ mod tests {
         // Build a valid file, then manually corrupt a row group entry
         // to point past the end of the file.
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(10);
         w.add_row_group(rg);
@@ -382,7 +402,7 @@ mod tests {
         // is truncated so the checksum field falls outside the slice.
         // Simplest: just truncate a valid file at the footer.
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
 
         // Truncate the file to cut off the last byte (the CRC).
@@ -394,7 +414,7 @@ mod tests {
     #[test]
     fn footer_offset_out_of_bounds() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (bytes, _) = w.finish().unwrap();
 
         // Use a footer offset past the end of the file.
@@ -405,7 +425,7 @@ mod tests {
     fn from_file_size_round_trip() {
         let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(0);
-        w.add_column(0, "ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(42);
         w.add_row_group(rg);
@@ -439,8 +459,8 @@ mod tests {
     fn sorting_columns_round_trip() {
         let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(0);
-        w.add_column(0, "ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
-        w.add_column(0, "key", 1, 12, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("key", 1, 12, ColumnFlags::new(), 0, 0, 0, 0);
         w.add_sorting_column(0);
         w.add_sorting_column(1);
 
@@ -450,5 +470,42 @@ mod tests {
         assert_eq!(reader.sorting_column_count(), 2);
         assert_eq!(reader.sorting_column(0).unwrap(), 0);
         assert_eq!(reader.sorting_column(1).unwrap(), 1);
+    }
+
+    #[test]
+    fn column_tops_through_reader() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_column_top(0, 256);
+
+        let (bytes, footer_offset) = w.finish().unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
+
+        assert_eq!(reader.column_top(0).unwrap(), 256);
+        assert_eq!(reader.column_top(1).unwrap(), 0);
+    }
+
+    #[test]
+    fn crc_covers_column_tops_section() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_column_top(0, 42);
+
+        let (mut bytes, footer_offset) = w.finish().unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
+
+        // Corrupt a byte in the column tops section.
+        let top_bytes = 42u64.to_le_bytes();
+        let pos = bytes
+            .windows(8)
+            .position(|w| w == top_bytes)
+            .expect("should find top value in file");
+        bytes[pos] ^= 0xFF;
+
+        let reader2 = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        assert!(reader2.verify_checksum().is_err());
     }
 }

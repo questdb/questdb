@@ -77,7 +77,6 @@ impl ParquetMetaWriter {
     #[allow(clippy::too_many_arguments)]
     pub fn add_column(
         &mut self,
-        top: u64,
         name: &str,
         id: i32,
         col_type: i32,
@@ -88,7 +87,6 @@ impl ParquetMetaWriter {
         max_def_level: u8,
     ) -> &mut Self {
         self.header_builder.add_column(
-            top,
             name,
             id,
             col_type,
@@ -98,6 +96,11 @@ impl ParquetMetaWriter {
             max_rep_level,
             max_def_level,
         );
+        self
+    }
+
+    pub fn set_column_top(&mut self, index: usize, top: u64) -> &mut Self {
+        self.header_builder.set_column_top(index, top);
         self
     }
 
@@ -191,7 +194,8 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
                 "footer offset out of bounds"
             )
         })?;
-        let footer = Footer::new(footer_data)?;
+        let footer_length = Self::read_footer_length(existing)?;
+        let footer = Footer::new(footer_data, footer_length)?;
 
         // Initialize entries with existing row group offsets.
         let mut entries = Vec::with_capacity(footer.row_group_count() as usize);
@@ -239,6 +243,20 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         self
     }
 
+    /// Reads the footer_length_through_crc value from the trailer at the end of the file.
+    fn read_footer_length(data: &[u8]) -> ParquetResult<u32> {
+        if data.len() < FOOTER_TRAILER_SIZE {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "file too small for footer trailer"
+            ));
+        }
+        let trailer = &data[data.len() - FOOTER_TRAILER_SIZE..];
+        Ok(u32::from_le_bytes(
+            trailer.try_into().expect("slice is 4 bytes"),
+        ))
+    }
+
     /// Finishes the update.
     ///
     /// Returns `(append_bytes, new_footer_offset)`:
@@ -252,8 +270,8 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     pub fn finish(&self) -> ParquetResult<(Vec<u8>, u64)> {
         // The new data starts right after the old footer.
         let footer_usize = self.existing_footer_offset as usize;
-        let old_footer = Footer::new(&self.existing[footer_usize..])?;
-        let old_footer_total = Footer::total_size(old_footer.row_group_count())?;
+        let footer_length = Self::read_footer_length(self.existing)?;
+        let old_footer_total = footer_length as usize + FOOTER_TRAILER_SIZE;
         let append_start = footer_usize + old_footer_total;
 
         let mut append_buf = Vec::new();
@@ -329,7 +347,6 @@ mod tests {
         let mut w = ParquetMetaWriter::new();
         w.designated_timestamp(0);
         w.add_column(
-            0,
             "ts",
             0,
             8,
@@ -339,7 +356,7 @@ mod tests {
             0,
             0,
         );
-        w.add_column(0, "val", 1, 10, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("val", 1, 10, ColumnFlags::new(), 0, 0, 0, 0);
         w.add_sorting_column(0);
 
         let mut rg = RowGroupBlockBuilder::new(2);
@@ -374,7 +391,7 @@ mod tests {
     #[test]
     fn create_empty() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
 
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
@@ -400,9 +417,7 @@ mod tests {
         let (append_bytes, new_footer_offset) = updater.finish().unwrap();
 
         // Construct the full updated file.
-        let old_footer = Footer::new(&original[footer_offset as usize..]).unwrap();
-        let old_end =
-            footer_offset as usize + Footer::total_size(old_footer.row_group_count()).unwrap();
+        let old_end = original.len();
         let mut full = original[..old_end].to_vec();
         full.extend_from_slice(&append_bytes);
 
@@ -425,7 +440,7 @@ mod tests {
     fn update_replace_row_group() {
         // Build a file with 2 row groups.
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
 
         let mut rg0 = RowGroupBlockBuilder::new(1);
         rg0.set_num_rows(100);
@@ -445,9 +460,7 @@ mod tests {
 
         let (append_bytes, new_footer_offset) = updater.finish().unwrap();
 
-        let old_footer = Footer::new(&original[footer_offset as usize..]).unwrap();
-        let old_end =
-            footer_offset as usize + Footer::total_size(old_footer.row_group_count()).unwrap();
+        let old_end = original.len();
         let mut full = original[..old_end].to_vec();
         full.extend_from_slice(&append_bytes);
 
@@ -473,7 +486,7 @@ mod tests {
     #[test]
     fn default_creates_same_as_new() {
         let mut w = ParquetMetaWriter::default();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 1);

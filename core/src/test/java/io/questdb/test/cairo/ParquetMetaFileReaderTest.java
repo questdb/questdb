@@ -60,7 +60,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             for (int i = 0; i < columnCount; i++) {
                 try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
                     name.put("col_").put(i);
-                    ParquetMetaFileWriter.addColumn(writerPtr, 0, name.ptr(), (int) name.size(), i, 5, 0, 0, 0, 0, 0);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), i, 5, 0, 0, 0, 0, 0);
                 }
             }
             for (long numRows : rowGroupSizes) {
@@ -380,11 +380,11 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, 0);
                 try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
                     name.put("ts");
-                    ParquetMetaFileWriter.addColumn(writerPtr, 0, name.ptr(), (int) name.size(), 0, 8, 0, 0, 0, 0, 0);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 0, 8, 0, 0, 0, 0, 0);
                 }
                 try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
                     name.put("val");
-                    ParquetMetaFileWriter.addColumn(writerPtr, 0, name.ptr(), (int) name.size(), 1, 5, 0, 0, 0, 0, 0);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 1, 5, 0, 0, 0, 0, 0);
                 }
                 long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
                 try {
