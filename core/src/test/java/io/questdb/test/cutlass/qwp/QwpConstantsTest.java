@@ -187,6 +187,8 @@ public class QwpConstantsTest {
         Assert.assertEquals(0x05, STATUS_PARSE_ERROR);
         Assert.assertEquals(0x06, STATUS_INTERNAL_ERROR);
         Assert.assertEquals(0x07, STATUS_OVERLOADED);
+        Assert.assertEquals(0x08, STATUS_SECURITY_ERROR);
+        Assert.assertEquals(0x09, STATUS_WRITE_ERROR);
     }
 
     @Test

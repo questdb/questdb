@@ -24,8 +24,12 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -113,6 +117,16 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
                 WebSocketCloseCode.PROTOCOL_ERROR,
                 "fragment"
         );
+    }
+
+    @Test
+    public void testStatusCodesSynchronizedBetweenServerAndClient() {
+        assertClientDecodesStatus(QwpConstants.STATUS_OK, "OK");
+        assertClientDecodesStatus(QwpConstants.STATUS_PARSE_ERROR, "PARSE_ERROR");
+        assertClientDecodesStatus(QwpConstants.STATUS_SCHEMA_MISMATCH, "SCHEMA_ERROR");
+        assertClientDecodesStatus(QwpConstants.STATUS_WRITE_ERROR, "WRITE_ERROR");
+        assertClientDecodesStatus(QwpConstants.STATUS_SECURITY_ERROR, "SECURITY_ERROR");
+        assertClientDecodesStatus(QwpConstants.STATUS_INTERNAL_ERROR, "INTERNAL_ERROR");
     }
 
     @Test
@@ -386,6 +400,46 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
                         statusLine.contains("101"));
             }
         });
+    }
+
+    /**
+     * Constructs a raw binary response payload with the given status byte and
+     * sequence=1, then verifies {@link WebSocketResponse#readFrom} decodes it
+     * to the expected status name.
+     */
+    private static void assertClientDecodesStatus(byte statusByte, String expectedName) {
+        // Build a raw response: status (1) + sequence (8) + [error: msgLen (2) + msg]
+        int payloadSize;
+        byte[] errorMsg = "test error".getBytes(StandardCharsets.UTF_8);
+        if (statusByte == QwpConstants.STATUS_OK) {
+            payloadSize = 9; // status + sequence only
+        } else {
+            payloadSize = 11 + errorMsg.length; // status + sequence + msgLen + msg
+        }
+
+        long ptr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(ptr, statusByte);
+            Unsafe.getUnsafe().putLong(ptr + 1, 1L); // sequence = 1
+            if (statusByte != QwpConstants.STATUS_OK) {
+                Unsafe.getUnsafe().putShort(ptr + 9, (short) errorMsg.length);
+                for (int i = 0; i < errorMsg.length; i++) {
+                    Unsafe.getUnsafe().putByte(ptr + 11 + i, errorMsg[i]);
+                }
+            }
+
+            WebSocketResponse response = new WebSocketResponse();
+            boolean parsed = response.readFrom(ptr, payloadSize);
+            Assert.assertTrue("readFrom should succeed for status 0x"
+                    + Integer.toHexString(statusByte & 0xFF), parsed);
+            Assert.assertEquals(
+                    "Status byte 0x" + Integer.toHexString(statusByte & 0xFF)
+                            + " should decode to " + expectedName,
+                    expectedName, response.getStatusName()
+            );
+        } finally {
+            Unsafe.free(ptr, payloadSize, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     /**

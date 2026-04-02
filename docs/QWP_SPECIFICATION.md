@@ -717,6 +717,8 @@ varints for per-table error details:
 | 5    | `0x05` | PARSE_ERROR     | No        | Malformed message                                    |
 | 6    | `0x06` | INTERNAL_ERROR  | No        | Server-side error                                    |
 | 7    | `0x07` | OVERLOADED      | Yes       | Back-pressure; client should retry with backoff       |
+| 8    | `0x08` | SECURITY_ERROR  | No        | Authorization failure                                |
+| 9    | `0x09` | WRITE_ERROR     | No        | Write failure (e.g., table not accepting writes)     |
 
 ---
 

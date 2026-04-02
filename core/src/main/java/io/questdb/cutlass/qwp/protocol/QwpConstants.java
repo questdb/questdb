@@ -167,9 +167,17 @@ public final class QwpConstants {
      */
     public static final byte STATUS_SCHEMA_REQUIRED = 0x02;
     /**
+     * Status: Authorization failure.
+     */
+    public static final byte STATUS_SECURITY_ERROR = 0x08;
+    /**
      * Status: Table doesn't exist (auto-create disabled).
      */
     public static final byte STATUS_TABLE_NOT_FOUND = 0x04;
+    /**
+     * Status: Write failure (e.g., table not accepting writes).
+     */
+    public static final byte STATUS_WRITE_ERROR = 0x09;
     /**
      * Column type: BOOLEAN (1 bit per value, packed).
      */

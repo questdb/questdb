@@ -74,8 +74,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     private static final byte[] HTTP_HEADER_END = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     private static final Log LOG = LogFactory.getLog(QwpWebSocketUpgradeProcessor.class);
     private static final LocalValue<QwpProcessorState> LV = new LocalValue<>();
-    private static final byte STATUS_SECURITY_ERROR = 4;
-    private static final byte STATUS_WRITE_ERROR = 3;
     private static final byte[] UPGRADE_REQUIRED_RESPONSE =
             ("""
                     HTTP/1.1 426 Upgrade Required\r
