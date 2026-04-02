@@ -51,10 +51,7 @@ import io.questdb.std.str.Utf8s;
 
 import java.nio.charset.StandardCharsets;
 
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.STATUS_INTERNAL_ERROR;
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.STATUS_OK;
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.STATUS_PARSE_ERROR;
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.STATUS_SCHEMA_MISMATCH;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 
 /**
  * HTTP request processor that handles WebSocket upgrade for QWP v1.

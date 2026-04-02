@@ -424,17 +424,17 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
                 && highestProcessedSequence - lastAckedSequence >= batchSize;
     }
 
-    private void clearDeferredError() {
-        deferredErrorMessage.clear();
-        deferredErrorSequence = -1;
-        deferredErrorStatus = 0;
-    }
-
     private static Status cairoExceptionStatus(CairoException e) {
         if (e.isAuthorizationError()) {
             return Status.SECURITY_ERROR;
         }
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
+    }
+
+    private void clearDeferredError() {
+        deferredErrorMessage.clear();
+        deferredErrorSequence = -1;
+        deferredErrorStatus = 0;
     }
 
     private void ensureCapacity(int required) {
