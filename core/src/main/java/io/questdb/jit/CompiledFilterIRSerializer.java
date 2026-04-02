@@ -142,6 +142,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final StringSink sink = new StringSink();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntStack typeStack = new IntStack();
+    private boolean allColumnsNotNull;
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
@@ -156,6 +157,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory = null;
         metadata = null;
         pageFrameCursor = null;
+        allColumnsNotNull = true;
         forceScalarMode = false;
         predicateContext.clear();
         backfillNodes.clear();
@@ -197,6 +199,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             PageFrameCursor pageFrameCursor,
             ObjList<Function> bindVarFunctions
     ) {
+        this.allColumnsNotNull = true;
         this.memory = memory;
         this.executionContext = executionContext;
         this.metadata = metadata;
@@ -622,7 +625,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int execHint = getExecHint(forceScalar);
         options = options | (execHint << 4);
 
-        options = options | ((nullChecks ? 1 : 0) << 6);
+        boolean effectiveNullChecks = nullChecks && !allColumnsNotNull;
+        options = options | ((effectiveNullChecks ? 1 : 0) << 6);
         return options;
     }
 
@@ -827,6 +831,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int index = metadata.getColumnIndexQuiet(token);
             if (index == -1) {
                 throw SqlException.invalidColumn(position, token);
+            }
+
+            if (!metadata.isNotNull(index)) {
+                allColumnsNotNull = false;
             }
 
             final int columnType = metadata.getColumnType(index);
@@ -1714,6 +1722,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnIndex = metadata.getColumnIndexQuiet(node.token);
             if (columnIndex == -1) {
                 throw SqlException.invalidColumn(node.position, node.token);
+            }
+            if (!metadata.isNotNull(columnIndex)) {
+                allColumnsNotNull = false;
             }
             final int columnType = metadata.getColumnType(columnIndex);
             final int columnTypeTag = ColumnType.tagOf(columnType);

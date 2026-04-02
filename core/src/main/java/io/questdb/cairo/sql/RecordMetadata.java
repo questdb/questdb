@@ -182,6 +182,14 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
     boolean isDedupKey(int columnIndex);
 
     /**
+     * @param columnIndex numeric index of the column
+     * @return true if column has a NOT NULL constraint.
+     */
+    default boolean isNotNull(int columnIndex) {
+        return false;
+    }
+
+    /**
      * @param columnName name of the column
      * @return true if symbol table is static, otherwise false.
      */

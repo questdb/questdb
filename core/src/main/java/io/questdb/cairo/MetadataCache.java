@@ -245,6 +245,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                column.setNotNullFlag(TableUtils.isColumnNotNull(metaMem, writerIndex) || ColumnType.isImplicitlyNotNull(columnType));
                 column.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, writerIndex));
                 column.setWriterIndex(writerIndex);
 
@@ -603,6 +604,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
                 column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());
+                column.setNotNullFlag(columnMetadata.isNotNull());
                 column.setParquetEncodingConfig(columnMetadata.getParquetEncodingConfig());
 
                 int writerIndex = columnMetadata.getWriterIndex();

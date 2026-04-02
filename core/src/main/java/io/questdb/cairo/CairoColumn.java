@@ -40,6 +40,7 @@ public class CairoColumn implements Sinkable {
     private boolean indexed;
     private long metadataVersion;
     private CharSequence name;
+    private boolean notNull;
     private int parquetEncodingConfig;
     private int position;
     private boolean symbolCached;
@@ -58,6 +59,7 @@ public class CairoColumn implements Sinkable {
         target.indexed = this.indexed;
         target.symbolTableStatic = this.symbolTableStatic;
         target.name = this.name;
+        target.notNull = this.notNull;
         target.parquetEncodingConfig = this.parquetEncodingConfig;
         target.position = this.position;
         target.symbolCached = this.symbolCached;
@@ -107,6 +109,10 @@ public class CairoColumn implements Sinkable {
         return indexed;
     }
 
+    public boolean isNotNull() {
+        return notNull;
+    }
+
     public boolean isSymbolCached() {
         return symbolCached;
     }
@@ -133,6 +139,10 @@ public class CairoColumn implements Sinkable {
 
     public void setName(CharSequence name) {
         this.name = name;
+    }
+
+    public void setNotNullFlag(boolean notNull) {
+        this.notNull = notNull;
     }
 
     public void setParquetEncodingConfig(int parquetEncodingConfig) {
@@ -175,6 +185,7 @@ public class CairoColumn implements Sinkable {
         sink.put("symbolCached=").put(isSymbolCached()).put(", ");
         sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
         sink.put("isIndexed=").put(isIndexed()).put(", ");
+        sink.put("isNotNull=").put(isNotNull()).put(", ");
         sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
         int config = getParquetEncodingConfig();
         if (config == 0) {

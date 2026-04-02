@@ -807,6 +807,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final boolean cache;
         int symbolCapacity;
         final boolean indexed;
+        boolean isNotNull = false;
 
         if (
                 ColumnType.isSymbol(columnType)
@@ -873,13 +874,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 indexValueBlockCapacity = configuration.getIndexValueBlockSize();
             }
         } else { // set defaults
-            // ignore `NULL` and `NOT NULL`
             if (tok != null && isNotKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-            }
-
-            if (tok != null && isNullKeyword(tok)) {
+                if (tok != null && isNullKeyword(tok)) {
+                    isNotNull = true;
+                    SqlUtil.fetchNext(lexer);
+                }
+            } else if (tok != null && isNullKeyword(tok)) {
+                if (ColumnType.isImplicitlyNotNull(columnType)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "NULL is not supported for ")
+                            .put(ColumnType.nameOf(columnType))
+                            .put(" columns (no null sentinel exists for this type)");
+                }
                 SqlUtil.fetchNext(lexer);
+            } else if (ColumnType.isImplicitlyNotNull(columnType)) {
+                isNotNull = true;
             }
 
             cache = configuration.getDefaultSymbolCacheFlag();
@@ -897,7 +906,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     cache,
                     indexed,
                     Numbers.ceilPow2(indexValueBlockCapacity),
-                    false
+                    false,
+                    isNotNull
             );
         }
         lexer.unparseLast();
@@ -1115,6 +1125,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 configuration.getDefaultSymbolCacheFlag(), // ignored
                 false, // ignored
                 Numbers.ceilPow2(configuration.getIndexValueBlockSize()), // ignored
+                false, // ignored
                 false // ignored
         );
 
@@ -1204,6 +1215,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         alterOperationBuilder.ofDropIndex(tableNamePosition, tableToken, metadata.getTableId(), columnName, columnNamePosition);
         securityContext.authorizeAlterTableDropIndex(tableToken, alterOperationBuilder.getExtraStrInfo());
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableColumnDropNotNull(
+            int tableNamePosition,
+            TableToken tableToken,
+            CharSequence columnName,
+            TableRecordMetadata metadata,
+            int columnIndex
+    ) throws SqlException {
+        int columnType = metadata.getColumnType(columnIndex);
+        if (ColumnType.isImplicitlyNotNull(columnType)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "cannot set NULL for ")
+                    .put(ColumnType.nameOf(columnType))
+                    .put(" columns (no null sentinel exists for this type)");
+        }
+        alterOperationBuilder.ofDropColumnNotNull(tableNamePosition, tableToken, metadata.getTableId(), columnName);
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableColumnSetNotNull(
+            int tableNamePosition,
+            TableToken tableToken,
+            CharSequence columnName,
+            TableRecordMetadata metadata
+    ) {
+        alterOperationBuilder.ofSetColumnNotNull(tableNamePosition, tableToken, metadata.getTableId(), columnName);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -2377,8 +2415,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnIndex
                         );
                     } else if (isSetKeyword(tok)) {
-                        tok = expectToken(lexer, "'parquet'");
-                        if (isParquetKeyword(tok)) {
+                        tok = expectToken(lexer, "'not', 'null' or 'parquet'");
+                        if (isNotKeyword(tok)) {
+                            tok = expectToken(lexer, "'null'");
+                            if (isNullKeyword(tok)) {
+                                alterTableColumnSetNotNull(
+                                        tableNamePosition,
+                                        tableToken,
+                                        columnName,
+                                        tableMetadata
+                                );
+                            } else {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'null' expected");
+                            }
+                        } else if (isNullKeyword(tok)) {
+                            alterTableColumnDropNotNull(
+                                    tableNamePosition,
+                                    tableToken,
+                                    columnName,
+                                    tableMetadata,
+                                    columnIndex
+                            );
+                        } else if (isParquetKeyword(tok)) {
                             alterTableSetParquetEncoding(
                                     securityContext,
                                     tableNamePosition,
@@ -2388,7 +2446,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     columnIndex
                             );
                         } else {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+                            throw SqlException.$(lexer.lastTokenPosition(), "'not', 'null' or 'parquet' expected");
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'set', 'symbol', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');

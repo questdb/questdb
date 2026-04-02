@@ -1974,13 +1974,21 @@ public class SqlParser {
                 tok = tok(lexer, "'NOT' or 'NULL' or ',' or ')'");
             }
 
-            // ignore `NULL` and `NOT NULL`
             if (isNotKeyword(tok)) {
                 tok = tok(lexer, "'NULL'");
-            }
-
-            if (isNullKeyword(tok)) {
+                if (isNullKeyword(tok)) {
+                    model.setNotNullFlag(true);
+                    tok = tok(lexer, "','");
+                }
+            } else if (isNullKeyword(tok)) {
+                if (ColumnType.isImplicitlyNotNull(columnType)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "NULL is not supported for ")
+                            .put(ColumnType.nameOf(columnType))
+                            .put(" columns (no null sentinel exists for this type)");
+                }
                 tok = tok(lexer, "','");
+            } else if (ColumnType.isImplicitlyNotNull(columnType)) {
+                model.setNotNullFlag(true);
             }
 
             if (Chars.equals(tok, ')')) {

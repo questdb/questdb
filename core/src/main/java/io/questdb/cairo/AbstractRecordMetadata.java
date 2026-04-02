@@ -110,6 +110,11 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     }
 
     @Override
+    public boolean isNotNull(int columnIndex) {
+        return getColumnMetadata(columnIndex).isNotNull();
+    }
+
+    @Override
     public boolean isSymbolTableStatic(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolTableStatic();
     }

@@ -55,7 +55,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_SYMBOL_CAPACITY_COL = N_SYMBOL_CACHED_COL + 1;
     private static final int N_SYMBOL_TABLE_SIZE_COL = N_SYMBOL_CAPACITY_COL + 1;
     private static final int N_DESIGNATED_COL = N_SYMBOL_TABLE_SIZE_COL + 1;
-    private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
+    private static final int N_NOT_NULL_COL = N_DESIGNATED_COL + 1;
+    private static final int N_UPSERT_KEY_COL = N_NOT_NULL_COL + 1;
     private static final RecordMetadata METADATA;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
@@ -179,6 +180,9 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 if (col == N_DESIGNATED_COL) {
                     return cairoColumn.isDesignated();
                 }
+                if (col == N_NOT_NULL_COL) {
+                    return cairoColumn.isNotNull();
+                }
                 if (col == N_UPSERT_KEY_COL) {
                     return cairoColumn.isDedupKey();
                 }
@@ -237,6 +241,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT));
         metadata.add(new TableColumnMetadata("symbolTableSize", ColumnType.INT));
         metadata.add(new TableColumnMetadata("designated", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("notNull", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("upsertKey", ColumnType.BOOLEAN));
         METADATA = metadata;
     }

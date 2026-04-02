@@ -466,10 +466,10 @@ public class CreateTableTest extends AbstractCairoTest {
         );
         execute("create table foo_clone ( like foo)");
         assertSql(
-                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\n" +
-                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\n" +
-                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\ttrue\n" +
+                        "a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\ttrue\n" +
+                        "b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                 "SHOW COLUMNS FROM foo_clone"
         );
     }
@@ -677,9 +677,9 @@ public class CreateTableTest extends AbstractCairoTest {
                             ") timestamp(ns) PARTITION BY DAY;\n",
                     "show create table y;");
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\n"
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                            "ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\n" +
+                            "s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\tfalse\n"
                     ,
                     "SHOW COLUMNS FROM y"
             );

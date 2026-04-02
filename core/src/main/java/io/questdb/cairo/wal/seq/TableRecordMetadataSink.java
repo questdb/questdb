@@ -40,7 +40,8 @@ public interface TableRecordMetadataSink extends Mutable {
             int writerIndex,
             boolean isDedupKey,
             boolean symbolIsCached,
-            int symbolCapacity
+            int symbolCapacity,
+            boolean isNotNull
     );
 
     void of(

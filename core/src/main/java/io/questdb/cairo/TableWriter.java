@@ -577,7 +577,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 false,
                 0,
                 false,
-                false,
                 securityContext
         );
     }
@@ -602,6 +601,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexValueBlockCapacity,
                 false,
                 isDedupKey,
+                false,
                 securityContext
         );
     }
@@ -645,6 +645,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
+            boolean isNotNull,
             SecurityContext securityContext
     ) {
         assert txWriter.getLagRowCount() == 0;
@@ -675,6 +676,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 isIndexed,
                 indexValueBlockCapacity,
                 isDedupKey,
+                isNotNull,
                 columnNameTxn,
                 -1,
                 metadata
@@ -1056,6 +1058,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
+            boolean isNotNull = metadata.isNotNull(existingColIndex)
+                    && !ColumnType.isImplicitlyNotNull(metadata.getColumnType(existingColIndex));
             int columnIndex = columnCount;
             long columnNameTxn = getTxn();
 
@@ -1090,6 +1094,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     isIndexed,
                     indexValueBlockCapacity,
                     isDedupKey,
+                    isNotNull,
                     columnNameTxn,
                     existingColIndex,
                     metadata
@@ -2946,6 +2951,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        checkDistressed();
+        int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.nonCritical().put("column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        int columnType = metadata.getColumnType(columnIndex);
+        if (!isNotNull && ColumnType.isImplicitlyNotNull(columnType)) {
+            throw CairoException.nonCritical().put("cannot set NULL for ")
+                    .put(ColumnType.nameOf(columnType))
+                    .put(" columns (no null sentinel exists for this type)");
+        }
+        commit();
+        TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
+        columnMetadata.setNotNullFlag(isNotNull);
+        writeMetadataToDisk();
+    }
+
+    @Override
     public void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig) {
         checkDistressed();
         int columnIndex = metadata.getColumnIndexQuiet(columnName);
@@ -3399,6 +3424,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isIndexed,
             int indexValueBlockCapacity,
             boolean isDedupKey,
+            boolean isNotNull,
             long columnNameTxn,
             int replaceColumnIndex,
             TableWriterMetadata metadata
@@ -3421,6 +3447,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 replaceColumnIndex,
                 symbolCacheFlag
         );
+
+        if (isNotNull) {
+            metadata.getColumnMetadata(metadata.getColumnCount() - 1).setNotNullFlag(true);
+        }
 
         rewriteAndSwapMetadata(metadata);
 
@@ -9792,6 +9822,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     flags |= META_FLAG_BIT_INDEXED;
                 }
 
+                if (metadata.isNotNull(i)) {
+                    flags |= META_FLAG_BIT_NOT_NULL;
+                }
+
                 if (metadata.isDedupKey(i)) {
                     flags |= META_FLAG_BIT_DEDUP_KEY;
                 }
@@ -9888,6 +9922,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if ((masterRef & 1) != 0) {
             for (int i = 0; i < columnCount; i++) {
                 if (rowValueIsNotNull.getQuick(i) < masterRef) {
+                    if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                        throw CairoException.nonCritical()
+                                .put("NOT NULL constraint violation, column is required [column=")
+                                .put(metadata.getColumnName(i))
+                                .put(']');
+                    }
                     activeNullSetters.getQuick(i).run();
                 }
             }

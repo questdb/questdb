@@ -197,6 +197,7 @@ public final class TableUtils {
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     static final int META_FLAG_BIT_INDEXED = 1;
+    static final int META_FLAG_BIT_NOT_NULL = 1 << 1;
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
     static final byte TODO_RESTORE_META = 2;
@@ -276,24 +277,29 @@ public final class TableUtils {
         if (existingIndex < 0) {
             throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
         }
-        String columnNameStr = columnMetadata.getQuick(existingIndex).getColumnName();
+        TableColumnMetadata existingMeta = columnMetadata.getQuick(existingIndex);
+        String columnNameStr = existingMeta.getColumnName();
+        // Preserve explicit NOT NULL across type changes, but not implicit NOT NULL
+        // (e.g., BOOLEAN→LONG should not inherit implicit NOT NULL from BOOLEAN)
+        boolean preserveNotNull = existingMeta.isNotNull()
+                && !ColumnType.isImplicitlyNotNull(existingMeta.getColumnType());
         int columnIndex = columnMetadata.size();
-        columnMetadata.add(
-                new TableColumnMetadata(
-                        columnNameStr,
-                        columnType,
-                        isIndexed,
-                        indexValueBlockCapacity,
-                        false,
-                        null,
-                        columnIndex,
-                        false,
-                        existingIndex + 1, // replacing column index by convention can be 0 if not in use
-                        symbolCacheFlag,
-                        symbolCapacity
-                )
+        var newMeta = new TableColumnMetadata(
+                columnNameStr,
+                columnType,
+                isIndexed,
+                indexValueBlockCapacity,
+                false,
+                null,
+                columnIndex,
+                false,
+                existingIndex + 1, // replacing column index by convention can be 0 if not in use
+                symbolCacheFlag,
+                symbolCapacity
         );
-        columnMetadata.getQuick(existingIndex).markDeleted();
+        newMeta.setNotNullFlag(preserveNotNull);
+        columnMetadata.add(newMeta);
+        existingMeta.markDeleted();
         columnNameIndexMap.put(columnNameStr, columnIndex);
         return existingIndex;
     }
@@ -2113,6 +2119,10 @@ public final class TableUtils {
                 flags |= META_FLAG_BIT_INDEXED;
             }
 
+            if (tableStruct.isNotNull(i)) {
+                flags |= META_FLAG_BIT_NOT_NULL;
+            }
+
             if (tableStruct.getSymbolCacheFlag(i)) {
                 flags |= META_FLAG_BIT_SYMBOL_CACHE;
             }
@@ -2252,6 +2262,14 @@ public final class TableUtils {
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
+    }
+
+    static boolean isColumnNotNull(MemoryR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_NOT_NULL) != 0;
+    }
+
+    public static boolean isEnforceableNotNull(int columnType, boolean isNotNull) {
+        return columnType > 0 && isNotNull && !ColumnType.isImplicitlyNotNull(columnType);
     }
 
     static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {

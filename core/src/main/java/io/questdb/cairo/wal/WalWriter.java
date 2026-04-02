@@ -246,7 +246,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                isDedupKey
+                isDedupKey,
+                false
         );
         alterOp.withSecurityContext(securityContext);
         apply(alterOp, true);
@@ -1611,6 +1612,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
         for (int i = 0; i < columnCount; i++) {
             if (rowValueIsNotNull.getQuick(i) < segmentRowCount) {
+                if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                    throw CairoException.nonCritical()
+                            .put("NOT NULL constraint violation, column is required [column=")
+                            .put(metadata.getColumnName(i))
+                            .put(']');
+                }
                 activeNullSetters.getQuick(i).run();
             }
         }
@@ -1881,6 +1888,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
+                boolean isNotNull,
                 SecurityContext securityContext
         ) {
             validateNewColumnName(columnName);
@@ -2009,6 +2017,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 int indexValueBlockCapacity,
                 boolean isSequential,
                 boolean isDedupKey,
+                boolean isNotNull,
                 SecurityContext securityContext
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
@@ -2029,6 +2038,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             symbolCacheFlag,
                             symbolCapacity
                     );
+                    if (isNotNull) {
+                        metadata.getColumnMetadata(metadata.getColumnCount() - 1).setNotNullFlag(true);
+                    }
                     columnCount = metadata.getColumnCount();
                     columnIndex = columnCount - 1;
                     // create column file

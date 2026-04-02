@@ -87,9 +87,13 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean isNotNull
     ) {
         addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey);
+        columnMetadata.getQuick(columnMetadata.size() - 1).setNotNullFlag(
+                isNotNull || ColumnType.isImplicitlyNotNull(columnType)
+        );
         readColumnOrder.add(columnMetadata.size() - 1);
         structureVersion.incrementAndGet();
     }
@@ -321,6 +325,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getIndexBlockCapacity(i),
                     tableStruct.isDedupKey(i)
             );
+            columnMetadata.getQuick(i).setNotNullFlag(
+                    tableStruct.isNotNull(i) || ColumnType.isImplicitlyNotNull(tableStruct.getColumnType(i))
+            );
             readColumnOrder.add(i);
         }
 
@@ -353,11 +360,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     columnNameIndexMap.put(name, i);
                 }
 
+                TableColumnMetadata colMeta;
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    columnMetadata.add(new TableColumnMetadata(name, type, true, 1024, true, null));
+                    colMeta = new TableColumnMetadata(name, type, true, 1024, true, null);
                 } else {
-                    columnMetadata.add(new TableColumnMetadata(name, type));
+                    colMeta = new TableColumnMetadata(name, type);
                 }
+                colMeta.setNotNullFlag(ColumnType.isImplicitlyNotNull(type));
+                columnMetadata.add(colMeta);
                 readColumnOrder.add(i);
                 checkSum = checkSum * 31 + type;
                 checkSum = checkSum * 31 + name.hashCode();
@@ -384,6 +394,26 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         for (int i = 0; i < records; i++) {
                             readColumnOrder.add(metaMem.getInt(offset));
                             offset += Integer.BYTES;
+                        }
+                    }
+                }
+            }
+
+            // Read NOT NULL flags (optional section, backward compatible)
+            long notNullMagic = checkSum * 31 + 0x4E4F544E554C4CL;
+            if (memSize > offset + Long.BYTES + Integer.BYTES) {
+                long sectionMagic = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (sectionMagic == notNullMagic) {
+                    int flagCount = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (memSize - offset >= flagCount * Byte.BYTES) {
+                        for (int i = 0; i < Math.min(flagCount, columnMetadata.size()); i++) {
+                            boolean isNotNull = metaMem.getBool(offset);
+                            offset += Byte.BYTES;
+                            columnMetadata.getQuick(i).setNotNullFlag(
+                                    isNotNull || ColumnType.isImplicitlyNotNull(columnMetadata.getQuick(i).getColumnType())
+                            );
                         }
                     }
                 }
@@ -436,6 +466,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.putInt(readColumnOrder.size());
         for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
             metaMem.putInt(readColumnOrder.get(i));
+        }
+
+        // write NOT NULL flags (optional section, backward compatible)
+        long notNullMagic = checkSum * 31 + 0x4E4F544E554C4CL; // "NOTNULL" as long seed
+        metaMem.putLong(notNullMagic);
+        metaMem.putInt(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            metaMem.putBool(getColumnMetadata(i).isNotNull());
         }
 
         // update metadata size

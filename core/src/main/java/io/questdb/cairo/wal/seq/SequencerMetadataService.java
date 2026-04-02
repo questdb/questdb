@@ -50,6 +50,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
+            boolean isNotNull,
             SecurityContext securityContext
     ) {
         metadata.addColumn(
@@ -59,7 +60,8 @@ public class SequencerMetadataService implements MetadataServiceStub {
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                isDedupKey
+                isDedupKey,
+                isNotNull
         );
     }
 

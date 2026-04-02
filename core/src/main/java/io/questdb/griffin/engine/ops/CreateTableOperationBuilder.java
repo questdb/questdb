@@ -35,6 +35,7 @@ public interface CreateTableOperationBuilder extends ExecutionModel, Sinkable {
     int COLUMN_FLAG_CACHED = 1;
     int COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
     int COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
+    int COLUMN_FLAG_NOT_NULL = COLUMN_FLAG_DEDUP_KEY << 1;
 
     CreateTableOperation build(
             SqlCompiler sqlCompiler,

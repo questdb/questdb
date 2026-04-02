@@ -46,7 +46,7 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
                             "qdb\tpublic\tB\tcol2\t2\t\tyes\tFLOAT\n" +
                             "qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE\n" +
                             "qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR\n" +
-                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE\n",
+                            "qdb\tpublic\tC\tcol2\t2\t\tno\tBYTE\n",
                     "SELECT * FROM information_schema.questdb_columns() ORDER BY table_name",
                     null,
                     null,
@@ -62,9 +62,9 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                     "show columns from test_rename"
             );
 
@@ -79,9 +79,9 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             drainWalQueue();
 
             assertSql(
-                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
-                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                     "show columns from test_renamed"
             );
 
