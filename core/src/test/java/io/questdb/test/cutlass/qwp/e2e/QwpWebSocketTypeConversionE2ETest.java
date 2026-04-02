@@ -87,6 +87,69 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
     }
 
     @Test
+    public void testBooleanToNumericColumns() throws Exception {
+        runInContext((port) -> {
+            execute("""
+                    CREATE TABLE tc_bool_num (
+                        b BYTE, s SHORT, i INT, l LONG, f FLOAT, d DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+
+            try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
+                sender.table("tc_bool_num")
+                        .boolColumn("b", true)
+                        .boolColumn("s", true)
+                        .boolColumn("i", true)
+                        .boolColumn("l", true)
+                        .boolColumn("f", true)
+                        .boolColumn("d", true)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                // Omit all columns → null
+                sender.table("tc_bool_num")
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                sender.table("tc_bool_num")
+                        .boolColumn("b", false)
+                        .boolColumn("s", false)
+                        .boolColumn("i", false)
+                        .boolColumn("l", false)
+                        .boolColumn("f", false)
+                        .boolColumn("d", false)
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
+
+                // Omit all columns → null
+                sender.table("tc_bool_num")
+                        .at(1_000_000_000_003L, ChronoUnit.MICROS);
+
+                sender.table("tc_bool_num")
+                        .boolColumn("b", true)
+                        .boolColumn("s", true)
+                        .boolColumn("i", true)
+                        .boolColumn("l", true)
+                        .boolColumn("f", true)
+                        .boolColumn("d", true)
+                        .at(1_000_000_000_004L, ChronoUnit.MICROS);
+            }
+
+            drainWalQueue();
+            // Omitted boolean columns send false (0), not SQL NULL,
+            // so omitted rows produce 0/0.0 across all numeric types.
+            assertSql(
+                    "SELECT b, s, i, l, f, d FROM tc_bool_num ORDER BY ts",
+                    """
+                            b\ts\ti\tl\tf\td
+                            1\t1\t1\t1\t1.0\t1.0
+                            0\t0\t0\t0\t0.0\t0.0
+                            0\t0\t0\t0\t0.0\t0.0
+                            0\t0\t0\t0\t0.0\t0.0
+                            1\t1\t1\t1\t1.0\t1.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testBooleanToVarcharColumn() throws Exception {
         runInContext((port) -> {
             execute("CREATE TABLE tc_bool_vc (" +
