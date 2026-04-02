@@ -137,6 +137,18 @@ public interface ColumnarRowAppender {
     void putBooleanToStringColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount);
 
     /**
+     * Writes a BOOLEAN column cursor to a numeric column (BYTE, SHORT, INT, LONG, FLOAT, DOUBLE).
+     * <p>
+     * Converts true to 1, false to 0, null to the type's null sentinel.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the boolean column cursor
+     * @param rowCount    total number of rows
+     * @param columnType  the target QuestDB column type
+     */
+    void putBooleanToNumericColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount, int columnType);
+
+    /**
      * Writes a BOOLEAN column cursor to a VARCHAR column.
      *
      * @param columnIndex the column index in the table

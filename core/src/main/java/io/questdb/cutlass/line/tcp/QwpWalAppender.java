@@ -502,6 +502,15 @@ public class QwpWalAppender implements QuietCloseable {
                             } else {
                                 throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
                             }
+                        } else if (cursor instanceof QwpBooleanColumnCursor boolCursor) {
+                            int colTag = ColumnType.tagOf(columnType);
+                            if (colTag == ColumnType.BYTE || colTag == ColumnType.SHORT
+                                    || colTag == ColumnType.INT || colTag == ColumnType.LONG
+                                    || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE) {
+                                appender.putBooleanToNumericColumn(columnIndex, boolCursor, rowCount, columnType);
+                            } else {
+                                throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            }
                         } else if (cursor instanceof QwpStringColumnCursor strCursor) {
                             int colTag = ColumnType.tagOf(columnType);
                             switch (colTag) {

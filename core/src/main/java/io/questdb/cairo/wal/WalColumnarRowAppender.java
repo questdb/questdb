@@ -236,6 +236,55 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
+    public void putBooleanToNumericColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount, int columnType) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BYTE -> {
+                for (int row = 0; row < rowCount; row++) {
+                    cursor.advanceRow();
+                    dataMem.putByte(cursor.isNull() ? (byte) 0 : (cursor.getValue() ? (byte) 1 : (byte) 0));
+                }
+            }
+            case ColumnType.SHORT -> {
+                for (int row = 0; row < rowCount; row++) {
+                    cursor.advanceRow();
+                    dataMem.putShort(cursor.isNull() ? (short) 0 : (cursor.getValue() ? (short) 1 : (short) 0));
+                }
+            }
+            case ColumnType.INT -> {
+                for (int row = 0; row < rowCount; row++) {
+                    cursor.advanceRow();
+                    dataMem.putInt(cursor.isNull() ? Numbers.INT_NULL : (cursor.getValue() ? 1 : 0));
+                }
+            }
+            case ColumnType.LONG -> {
+                for (int row = 0; row < rowCount; row++) {
+                    cursor.advanceRow();
+                    dataMem.putLong(cursor.isNull() ? Numbers.LONG_NULL : (cursor.getValue() ? 1L : 0L));
+                }
+            }
+            case ColumnType.FLOAT -> {
+                for (int row = 0; row < rowCount; row++) {
+                    cursor.advanceRow();
+                    dataMem.putFloat(cursor.isNull() ? Float.NaN : (cursor.getValue() ? 1f : 0f));
+                }
+            }
+            case ColumnType.DOUBLE -> {
+                for (int row = 0; row < rowCount; row++) {
+                    cursor.advanceRow();
+                    dataMem.putDouble(cursor.isNull() ? Double.NaN : (cursor.getValue() ? 1d : 0d));
+                }
+            }
+            default -> throw CairoException.nonCritical()
+                    .put("unsupported boolean-to-numeric target type: ").put(ColumnType.nameOf(columnType));
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
     public void putBooleanToVarcharColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
