@@ -1654,8 +1654,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
      * the bad data.
      * <p>
      * The bad row targets a pre-existing table via a fresh connection so the
-     * client has no cached schema and cannot detect the mismatch locally —
-     * only the server can reject it.
+     * client doesn't know the server-side schema of this table and cannot
+     * detect the mismatch locally — only the server can reject it.
      */
     @Test
     public void testErrorPropagation_asyncMultipleBatchesInFlight() throws Exception {
@@ -1672,8 +1672,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
 
             // Fresh async sender: autoFlushRows=1 so each row is enqueued
-            // immediately, window=8. The sender has no cached schema for
-            // "ws_async_multi_err", so it cannot detect the type mismatch.
+            // immediately, window=8. The sender doesn't know the server-side
+            // schema of "ws_async_multi_err", so it cannot detect the type mismatch.
             boolean errorCaught = false;
             try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                     "localhost", port, false,
@@ -1691,7 +1691,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 }
 
                 // Bad row to the pre-existing table — STRING into LONG.
-                // Client has no cached schema, so this passes client-side
+                // Client doesn't know the server-side schema, so this passes client-side
                 // validation. The I/O thread sends it; the server rejects it.
                 sender.table("ws_async_multi_err")
                         .stringColumn("value", "not a number")
@@ -2716,8 +2716,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
     /**
      * Tests schema evolution by adding a new column in the second batch within
-     * a single connection. The schema-reference hash changes, so the client
-     * must re-send the full schema. Rows from batch 1 should have NULL for
+     * a single connection. The new column set gets a new schema ID, so the
+     * client re-sends the full schema. Rows from batch 1 should have NULL for
      * the extra column.
      */
     @Test
@@ -2735,7 +2735,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .at(1_000_000_001_000L, ChronoUnit.MICROS);
                 sender.flush();
 
-                // Batch 2: three columns (sym, val, extra) - schema hash changes
+                // Batch 2: three columns (sym, val, extra) - schema ID changes
                 sender.table("ws_schema_evo_add")
                         .symbol("sym", "CCC")
                         .longColumn("val", 30)
@@ -2818,7 +2818,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
     /**
      * Tests that sending columns in a different order across batches triggers
-     * a schema-hash change and the client re-sends the full schema. The server
+     * a schema ID change and the client re-sends the full schema. The server
      * must match columns by name regardless of order.
      */
     @Test
@@ -2862,7 +2862,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
      * after the first successful ACK.
      */
     @Test
-    public void testSchemaReference_cacheHitAfterMultipleBatches() throws Exception {
+    public void testSchemaReference_registryHitAfterMultipleBatches() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = createSender(port)) {
                 for (int batch = 0; batch < 5; batch++) {

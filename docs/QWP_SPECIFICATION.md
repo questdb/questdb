@@ -37,7 +37,7 @@ features:
 - **Batch processing**: Multiple tables and rows per message
 - **Optional compression**: LZ4 or Zstd at the message level
 - **Gorilla timestamp compression**: Delta-of-delta encoding for timestamps
-- **Schema caching**: Reference previously sent schemas by hash
+- **Schema references**: Reference previously sent schemas by monotonic ID
 
 ### Magic Bytes
 
@@ -276,19 +276,21 @@ Each table block contains data for a single table.
 
 ### Schema Mode Byte
 
-| Value  | Mode      | Description                           |
-|--------|-----------|---------------------------------------|
-| `0x00` | Full      | Complete schema follows inline        |
-| `0x01` | Reference | Schema hash lookup (8-byte hash)      |
+| Value  | Mode      | Description                                    |
+|--------|-----------|------------------------------------------------|
+| `0x00` | Full      | Schema ID + complete column definitions inline |
+| `0x01` | Reference | Schema ID only (lookup from registry)          |
 
 ### Full Schema Mode (`0x00`)
 
-Sent on the first batch for a given table, or when the server responds with
-`SCHEMA_REQUIRED`.
+Sent the first time a table's schema appears on a connection, or whenever the
+column set changes.
 
 ```
 ┌─────────────────────────────────────────┐
 │ mode_byte: 0x00                         │
+├─────────────────────────────────────────┤
+│ schema_id: varint                       │
 ├─────────────────────────────────────────┤
 │ Column Definition 0                     │
 │   ├─ name_length: varint                │
@@ -299,6 +301,10 @@ Sent on the first batch for a given table, or when the server responds with
 └─────────────────────────────────────────┘
 ```
 
+Schema IDs are dense, monotonically increasing integers starting at 0,
+assigned by the client and scoped to the lifetime of a single connection.
+They are global across all tables on the connection (not per-table).
+
 The `type_code` byte contains the column type (0x01 through 0x16).
 
 A column with an **empty name** (length 0) and type TIMESTAMP denotes the
@@ -306,19 +312,19 @@ designated timestamp column.
 
 ### Reference Schema Mode (`0x01`)
 
-Used for subsequent batches when the server has already cached the schema.
+Used for subsequent batches when the server has already registered the schema.
 
 ```
 ┌─────────────────────────────────────────┐
 │ mode_byte: 0x01                         │
 ├─────────────────────────────────────────┤
-│ schema_hash: int64                      │
+│ schema_id: varint                       │
 └─────────────────────────────────────────┘
 ```
 
-The schema hash is computed with XXH64 over all column name bytes and type
-codes. If the server does not recognize the hash, it responds with
-`SCHEMA_REQUIRED`, and the client resends with full schema mode.
+The server looks up the schema by its ID in the per-connection schema
+registry. IDs must arrive in strictly increasing order for full-mode
+schemas; the server rejects out-of-sequence IDs.
 
 ---
 
@@ -705,7 +711,7 @@ varints for per-table error details:
 |------|--------|-----------------|-----------|------------------------------------------------------|
 | 0    | `0x00` | OK              | -         | Batch accepted                                       |
 | 1    | `0x01` | PARTIAL         | No        | Some rows failed; error payload has per-table details |
-| 2    | `0x02` | SCHEMA_REQUIRED | Yes       | Schema hash not recognized; resend with full schema   |
+| 2    | `0x02` | SCHEMA_REQUIRED | Yes       | Schema ID not recognized; resend with full schema     |
 | 3    | `0x03` | SCHEMA_MISMATCH | No        | Column type incompatible with existing table          |
 | 4    | `0x04` | TABLE_NOT_FOUND | No        | Table does not exist (auto-create disabled)           |
 | 5    | `0x05` | PARSE_ERROR     | No        | Malformed message                                    |
@@ -750,11 +756,13 @@ The client uses double-buffered microbatches:
 | Byte size            | 1 MB       |
 | Time since first row | 100 ms     |
 
-### Schema Caching
+### Schema Registry
 
-- First batch for a given table: full schema mode (0x00).
-- Subsequent batches: schema reference mode (0x01) with 8-byte XXH64 hash.
-- If the server returns SCHEMA_REQUIRED, the client resends with full schema.
+- First batch for a given table: full schema mode (0x00) with a new schema ID.
+- Subsequent batches with an unchanged column set: schema reference mode (0x01) with the same ID.
+- When a table gains a column, the client assigns a new schema ID and sends it in full mode.
+- Schema IDs are global per connection, not per table; the server registers them in a per-connection registry.
+- On reconnect both sides reset: the client reassigns IDs from 0 and the server clears its registry.
 
 ### Symbol Dictionary Lifecycle
 
@@ -789,6 +797,7 @@ XX XX XX XX  # Payload length
 
 # Schema (full mode)
 00           # Schema mode: full
+00           # Schema ID: 0
 
 # Column 0: id
 02           # Name length: 2
@@ -893,6 +902,7 @@ Payload:
 
     Schema (full mode):
       00                       -- schema_mode = FULL
+      00                       -- schema_id = 0
       04 68 6F 73 74  09       -- "host" : SYMBOL
       04 74 65 6D 70  07       -- "temp" : DOUBLE
       00              0A       -- "" : TIMESTAMP (designated)
@@ -925,7 +935,8 @@ The authoritative implementation is in QuestDB's Java codebase:
 - `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpTableHeader.java` - Table header parsing
 - `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpVarint.java` - Varint encoding/decoding
 - `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpNullBitmap.java` - Null bitmap utilities
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpSchema.java` - Schema parsing and caching
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpSchema.java` - Schema parsing and encoding
+- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpSchemaRegistry.java` - Per-connection schema registry
 - `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpMessageCursor.java` - Message/table iteration
 - `core/src/main/java/io/questdb/cutlass/qwp/protocol/Qwp*ColumnCursor.java` - Type-specific decoders
 

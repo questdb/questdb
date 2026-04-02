@@ -39,7 +39,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_COLUMN_NAME_LENGT
  * Schema modes:
  * <ul>
  *   <li>0x00 - Full schema (column definitions inline, preceded by varint schemaId)</li>
- *   <li>0x01 - Schema reference (only varint schemaId, lookup from cache)</li>
+ *   <li>0x01 - Schema reference (only varint schemaId, lookup from registry)</li>
  * </ul>
  */
 public final class QwpSchema {
