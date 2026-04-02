@@ -315,14 +315,23 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let footer_rel_start = fb.write_to(&mut append_buf);
         let new_footer_offset = (append_start + footer_rel_start) as u64;
 
-        // Compute CRC32 over the entire file [0, checksum_field).
-        // The trailer (last 4 bytes) is NOT covered by the CRC.
+        // Resume CRC32 from the previous checksum instead of re-hashing the
+        // entire existing file.  The old CRC covers [0, old_crc_field_offset).
+        // We continue from there, hashing only the bytes after the old CRC
+        // field (old CRC value + old trailer + new append data).
+        let old_crc_field_offset =
+            footer_usize + footer_length as usize - FOOTER_CHECKSUM_SIZE;
+        let old_crc = u32::from_le_bytes(
+            self.existing[old_crc_field_offset..old_crc_field_offset + FOOTER_CHECKSUM_SIZE]
+                .try_into()
+                .expect("slice is 4 bytes"),
+        );
         let checksum_field_abs =
             append_start + append_buf.len() - FOOTER_TRAILER_SIZE - FOOTER_CHECKSUM_SIZE;
-        let mut hasher = crc32fast::Hasher::new();
-        // Hash existing bytes up to append_start.
-        hasher.update(&self.existing[..append_start]);
-        // Hash new bytes up to (but not including) the checksum field.
+        let mut hasher = crc32fast::Hasher::new_with_initial(old_crc);
+        // Hash the old CRC field + old trailer (8 bytes not covered by old CRC).
+        hasher.update(&self.existing[old_crc_field_offset..append_start]);
+        // Hash new bytes up to (but not including) the new checksum field.
         let new_bytes_before_crc = checksum_field_abs - append_start;
         hasher.update(&append_buf[..new_bytes_before_crc]);
         let crc = hasher.finalize();

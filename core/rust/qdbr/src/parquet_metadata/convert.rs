@@ -787,12 +787,6 @@ pub fn update_parquet_metadata(
         columns.iter().map(|c| c.col_type_tag).collect();
 
     for (i, thrift_rg) in thrift_row_groups.iter().enumerate() {
-        let block = build_row_group_block_from_thrift_with_types(
-            thrift_rg,
-            schema_columns,
-            &col_type_tags,
-        )?;
-
         // Fingerprint the new row group: first column's byte_range_start.
         let new_fp = thrift_rg
             .columns
@@ -801,11 +795,18 @@ pub fn update_parquet_metadata(
             .map(|m| m.dictionary_page_offset.unwrap_or(m.data_page_offset) as u64)
             .unwrap_or(u64::MAX);
 
+        if i < existing_rg_count && existing_fingerprints[i] == new_fp {
+            // Unchanged row group — keep existing block.
+            continue;
+        }
+
+        let block = build_row_group_block_from_thrift_with_types(
+            thrift_rg,
+            schema_columns,
+            &col_type_tags,
+        )?;
+
         if i < existing_rg_count {
-            if existing_fingerprints[i] == new_fp {
-                // Unchanged row group — keep existing block.
-                continue;
-            }
             // Changed row group — replace.
             updater.replace_row_group(i, block)?;
         } else {
