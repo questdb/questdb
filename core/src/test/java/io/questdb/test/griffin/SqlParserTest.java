@@ -3847,6 +3847,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableParquetByteStreamSplitRejected() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT PARQUET(BYTE_STREAM_SPLIT), " +
+                        "t TIMESTAMP) " +
+                        "timestamp(t) " +
+                        "partition by DAY",
+                30,
+                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
+        );
+    }
+
+    @Test
     public void testCreateTableParquetCompression() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
@@ -4006,6 +4019,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableParquetDeltaLengthByteArrayRejectedForInt() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a INT PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
+                        "t TIMESTAMP) " +
+                        "timestamp(t) " +
+                        "partition by DAY",
+                30,
+                "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
+        );
+    }
+
+    @Test
     public void testCreateTableParquetEncoding() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
@@ -4113,45 +4139,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableParquetByteStreamSplitRejected() throws Exception {
-        assertSyntaxError(
-                "create table x (" +
-                        "a INT PARQUET(BYTE_STREAM_SPLIT), " +
-                        "t TIMESTAMP) " +
-                        "timestamp(t) " +
-                        "partition by DAY",
-                30,
-                "encoding 'BYTE_STREAM_SPLIT' is not valid for column type"
-        );
-    }
-
-    @Test
-    public void testCreateTableParquetPlainRejectedForVarchar() throws Exception {
-        assertSyntaxError(
-                "create table x (" +
-                        "a VARCHAR PARQUET(PLAIN), " +
-                        "t TIMESTAMP) " +
-                        "timestamp(t) " +
-                        "partition by DAY",
-                34,
-                "encoding 'PLAIN' is not valid for column type"
-        );
-    }
-
-    @Test
-    public void testCreateTableParquetDeltaLengthByteArrayRejectedForInt() throws Exception {
-        assertSyntaxError(
-                "create table x (" +
-                        "a INT PARQUET(DELTA_LENGTH_BYTE_ARRAY), " +
-                        "t TIMESTAMP) " +
-                        "timestamp(t) " +
-                        "partition by DAY",
-                30,
-                "encoding 'DELTA_LENGTH_BYTE_ARRAY' is not valid for column type"
-        );
-    }
-
-    @Test
     public void testCreateTableParquetMultipleColumns() throws SqlException {
         assertCreateTable(
                 "create atomic table x (" +
@@ -4168,6 +4155,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "t TIMESTAMP) " +
                         "timestamp(t) " +
                         "partition by DAY"
+        );
+    }
+
+    @Test
+    public void testCreateTableParquetPlainRejectedForVarchar() throws Exception {
+        assertSyntaxError(
+                "create table x (" +
+                        "a VARCHAR PARQUET(PLAIN), " +
+                        "t TIMESTAMP) " +
+                        "timestamp(t) " +
+                        "partition by DAY",
+                34,
+                "encoding 'PLAIN' is not valid for column type"
         );
     }
 
@@ -7924,6 +7924,68 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testLateralJoinCross() throws SqlException {
+        assertQuery(
+                "select-choose t1.x x, t.y y from (select [x] from tab1 t1 join select [y, __qdb_outer_ref__0_x] from (select-choose [y, x __qdb_outer_ref__0_x] y, x __qdb_outer_ref__0_x from (select [y, x] from tab2)) t on t.__qdb_outer_ref__0_x = t1.x) t1",
+                "select t1.x, t.y from tab1 t1 cross join lateral (select y from tab2 where x = t1.x) t",
+                modelOf("tab1").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testLateralJoinInner() throws SqlException {
+        assertQuery(
+                "select-choose t1.x x, t.y y from (select [x] from tab1 t1 join select [y] from (select-choose [y] y, x __qdb_outer_ref__0_x from (select [y, x] from tab2 where x = y)) t on y = t1.x) t1",
+                "select t1.x, t.y from tab1 t1 join lateral (select y from tab2 where x = t1.x) t on t.y = t1.x",
+                modelOf("tab1").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testLateralJoinLeft() throws SqlException {
+        assertQuery(
+                "select-choose t1.x x, t.y y from (select [x] from tab1 t1 left join select [y] from (select-choose [y] y, x __qdb_outer_ref__0_x from (select [y, x] from tab2 where x = y)) t on y = t1.x) t1",
+                "select t1.x, t.y from tab1 t1 left join lateral (select y from tab2 where x = t1.x) t on t.y = t1.x",
+                modelOf("tab1").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testLateralJoinRequiresSubquery() throws Exception {
+        assertSyntaxError(
+                "select * from tab1 t1 join lateral tab2 t on t.x = t1.x",
+                35,
+                "LATERAL requires a subquery",
+                modelOf("tab1").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testLateralJoinStandalone() throws SqlException {
+        assertQuery(
+                "select-choose t1.x x, t.y y from (select [x] from tab1 t1 join select [y, __qdb_outer_ref__0_x] from (select-choose [y, x __qdb_outer_ref__0_x] y, x __qdb_outer_ref__0_x from (select [y, x] from tab2)) t on t.__qdb_outer_ref__0_x = t1.x) t1",
+                "select t1.x, t.y from tab1 t1, lateral (select y from tab2 where x = t1.x) t",
+                modelOf("tab1").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testLateralJoinUnsupportedRightJoin() throws Exception {
+        assertSyntaxError(
+                "select * from tab1 t1 right join lateral (select * from tab2) t on t.x = t1.x",
+                33,
+                "LATERAL is only supported with INNER, LEFT, or CROSS joins",
+                modelOf("tab1").col("x", ColumnType.INT),
+                modelOf("tab2").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testLatestByDeprecatedKeepWhereOutside() throws SqlException {
         assertQuery(
                 "select-choose a, b from (select [a, b] from x latest by b where b = 'PEHN' and a < 22 and test_match())",
@@ -10073,7 +10135,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testProjectionCanReferenceOwnFunctionsWindowFunction() throws SqlException {
         assertQuery(
-                "select-window c, lag(c1) lag over () from (select-virtual [f(a) c, c c1] f(a) c, c c1 from (select [a] from tab timestamp (ts))) order by c",
+                "select-window c, lag(c1) lag over () from (select-virtual [f(a) c, c c1] f(a) c, c c1 from (select-choose [a] a, c c1 from (select [a] from tab timestamp (ts)))) order by c",
                 "select f(a) c, lag(c) over() from tab order by c",
                 modelOf("tab")
                         .col("a", ColumnType.encodeArrayType(ColumnType.DOUBLE, 2))
@@ -14004,7 +14066,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWindowFunctionReferencesSameColumnAsVirtual() throws Exception {
         assertQuery(
-                "select-window a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts] a, concat(b, 'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select-window a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts] a, concat(b, 'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, b1 b11, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
                 "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts) from xyz k",
                 modelOf("xyz")
                         .col("c", ColumnType.INT)
@@ -14177,7 +14239,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWindowLiteralAfterFunction() throws Exception {
         assertQuery(
-                "select-window a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts, b] a, concat(b, 'abc') b1, c, b, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select-window a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts, b] a, concat(b, 'abc') b1, c, b, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, b1 b11, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
                 "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
                 modelOf("xyz")
                         .col("c", ColumnType.INT)
