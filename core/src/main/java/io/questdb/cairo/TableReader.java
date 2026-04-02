@@ -37,9 +37,10 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BitSet;
 import io.questdb.std.Files;
-import io.questdb.std.IntList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -56,7 +57,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.BitSet;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
