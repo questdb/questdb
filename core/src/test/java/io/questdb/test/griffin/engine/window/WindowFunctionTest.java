@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
+import io.questdb.griffin.engine.functions.window.StdDevPopDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -75,6 +76,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
             },
             {
                     "i", "j" // ksum
+            },
+            {
+                    "i", "j" // stddev_pop
             },
             {
                     "i", "j", // first_value
@@ -10207,6 +10211,271 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStdDevPopCurrentRowSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.5), (2, null), (3, 2.5)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tsd
+                            1970-01-01T00:00:00.000001Z\t0.0
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t0.0
+                            """),
+                    "select ts, stddev_pop(j) over (order by ts rows between current row and current row) sd from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopOverOrderByDefaultFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "stddev_pop(j) over (order by ts) sd, " +
+                            "sqrt(avg(j * j) over (order by ts) - avg(j) over (order by ts) * avg(j) over (order by ts)) sd_ref " +
+                            "from tab" +
+                            ") where sd is not null and sd_ref is not null"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopOverOrderByRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "stddev_pop(j) over (order by ts range between 2 microseconds preceding and current row) sd, " +
+                            "sqrt(" +
+                            "avg(j * j) over (order by ts range between 2 microseconds preceding and current row) - " +
+                            "avg(j) over (order by ts range between 2 microseconds preceding and current row) * " +
+                            "avg(j) over (order by ts range between 2 microseconds preceding and current row)" +
+                            ") sd_ref " +
+                            "from tab" +
+                            ") where sd is not null and sd_ref is not null"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopOverOrderByRowsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "stddev_pop(j) over (order by ts rows between 2 preceding and current row) sd, " +
+                            "sqrt(" +
+                            "avg(j * j) over (order by ts rows between 2 preceding and current row) - " +
+                            "avg(j) over (order by ts rows between 2 preceding and current row) * " +
+                            "avg(j) over (order by ts rows between 2 preceding and current row)" +
+                            ") sd_ref " +
+                            "from tab" +
+                            ") where sd is not null and sd_ref is not null"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopNullAndSingleValueSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, null), (2, 1, null), (3, 2, 42.0), (4, 2, null), (5, 3, 1.0), (6, 3, 3.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tsd
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t2\t0.0
+                            1970-01-01T00:00:00.000004Z\t2\t0.0
+                            1970-01-01T00:00:00.000005Z\t3\t1.0
+                            1970-01-01T00:00:00.000006Z\t3\t1.0
+                            """),
+                    "select ts, i, stddev_pop(j) over (partition by i) sd from tab order by i, ts",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopOverPartitionOrderByDefaultFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                            "from (" +
+                            "select i, " +
+                            "stddev_pop(j) over (partition by i order by ts) sd, " +
+                            "sqrt(avg(j * j) over (partition by i order by ts) - avg(j) over (partition by i order by ts) * avg(j) over (partition by i order by ts)) sd_ref " +
+                            "from tab" +
+                            ") where sd is not null and sd_ref is not null"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopOverPartitionOrderByRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                            "from (" +
+                            "select i, " +
+                            "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd, " +
+                            "sqrt(" +
+                            "avg(j * j) over (partition by i order by ts range between 2 microseconds preceding and current row) - " +
+                            "avg(j) over (partition by i order by ts range between 2 microseconds preceding and current row) * " +
+                            "avg(j) over (partition by i order by ts range between 2 microseconds preceding and current row)" +
+                            ") sd_ref " +
+                            "from tab" +
+                            ") where sd is not null and sd_ref is not null"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopOverPartitionOrderByRowsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                            "from (" +
+                            "select i, " +
+                            "stddev_pop(j) over (partition by i order by ts rows between 2 preceding and current row) sd, " +
+                            "sqrt(" +
+                            "avg(j * j) over (partition by i order by ts rows between 2 preceding and current row) - " +
+                            "avg(j) over (partition by i order by ts rows between 2 preceding and current row) * " +
+                            "avg(j) over (partition by i order by ts rows between 2 preceding and current row)" +
+                            ") sd_ref " +
+                            "from tab" +
+                            ") where sd is not null and sd_ref is not null"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopOverPartitionMvp() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, 4.0), (4, 2, null), (5, 2, null), (6, 3, 10.0), (7, 3, 14.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                            "from (" +
+                            "select i, " +
+                            "stddev_pop(j) over (partition by i) sd, " +
+                            "sqrt(avg(j * j) over (partition by i) - avg(j) over (partition by i) * avg(j) over (partition by i)) sd_ref " +
+                            "from tab" +
+                            ") where i in (1, 3)"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopRejectsGroupsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select stddev_pop(j) over (order by ts groups between 1 preceding and current row) from tab",
+                    -1,
+                    "function not implemented for given window parameters",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopRejectsRangeOnNonDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, j double)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select stddev_pop(j) over (order by ts range between 1 microsecond preceding and current row) from nodts",
+                    -1,
+                    "RANGE is supported only for queries ordered by designated timestamp",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopOverWholeResultSetMvp() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "stddev_pop(j) over () sd, " +
+                            "sqrt(avg(j * j) over () - avg(j) over () * avg(j) over ()) sd_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
     public void testTwoWindowColumns() throws Exception {
         // Test two window functions with different specifications
         assertQuery(
@@ -11209,23 +11478,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         func.contains("first_value") || func.contains("last_value") ?
                                 "Window\n" +
                                         "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME(1)", replace) +
-                                        "    FilterOnValues\n" +
-                                        "        Table-order scan\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='B'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "        Frame forward scan on: tab\n"
+                                "    FilterOnValues\n" +
+                                "        Table-order scan\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='B'\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='A'\n" +
+                                "        Frame forward scan on: tab\n"
                                 :
                                 "CachedWindow\n" +
                                         "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
-                                        "    FilterOnValues symbolOrder: desc\n" +
-                                        "        Cursor-order scan\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='B'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "        Frame forward scan on: tab\n"
+                                "    FilterOnValues symbolOrder: desc\n" +
+                                "        Cursor-order scan\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='B'\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='A'\n" +
+                                "        Frame forward scan on: tab\n"
 
                 );
 
@@ -11317,6 +11586,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     RowNumberFunctionFactory.class,
                     AvgDoubleWindowFunctionFactory.class,
                     SumDoubleWindowFunctionFactory.class,
+                    StdDevPopDoubleWindowFunctionFactory.class,
                     KSumDoubleWindowFunctionFactory.class,
                     CountConstWindowFunctionFactory.class,
                     CountDoubleWindowFunctionFactory.class,
@@ -12405,7 +12675,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     static {
-        FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "ksum(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
+        FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "ksum(#COLUMN)", "stddev_pop(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",
                 "last_value(#COLUMN)", "last_value(#COLUMN) ignore nulls", "last_value(#COLUMN) respect nulls");
 
