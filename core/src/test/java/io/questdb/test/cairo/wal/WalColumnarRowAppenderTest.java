@@ -1235,6 +1235,62 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutBooleanToNumericColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_bool_num", PartitionBy.HOUR)
+                    .col("b", ColumnType.BYTE)
+                    .col("s", ColumnType.SHORT)
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG)
+                    .col("f", ColumnType.FLOAT)
+                    .col("d", ColumnType.DOUBLE)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            Boolean[] values = {true, false, null, true};
+            long[] timestamps = makeTimestamps(rowCount);
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken);
+                 BooleanColumnWireFormat bFmt = new BooleanColumnWireFormat(values, true);
+                 BooleanColumnWireFormat sFmt = new BooleanColumnWireFormat(values, true);
+                 BooleanColumnWireFormat iFmt = new BooleanColumnWireFormat(values, true);
+                 BooleanColumnWireFormat lFmt = new BooleanColumnWireFormat(values, true);
+                 BooleanColumnWireFormat fFmt = new BooleanColumnWireFormat(values, true);
+                 BooleanColumnWireFormat dFmt = new BooleanColumnWireFormat(values, true)) {
+                ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                appender.beginColumnarWrite(rowCount);
+                appender.putBooleanToNumericColumn(0, bFmt.cursor, rowCount, ColumnType.BYTE);
+                appender.putBooleanToNumericColumn(1, sFmt.cursor, rowCount, ColumnType.SHORT);
+                appender.putBooleanToNumericColumn(2, iFmt.cursor, rowCount, ColumnType.INT);
+                appender.putBooleanToNumericColumn(3, lFmt.cursor, rowCount, ColumnType.LONG);
+                appender.putBooleanToNumericColumn(4, fFmt.cursor, rowCount, ColumnType.FLOAT);
+                appender.putBooleanToNumericColumn(5, dFmt.cursor, rowCount, ColumnType.DOUBLE);
+                putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+            // BYTE and SHORT: null sentinel is 0
+            // INT, LONG, FLOAT, DOUBLE: null sentinel is distinct (null)
+            assertSql(
+                    """
+                            b\ts\ti\tl\tf\td
+                            1\t1\t1\t1\t1.0\t1.0
+                            0\t0\t0\t0\t0.0\t0.0
+                            0\t0\tnull\tnull\tnull\tnull
+                            1\t1\t1\t1\t1.0\t1.0
+                            """,
+                    "SELECT b, s, i, l, f, d FROM test_bool_num ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testPutBooleanToVarcharColumn() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(new TableModel(configuration, "test_bool_vc", PartitionBy.HOUR)
