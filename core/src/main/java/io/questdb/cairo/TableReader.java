@@ -1227,6 +1227,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 continue; // only native partitions have per-column mappings
             }
             final int columnBase = getColumnBase(partitionIndex);
+            boolean hasNewColumns = false;
             for (int i = 0; i < columnCount; i++) {
                 if (!activeColumns.get(i)) {
                     continue;
@@ -1235,6 +1236,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final MemoryCMR mem = columns.getQuick(primaryIndex);
                 if (mem != null && mem != NullMemoryCMR.INSTANCE) {
                     continue; // already mapped
+                }
+                if (!hasNewColumns) {
+                    final long nameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+                    pathGenNativePartition(partitionIndex, nameTxn);
+                    hasNewColumns = true;
                 }
                 reloadColumnAt(
                         partitionIndex,
@@ -1246,6 +1252,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                         i,
                         partitionSize
                 );
+            }
+            if (hasNewColumns) {
+                path.trimTo(rootLen);
             }
         }
     }
