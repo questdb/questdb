@@ -638,7 +638,9 @@ public interface CairoConfiguration {
      */
     int getSqlJoinMetadataPageSize();
 
-    long getSqlLatestByRowCount();
+   long getSqlLatestByRowCount();
+
+    long getSqlEarliestByRowCount();
 
     int getSqlLexerPoolCapacity();
 

@@ -1062,6 +1062,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlEarliestByRowCount() {
+        return getDelegate().getSqlEarliestByRowCount();
+    }
+
+    @Override
     public int getSqlLexerPoolCapacity() {
         return getDelegate().getSqlLexerPoolCapacity();
     }

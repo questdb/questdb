@@ -1082,6 +1082,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlEarliestByRowCount() {
+        return 1000;
+    }
+
+    @Override
     public int getSqlLexerPoolCapacity() {
         return 2048;
     }

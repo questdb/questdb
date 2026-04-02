@@ -466,7 +466,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinContextPoolCapacity;
     private final int sqlJoinMetadataMaxResizes;
     private final int sqlJoinMetadataPageSize;
-    private final long sqlLatestByRowCount;
+   private final long sqlLatestByRowCount;
+    private final long sqlEarliestByRowCount;
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
@@ -1516,6 +1517,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
+            this.sqlEarliestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_EARLIEST_BY_ROW_COUNT, 1000);
             this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 64);
@@ -4228,6 +4230,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSqlLatestByRowCount() {
             return sqlLatestByRowCount;
+        }
+
+        @Override
+        public long getSqlEarliestByRowCount() {
+            return sqlEarliestByRowCount;
         }
 
         @Override

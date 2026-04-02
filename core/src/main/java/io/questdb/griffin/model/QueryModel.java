@@ -83,6 +83,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int LATEST_BY_DEPRECATED = 1;
     public static final int LATEST_BY_NEW = 2;
     public static final int LATEST_BY_NONE = 0;
+    public static final int EARLIEST_BY_DEPRECATED = 3;
+    public static final int EARLIEST_BY_NEW = 4;
+    public static final int EARLIEST_BY_NONE = 0;
     public static final String NO_ROWID_MARKER = "*!*";
     public static final int ORDER_DIRECTION_ASCENDING = 0;
     public static final int ORDER_DIRECTION_DESCENDING = 1;
@@ -208,6 +211,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int joinKeywordPosition;
     private int joinType = JOIN_NONE;
     private int latestByType = LATEST_BY_NONE;
+    private int earliestByType = EARLIEST_BY_NONE;
+    private final ObjList<ExpressionNode> earliestBy = new ObjList<>();
     private ExpressionNode limitAdviceHi;
     private ExpressionNode limitAdviceLo;
     private ExpressionNode limitHi;
@@ -505,6 +510,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         alias = null;
         latestByType = LATEST_BY_NONE;
         latestBy.clear();
+        earliestByType = EARLIEST_BY_NONE;
+        earliestBy.clear();
         joinCriteria = null;
         joinType = JOIN_NONE;
         joinKeywordPosition = 0;
@@ -1044,6 +1051,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public int getLatestByType() {
         return latestByType;
+    }
+
+    public ObjList<ExpressionNode> getEarliestBy() {
+        return earliestBy;
+    }
+
+    public int getEarliestByType() {
+        return earliestByType;
+    }
+
+    public void setEarliestByType(int earliestByType) {
+        this.earliestByType = earliestByType;
+    }
+
+    public void addEarliestBy(ExpressionNode earliestBy) {
+        this.earliestBy.add(earliestBy);
     }
 
     public ExpressionNode getLimitAdviceHi() {

@@ -303,6 +303,8 @@ import io.questdb.griffin.engine.table.LatestByValueDeferredIndexedRowCursorFact
 import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecord;
@@ -5546,6 +5548,65 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @NotNull
+    private RecordCursorFactory generateEarliestBy(RecordCursorFactory factory, QueryModel model) throws SqlException {
+        final ObjList<ExpressionNode> earliestBy = model.getEarliestBy();
+        if (earliestBy.size() == 0) {
+            return factory;
+        }
+
+        // We require timestamp with any order.
+        final int timestampIndex;
+        try {
+            timestampIndex = getTimestampIndex(model, factory);
+            if (timestampIndex == -1) {
+                throw SqlException.$(model.getModelPosition(), "earliest by query does not provide dedicated TIMESTAMP column");
+            }
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        }
+
+        final RecordMetadata metadata = factory.getMetadata();
+        prepareLatestByColumnIndexes(earliestBy, metadata);
+
+        if (!factory.recordCursorSupportsRandomAccess()) {
+            return new io.questdb.griffin.engine.table.EarliestByRecordCursorFactory(
+                    configuration,
+                    factory,
+                    RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
+                    keyTypes,
+                    timestampIndex
+            );
+        }
+
+        boolean orderedByTimestampAsc = false;
+        final QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            final LowerCaseCharSequenceIntHashMap orderBy = nested.getOrderHash();
+            CharSequence timestampColumn = metadata.getColumnName(timestampIndex);
+            if (orderBy.get(timestampColumn) == ORDER_DIRECTION_ASCENDING) {
+                // ORDER BY the timestamp column case.
+                orderedByTimestampAsc = true;
+            } else if (timestampIndex == metadata.getTimestampIndex() && orderBy.size() == 0) {
+                // Empty ORDER BY, but the timestamp column in the designated timestamp.
+                orderedByTimestampAsc = true;
+            }
+        } else {
+            // No nested model, assume ordered by timestamp ascending
+            orderedByTimestampAsc = true;
+        }
+
+        return new io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory(
+                configuration,
+                factory,
+                RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
+                keyTypes,
+                timestampIndex,
+                orderedByTimestampAsc
+        );
+    }
+
+    @NotNull
     private RecordCursorFactory generateLatestByTableQuery(
             QueryModel model,
             @Transient TableReader reader,
@@ -6687,9 +6748,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             RecordCursorFactory factory;
 
-            factory = generateSelect(model, executionContext, processJoins);
+     factory = generateSelect(model, executionContext, processJoins);
             factory = generateFilter(factory, model, executionContext);
             factory = generateLatestBy(factory, model);
+            factory = generateEarliestBy(factory, model);
             factory = generateOrderBy(factory, model, executionContext);
             factory = generateLimit(factory, model, executionContext);
 
