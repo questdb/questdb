@@ -60,7 +60,6 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -81,7 +80,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
     private final JoinRecordMetadata horizonJoinMetadata;
     private final ObjList<Function> keyFunctions;
     private final RecordCursorFactory masterFactory;
-    private final LongList offsets;
+    private final long[] offsets;
     private final ObjList<Function> recordFunctions;
     private final RecordCursorFactory slaveFactory;
 
@@ -92,7 +91,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
@@ -188,7 +187,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Horizon Join");
-        sink.meta("offsets").val(offsets.size());
+        sink.meta("offsets").val(offsets.length);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", cursor.groupByFunctions);
@@ -204,14 +203,12 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(horizonJoinMetadata);
+        // recordFunctions includes groupByFunctions (same object references)
         Misc.freeObjList(recordFunctions);
     }
 
     private static class HorizonJoinRecordCursor implements RecordCursor {
         private final Map asOfJoinMap;
-        private final long bwdScanAbsoluteThreshold;
-        private final long bwdScanMinGap;
-        private final long bwdScanSwitchFactor;
         private final Map dataMap;
         private final GroupByAllocator groupByAllocator;
         private final ObjList<GroupByFunction> groupByFunctions;
@@ -224,7 +221,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         private final RecordSink masterAsOfJoinMapSink;
         private final int masterTimestampColumnIndex;
         private final long masterTsScale;
-        private final LongList offsets;
+        private final long[] offsets;
         private final VirtualRecord recordA;
         private final VirtualRecord recordB;
         private final ObjList<Function> recordFunctions;
@@ -246,7 +243,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 ObjList<Function> keyFunctions,
                 @Transient BytecodeAssembler asm,
                 int masterTimestampColumnIndex,
-                LongList offsets,
+                long[] offsets,
                 @Transient ArrayColumnTypes keyTypes,
                 @Transient ArrayColumnTypes valueTypes,
                 @Nullable ColumnTypes asOfJoinKeyTypes,
@@ -261,9 +258,6 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 long masterTsScale,
                 long slaveTsScale
         ) {
-            this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
-            this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
-            this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             this.keyFunctions = keyFunctions;
@@ -323,7 +317,12 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 this.symbolTranslatingRecord = null;
             }
 
-            this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
+            this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
+                    configuration.getSqlAsOfJoinLookAhead(), slaveTsScale,
+                    configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold(),
+                    configuration.getSqlHorizonJoinBwdScanMinGap(),
+                    configuration.getSqlHorizonJoinBwdScanSwitchFactor()
+            );
             this.isOpen = true;
         }
 
@@ -415,9 +414,6 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             dataMap.clear();
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
-            long prevAsOfRowId = Long.MIN_VALUE;
-            boolean isForwardScanMode = false;
-            long bwdScanRowsAtPositionStart = 0;
 
             while (horizonIterator.next()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -425,16 +421,12 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
                 final int offsetIdx = horizonIterator.getOffsetIndex();
-                final long offset = offsets.getQuick(offsetIdx);
+                final long offset = offsets[offsetIdx];
 
-                // Position master record at the correct row via random access
                 masterCursor.recordAt(masterCursor.getRecordB(), masterRowId);
                 Record masterRecord = masterCursor.getRecordB();
 
-                // Scale horizon timestamp for ASOF lookup
                 final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
-
-                // Find ASOF row
                 long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
                 long matchRowId = Long.MIN_VALUE;
@@ -444,51 +436,18 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                         symbolTranslatingRecord.of(masterRecord);
                         masterKeyRecord = symbolTranslatingRecord;
                     }
-
-                    if (asOfRowId != Long.MIN_VALUE) {
-                        if (asOfRowId != prevAsOfRowId) {
-                            // ASOF position changed — decide scanning strategy
-                            if (!isForwardScanMode) {
-                                long bwdScanCost = slaveTimeFrameHelper.getBackwardScanRows() - bwdScanRowsAtPositionStart;
-                                if (prevAsOfRowId != Long.MIN_VALUE) {
-                                    long gap = asOfRowId - prevAsOfRowId;
-                                    if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
-                                            bwdScanCost,
-                                            gap,
-                                            bwdScanMinGap,
-                                            bwdScanSwitchFactor,
-                                            bwdScanAbsoluteThreshold
-                                    )) {
-                                        isForwardScanMode = true;
-                                        slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
-                                    }
-                                }
-                                if (!isForwardScanMode) {
-                                    asOfJoinMap.clear();
-                                    slaveTimeFrameHelper.resetBackwardWatermark();
-                                    bwdScanRowsAtPositionStart = slaveTimeFrameHelper.getBackwardScanRows();
-                                }
-                            }
-                            if (isForwardScanMode) {
-                                slaveTimeFrameHelper.forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, asOfJoinMap);
-                            }
-                            prevAsOfRowId = asOfRowId;
-                        }
-                        // Look up key in map; backward scan on miss
-                        matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                                asOfRowId,
-                                masterKeyRecord,
-                                masterAsOfJoinMapSink,
-                                slaveAsOfJoinMapSink,
-                                asOfJoinMap,
-                                symbolTranslatingRecord
-                        );
-                    }
+                    matchRowId = slaveTimeFrameHelper.findKeyedAsOfMatch(
+                            asOfRowId,
+                            masterKeyRecord,
+                            masterAsOfJoinMapSink,
+                            slaveAsOfJoinMapSink,
+                            asOfJoinMap,
+                            symbolTranslatingRecord
+                    );
                 } else {
                     matchRowId = asOfRowId;
                 }
 
-                // Aggregate the result
                 Record matchedSlaveRecord = null;
                 if (matchRowId != Long.MIN_VALUE) {
                     slaveTimeFrameHelper.recordAt(matchRowId);

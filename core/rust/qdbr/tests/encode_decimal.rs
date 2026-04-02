@@ -4,16 +4,17 @@ use arrow::array::{Array, Decimal128Array, Decimal256Array};
 use arrow::record_batch::RecordBatch;
 use common::encode::{
     generate_nulls, make_primitive_column, read_parquet_batches, write_parquet_no_stats,
-    EncodeEncoding, ALL_NULL_PATTERNS,
+    ALL_NULL_PATTERNS,
 };
 use common::types::primitives::rnd;
 use qdb_core::col_type::ColumnType;
 use questdbr::parquet_write::schema::Partition;
 
+use crate::common::Encoding;
+
 const COUNT: usize = 500;
 
-const DECIMAL_ENCODINGS: [EncodeEncoding; 2] =
-    [EncodeEncoding::Plain, EncodeEncoding::RleDictionary];
+const DECIMAL_ENCODINGS: [Encoding; 2] = [Encoding::Plain, Encoding::RleDictionary];
 
 fn as_bytes<T>(data: &[T]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data)) }
@@ -23,7 +24,7 @@ fn encode_and_read(
     col_type: ColumnType,
     data: &[u8],
     row_count: usize,
-    encoding: EncodeEncoding,
+    encoding: Encoding,
 ) -> Vec<RecordBatch> {
     let column = make_primitive_column(
         "col",
