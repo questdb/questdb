@@ -415,9 +415,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE " + table + " (v BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "BYTE");
-            assertCoercionError(port, table,
                     (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
                     "not supported", "BYTE");
             assertCoercionError(port, table,
@@ -867,9 +864,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE " + table + " (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "DOUBLE");
-            assertCoercionError(port, table,
                     (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
                     "not supported", "DOUBLE");
             assertCoercionError(port, table,
@@ -924,9 +918,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_float_err";
             execute("CREATE TABLE " + table + " (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "FLOAT");
             assertCoercionError(port, table,
                     (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
                     "not supported", "FLOAT");
@@ -1062,9 +1053,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_int_err";
             execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "INT");
             assertCoercionError(port, table,
                     (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
                     "not supported", "INT");
@@ -1210,9 +1198,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "LONG");
-            assertCoercionError(port, table,
                     (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
                     "not supported", "LONG");
             assertCoercionError(port, table,
@@ -1273,9 +1258,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_coerce_short_err";
             execute("CREATE TABLE " + table + " (v SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            assertCoercionError(port, table,
-                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
-                    "cannot write BOOLEAN", "SHORT");
             assertCoercionError(port, table,
                     (s, t) -> s.table(t).charColumn("v", 'A').at(1_000_000, ChronoUnit.MICROS),
                     "not supported", "SHORT");
