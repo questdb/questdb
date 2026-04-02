@@ -692,11 +692,23 @@ public class TableReader implements Closeable, SymbolTableSource {
             hasActiveColumns = false;
             return;
         }
+        boolean broadened = false;
+        if (hasActiveColumns) {
+            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+                if (!activeColumns.get(columnIndexes.getQuick(i))) {
+                    broadened = true;
+                    break;
+                }
+            }
+        }
         activeColumns.clear();
         for (int i = 0, n = columnIndexes.size(); i < n; i++) {
             activeColumns.set(columnIndexes.getQuick(i));
         }
         hasActiveColumns = true;
+        if (broadened) {
+            openActiveColumnsInOpenPartitions();
+        }
     }
 
     /**
@@ -1201,6 +1213,41 @@ public class TableReader implements Closeable, SymbolTableSource {
                 columnVersionReader.getSymbolTableNameTxn(metadata.getWriterIndex(columnIndex)),
                 txFile.getSymbolValueCount(symbolColumnIndex)
         );
+    }
+
+    private void openActiveColumnsInOpenPartitions() {
+        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+            if (partitionSize < 0) {
+                continue; // partition not open
+            }
+            final byte format = (byte) openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT);
+            if (format != PartitionFormat.NATIVE) {
+                continue; // only native partitions have per-column mappings
+            }
+            final int columnBase = getColumnBase(partitionIndex);
+            for (int i = 0; i < columnCount; i++) {
+                if (!activeColumns.get(i)) {
+                    continue;
+                }
+                final int primaryIndex = getPrimaryColumnIndex(columnBase, i);
+                final MemoryCMR mem = columns.getQuick(primaryIndex);
+                if (mem != null && mem != NullMemoryCMR.INSTANCE) {
+                    continue; // already mapped
+                }
+                reloadColumnAt(
+                        partitionIndex,
+                        path,
+                        columns,
+                        columnTops,
+                        bitmapIndexes,
+                        columnBase,
+                        i,
+                        partitionSize
+                );
+            }
+        }
     }
 
     private TableReaderMetadata openMetaFile() {
