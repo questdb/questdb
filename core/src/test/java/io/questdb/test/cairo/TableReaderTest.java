@@ -46,8 +46,8 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.IntList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -2998,7 +2998,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSetActiveColumnsOnlyMapsRequestedColumns() throws Exception {
+    public void testSetActiveColumnsBroadeningMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
                     .col("a", ColumnType.INT)
@@ -3007,52 +3007,10 @@ public class TableReaderTest extends AbstractCairoTest {
                     .timestamp(timestampType);
             TestUtils.createTable(engine, model);
 
+            // 3 days = 3 partitions
             long tsStep = timestampDriver.fromSeconds(60 * 60);
             try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
-                for (int i = 0; i < 24; i++) {
-                    TableWriter.Row row = writer.newRow(i * tsStep);
-                    row.putInt(0, i);
-                    row.putLong(1, i * 100L);
-                    row.putDouble(2, i * 1.5);
-                    row.append();
-                }
-                writer.commit();
-            }
-
-            // set active columns to only column "a" (index 0) and timestamp (index 3)
-            IntList columnIndexes = new IntList();
-            columnIndexes.add(0);
-            columnIndexes.add(3);
-
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
-                reader.setActiveColumns(columnIndexes);
-                reader.openPartition(0);
-
-                int columnBase = reader.getColumnBase(0);
-                // column "a" (index 0) should be mapped
-                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
-                // timestamp (index 3) should be mapped
-                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 3)));
-                // columns "b" (index 1) and "c" (index 2) should NOT be mapped
-                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
-                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 2)));
-            }
-        });
-    }
-
-    @Test
-    public void testSetActiveColumnsBroadeningMapsAdditionalColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.LONG)
-                    .col("c", ColumnType.DOUBLE)
-                    .timestamp(timestampType);
-            TestUtils.createTable(engine, model);
-
-            long tsStep = timestampDriver.fromSeconds(60 * 60);
-            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
-                for (int i = 0; i < 24; i++) {
+                for (int i = 0; i < 72; i++) {
                     TableWriter.Row row = writer.newRow(i * tsStep);
                     row.putInt(0, i);
                     row.putLong(1, i * 100L);
@@ -3063,64 +3021,35 @@ public class TableReaderTest extends AbstractCairoTest {
             }
 
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
-                // first, set active columns to only "a"
+                Assert.assertEquals(3, reader.getPartitionCount());
+
+                // open all 3 partitions with only column "a"
                 IntList narrowSet = new IntList();
                 narrowSet.add(0);
                 reader.setActiveColumns(narrowSet);
-                reader.openPartition(0);
+                for (int p = 0; p < 3; p++) {
+                    reader.openPartition(p);
+                }
 
-                int columnBase = reader.getColumnBase(0);
-                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
-                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+                // verify "b" is not mapped in any partition
+                for (int p = 0; p < 3; p++) {
+                    int columnBase = reader.getColumnBase(p);
+                    Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+                }
 
-                // now broaden to include "b" - should map "b" in already-open partition
+                // broaden to include "b"
                 IntList broadSet = new IntList();
                 broadSet.add(0);
                 broadSet.add(1);
                 reader.setActiveColumns(broadSet);
 
-                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
-                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
-                // "c" still not mapped
-                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 2)));
-            }
-        });
-    }
-
-    @Test
-    public void testSetActiveColumnsNullMapsAllColumns() throws Exception {
-        assertMemoryLeak(() -> {
-            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
-                    .col("a", ColumnType.INT)
-                    .col("b", ColumnType.LONG)
-                    .col("c", ColumnType.DOUBLE)
-                    .timestamp(timestampType);
-            TestUtils.createTable(engine, model);
-
-            long tsStep = timestampDriver.fromSeconds(60 * 60);
-            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
-                for (int i = 0; i < 24; i++) {
-                    TableWriter.Row row = writer.newRow(i * tsStep);
-                    row.putInt(0, i);
-                    row.putLong(1, i * 100L);
-                    row.putDouble(2, i * 1.5);
-                    row.append();
-                }
-                writer.commit();
-            }
-
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
-                // null means all columns
-                reader.setActiveColumns(null);
-                reader.openPartition(0);
-
-                int columnBase = reader.getColumnBase(0);
-                for (int i = 0; i < reader.getColumnCount(); i++) {
-                    Assert.assertNotSame(
-                            "column " + i + " should be mapped",
-                            NullMemoryCMR.INSTANCE,
-                            reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i))
-                    );
+                // "b" should now be mapped in all 3 already-open partitions
+                for (int p = 0; p < 3; p++) {
+                    int columnBase = reader.getColumnBase(p);
+                    Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
+                    Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+                    // "c" still not mapped
+                    Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 2)));
                 }
             }
         });
@@ -3216,6 +3145,368 @@ public class TableReaderTest extends AbstractCairoTest {
                                 reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i))
                         );
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsNarrowing() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                // set wide active set, open partition
+                IntList wideSet = new IntList();
+                wideSet.add(0);
+                wideSet.add(1);
+                wideSet.add(2);
+                reader.setActiveColumns(wideSet);
+                reader.openPartition(0);
+
+                int columnBase = reader.getColumnBase(0);
+                // all 3 columns should be mapped
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 2)));
+
+                // narrow to only "a" - already-mapped columns should remain accessible
+                IntList narrowSet = new IntList();
+                narrowSet.add(0);
+                reader.setActiveColumns(narrowSet);
+
+                // "b" and "c" were already mapped and should still be accessible
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 2)));
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsNullMapsAllColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                // null means all columns
+                reader.setActiveColumns(null);
+                reader.openPartition(0);
+
+                int columnBase = reader.getColumnBase(0);
+                for (int i = 0; i < reader.getColumnCount(); i++) {
+                    Assert.assertNotSame(
+                            "column " + i + " should be mapped",
+                            NullMemoryCMR.INSTANCE,
+                            reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i))
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsOnlyMapsRequestedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            // set active columns to only column "a" (index 0) and timestamp (index 3)
+            IntList columnIndexes = new IntList();
+            columnIndexes.add(0);
+            columnIndexes.add(3);
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                reader.setActiveColumns(columnIndexes);
+                reader.openPartition(0);
+
+                int columnBase = reader.getColumnBase(0);
+                // column "a" (index 0) should be mapped
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
+                // timestamp (index 3) should be mapped
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 3)));
+                // columns "b" (index 1) and "c" (index 2) should NOT be mapped
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 2)));
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsReloadColumnFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            // use 30-min step so all rows land in a single partition (day 0)
+            long tsStep = timestampDriver.fromSeconds(30 * 60);
+            try (
+                    TableWriter writer = newOffPoolWriter(configuration, "x");
+                    TableReader reader = newOffPoolReader(configuration, "x")
+            ) {
+                // write first batch - 24 rows in partition 0
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+
+                // set active columns to "a" only, open partition
+                IntList columnIndexes = new IntList();
+                columnIndexes.add(0);
+                reader.setActiveColumns(columnIndexes);
+                Assert.assertTrue(reader.reload());
+                reader.openPartition(0);
+
+                int columnBase = reader.getColumnBase(0);
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
+
+                // append more rows to same partition (triggers reloadColumnFiles path)
+                for (int i = 24; i < 48; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+
+                // reload should succeed - reloadColumnFiles must skip inactive columns
+                Assert.assertTrue(reader.reload());
+
+                // verify data correctness through cursor
+                try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+                    final Record record = cursor.getRecord();
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, record.getInt(0));
+                        count++;
+                    }
+                    Assert.assertEquals(48, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsSameSetDoesNotReopenPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                IntList columnIndexes = new IntList();
+                columnIndexes.add(0);
+                reader.setActiveColumns(columnIndexes);
+                reader.openPartition(0);
+
+                int columnBase = reader.getColumnBase(0);
+                // grab reference to mapped column memory
+                Object colAMem = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0));
+                Assert.assertNotNull(colAMem);
+
+                // re-apply same set - should not trigger reopening
+                IntList sameSet = new IntList();
+                sameSet.add(0);
+                reader.setActiveColumns(sameSet);
+
+                // same memory object should still be there (not remapped)
+                Assert.assertSame(colAMem, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
+                // "b" should still be unmapped
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsVarSizeColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("s", ColumnType.STRING)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putStr(1, "str_" + i);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                // activate only "s" (var-size) and timestamp
+                IntList columnIndexes = new IntList();
+                columnIndexes.add(1); // s
+                columnIndexes.add(3); // timestamp
+                reader.setActiveColumns(columnIndexes);
+                reader.openPartition(0);
+
+                int columnBase = reader.getColumnBase(0);
+                // "a" not mapped
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
+                // "s" primary (data) and secondary (aux) both mapped
+                int sPrimary = TableReader.getPrimaryColumnIndex(columnBase, 1);
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(sPrimary));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(sPrimary + 1));
+                // "c" not mapped
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 2)));
+
+                // now broaden to include "s" and "a" - verify "a" gets mapped
+                IntList broadSet = new IntList();
+                broadSet.add(0);
+                broadSet.add(1);
+                broadSet.add(3);
+                reader.setActiveColumns(broadSet);
+
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
+                // "s" still mapped
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(sPrimary));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(sPrimary + 1));
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsWithColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                // write first batch (1 partition)
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.append();
+                }
+                writer.commit();
+
+                // add column "b" mid-table - partition 0 will have column top for "b"
+                writer.addColumn("b", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
+
+                // write second batch (partition 1) - "b" (writer index 2) has data here
+                for (int i = 24; i < 48; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(2, i * 100L);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                // after addColumn("b"), layout is: a(0), timestamp(1), b(2)
+                // activate only "b" (index 2) and timestamp (index 1)
+                IntList columnIndexes = new IntList();
+                columnIndexes.add(1); // timestamp
+                columnIndexes.add(2); // b
+                reader.setActiveColumns(columnIndexes);
+
+                // open both partitions
+                reader.openPartition(0);
+                reader.openPartition(1);
+
+                int columnBase0 = reader.getColumnBase(0);
+                int columnBase1 = reader.getColumnBase(1);
+                // "a" (index 0) should not be mapped in either partition
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase0, 0)));
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase1, 0)));
+                // "b" (index 2) should be mapped in partition 1 (has data)
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase1, 2)));
+
+                // verify data via cursor
+                try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+                    final Record record = cursor.getRecord();
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        if (count >= 24) {
+                            // partition 1: "b" (index 2) has data
+                            Assert.assertEquals(count * 100L, record.getLong(2));
+                        }
+                        count++;
+                    }
+                    Assert.assertEquals(48, count);
                 }
             }
         });
