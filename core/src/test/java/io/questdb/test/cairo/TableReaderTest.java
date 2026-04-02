@@ -3099,6 +3099,89 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetActiveColumnsFreedColumnDetectedOnBroadening() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("s", ColumnType.STRING)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putStr(1, "str_" + i);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                // Open partition with all columns mapped
+                reader.openPartition(0);
+                int columnBase = reader.getColumnBase(0);
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+
+                // Close the partition — column memory objects are freed
+                // (pageAddress set to 0) but stay in the columns list for reuse
+                reader.closePartitionByIndex(0);
+
+                // Set narrow active set and reopen the partition.
+                // Only column "a" is mapped; "s" slot still holds the closed object.
+                IntList narrowSet = new IntList();
+                narrowSet.add(0);
+                narrowSet.add(3); // timestamp
+                reader.setActiveColumns(narrowSet);
+                reader.openPartition(0);
+
+                // Verify "s" (STRING, index 1) is not mapped.
+                // The slot holds a closed MemoryCMRDetachedImpl, not null/NullMemoryCMR.
+                columnBase = reader.getColumnBase(0);
+                int sPrimary = TableReader.getPrimaryColumnIndex(columnBase, 1);
+                Assert.assertNotNull(reader.getColumn(sPrimary));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(sPrimary));
+
+                // Broaden active set — must detect the closed object and remap
+                IntList allColumns = new IntList();
+                allColumns.add(0);
+                allColumns.add(1);
+                allColumns.add(2);
+                allColumns.add(3);
+                reader.setActiveColumns(allColumns);
+
+                // "s" should now be properly mapped with a non-zero address
+                columnBase = reader.getColumnBase(0);
+                sPrimary = TableReader.getPrimaryColumnIndex(columnBase, 1);
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(sPrimary));
+                Assert.assertTrue(
+                        "STRING column primary should have non-zero address after broadening",
+                        reader.getColumn(sPrimary).addressOf(0) != 0
+                );
+                Assert.assertTrue(
+                        "STRING column aux should have non-zero address after broadening",
+                        reader.getColumn(sPrimary + 1).addressOf(0) != 0
+                );
+
+                // Verify data is readable through cursor
+                try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+                    final Record record = cursor.getRecord();
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, record.getInt(0));
+                        Assert.assertEquals("str_" + count, record.getStrA(1).toString());
+                        count++;
+                    }
+                    Assert.assertEquals(24, count);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSetActiveColumnsGoPassiveClearsState() throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)

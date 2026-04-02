@@ -1235,7 +1235,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
                 final int primaryIndex = getPrimaryColumnIndex(columnBase, i);
                 final MemoryCMR mem = columns.getQuick(primaryIndex);
-                if (mem != null && mem != NullMemoryCMR.INSTANCE) {
+                if (mem != null && mem != NullMemoryCMR.INSTANCE && mem.addressOf(0) != 0) {
                     continue; // already mapped
                 }
                 if (!hasNewColumns) {
