@@ -151,10 +151,9 @@ public final class QwpSchema {
 
         if (schemaMode == SCHEMA_MODE_REFERENCE) {
             // Schema reference mode - just a varint schemaId (zero-alloc path)
-            QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
-            QwpVarint.decode(address + offset, address + length, decodeResult);
-            int schemaId = validateSchemaId(decodeResult.value);
-            offset += decodeResult.bytesRead;
+            QwpVarint.decode(address + offset, address + length, result.decodeResult);
+            int schemaId = validateSchemaId(result.decodeResult.value);
+            offset += result.decodeResult.bytesRead;
             result.setReference(schemaId, offset);
         } else if (schemaMode == SCHEMA_MODE_FULL) {
             // Full schema mode - parse schemaId + column definitions (allocates for new schema)
@@ -293,7 +292,7 @@ public final class QwpSchema {
 
     private static void parseFullSchema(long address, int length, int columnCount, int offset, ParseResult result) throws QwpParseException {
         QwpColumnDef[] columns = new QwpColumnDef[columnCount];
-        QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
+        QwpVarint.DecodeResult decodeResult = result.decodeResult;
         long limit = address + length; // Absolute end address
 
         // Read schema ID
@@ -418,6 +417,7 @@ public final class QwpSchema {
      */
     public static final class ParseResult implements Mutable {
         public int bytesConsumed;
+        public final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
         public boolean isReference;
         public QwpSchema schema;
         public int schemaId;
