@@ -309,20 +309,14 @@ public final class QwpSchema {
             QwpVarint.decode(address + offset, limit, decodeResult);
             offset += decodeResult.bytesRead;
 
+            // Empty column names (length 0) are allowed for designated timestamp columns.
+            if (decodeResult.value < 0 || decodeResult.value > MAX_COLUMN_NAME_LENGTH) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INVALID_COLUMN_NAME,
+                        "invalid column name length at column " + i + ": " + decodeResult.value
+                );
+            }
             int nameLenInt = (int) decodeResult.value;
-            // Empty column names are allowed for designated timestamp (empty name + TIMESTAMP type)
-            if (nameLenInt < 0) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INVALID_COLUMN_NAME,
-                        "negative column name length at column " + i
-                );
-            }
-            if (nameLenInt > MAX_COLUMN_NAME_LENGTH) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INVALID_COLUMN_NAME,
-                        "column name too long: " + nameLenInt + " bytes"
-                );
-            }
             if (offset + nameLenInt + 1 > length) {
                 throw QwpParseException.headerTooShort();
             }
@@ -365,20 +359,13 @@ public final class QwpSchema {
             QwpVarint.decode(buf, bufOffset + offset, limit, decodeResult);
             offset += decodeResult.bytesRead;
 
+            if (decodeResult.value < 0 || decodeResult.value > MAX_COLUMN_NAME_LENGTH) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INVALID_COLUMN_NAME,
+                        "invalid column name length at column " + i + ": " + decodeResult.value
+                );
+            }
             int nameLenInt = (int) decodeResult.value;
-            // Empty column names are allowed for designated timestamp (empty name + TIMESTAMP type)
-            if (nameLenInt < 0) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INVALID_COLUMN_NAME,
-                        "negative column name length at column " + i
-                );
-            }
-            if (nameLenInt > MAX_COLUMN_NAME_LENGTH) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INVALID_COLUMN_NAME,
-                        "column name too long: " + nameLenInt + " bytes"
-                );
-            }
             if (offset + nameLenInt + 1 > length) {
                 throw QwpParseException.headerTooShort();
             }
@@ -416,8 +403,8 @@ public final class QwpSchema {
      * {@link #clear} to reset for reuse.
      */
     public static final class ParseResult implements Mutable {
-        public int bytesConsumed;
         public final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
+        public int bytesConsumed;
         public boolean isReference;
         public QwpSchema schema;
         public int schemaId;

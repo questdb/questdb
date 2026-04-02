@@ -150,7 +150,7 @@ public class QwpSchemaTest {
             QwpSchema.parse(buf, 0, offset, 1);
             Assert.fail("Expected exception for column name too long");
         } catch (QwpParseException e) {
-            Assert.assertTrue(e.getMessage().contains("column name too long"));
+            Assert.assertTrue(e.getMessage().contains("invalid column name length"));
         }
     }
 
