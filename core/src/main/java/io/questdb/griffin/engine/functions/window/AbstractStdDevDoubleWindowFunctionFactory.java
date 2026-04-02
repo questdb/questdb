@@ -63,12 +63,27 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
+    // Naive sum-of-squares formula, used by sliding-window (removable) frames.
     static double computeStdDev(double sum, double sumSq, long count, boolean isSample) {
         long denom = isSample ? count - 1 : count;
         if (denom <= 0) {
             return Double.NaN;
         }
         double variance = (sumSq - (sum * sum) / count) / denom;
+        if (variance < 0) {
+            variance = 0.0;
+        }
+        return Math.sqrt(variance);
+    }
+
+    // Welford's online algorithm result, used by non-removable (running/whole) frames.
+    // m2 is the running sum of squared deviations from the running mean.
+    static double computeStdDevWelford(double m2, long count, boolean isSample) {
+        long denom = isSample ? count - 1 : count;
+        if (denom <= 0) {
+            return Double.NaN;
+        }
+        double variance = m2 / denom;
         if (variance < 0) {
             variance = 0.0;
         }
@@ -379,6 +394,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            // Welford's online algorithm: map stores [0]=mean, [1]=m2, [2]=count
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
                 partitionByRecord.of(record);
@@ -388,12 +404,16 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
                 if (value.isNew()) {
                     value.putDouble(0, d);
-                    value.putDouble(1, d * d);
+                    value.putDouble(1, 0.0);
                     value.putLong(2, 1);
                 } else {
-                    value.addDouble(0, d);
-                    value.addDouble(1, d * d);
-                    value.addLong(2, 1);
+                    long count = value.getLong(2) + 1;
+                    double oldMean = value.getDouble(0);
+                    double newMean = oldMean + (d - oldMean) / count;
+                    double m2 = value.getDouble(1) + (d - newMean) * (d - oldMean);
+                    value.putDouble(0, newMean);
+                    value.putDouble(1, m2);
+                    value.putLong(2, count);
                 }
             }
         }
@@ -415,10 +435,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
                 MapValue value = record.getValue();
-                double sum = value.getDouble(0);
-                double sumSq = value.getDouble(1);
+                double m2 = value.getDouble(1);
                 long count = value.getLong(2);
-                value.putDouble(0, computeStdDev(sum, sumSq, count, isSample));
+                value.putDouble(0, computeStdDevWelford(m2, count, isSample));
             }
         }
     }
@@ -1297,36 +1316,38 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
         @Override
         public void computeNext(Record record) {
+            // Welford's online algorithm: map stores [0]=mean, [1]=m2, [2]=count
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
 
-            double sum;
-            double sumSq;
+            double mean;
+            double m2;
             long count;
 
             if (value.isNew()) {
-                sum = 0.0;
-                sumSq = 0.0;
+                mean = 0.0;
+                m2 = 0.0;
                 count = 0;
             } else {
-                sum = value.getDouble(0);
-                sumSq = value.getDouble(1);
+                mean = value.getDouble(0);
+                m2 = value.getDouble(1);
                 count = value.getLong(2);
             }
 
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                sum += d;
-                sumSq += d * d;
                 count++;
+                double oldMean = mean;
+                mean += (d - mean) / count;
+                m2 += (d - mean) * (d - oldMean);
             }
 
-            value.putDouble(0, sum);
-            value.putDouble(1, sumSq);
+            value.putDouble(0, mean);
+            value.putDouble(1, m2);
             value.putLong(2, count);
-            stddev = computeStdDev(sum, sumSq, count, isSample);
+            stddev = computeStdDevWelford(m2, count, isSample);
         }
 
         @Override
@@ -1362,13 +1383,14 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     }
 
     // Handles stddev() over (rows between unbounded preceding and current row); no partition key.
+    // Uses Welford's online algorithm for numerical stability.
     static class StdDevOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDoubleFunction {
         private final boolean isSample;
         private final String name;
         private long count = 0;
+        private double m2 = 0.0;
+        private double mean = 0.0;
         private double stddev = Double.NaN;
-        private double sum = 0.0;
-        private double sumSq = 0.0;
 
         StdDevOverUnboundedRowsFrameFunction(Function arg, boolean isSample, String name) {
             super(arg);
@@ -1380,12 +1402,13 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                sum += d;
-                sumSq += d * d;
                 count++;
+                double oldMean = mean;
+                mean += (d - mean) / count;
+                m2 += (d - mean) * (d - oldMean);
             }
 
-            stddev = computeStdDev(sum, sumSq, count, isSample);
+            stddev = computeStdDevWelford(m2, count, isSample);
         }
 
         @Override
@@ -1414,8 +1437,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             super.reset();
             stddev = Double.NaN;
             count = 0;
-            sum = 0.0;
-            sumSq = 0.0;
+            mean = 0.0;
+            m2 = 0.0;
         }
 
         @Override
@@ -1430,19 +1453,20 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             super.toTop();
             stddev = Double.NaN;
             count = 0;
-            sum = 0.0;
-            sumSq = 0.0;
+            mean = 0.0;
+            m2 = 0.0;
         }
     }
 
     // stddev() over () - empty clause, no partition by, no order by, default frame.
+    // Uses Welford's online algorithm for numerical stability.
     static class StdDevOverWholeResultSetFunction extends BaseWindowFunction implements WindowDoubleFunction {
         private final boolean isSample;
         private final String name;
         private long count;
+        private double m2;
+        private double mean;
         private double stddev;
-        private double sum;
-        private double sumSq;
 
         StdDevOverWholeResultSetFunction(Function arg, boolean isSample, String name) {
             super(arg);
@@ -1464,9 +1488,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             double d = arg.getDouble(record);
             if (Numbers.isFinite(d)) {
-                sum += d;
-                sumSq += d * d;
                 count++;
+                double oldMean = mean;
+                mean += (d - mean) / count;
+                m2 += (d - mean) * (d - oldMean);
             }
         }
 
@@ -1477,7 +1502,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
         @Override
         public void preparePass2() {
-            stddev = computeStdDev(sum, sumSq, count, isSample);
+            stddev = computeStdDevWelford(m2, count, isSample);
         }
 
         @Override
@@ -1485,8 +1510,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             super.reset();
             count = 0;
             stddev = Double.NaN;
-            sum = 0.0;
-            sumSq = 0.0;
+            mean = 0.0;
+            m2 = 0.0;
         }
 
         @Override
@@ -1494,8 +1519,8 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             super.toTop();
             count = 0;
             stddev = Double.NaN;
-            sum = 0.0;
-            sumSq = 0.0;
+            mean = 0.0;
+            m2 = 0.0;
         }
     }
 
