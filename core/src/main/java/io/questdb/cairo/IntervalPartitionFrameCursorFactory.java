@@ -69,8 +69,8 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, IntList columnIndexes, int order) throws SqlException {
         authorizeSelect(executionContext, columnIndexes);
         final TableReader reader = getReader(executionContext);
-        reader.setActiveColumns(columnIndexes);
         try {
+            reader.setActiveColumns(columnIndexes);
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
                 if (fwdCursor == null) {
                     fwdCursor = new IntervalFwdPartitionFrameCursor(intervalModel, timestampIndex);
