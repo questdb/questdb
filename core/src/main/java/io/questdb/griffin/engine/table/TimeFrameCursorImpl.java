@@ -319,11 +319,9 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     public void toTop() {
         timeFrame.clear();
         if (!isFrameCacheBuilt) {
-            frameCount = 0;
+            // No need to reset frame lists here — buildFrameCache() resets
+            // all state unconditionally before populating the cache.
             frameCursor.toTop();
-            framePartitionIndexes.clear();
-            frameTimestampCache.clear();
-            frameRowCounts.clear();
         }
     }
 
@@ -427,8 +425,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
         partitionCount = tableReader.getPartitionCount();
 
+        frameCount = 0;
         framePartitionIndexes.reopen();
+        framePartitionIndexes.clear();
         frameRowCounts.reopen();
+        frameRowCounts.clear();
 
         if (frameCursor.hasIntervalFilter()) {
             // Interval filtering makes frame counts unpredictable from metadata.
@@ -531,5 +532,4 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         long partitionHi = partitionCeilMethod != null ? partitionCeilMethod.ceil(partitionTimestamp) : Long.MAX_VALUE;
         return Math.min(partitionHi, maxTimestampHi);
     }
-
 }
