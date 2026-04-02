@@ -7570,7 +7570,7 @@ public class JoinTest extends AbstractCairoTest {
 
                 @Override
                 public long openRO(LPSZ name) {
-                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -7586,7 +7586,7 @@ public class JoinTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
-                TestUtils.assertContains(ex.getFlyweightMessage(), "ts.d");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "x.d");
             }
         });
     }
