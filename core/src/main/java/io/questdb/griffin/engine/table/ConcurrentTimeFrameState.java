@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -155,7 +156,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
      *
      * @param frameCursor      page frame cursor (used for lazy partition opening)
      * @param metadata         slave table metadata
-     * @param columnIndexes    query-to-reader column index mapping
+     * @param columnMapping    column mapping (column indexes + writer indexes)
      * @param isExternal       whether the cursor wraps an external data source
      * @param pageFrameMinRows min rows per page frame (from SqlExecutionContext)
      * @param pageFrameMaxRows max rows per page frame (from SqlExecutionContext)
@@ -164,7 +165,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
     public ConcurrentTimeFrameState of(
             TablePageFrameCursor frameCursor,
             RecordMetadata metadata,
-            IntList columnIndexes,
+            ColumnMapping columnMapping,
             boolean isExternal,
             int pageFrameMinRows,
             int pageFrameMaxRows,
@@ -175,8 +176,14 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         populatePartitionTimestamps(frameCursor, partitionTimestamps, partitionCeilings);
         partitionCount = partitionTimestamps.size();
 
+        // Build column indexes from the mapping for native frame boundary calculation
+        final IntList columnIndexes = new IntList(columnMapping.getColumnCount());
+        for (int i = 0, n = columnMapping.getColumnCount(); i < n; i++) {
+            columnIndexes.add(columnMapping.getColumnIndex(i));
+        }
+
         // Initialize the address cache structure (no frames added yet)
-        addressCache.of(metadata, columnIndexes, isExternal);
+        addressCache.of(metadata, columnMapping, isExternal);
         framePartitionIndexes.reopen();
         framePartitionIndexes.clear();
         frameRowCounts.reopen();

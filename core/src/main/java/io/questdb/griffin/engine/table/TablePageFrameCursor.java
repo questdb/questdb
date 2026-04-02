@@ -25,15 +25,26 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 
 /**
  * Defines a page frame cursor backed with an in-house database table.
  */
 public interface TablePageFrameCursor extends PageFrameCursor {
+
+    static void buildColumnMapping(ColumnMapping columnMapping, IntList columnIndexes, RecordMetadata readerMetadata) {
+        columnMapping.clear();
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            int colIdx = columnIndexes.getQuick(i);
+            columnMapping.addColumn(colIdx, readerMetadata.getWriterIndex(colIdx));
+        }
+    }
 
     default boolean hasIntervalFilter() {
         return false;

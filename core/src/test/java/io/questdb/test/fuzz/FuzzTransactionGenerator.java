@@ -62,6 +62,8 @@ public class FuzzTransactionGenerator {
             double probabilityOfDataInsert,
             double probabilityOfSameTimestamp,
             double probabilityOfDropPartition,
+            double probabilityOfConvertPartitionToParquet,
+            double probabilityOfConvertPartitionToNative,
             double probabilityOfTruncate,
             double probabilityOfDropTable,
             double probabilityOfSetTtl,
@@ -85,6 +87,8 @@ public class FuzzTransactionGenerator {
                 + probabilityOfColumnTypeChange
                 + probabilityOfTruncate
                 + probabilityOfDropPartition
+                + probabilityOfConvertPartitionToParquet
+                + probabilityOfConvertPartitionToNative
                 + probabilityOfDataInsert
                 + probabilityOfSymbolAccessValidation
                 + probabilityOfQuery;
@@ -94,6 +98,8 @@ public class FuzzTransactionGenerator {
         probabilityOfColumnTypeChange = probabilityOfColumnTypeChange / sumOfProbabilities;
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
         probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
+        probabilityOfConvertPartitionToParquet = probabilityOfConvertPartitionToParquet / sumOfProbabilities;
+        probabilityOfConvertPartitionToNative = probabilityOfConvertPartitionToNative / sumOfProbabilities;
         probabilityOfSymbolAccessValidation = probabilityOfSymbolAccessValidation / sumOfProbabilities;
         probabilityOfQuery = probabilityOfQuery / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
@@ -176,6 +182,14 @@ public class FuzzTransactionGenerator {
 
             aggregateProbability += probabilityOfDropPartition;
             boolean wantToDropPartition = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToDropPartition;
+
+            aggregateProbability += probabilityOfConvertPartitionToParquet;
+            boolean wantToConvertPartitionToParquet = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToConvertPartitionToParquet;
+
+            aggregateProbability += probabilityOfConvertPartitionToNative;
+            boolean wantToConvertPartitionToNative = !wantSomething && rndDouble < aggregateProbability;
 
             Assert.assertNotNull(meta);
 
@@ -199,6 +213,10 @@ public class FuzzTransactionGenerator {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
                 generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+            } else if (wantToConvertPartitionToParquet) {
+                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+            } else if (wantToConvertPartitionToNative) {
+                generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
@@ -328,6 +346,39 @@ public class FuzzTransactionGenerator {
         }
         return null;
     }
+
+    private static void generateConvertPartitionToNative(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            long lastTimestamp, Rnd rnd
+    ) {
+        long cutoffTimestamp = lastTimestamp;
+        if (rnd.nextInt(100) <= 20) {
+            cutoffTimestamp -= DAY_MICROS;
+        }
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzConvertPartitionToNativeOperation(cutoffTimestamp));
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transactionList.add(transaction);
+    }
+
+    private static void generateConvertPartitionToParquet(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            long lastTimestamp, Rnd rnd
+    ) {
+        long cutoffTimestamp = lastTimestamp;
+        if (rnd.nextInt(100) <= 20) {
+            cutoffTimestamp -= DAY_MICROS;
+        }
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzConvertPartitionToParquetOperation(cutoffTimestamp));
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transactionList.add(transaction);
+    }
+
 
     private static void generateDropPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,

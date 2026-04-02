@@ -172,7 +172,7 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                 slaveTimeFrameStates.getQuick(s).of(
                         cursor,
                         slaveFactories.getQuick(s).getMetadata(),
-                        cursor.getColumnIndexes(),
+                        cursor.getColumnMapping(),
                         cursor.isExternal(),
                         executionContext.getPageFrameMinRows(),
                         executionContext.getPageFrameMaxRows(),

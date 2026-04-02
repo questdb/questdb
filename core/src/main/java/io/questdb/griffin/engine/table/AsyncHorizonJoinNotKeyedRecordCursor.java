@@ -153,7 +153,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
             slaveTimeFrameState.of(
                     slaveFrameCursor,
                     slaveFactory.getMetadata(),
-                    slaveFrameCursor.getColumnIndexes(),
+                    slaveFrameCursor.getColumnMapping(),
                     slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),

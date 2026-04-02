@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -68,6 +69,7 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  * should start with a {@link #next()} call.
  */
 public final class TimeFrameCursorImpl implements TimeFrameCursor {
+    private final IntList columnIndexes = new IntList();
     private final LongList columnTops = new LongList();
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
@@ -126,7 +128,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
     @Override
     public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
-        int physicalColumnIndex = frameCursor.getColumnIndexes().getQuick(logicalColumnIndex);
+        int physicalColumnIndex = frameCursor.getColumnMapping().getColumnIndex(logicalColumnIndex);
         int frameIndex = timeFrame.getFrameIndex();
         if (frameIndex == -1) {
             return null;
@@ -206,7 +208,12 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         this.pageFrameMinRows = pageFrameMinRows;
         this.pageFrameMaxRows = pageFrameMaxRows;
         this.workerCount = workerCount;
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
+        final ColumnMapping mapping = frameCursor.getColumnMapping();
+        frameAddressCache.of(metadata, mapping, frameCursor.isExternal());
+        columnIndexes.clear();
+        for (int i = 0, n = mapping.getColumnCount(); i < n; i++) {
+            columnIndexes.add(mapping.getColumnIndex(i));
+        }
         frameMemoryPool.of(frameAddressCache);
         tableReader = frameCursor.getTableReader();
         recordA.of(frameCursor);
@@ -437,7 +444,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             buildFrameCacheEagerly();
         } else {
             final ColumnVersionReader columnVersionReader = tableReader.getColumnVersionReader();
-            final IntList columnIndexes = frameCursor.getColumnIndexes();
+            final IntList columnIndexes = this.columnIndexes;
             final int columnCount = columnIndexes.size();
 
             partitionFirstFrame.setAll(partitionCount, 0);

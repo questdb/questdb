@@ -163,7 +163,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     sharedState.of(
                             pageFrameCursor,
                             metadata,
-                            pageFrameCursor.getColumnIndexes(),
+                            pageFrameCursor.getColumnMapping(),
                             pageFrameCursor.isExternal(),
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
@@ -249,7 +249,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     sharedState.of(
                             pageFrameCursor,
                             metadata,
-                            pageFrameCursor.getColumnIndexes(),
+                            pageFrameCursor.getColumnMapping(),
                             pageFrameCursor.isExternal(),
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
@@ -320,7 +320,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     sharedState.of(
                             pageFrameCursor,
                             metadata,
-                            pageFrameCursor.getColumnIndexes(),
+                            pageFrameCursor.getColumnMapping(),
                             pageFrameCursor.isExternal(),
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
@@ -1339,7 +1339,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
             sharedState.of(
                     pageFrameCursor,
                     metadata,
-                    pageFrameCursor.getColumnIndexes(),
+                    pageFrameCursor.getColumnMapping(),
                     pageFrameCursor.isExternal(),
                     sqlExecutionContext.getPageFrameMinRows(),
                     sqlExecutionContext.getPageFrameMaxRows(),

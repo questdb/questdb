@@ -111,6 +111,7 @@ impl<'de> Deserialize<'de> for QdbMetaColFormat {
 pub struct QdbMetaCol {
     // designated timestamp has TYPE_FLAG_DESIGNATED_TIMESTAMP bit set
     pub column_type: ColumnType,
+    #[serde(default)]
     pub column_top: usize,
 
     #[serde(skip_serializing_if = "Option::is_none")]

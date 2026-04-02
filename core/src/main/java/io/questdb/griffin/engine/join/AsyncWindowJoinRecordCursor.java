@@ -217,7 +217,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
             slaveTimeFrameState.of(
                     slaveFrameCursor,
                     slaveMetadata,
-                    slaveFrameCursor.getColumnIndexes(),
+                    slaveFrameCursor.getColumnMapping(),
                     slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
