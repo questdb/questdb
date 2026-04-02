@@ -245,7 +245,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-                column.setNotNullFlag(TableUtils.isColumnNotNull(metaMem, writerIndex) || ColumnType.isImplicitlyNotNull(columnType));
+                column.setNotNullFlag(TableUtils.isColumnNotNull(metaMem, writerIndex));
                 column.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, writerIndex));
                 column.setWriterIndex(writerIndex);
 

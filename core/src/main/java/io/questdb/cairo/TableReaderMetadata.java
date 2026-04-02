@@ -346,7 +346,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         TableUtils.getSymbolCapacity(mem, writerIndex)
                 );
                 colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(mem, writerIndex));
-                colMeta.setNotNullFlag(TableUtils.isColumnNotNull(mem, writerIndex) || ColumnType.isImplicitlyNotNull(columnType));
+                colMeta.setNotNullFlag(TableUtils.isColumnNotNull(mem, writerIndex));
                 columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;
                 if (!columnNameIndexMap.put(colName, denseIndex)) {
@@ -461,7 +461,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                             symbolIsCached,
                             symbolCapacity
                     );
-                    colMeta.setNotNullFlag(isNotNull || ColumnType.isImplicitlyNotNull(columnType));
+                    colMeta.setNotNullFlag(isNotNull);
                     columnMetadata.setQuick(outIndex, colMeta);
                     if (existing != null) {
                         // column deleted at existingIndex

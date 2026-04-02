@@ -227,7 +227,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long exportWorkerYieldThreshold;
     private final boolean fileDescriptorCacheEnabled;
     private final int fileOperationRetryCount;
-    private final boolean implicitNotNullDefaultValues;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
@@ -1612,7 +1611,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
             this.fileDescriptorCacheEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_DESCRIPTOR_CACHE_ENABLED, true);
-            this.implicitNotNullDefaultValues = getBoolean(properties, env, PropertyKey.CAIRO_IMPLICIT_NOT_NULL_DEFAULT_VALUES, false);
             this.asyncMunmapEnabled = getBoolean(properties, env, PropertyKey.CAIRO_FILE_ASYNC_MUNMAP_ENABLED, false);
             if (asyncMunmapEnabled && Os.isWindows()) {
                 throw new ServerConfigurationException("Async munmap is not supported on Windows");
@@ -3504,11 +3502,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getFileDescriptorCacheEnabled() {
             return fileDescriptorCacheEnabled;
-        }
-
-        @Override
-        public boolean getImplicitNotNullDefaultValues() {
-            return implicitNotNullDefaultValues;
         }
 
         @Override

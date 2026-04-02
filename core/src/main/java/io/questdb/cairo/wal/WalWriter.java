@@ -1612,7 +1612,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
         for (int i = 0; i < columnCount; i++) {
             if (rowValueIsNotNull.getQuick(i) < segmentRowCount) {
-                if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i), configuration.getImplicitNotNullDefaultValues())) {
+                if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
                     throw CairoException.nonCritical()
                             .put("NOT NULL constraint violation, column is required [column=")
                             .put(metadata.getColumnName(i))

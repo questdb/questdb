@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -41,19 +40,6 @@ public class NotNullColumnTest extends AbstractCairoTest {
         try (TableReader reader = engine.getReader(table)) {
             return reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex(column));
         }
-    }
-
-    @Test
-    public void testAlterTableAddBooleanAutoNotNull() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("ALTER TABLE t ADD COLUMN b BOOLEAN");
-
-            try (TableReader reader = engine.getReader("t")) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                assertTrue(metadata.isNotNull(metadata.getColumnIndex("b")));
-            }
-        });
     }
 
     @Test
@@ -98,29 +84,6 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBooleanAutoNotNull() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-
-            try (TableReader reader = engine.getReader("t")) {
-                TableReaderMetadata metadata = reader.getMetadata();
-                assertTrue(metadata.isNotNull(metadata.getColumnIndex("b")));
-            }
-
-            assertSql(
-                    """
-                            ddl
-                            CREATE TABLE 't' (\s
-                            \tb BOOLEAN NOT NULL,
-                            \tts TIMESTAMP
-                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                            """,
-                    "SHOW CREATE TABLE t"
-            );
-        });
-    }
-
-    @Test
     public void testBooleanExplicitNotNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (b BOOLEAN NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -131,32 +94,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBooleanNullRejected() throws Exception {
-        assertException(
-                "CREATE TABLE t (b BOOLEAN NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                26,
-                "NULL is not supported for BOOLEAN columns"
-        );
-    }
-
-    @Test
-    public void testByteAutoNotNull() throws Exception {
+    public void testBooleanNullAccepted() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (b BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-
+            // BOOLEAN NULL is valid — the column is nullable (will use null bitmap when available)
+            execute("CREATE TABLE t (b BOOLEAN NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             try (TableReader reader = engine.getReader("t")) {
-                assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
+                assertFalse(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
             }
         });
-    }
-
-    @Test
-    public void testByteNullRejected() throws Exception {
-        assertException(
-                "CREATE TABLE t (b BYTE NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                23,
-                "NULL is not supported for BYTE columns"
-        );
     }
 
     @Test
@@ -171,13 +116,14 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAlterColumnDropNotNullBooleanRejected() throws Exception {
-        assertException(
-                "ALTER TABLE t ALTER COLUMN b SET NULL",
-                "CREATE TABLE t (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                33,
-                "cannot set NULL for BOOLEAN columns"
-        );
+    public void testAlterColumnDropNotNullBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BOOLEAN NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertTrue(getNotNull("t", "b"));
+
+            execute("ALTER TABLE t ALTER COLUMN b SET NULL");
+            assertFalse(getNotNull("t", "b"));
+        });
     }
 
     @Test
@@ -384,24 +330,9 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImplicitNotNullBooleanEnforcedByDefault() throws Exception {
+    public void testBooleanAutoFillsDefault() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (b BOOLEAN, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            try {
-                execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
-                fail("Expected NOT NULL violation for BOOLEAN column");
-            } catch (CairoException e) {
-                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
-                assertContains(e.getFlyweightMessage(), "column=b");
-            }
-        });
-    }
-
-    @Test
-    public void testImplicitNotNullBooleanDefaultValues() throws Exception {
-        setProperty(PropertyKey.CAIRO_IMPLICIT_NOT_NULL_DEFAULT_VALUES, "true");
-        assertMemoryLeak(() -> {
-            // With the config flag enabled, BOOLEAN auto-fills with false when not provided
+            // BOOLEAN without NOT NULL auto-fills with false when not provided
             execute("CREATE TABLE t (b BOOLEAN, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
 
@@ -412,6 +343,21 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             """,
                     "SELECT * FROM t"
             );
+        });
+    }
+
+    @Test
+    public void testBooleanNotNullEnforced() throws Exception {
+        assertMemoryLeak(() -> {
+            // BOOLEAN NOT NULL is enforced — missing value throws
+            execute("CREATE TABLE t (b BOOLEAN NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
+                fail("Expected NOT NULL violation for BOOLEAN NOT NULL column");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=b");
+            }
         });
     }
 
@@ -433,11 +379,9 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImplicitNotNullNotPreservedOnTypeChange() throws Exception {
+    public void testExplicitNotNullPreservedOnTypeChange() throws Exception {
         assertMemoryLeak(() -> {
-            // BOOLEAN is implicitly NOT NULL. Changing to LONG should NOT
-            // inherit the implicit constraint — the user never asked for it.
-            execute("CREATE TABLE t (b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (b INT NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
             try (TableReader reader = engine.getReader("t")) {
                 assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
@@ -446,7 +390,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("ALTER TABLE t ALTER COLUMN b TYPE LONG");
 
             try (TableReader reader = engine.getReader("t")) {
-                assertFalse(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
+                assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
             }
         });
     }
@@ -510,24 +454,6 @@ public class NotNullColumnTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testShortAutoNotNull() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (s SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            try (TableReader reader = engine.getReader("t")) {
-                assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("s")));
-            }
-        });
-    }
-
-    @Test
-    public void testShortNullRejected() throws Exception {
-        assertException(
-                "CREATE TABLE t (s SHORT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                24,
-                "NULL is not supported for SHORT columns"
-        );
-    }
 
     @Test
     public void testShowColumnsIncludesNotNull() throws Exception {

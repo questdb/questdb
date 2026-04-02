@@ -85,7 +85,7 @@ public class TelemetryTest extends AbstractCairoTest {
                 String expected = """
                         column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
                         id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                        enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
+                        enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                         version\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\tfalse
                         os\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\tfalse
                         package\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\tfalse
@@ -305,8 +305,8 @@ public class TelemetryTest extends AbstractCairoTest {
             String start = "ddl\n" +
                     "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
                     "\tcreated TIMESTAMP,\n" +
-                    "\tevent SHORT NOT NULL,\n" +
-                    "\torigin SHORT NOT NULL\n" +
+                    "\tevent SHORT,\n" +
+                    "\torigin SHORT\n" +
                     ") timestamp(created)";
             String middle = " PARTITION BY NONE";
             String end = " BYPASS WAL;\n";
@@ -331,8 +331,8 @@ public class TelemetryTest extends AbstractCairoTest {
             String start = "ddl\n" +
                     "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
                     "\tcreated TIMESTAMP,\n" +
-                    "\tevent SHORT NOT NULL,\n" +
-                    "\torigin SHORT NOT NULL\n" +
+                    "\tevent SHORT,\n" +
+                    "\torigin SHORT\n" +
                     ") timestamp(created)";
             String middle = " PARTITION BY DAY TTL 1 WEEK";
             String end = " BYPASS WAL;\n";
@@ -402,7 +402,7 @@ public class TelemetryTest extends AbstractCairoTest {
             String header = "ddl\n" +
                     "CREATE TABLE '" + tableName + "' ( \n" +
                     "\tcreated TIMESTAMP,\n" +
-                    "\tevent SHORT NOT NULL,\n" +
+                    "\tevent SHORT,\n" +
                     "\ttableId INT,\n" +
                     "\twalId INT,\n" +
                     "\tseqTxn LONG,\n" +

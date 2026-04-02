@@ -287,7 +287,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 symbolCacheFlag,
                 symbolCapacity
         );
-        colMeta.setNotNullFlag(isNotNull || ColumnType.isImplicitlyNotNull(columnType));
+        colMeta.setNotNullFlag(isNotNull);
         columnMetadata.add(colMeta);
         columnCount++;
     }

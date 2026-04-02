@@ -53,7 +53,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_FILE_OPERATION_RETRY_COUNT("cairo.file.operation.retry.count"),
     CAIRO_ID_GENERATE_STEP("cairo.id.generator.batch.step"),
     CAIRO_IDLE_CHECK_INTERVAL("cairo.idle.check.interval"),
-    CAIRO_IMPLICIT_NOT_NULL_DEFAULT_VALUES("cairo.implicit.not.null.default.values"),
     CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS("cairo.inactive.reader.max.open.partitions"),
     CAIRO_INACTIVE_READER_TTL("cairo.inactive.reader.ttl"),
     CAIRO_INACTIVE_WRITER_TTL("cairo.inactive.writer.ttl"),

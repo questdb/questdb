@@ -123,7 +123,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                         symbolIsCached,
                         symbolCapacity
                 );
-                colMeta.setNotNullFlag(isNotNull || ColumnType.isImplicitlyNotNull(columnType));
+                colMeta.setNotNullFlag(isNotNull);
                 add(colMeta);
             }
         }

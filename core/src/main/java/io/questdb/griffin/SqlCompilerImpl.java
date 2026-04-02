@@ -881,14 +881,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     SqlUtil.fetchNext(lexer);
                 }
             } else if (tok != null && isNullKeyword(tok)) {
-                if (ColumnType.isImplicitlyNotNull(columnType)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "NULL is not supported for ")
-                            .put(ColumnType.nameOf(columnType))
-                            .put(" columns (no null sentinel exists for this type)");
-                }
                 SqlUtil.fetchNext(lexer);
-            } else if (ColumnType.isImplicitlyNotNull(columnType)) {
-                isNotNull = true;
             }
 
             cache = configuration.getDefaultSymbolCacheFlag();
@@ -1225,12 +1218,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata metadata,
             int columnIndex
     ) throws SqlException {
-        int columnType = metadata.getColumnType(columnIndex);
-        if (ColumnType.isImplicitlyNotNull(columnType)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "cannot set NULL for ")
-                    .put(ColumnType.nameOf(columnType))
-                    .put(" columns (no null sentinel exists for this type)");
-        }
         alterOperationBuilder.ofDropColumnNotNull(tableNamePosition, tableToken, metadata.getTableId(), columnName);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }

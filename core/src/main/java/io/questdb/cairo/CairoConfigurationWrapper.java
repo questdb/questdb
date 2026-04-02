@@ -342,11 +342,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getImplicitNotNullDefaultValues() {
-        return getDelegate().getImplicitNotNullDefaultValues();
-    }
-
-    @Override
     public int getFileOperationRetryCount() {
         return getDelegate().getFileOperationRetryCount();
     }

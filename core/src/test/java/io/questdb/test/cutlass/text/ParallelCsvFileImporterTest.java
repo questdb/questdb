@@ -3138,7 +3138,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         assertQueryNoLeakCheck(
                 compiler,
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
-                        "bo\tBOOLEAN\tfalse\t256\tfalse\t0\t0\tfalse\ttrue\tfalse\n" +
+                        "bo\tBOOLEAN\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
                         "by\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
                         "sh\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
                         "ch\tCHAR\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +

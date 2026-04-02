@@ -279,10 +279,7 @@ public final class TableUtils {
         }
         TableColumnMetadata existingMeta = columnMetadata.getQuick(existingIndex);
         String columnNameStr = existingMeta.getColumnName();
-        // Preserve explicit NOT NULL across type changes, but not implicit NOT NULL
-        // (e.g., BOOLEAN→LONG should not inherit implicit NOT NULL from BOOLEAN)
-        boolean preserveNotNull = existingMeta.isNotNull()
-                && !ColumnType.isImplicitlyNotNull(existingMeta.getColumnType());
+        boolean preserveNotNull = existingMeta.isNotNull();
         int columnIndex = columnMetadata.size();
         var newMeta = new TableColumnMetadata(
                 columnNameStr,
@@ -2268,8 +2265,8 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_NOT_NULL) != 0;
     }
 
-    public static boolean isEnforceableNotNull(int columnType, boolean isNotNull, boolean implicitNotNullDefaultValues) {
-        return columnType > 0 && isNotNull && (!ColumnType.isImplicitlyNotNull(columnType) || !implicitNotNullDefaultValues);
+    public static boolean isEnforceableNotNull(int columnType, boolean isNotNull) {
+        return columnType > 0 && isNotNull;
     }
 
     static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {

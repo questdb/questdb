@@ -91,9 +91,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             boolean isNotNull
     ) {
         addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey);
-        columnMetadata.getQuick(columnMetadata.size() - 1).setNotNullFlag(
-                isNotNull || ColumnType.isImplicitlyNotNull(columnType)
-        );
+        columnMetadata.getQuick(columnMetadata.size() - 1).setNotNullFlag(isNotNull);
         readColumnOrder.add(columnMetadata.size() - 1);
         structureVersion.incrementAndGet();
     }
@@ -325,9 +323,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getIndexBlockCapacity(i),
                     tableStruct.isDedupKey(i)
             );
-            columnMetadata.getQuick(i).setNotNullFlag(
-                    tableStruct.isNotNull(i) || ColumnType.isImplicitlyNotNull(tableStruct.getColumnType(i))
-            );
+            columnMetadata.getQuick(i).setNotNullFlag(tableStruct.isNotNull(i));
             readColumnOrder.add(i);
         }
 
@@ -366,7 +362,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 } else {
                     colMeta = new TableColumnMetadata(name, type);
                 }
-                colMeta.setNotNullFlag(ColumnType.isImplicitlyNotNull(type));
+                colMeta.setNotNullFlag(false);
                 columnMetadata.add(colMeta);
                 readColumnOrder.add(i);
                 checkSum = checkSum * 31 + type;
@@ -411,9 +407,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                         for (int i = 0; i < Math.min(flagCount, columnMetadata.size()); i++) {
                             boolean isNotNull = metaMem.getBool(offset);
                             offset += Byte.BYTES;
-                            columnMetadata.getQuick(i).setNotNullFlag(
-                                    isNotNull || ColumnType.isImplicitlyNotNull(columnMetadata.getQuick(i).getColumnType())
-                            );
+                            columnMetadata.getQuick(i).setNotNullFlag(isNotNull);
                         }
                     }
                 }

@@ -1058,8 +1058,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
-            boolean isNotNull = metadata.isNotNull(existingColIndex)
-                    && !ColumnType.isImplicitlyNotNull(metadata.getColumnType(existingColIndex));
+            boolean isNotNull = metadata.isNotNull(existingColIndex);
             int columnIndex = columnCount;
             long columnNameTxn = getTxn();
 
@@ -3013,12 +3012,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (columnIndex < 0) {
             throw CairoException.nonCritical().put("column does not exist [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
-        }
-        int columnType = metadata.getColumnType(columnIndex);
-        if (!isNotNull && ColumnType.isImplicitlyNotNull(columnType)) {
-            throw CairoException.nonCritical().put("cannot set NULL for ")
-                    .put(ColumnType.nameOf(columnType))
-                    .put(" columns (no null sentinel exists for this type)");
         }
         commit();
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
@@ -10102,7 +10095,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if ((masterRef & 1) != 0) {
             for (int i = 0; i < columnCount; i++) {
                 if (rowValueIsNotNull.getQuick(i) < masterRef) {
-                    if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i), configuration.getImplicitNotNullDefaultValues())) {
+                    if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
                         throw CairoException.nonCritical()
                                 .put("NOT NULL constraint violation, column is required [column=")
                                 .put(metadata.getColumnName(i))
