@@ -78,6 +78,7 @@ set(
         src/main/c/share/converters.cpp
         src/main/c/share/converters.h
         src/main/c/share/json.cpp
+        src/main/c/share/hash_prefetch.cpp
 )
 
 # JNI includes

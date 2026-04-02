@@ -397,6 +397,73 @@ public class OrderedMap implements Map, Reopenable {
         return key.init();
     }
 
+    /**
+     * Probes the map for a fixed-size key stored at an external memory address using
+     * a precomputed hash. If the key exists, returns the existing value (isNew() == false).
+     * If the key is new, copies it into the heap and returns the new value (isNew() == true).
+     * <p>
+     * This avoids copying key data into the map's key area for the common case
+     * of existing keys (cache-friendly batch probe pattern).
+     *
+     * @param extKeyAddr external memory address of the key
+     * @param hashCode   precomputed hash code (from Hash.hashMem64)
+     * @return the map value
+     */
+    public MapValue probeExternal(long extKeyAddr, long hashCode) {
+        assert keySize > 0 : "probeExternal only supports fixed-size keys";
+        int hashCodeLo = Numbers.decodeLowInt(hashCode);
+        int index = hashCodeLo & mask;
+
+        long offsetAddr = offsetsAddr + ((long) index << 3);
+        long slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+        int rawOffset = Numbers.decodeLowInt(slotValue);
+        while (rawOffset > 0) {
+            int storedHash = Numbers.decodeHighInt(slotValue);
+            if (hashCodeLo == storedHash) {
+                long offset = decompressOffset(rawOffset);
+                if (Vect.memeq(heapAddr + offset, extKeyAddr, keySize)) {
+                    // Existing key — zero copy.
+                    long startAddr = heapAddr + offset;
+                    return valueOf(startAddr, startAddr + keySize, false, value);
+                }
+            }
+            index = (index + 1) & mask;
+            offsetAddr = offsetsAddr + ((long) index << 3);
+            slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+            rawOffset = Numbers.decodeLowInt(slotValue);
+        }
+
+        // New key — copy into the heap.
+        long requiredSize = keySize + valueSize;
+        if (kPos + requiredSize > heapLimit) {
+            resize(requiredSize, kPos);
+        }
+        Vect.memcpy(kPos, extKeyAddr, keySize);
+        long newStartAddr = kPos;
+        long newAppendAddr = kPos + keySize;
+        kPos = Bytes.align8b(newAppendAddr + valueSize);
+
+        Unsafe.getUnsafe().putInt(offsetAddr, compressOffset(newStartAddr - heapAddr));
+        Unsafe.getUnsafe().putInt(offsetAddr + 4, hashCodeLo);
+        size++;
+        if (--free == 0) {
+            rehash();
+        }
+        return valueOf(newStartAddr, newAppendAddr, true, value);
+    }
+
+    public long getOffsetsAddr() {
+        return offsetsAddr;
+    }
+
+    public int getMask() {
+        return mask;
+    }
+
+    public long getKeySize() {
+        return keySize;
+    }
+
     private static int compressOffset(long offset) {
         return (int) ((offset >> 3) + 1);
     }
@@ -909,7 +976,7 @@ public class OrderedMap implements Map, Reopenable {
             }
         }
 
-        abstract void copyFromRawKey(long srcPtr, long srcSize);
+        public abstract void copyFromRawKey(long srcPtr, long srcSize);
 
         protected abstract boolean eq(long offset);
     }

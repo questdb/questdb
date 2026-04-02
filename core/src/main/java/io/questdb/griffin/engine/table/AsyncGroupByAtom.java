@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.BatchKeySink;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
@@ -65,10 +66,12 @@ import java.io.Closeable;
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
+    private final BatchKeySink ownerBatchKeySink;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
+    private final ObjList<BatchKeySink> perWorkerBatchKeySinks;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
@@ -204,6 +207,19 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             perWorkerLongTopKLists = new ObjList<>(workerCount);
             perWorkerLongTopKLists.setAll(workerCount, null);
+
+            int fixedKeySize = ColumnTypes.sizeInBytes(keyTypes);
+            if (fixedKeySize > 0) {
+                int batchSize = AsyncGroupByRecordCursorFactory.BATCH_SIZE;
+                ownerBatchKeySink = new BatchKeySink(batchSize, fixedKeySize);
+                perWorkerBatchKeySinks = new ObjList<>(workerCount);
+                for (int i = 0; i < workerCount; i++) {
+                    perWorkerBatchKeySinks.extendAndSet(i, new BatchKeySink(batchSize, fixedKeySize));
+                }
+            } else {
+                ownerBatchKeySink = null;
+                perWorkerBatchKeySinks = null;
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -244,7 +260,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+        Misc.free(ownerBatchKeySink);
+        Misc.freeObjListAndKeepObjects(perWorkerBatchKeySinks);
         Misc.free(filterCtx);
+    }
+
+    public BatchKeySink getBatchKeySink(int slotId) {
+        if (slotId == -1) {
+            return ownerBatchKeySink;
+        }
+        return perWorkerBatchKeySinks.getQuick(slotId);
     }
 
     public ObjList<Map> getDestShards() {
@@ -354,6 +379,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         if (perWorkerAllocators != null) {
             for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
                 perWorkerAllocators.getQuick(i).reopen();
+            }
+        }
+        if (ownerBatchKeySink != null) {
+            ownerBatchKeySink.reopen();
+        }
+        if (perWorkerBatchKeySinks != null) {
+            for (int i = 0, n = perWorkerBatchKeySinks.size(); i < n; i++) {
+                perWorkerBatchKeySinks.getQuick(i).reopen();
             }
         }
     }
