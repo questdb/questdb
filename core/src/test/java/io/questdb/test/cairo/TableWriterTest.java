@@ -64,7 +64,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -94,7 +93,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 
@@ -1820,124 +1819,6 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testDefaultPartition() {
         populateTable();
-    }
-
-    @Test
-    public void testDropPartitionsDuplicateTimestamps() throws Exception {
-        assertMemoryLeak(() -> {
-            int N = 10000;
-            create(FF, PartitionBy.DAY, N);
-
-            Rnd rnd = new Rnd();
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            long interval = 60000L * 1000L;
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                populateProducts(writer, rnd, ts, N, interval);
-                writer.commit();
-
-                int partitionCountBefore = writer.getTxWriter().getPartitionCount();
-                Assert.assertTrue(partitionCountBefore > 2);
-
-                // Drop list with the same timestamp repeated
-                long firstPartitionTs = writer.getTxWriter().getPartitionTimestampByIndex(0);
-                LongList dropList = new LongList();
-                dropList.add(firstPartitionTs);
-                dropList.add(firstPartitionTs);
-                writer.dropPartitions(dropList);
-                writer.commit();
-
-                // Only one partition should be removed despite duplicate entries
-                Assert.assertEquals(partitionCountBefore - 1, writer.getTxWriter().getPartitionCount());
-            }
-        });
-    }
-
-    @Test
-    public void testDropPartitionsEmptyList() throws Exception {
-        assertMemoryLeak(() -> {
-            int N = 10000;
-            create(FF, PartitionBy.DAY, N);
-
-            Rnd rnd = new Rnd();
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            long interval = 60000L * 1000L;
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                populateProducts(writer, rnd, ts, N, interval);
-                writer.commit();
-
-                int partitionCountBefore = writer.getTxWriter().getPartitionCount();
-                long sizeBefore = writer.size();
-
-                LongList emptyList = new LongList();
-                writer.dropPartitions(emptyList);
-                writer.commit();
-
-                Assert.assertEquals(partitionCountBefore, writer.getTxWriter().getPartitionCount());
-                Assert.assertEquals(sizeBefore, writer.size());
-            }
-        });
-    }
-
-    @Test
-    public void testDropPartitionsNonExistentMixedWithExisting() throws Exception {
-        assertMemoryLeak(() -> {
-            int N = 10000;
-            create(FF, PartitionBy.DAY, N);
-
-            Rnd rnd = new Rnd();
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            long interval = 60000L * 1000L;
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                populateProducts(writer, rnd, ts, N, interval);
-                writer.commit();
-
-                int partitionCountBefore = writer.getTxWriter().getPartitionCount();
-                Assert.assertTrue(partitionCountBefore > 2);
-
-                // Mix a non-existent timestamp with a real one
-                long firstPartitionTs = writer.getTxWriter().getPartitionTimestampByIndex(0);
-                LongList dropList = new LongList();
-                dropList.add(timestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z"));
-                dropList.add(firstPartitionTs);
-                writer.dropPartitions(dropList);
-                writer.commit();
-
-                // Only the existing partition should be removed
-                Assert.assertEquals(partitionCountBefore - 1, writer.getTxWriter().getPartitionCount());
-            }
-        });
-    }
-
-    @Test
-    public void testDropPartitionsNonExistentTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            int N = 10000;
-            create(FF, PartitionBy.DAY, N);
-
-            Rnd rnd = new Rnd();
-            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
-            long interval = 60000L * 1000L;
-
-            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                populateProducts(writer, rnd, ts, N, interval);
-                writer.commit();
-
-                int partitionCountBefore = writer.getTxWriter().getPartitionCount();
-                long sizeBefore = writer.size();
-
-                // Use a timestamp that doesn't correspond to any partition
-                LongList dropList = new LongList();
-                dropList.add(timestampDriver.parseFloorLiteral("2000-01-01T00:00:00.000Z"));
-                writer.dropPartitions(dropList);
-                writer.commit();
-
-                Assert.assertEquals(partitionCountBefore, writer.getTxWriter().getPartitionCount());
-                Assert.assertEquals(sizeBefore, writer.size());
-            }
-        });
     }
 
     @Test

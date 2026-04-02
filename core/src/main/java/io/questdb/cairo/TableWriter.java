@@ -1891,20 +1891,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public void dropPartitions(LongList partitionTimestamps) {
-        partitionRemoveCandidates.clear();
-
-        boolean evicted = false;
-        for (int i = 0, n = partitionTimestamps.size(); i < n; i++) {
-            final long partitionTimestamp = partitionTimestamps.getQuick(i);
-            evicted |= dropPartitionByExactTimestamp(partitionTimestamp);
-        }
-
-        if (evicted) {
-            commitRemovePartitionOperation();
-        }
-    }
-
     @Override
     public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         assert txWriter.getLagRowCount() == 0;

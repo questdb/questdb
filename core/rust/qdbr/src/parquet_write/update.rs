@@ -485,7 +485,7 @@ impl ParquetUpdater {
     /// metadata. Format hints (e.g. `LocalKeyIsGlobal` for SYMBOL columns)
     /// are preserved from the old schema for columns that still exist.
     pub fn set_target_schema(&mut self, partition: &Partition) -> ParquetResult<()> {
-        let (schema, _kv) = to_parquet_schema(partition, self.raw_array_encoding)?;
+        let (schema, _kv) = to_parquet_schema(partition, self.raw_array_encoding, -1)?;
         self.parquet_file.set_schema(schema);
 
         // Build column_id → old schema index from the old file's parquet field_ids.
