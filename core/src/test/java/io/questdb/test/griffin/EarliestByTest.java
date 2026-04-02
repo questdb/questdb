@@ -34,8 +34,11 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -724,6 +727,88 @@ public class EarliestByTest extends AbstractCairoTest {
                     "ts\ts\n" +
                             "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
                             "1970-01-01T00:02:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByDeprecatedSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (SELECT rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertSql(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T02:00:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t EARLIEST BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByPartitionBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('b', '1970-01-01T00:00:00'), ('b', '1970-01-01T12:00:00'), ('a', '1970-01-01T23:00:00'), ('a', '1970-01-02T01:00:00'), ('b', '1970-01-02T02:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-01T23:00:00.000000" + suffix + "\ta\n",
+                    "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnDoesNotNeedFullScanForward() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long openRO(LPSZ name) {
+                    // EARLIEST ON scans forward; it should find all symbol
+                    // combinations in the first partitions without touching
+                    // the newest one.
+                    if (Utf8s.containsAscii(name, "1970-01-03")) {
+                        return -1;
+                    }
+                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
+                }
+            };
+            execute("CREATE TABLE t as (SELECT rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts FROM long_sequence(49)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T02:00:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t WHERE s IN ('a', 'b') EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnNonPartitionedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (SELECT rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts FROM long_sequence(10)) TIMESTAMP(ts)");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T02:00:00.000000" + suffix + "\tb\n",
                     "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s",
                     "ts",
                     true,
