@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -77,7 +78,7 @@ public class TableReaderMetadataTimestampTest extends AbstractCairoTest {
 
         assertThatTimestampRemains((w) -> {
             w.removeColumn("str");
-            w.addColumn("str", ColumnType.STRING);
+            w.addColumn("str", ColumnType.STRING, AllowAllSecurityContext.INSTANCE);
         }, expected, 12, 11, 13);
     }
 

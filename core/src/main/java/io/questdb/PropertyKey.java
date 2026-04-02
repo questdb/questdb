@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -108,6 +108,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_TOP_K_ENABLED("cairo.sql.parallel.topk.enabled"),
     CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED("cairo.sql.parallel.horizon.join.enabled"),
     CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED("cairo.sql.parallel.window.join.enabled"),
+    CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD("cairo.sql.horizon.join.bwd.scan.absolute.threshold"),
+    CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP("cairo.sql.horizon.join.bwd.scan.min.gap"),
+    CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR("cairo.sql.horizon.join.bwd.scan.switch.factor"),
     CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS("cairo.sql.horizon.join.max.offsets"),
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
@@ -592,10 +595,13 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PARTITION_ENCODER_PARQUET_VERSION("cairo.partition.encoder.parquet.version"),
     CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED("cairo.partition.encoder.parquet.statistics.enabled"),
     CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED("cairo.partition.encoder.parquet.raw.array.encoding.enabled"),
+    CAIRO_PARTITION_ENCODER_PARQUET_MIN_COMPRESSION_RATIO("cairo.partition.encoder.parquet.min.compression.ratio"),
     CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC("cairo.partition.encoder.parquet.compression.codec"),
     CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL("cairo.partition.encoder.parquet.compression.level"),
     CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE("cairo.partition.encoder.parquet.row.group.size"),
     CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE("cairo.partition.encoder.parquet.data.page.size"),
+    CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES("cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes"),
+    CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO("cairo.partition.encoder.parquet.o3.rewrite.unused.ratio"),
     HTTP_MIN_SEND_BUFFER_SIZE("http.min.send.buffer.size"),
     HTTP_MIN_RECV_BUFFER_SIZE("http.min.recv.buffer.size"),
     HTTP_MIN_RECEIVE_BUFFER_SIZE("http.min.receive.buffer.size"), // deprecated

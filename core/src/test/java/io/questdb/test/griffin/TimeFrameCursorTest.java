@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -626,7 +626,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC
             );
             RecordMetadata metadata = baseFactory.getMetadata();
-            addressCache.of(metadata, pageFrameCursor.getColumnIndexes(), pageFrameCursor.isExternal());
+            addressCache.of(metadata, pageFrameCursor.getColumnMapping(), pageFrameCursor.isExternal());
 
             LongList rowCounts = new LongList();
             LongList partitionTimestamps = new LongList();

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
@@ -107,11 +108,14 @@ public class FuzzRunner {
     private double nullSetProb;
     private int parallelWalCount;
     private double partitionDropProb;
+    private double partitionToNativeProb;
+    private double partitionToParquetProb;
     private double queryProb;
     private double replaceInsertProb;
     private double rollbackProb;
     private long s0;
     private long s1;
+    private double setParquetEncodingProb;
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
@@ -488,6 +492,8 @@ public class FuzzRunner {
                 dataAddProb,
                 equalTsRowsProb,
                 partitionDropProb,
+                partitionToParquetProb,
+                partitionToNativeProb,
                 truncateProb,
                 tableDropProb,
                 setTtlProb,
@@ -496,7 +502,8 @@ public class FuzzRunner {
                 queryProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) sequencerMetadata.getMetadataVersion()
+                (int) sequencerMetadata.getMetadataVersion(),
+                setParquetEncodingProb
         );
     }
 
@@ -619,6 +626,8 @@ public class FuzzRunner {
                 dataAddProb,
                 equalTsRowsProb,
                 partitionDropProb,
+                0.0,
+                0.0,
                 truncateProb,
                 tableDropProb,
                 setTtlProb,
@@ -640,12 +649,60 @@ public class FuzzRunner {
             double dataAddProb,
             double equalTsRowsProb,
             double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
             double truncateProb,
             double tableDropProb,
             double setTtlProb,
             double replaceInsertProb,
             double symbolAccessValidationProb,
             double queryProb
+    ) {
+        setFuzzProbabilities(
+                cancelRowsProb,
+                notSetProb,
+                nullSetProb,
+                rollbackProb,
+                colAddProb,
+                colRemoveProb,
+                colRenameProb,
+                colTypeChangeProb,
+                dataAddProb,
+                equalTsRowsProb,
+                partitionDropProb,
+                partitionToParquetProb,
+                partitionToNativeProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
+                replaceInsertProb,
+                symbolAccessValidationProb,
+                queryProb,
+                0.0
+        );
+    }
+
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceInsertProb,
+            double symbolAccessValidationProb,
+            double queryProb,
+            double setParquetEncodingProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -658,12 +715,15 @@ public class FuzzRunner {
         this.dataAddProb = dataAddProb;
         this.equalTsRowsProb = equalTsRowsProb;
         this.partitionDropProb = partitionDropProb;
+        this.partitionToParquetProb = partitionToParquetProb;
+        this.partitionToNativeProb = partitionToNativeProb;
         this.truncateProb = truncateProb;
         this.tableDropProb = tableDropProb;
         this.setTtlProb = setTtlProb;
         this.replaceInsertProb = replaceInsertProb;
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
+        this.setParquetEncodingProb = setParquetEncodingProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -769,7 +829,7 @@ public class FuzzRunner {
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
             String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
             LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
-            String limit = ""; // For debugging
+            String limit = ""; // for debugging, e.g. " limit 100"
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
             // Now let's do backward order assertion
             String orderBy = " order by " + tsColumnName + " desc";
@@ -1103,6 +1163,7 @@ public class FuzzRunner {
             errors.add(e);
         } finally {
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 
@@ -1306,6 +1367,8 @@ public class FuzzRunner {
                             rnd.nextDouble(),
                             rnd.nextDouble(),
                             0.01,
+                            0.0,
+                            0.0,
                             0.0,
                             0.1 * rnd.nextDouble(),
                             rnd.nextDouble(),

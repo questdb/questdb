@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -57,6 +58,7 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 
 public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private final StreamPartitionParquetExporter streamPartitionParquetExporter = new StreamPartitionParquetExporter();
+    private @Nullable BindVariableService bindVariableService;
     private @Nullable CharSequence bloomFilterColumns;
     private int bloomFilterColumnsPosition = -1;
     private double bloomFilterFpp = Double.NaN;
@@ -113,6 +115,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     @Override
     public void clear() {
+        this.bindVariableService = null;
         this.selectFactory = Misc.free(selectFactory);
         this.entry = null;
         this.exportMode = null;
@@ -155,6 +158,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             pageFrameCursor = Misc.free(pageFrameCursor);
         }
         Misc.free(streamPartitionParquetExporter);
+    }
+
+    public @Nullable BindVariableService getBindVariableService() {
+        return bindVariableService;
     }
 
     public @Nullable CharSequence getBloomFilterColumns() {
@@ -287,8 +294,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             @Nullable String selectText,
             @Nullable CharSequence bloomFilterColumns,
             int bloomFilterColumnsPosition,
-            double bloomFilterFpp
+            double bloomFilterFpp,
+            @Nullable BindVariableService bindVariableService
     ) {
+        this.bindVariableService = bindVariableService;
         this.entry = entry;
         this.tableName = tableName;
         this.fileName = fileName;
@@ -560,9 +569,12 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 columnNames.put(columnName);
                 columnMetadata.add(columnNames.size() - startSize);
                 final int columnType = meta.getColumnType(i);
-                // GenericRecordMetadata (hybrid/cursor paths) returns i;
                 // table metadata returns the physical writer column index.
-                final int writerIdx = meta.getWriterIndex(i);
+                int writerIdx = meta.getWriterIndex(i);
+                if (writerIdx < 0) {
+                    // GenericRecordMetadata (hybrid/cursor paths) returns -1, use i instead
+                    writerIdx = i;
+                }
 
                 // A SYMBOL column needs symbol-table metadata when it is a
                 // real table column.  In the hybrid path (baseColumnMap != null)
@@ -618,7 +630,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     parquetVersion,
                     bloomFilterIndexesPtr,
                     bloomFilterCount,
-                    fpp
+                    fpp,
+                    0.0
             );
         }
 
@@ -740,22 +753,14 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         }
 
         private static int getRequiredAlignmentForSimd(int columnType) {
-            switch (ColumnType.tagOf(columnType)) {
+            return switch (ColumnType.tagOf(columnType)) {
                 // Types using Simd<i64, 8> or Simd<f64, 8>
-                case ColumnType.LONG:
-                case ColumnType.DOUBLE:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DATE:
-                    return 8;
+                case ColumnType.LONG, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.DATE -> 8;
                 // Types using Simd<i32, 16> or Simd<f32, 16>
-                case ColumnType.INT:
-                case ColumnType.FLOAT:
-                case ColumnType.SYMBOL:
-                    return 4;
+                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL -> 4;
                 // All other types use scalar paths - no SIMD alignment required
-                default:
-                    return 1;
-            }
+                default -> 1;
+            };
         }
 
         /**

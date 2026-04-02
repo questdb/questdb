@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -236,7 +236,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
     private int initializeSlaveTimeFrameCache() {
         RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
+        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnMapping(), slaveFrameCursor.isExternal());
         slaveTimeFramePartitionIndexes.reopen();
         slaveTimeFramePartitionIndexes.clear();
         slaveTimeFrameRowCounts.clear();

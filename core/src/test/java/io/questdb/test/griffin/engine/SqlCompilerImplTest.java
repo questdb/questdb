@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -37,6 +37,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -2104,6 +2105,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseMissingArgRejected() throws Exception {
+        assertException("CLOSE", 5, "argument expected");
+    }
+
+    @Test
+    public void testCloseSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("CLOSE;", 5, "argument expected");
+    }
+
+    @Test
     public void testColumnNameWithDot() throws Exception {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(
                 "create table x (" +
@@ -2636,15 +2647,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCompileSetNonStandardForm() throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                Assert.assertEquals(SET, compiler.compile("SET x GARBAGE y", sqlExecutionContext).getType());
-            }
-        });
-    }
-
-    @Test
     public void testCompileSetMissingName() throws Exception {
         assertException("SET", 3, "parameter name expected");
     }
@@ -2669,6 +2671,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 Assert.assertEquals(SET, compiler.compile("SET x TO y, z", sqlExecutionContext).getType());
+            }
+        });
+    }
+
+    @Test
+    public void testCompileSetNonStandardForm() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertEquals(SET, compiler.compile("SET x GARBAGE y", sqlExecutionContext).getType());
             }
         });
     }
@@ -2979,7 +2990,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                         } else {
                                             writer.removeColumn("b" + (state - 1));
                                         }
-                                        writer.addColumn("b" + state, ColumnType.INT);
+                                        writer.addColumn("b" + state, ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                                     }
                                 }
                             }
@@ -3548,7 +3559,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             // remove column from table X
                             try (TableWriter writer = getWriter("X")) {
                                 writer.removeColumn("a");
-                                writer.addColumn("c", ColumnType.FLOAT);
+                                writer.addColumn("c", ColumnType.FLOAT, AllowAllSecurityContext.INSTANCE);
                             }
                         }
                     }
@@ -3577,7 +3588,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     // remove column from table X
                                     try (TableWriter writer = getWriter("X")) {
                                         writer.removeColumn("t");
-                                        writer.addColumn("t", ColumnType.FLOAT);
+                                        writer.addColumn("t", ColumnType.FLOAT, AllowAllSecurityContext.INSTANCE);
                                     }
                                 }
                             }
@@ -3982,6 +3993,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck("select x1 as a, a as a from t", 18, "Duplicate column [name=a]");
         });
+    }
+
+    @Test
+    public void testDiscardMissingArgRejected() throws Exception {
+        assertException("DISCARD", 7, "argument expected");
+    }
+
+    @Test
+    public void testDiscardSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("DISCARD;", 7, "argument expected");
     }
 
     @Test
@@ -5176,7 +5197,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     // remove column from table X
                     try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
                         writer.removeColumn("int1");
-                        writer.addColumn("c", ColumnType.INT);
+                        writer.addColumn("c", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                     }
                 }
             }
@@ -6406,7 +6427,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     Assert.assertEquals(2, writer.getMetadata().getTimestampIndex());
                     writer.removeColumn("t");
                     Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
-                    writer.addColumn("t", ColumnType.TIMESTAMP);
+                    writer.addColumn("t", ColumnType.TIMESTAMP, AllowAllSecurityContext.INSTANCE);
                     Assert.assertEquals(-1, writer.getMetadata().getTimestampIndex());
                 }
 
@@ -6448,6 +6469,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testResetMissingArgRejected() throws Exception {
+        assertException("RESET", 5, "argument expected");
+    }
+
+    @Test
+    public void testResetSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("RESET;", 5, "argument expected");
     }
 
     @Test
@@ -7294,6 +7325,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTrailingContentAfterCloseRejected() throws Exception {
+        assertException("CLOSE ALL extra", 10, "unexpected token [extra]");
+    }
+
+    @Test
     public void testTrailingContentAfterCommitRejected() throws Exception {
         assertException("COMMIT extra_token", 7, "unexpected token [extra_token]");
     }
@@ -7308,41 +7344,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseMissingArgRejected() throws Exception {
-        assertException("CLOSE", 5, "argument expected");
-    }
-
-    @Test
-    public void testCloseSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("CLOSE;", 5, "argument expected");
-    }
-
-    @Test
-    public void testDiscardMissingArgRejected() throws Exception {
-        assertException("DISCARD", 7, "argument expected");
-    }
-
-    @Test
-    public void testDiscardSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("DISCARD;", 7, "argument expected");
-    }
-
-    @Test
-    public void testResetMissingArgRejected() throws Exception {
-        assertException("RESET", 5, "argument expected");
-    }
-
-    @Test
-    public void testResetSemicolonNotAcceptedAsArg() throws Exception {
-        assertException("RESET;", 5, "argument expected");
-    }
-
-    @Test
-    public void testTrailingContentAfterCloseRejected() throws Exception {
-        assertException("CLOSE ALL extra", 10, "unexpected token [extra]");
-    }
-
-    @Test
     public void testTrailingContentAfterDiscardRejected() throws Exception {
         assertException("DISCARD ALL extra", 12, "unexpected token [extra]");
     }
@@ -7354,16 +7355,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 10,
                 "unexpected token [extra]"
         );
-    }
-
-    @Test
-    public void testTrailingContentAfterUnlistenRejected() throws Exception {
-        assertException("UNLISTEN * extra", 11, "unexpected token [extra]");
-    }
-
-    @Test
-    public void testUnlistenMissingArgRejected() throws Exception {
-        assertException("UNLISTEN", 8, "argument expected");
     }
 
     @Test
@@ -7384,12 +7375,29 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTrailingContentAfterSemicolonRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (x int)");
+            assertExceptionNoLeakCheck(
+                    "select x from tab; select x from tab",
+                    19,
+                    "unexpected token [select]"
+            );
+        });
+    }
+
+    @Test
     public void testTrailingContentAfterSetRejected() throws Exception {
         assertException(
                 "SET x = y extra_token",
                 10,
                 "unexpected token [extra_token]"
         );
+    }
+
+    @Test
+    public void testTrailingContentAfterUnlistenRejected() throws Exception {
+        assertException("UNLISTEN * extra", 11, "unexpected token [extra]");
     }
 
     @Test
@@ -7400,18 +7408,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertQuery("x\n",
                     "select x from tab;",
                     "", true, true);
-        });
-    }
-
-    @Test
-    public void testTrailingContentAfterSemicolonRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (x int)");
-            assertExceptionNoLeakCheck(
-                    "select x from tab; select x from tab",
-                    19,
-                    "unexpected token [select]"
-            );
         });
     }
 
@@ -7462,6 +7458,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "except"
             );
         });
+    }
+
+    @Test
+    public void testUnlistenMissingArgRejected() throws Exception {
+        assertException("UNLISTEN", 8, "argument expected");
+    }
+
+    @Test
+    public void testUnlistenSemicolonNotAcceptedAsArg() throws Exception {
+        assertException("UNLISTEN;", 8, "argument expected");
     }
 
     @Test

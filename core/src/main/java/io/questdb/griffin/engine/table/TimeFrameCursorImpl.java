@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -105,7 +105,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
     @Override
     public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
-        int physicalColumnIndex = frameCursor.getColumnIndexes().getQuick(logicalColumnIndex);
+        int physicalColumnIndex = frameCursor.getColumnMapping().getColumnIndex(logicalColumnIndex);
         int frameIndex = timeFrame.getFrameIndex();
         if (frameIndex == -1) {
             return null;
@@ -176,7 +176,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
 
     public TimeFrameCursor of(TablePageFrameCursor frameCursor) {
         this.frameCursor = frameCursor;
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
+        frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
         frameMemoryPool.of(frameAddressCache);
         reader = frameCursor.getTableReader();
         recordA.of(frameCursor);

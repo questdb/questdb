@@ -4,14 +4,12 @@ jobs:
     strategy:
       matrix:
         linux-jdk17:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
+          poolName: hetzner-incus
           os: Linux
           jdk: "1.17"
           javadoc_step: "javadoc:javadoc"
           javadoc_profile: ",javadoc"
     pool:
-      vmImage: $(imageName)
       name: $(poolName)
     timeoutInMinutes: 60
     variables:

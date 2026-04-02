@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -495,7 +495,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 "ALTER TABLE sensors ALTER COLUMN sensor_id dope INDEX",
                 CREATE_TABLE_STMT,
                 43,
-                "'add', 'drop', 'symbol', 'cache' or 'nocache' expected found 'dope'"
+                "'add', 'drop', 'set', 'symbol', 'cache' or 'nocache' expected found 'dope'"
         );
     }
 

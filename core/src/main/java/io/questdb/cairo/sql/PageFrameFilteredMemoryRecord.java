@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -102,6 +102,11 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
             array.ofNull();
         }
         return array;
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int columnIndex, int columnType, int idx0, int idx1) {
+        return getArrayDouble1d2d0(columnIndex, columnType, idx0, idx1, rowIndex(columnIndex));
     }
 
     @Override

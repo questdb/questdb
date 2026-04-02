@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -253,13 +253,17 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     ) {
         // Partition is dropped or not fully committed.
         // It is only possible to delete when there are no readers
+        boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
         long lastTxn = txReader.getTxn();
         for (int i = hi - 2, n = lo - 1; i > n; i -= 2) {
             long nameTxn = partitionList.get(i);
 
             // If the last committed transaction number is 4, TableWriter can write partition with ending .4 and .3
             // If the version on disk is .2 (nameTxn == 3) can remove it if the lastTxn > 3, e.g., when nameTxn < lastTxn
-            boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
+            // When a backup checkpoint is in progress, skip deletion — the checkpoint may reference
+            // these partitions via snapshotted metadata even if the scoreboard is not pinned yet.
+            boolean rangeUnlocked = !checkpointInProgress
+                    && nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn - 1);
@@ -345,6 +349,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         long lastCommittedPartitionName = txReader.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
         if (lastCommittedPartitionName > -1) {
             assert hi <= partitionList.size();
+            // When a backup checkpoint is in progress, skip deletion — the checkpoint may reference
+            // these partitions via snapshotted metadata even if the scoreboard is not pinned yet.
+            boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
             // lo points to the beginning element in partitionList, hi next after last
             // each partition folder represented by a pair in the partitionList (partition version, partition timestamp)
             // Skip first pair, start from second and check if it can be deleted.
@@ -352,7 +359,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long nextNameVersion = Math.min(lastCommittedPartitionName + 1, partitionList.get(i));
                 long previousNameVersion = partitionList.get(i - 2);
 
-                boolean rangeUnlocked = previousNameVersion < nextNameVersion
+                boolean rangeUnlocked = !checkpointInProgress
+                        && previousNameVersion < nextNameVersion
                         && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
 
                 // Sometimes TableWriter can create a partition folder before committing the transaction
