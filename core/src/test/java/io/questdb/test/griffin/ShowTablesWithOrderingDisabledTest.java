@@ -48,7 +48,7 @@ public class ShowTablesWithOrderingDisabledTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowTablesWithFunctionReturnsUnoderedList() throws Exception {
+    public void testShowTablesWithFunctionReturnsUnorderedList() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table deposits(account_no int, currency symbol, amount double)");
             execute("create table balances(account_no int, currency symbol, amount double)");

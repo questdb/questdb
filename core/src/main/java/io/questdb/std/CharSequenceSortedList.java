@@ -117,7 +117,7 @@ public class CharSequenceSortedList implements Mutable, Sinkable, ReadOnlyObjLis
                 pos--;
             }
 
-            if (buffer[pos] != null && buffer[pos].equals(o)) {
+            if (Chars.equalsNc((CharSequence) o, buffer[pos])) {
                 return pos;
             }
         }
