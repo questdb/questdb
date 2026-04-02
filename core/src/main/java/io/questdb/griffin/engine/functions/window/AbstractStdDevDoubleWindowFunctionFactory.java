@@ -64,7 +64,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     private static final ArrayColumnTypes STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
     // Naive sum-of-squares formula, used by sliding-window (removable) frames.
-    static double computeStdDev(double sum, double sumSq, long count, boolean isSample) {
+    static double computeResult(double sum, double sumSq, long count, boolean isSample, boolean isSqrt) {
         long denom = isSample ? count - 1 : count;
         if (denom <= 0) {
             return Double.NaN;
@@ -73,12 +73,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         if (variance < 0) {
             variance = 0.0;
         }
-        return Math.sqrt(variance);
+        return isSqrt ? Math.sqrt(variance) : variance;
     }
 
     // Welford's online algorithm result, used by non-removable (running/whole) frames.
     // m2 is the running sum of squared deviations from the running mean.
-    static double computeStdDevWelford(double m2, long count, boolean isSample) {
+    static double computeResultWelford(double m2, long count, boolean isSample, boolean isSqrt) {
         long denom = isSample ? count - 1 : count;
         if (denom <= 0) {
             return Double.NaN;
@@ -87,10 +87,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         if (variance < 0) {
             variance = 0.0;
         }
-        return Math.sqrt(variance);
+        return isSqrt ? Math.sqrt(variance) : variance;
     }
 
     protected abstract boolean isSample();
+
+    protected abstract boolean isSqrt();
 
     protected abstract String name();
 
@@ -110,6 +112,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
 
         boolean isSample = isSample();
+        boolean isSqrt = isSqrt();
         String name = name();
 
         long rowsLo = windowContext.getRowsLo();
@@ -141,6 +144,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             partitionBySink,
                             args.get(0),
                             isSample,
+                            isSqrt,
                             name
                     );
                 } // between unbounded preceding and current row
@@ -157,6 +161,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             partitionBySink,
                             args.get(0),
                             isSample,
+                            isSqrt,
                             name
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row]
@@ -192,6 +197,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 isSample,
+                                isSqrt,
                                 name
                         );
                     } catch (Throwable th) {
@@ -215,11 +221,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             partitionBySink,
                             args.get(0),
                             isSample,
+                            isSqrt,
                             name
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
-                    return new StdDevOverCurrentRowFunction(args.get(0), isSample, name);
+                    return new StdDevOverCurrentRowFunction(args.get(0), isSample, isSqrt, name);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(
@@ -234,6 +241,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             partitionBySink,
                             args.get(0),
                             isSample,
+                            isSqrt,
                             name
                     );
                 }
@@ -262,6 +270,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                                 args.get(0),
                                 mem,
                                 isSample,
+                                isSqrt,
                                 name
                         );
                     } catch (Throwable th) {
@@ -275,10 +284,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new StdDevOverWholeResultSetFunction(args.get(0), isSample, name);
+                    return new StdDevOverWholeResultSetFunction(args.get(0), isSample, isSqrt, name);
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new StdDevOverUnboundedRowsFrameFunction(args.get(0), isSample, name);
+                    return new StdDevOverUnboundedRowsFrameFunction(args.get(0), isSample, isSqrt, name);
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -294,19 +303,20 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             configuration,
                             timestampIndex,
                             isSample,
+                            isSqrt,
                             name
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new StdDevOverUnboundedRowsFrameFunction(args.get(0), isSample, name);
+                    return new StdDevOverUnboundedRowsFrameFunction(args.get(0), isSample, isSqrt, name);
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
-                    return new StdDevOverCurrentRowFunction(args.get(0), isSample, name);
+                    return new StdDevOverCurrentRowFunction(args.get(0), isSample, isSqrt, name);
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new StdDevOverWholeResultSetFunction(args.get(0), isSample, name);
+                    return new StdDevOverWholeResultSetFunction(args.get(0), isSample, isSqrt, name);
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     MemoryARW mem = Vm.getCARWInstance(
@@ -321,6 +331,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                             rowsHi,
                             mem,
                             isSample,
+                            isSqrt,
                             name
                     );
                 }
@@ -334,12 +345,14 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     // Population stddev of a single value is 0; sample stddev is undefined (NaN).
     static class StdDevOverCurrentRowFunction extends BaseWindowFunction implements WindowDoubleFunction {
         private final boolean isSample;
+        private final boolean isSqrt;
         private final String name;
         private double value;
 
-        StdDevOverCurrentRowFunction(Function arg, boolean isSample, String name) {
+        StdDevOverCurrentRowFunction(Function arg, boolean isSample, boolean isSqrt, String name) {
             super(arg);
             this.isSample = isSample;
+            this.isSqrt = isSqrt;
             this.name = name;
         }
 
@@ -374,11 +387,13 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     // Handles stddev() over (partition by x), order by absent or whole-partition frame.
     static class StdDevOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
         private final boolean isSample;
+        private final boolean isSqrt;
         private final String name;
 
-        StdDevOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isSample, String name) {
+        StdDevOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isSample, boolean isSqrt, String name) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.isSample = isSample;
+            this.isSqrt = isSqrt;
             this.name = name;
         }
 
@@ -437,7 +452,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 MapValue value = record.getValue();
                 double m2 = value.getDouble(1);
                 long count = value.getLong(2);
-                value.putDouble(0, computeStdDevWelford(m2, count, isSample));
+                value.putDouble(0, computeResultWelford(m2, count, isSample, isSqrt));
             }
         }
     }
@@ -453,6 +468,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
         private final boolean isSample;
+        private final boolean isSqrt;
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
@@ -472,6 +488,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 int initialBufferSize,
                 int timestampIdx,
                 boolean isSample,
+                boolean isSqrt,
                 String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -483,6 +500,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             this.timestampIndex = timestampIdx;
             frameIncludesCurrentValue = rangeHi == 0;
             this.isSample = isSample;
+            this.isSqrt = isSqrt;
             this.name = name;
         }
 
@@ -534,7 +552,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                         sum = d;
                         sumSq = d * d;
                         count = 1;
-                        stddev = computeStdDev(sum, sumSq, count, isSample);
+                        stddev = computeResult(sum, sumSq, count, isSample, isSqrt);
                         size = frameLoBounded ? 1 : 0;
                     } else {
                         sum = 0.0;
@@ -633,7 +651,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     firstIdx = newFirstIdx;
                 }
 
-                stddev = computeStdDev(sum, sumSq, count, isSample);
+                stddev = computeResult(sum, sumSq, count, isSample, isSqrt);
             }
 
             mapValue.putDouble(0, sum);
@@ -718,6 +736,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final boolean frameLoBounded;
         private final int frameSize;
         private final boolean isSample;
+        private final boolean isSqrt;
         private final MemoryARW memory;
         private final String name;
         private double stddev;
@@ -731,6 +750,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 Function arg,
                 MemoryARW memory,
                 boolean isSample,
+                boolean isSqrt,
                 String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -748,6 +768,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
             this.memory = memory;
             this.isSample = isSample;
+            this.isSqrt = isSqrt;
             this.name = name;
         }
 
@@ -786,7 +807,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     sum = d;
                     sumSq = d * d;
                     count = 1;
-                    stddev = computeStdDev(sum, sumSq, count, isSample);
+                    stddev = computeResult(sum, sumSq, count, isSample, isSqrt);
                 } else {
                     sum = 0.0;
                     sumSq = 0.0;
@@ -811,7 +832,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     sumSq += hiValue * hiValue;
                 }
 
-                stddev = computeStdDev(sum, sumSq, count, isSample);
+                stddev = computeResult(sum, sumSq, count, isSample, isSqrt);
 
                 if (frameLoBounded) {
                     double loValue = memory.getDouble(startOffset + loIdx * Double.BYTES);
@@ -900,6 +921,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final boolean frameLoBounded;
         private final long initialCapacity;
         private final boolean isSample;
+        private final boolean isSqrt;
         private final long maxDiff;
         private final MemoryARW memory;
         private final long minDiff;
@@ -921,6 +943,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 CairoConfiguration configuration,
                 int timestampIdx,
                 boolean isSample,
+                boolean isSqrt,
                 String name
         ) {
             this(
@@ -935,6 +958,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     ),
                     timestampIdx,
                     isSample,
+                    isSqrt,
                     name
             );
         }
@@ -947,6 +971,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 MemoryARW memory,
                 int timestampIdx,
                 boolean isSample,
+                boolean isSqrt,
                 String name
         ) {
             super(arg);
@@ -957,6 +982,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             minDiff = Math.abs(rangeHi);
             timestampIndex = timestampIdx;
             this.isSample = isSample;
+            this.isSqrt = isSqrt;
             this.name = name;
 
             capacity = initialCapacity;
@@ -1062,7 +1088,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 firstIdx = newFirstIdx;
             }
 
-            stddev = computeStdDev(sum, sumSq, count, isSample);
+            stddev = computeResult(sum, sumSq, count, isSample, isSqrt);
         }
 
         @Override
@@ -1148,6 +1174,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final boolean frameLoBounded;
         private final int frameSize;
         private final boolean isSample;
+        private final boolean isSqrt;
         private final String name;
         private long count = 0;
         private int loIdx = 0;
@@ -1155,9 +1182,10 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private double sum = 0.0;
         private double sumSq = 0.0;
 
-        StdDevOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, boolean isSample, String name) {
+        StdDevOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, boolean isSample, boolean isSqrt, String name) {
             super(arg);
             this.isSample = isSample;
+            this.isSqrt = isSqrt;
             this.name = name;
 
             assert rowsLo != Long.MIN_VALUE || rowsHi != 0;
@@ -1204,7 +1232,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 count++;
             }
 
-            stddev = computeStdDev(sum, sumSq, count, isSample);
+            stddev = computeResult(sum, sumSq, count, isSample, isSqrt);
 
             if (frameLoBounded) {
                 double loValue = buffer.getDouble((long) loIdx * Double.BYTES);
@@ -1305,12 +1333,14 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     // Doesn't require value buffering.
     static class StdDevOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
         private final boolean isSample;
+        private final boolean isSqrt;
         private final String name;
         private double stddev = Double.NaN;
 
-        StdDevOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isSample, String name) {
+        StdDevOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isSample, boolean isSqrt, String name) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.isSample = isSample;
+            this.isSqrt = isSqrt;
             this.name = name;
         }
 
@@ -1347,7 +1377,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             value.putDouble(0, mean);
             value.putDouble(1, m2);
             value.putLong(2, count);
-            stddev = computeStdDevWelford(m2, count, isSample);
+            stddev = computeResultWelford(m2, count, isSample, isSqrt);
         }
 
         @Override
@@ -1386,15 +1416,17 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     // Uses Welford's online algorithm for numerical stability.
     static class StdDevOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDoubleFunction {
         private final boolean isSample;
+        private final boolean isSqrt;
         private final String name;
         private long count = 0;
         private double m2 = 0.0;
         private double mean = 0.0;
         private double stddev = Double.NaN;
 
-        StdDevOverUnboundedRowsFrameFunction(Function arg, boolean isSample, String name) {
+        StdDevOverUnboundedRowsFrameFunction(Function arg, boolean isSample, boolean isSqrt, String name) {
             super(arg);
             this.isSample = isSample;
+            this.isSqrt = isSqrt;
             this.name = name;
         }
 
@@ -1408,7 +1440,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 m2 += (d - mean) * (d - oldMean);
             }
 
-            stddev = computeStdDevWelford(m2, count, isSample);
+            stddev = computeResultWelford(m2, count, isSample, isSqrt);
         }
 
         @Override
@@ -1462,15 +1494,17 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     // Uses Welford's online algorithm for numerical stability.
     static class StdDevOverWholeResultSetFunction extends BaseWindowFunction implements WindowDoubleFunction {
         private final boolean isSample;
+        private final boolean isSqrt;
         private final String name;
         private long count;
         private double m2;
         private double mean;
         private double stddev;
 
-        StdDevOverWholeResultSetFunction(Function arg, boolean isSample, String name) {
+        StdDevOverWholeResultSetFunction(Function arg, boolean isSample, boolean isSqrt, String name) {
             super(arg);
             this.isSample = isSample;
+            this.isSqrt = isSqrt;
             this.name = name;
         }
 
@@ -1502,7 +1536,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
         @Override
         public void preparePass2() {
-            stddev = computeStdDevWelford(m2, count, isSample);
+            stddev = computeResultWelford(m2, count, isSample, isSqrt);
         }
 
         @Override

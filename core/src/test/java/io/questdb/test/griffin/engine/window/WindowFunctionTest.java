@@ -53,6 +53,9 @@ import io.questdb.griffin.engine.functions.window.StdDevDoubleWindowFunctionFact
 import io.questdb.griffin.engine.functions.window.StdDevPopDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.StdDevSampDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.VarDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.VarPopDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.VarSampDoubleWindowFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -87,6 +90,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             },
             {
                     "i", "j" // stddev
+            },
+            {
+                    "i", "j" // var_pop
+            },
+            {
+                    "i", "j" // var_samp
+            },
+            {
+                    "i", "j" // variance
             },
             {
                     "i", "j", // first_value
@@ -10899,6 +10911,150 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarPopCurrentRowSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.5), (2, null), (3, 2.5)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tvr
+                            1970-01-01T00:00:00.000001Z\t0.0
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\t0.0
+                            """),
+                    "select ts, var_pop(j) over (order by ts rows between current row and current row) vr from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testVarSampCurrentRowSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.5), (2, null), (3, 2.5)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tvr
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            """),
+                    "select ts, var_samp(j) over (order by ts rows between current row and current row) vr from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testVarPopCrossValidation() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "var_pop(j) over (order by ts) vr, " +
+                            "stddev_pop(j) over (order by ts) sd " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testVarSampCrossValidation() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 8.0), (6, null)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "var_samp(j) over (order by ts) vr, " +
+                            "stddev_samp(j) over (order by ts) sd " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testVarPopOverPartitionRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, null), (7, 2, 14.0), (8, 3, null), (9, 3, null)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+                            "from (" +
+                            "select i, " +
+                            "var_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) vr, " +
+                            "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testVarRejectsGroupsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select var_pop(j) over (order by ts groups between 1 preceding and current row) from tab",
+                    -1,
+                    "function not implemented for given window parameters",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testVarianceAliasEqualsVarSamp() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, 14.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when vr is null and vr_ref is null then 0.0 when vr is null or vr_ref is null then 1.0 else abs(vr - vr_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "variance(j) over (partition by i order by ts) vr, " +
+                            "var_samp(j) over (partition by i order by ts) vr_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
     public void testTwoWindowColumns() throws Exception {
         // Test two window functions with different specifications
         assertQuery(
@@ -12012,6 +12168,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     StdDevPopDoubleWindowFunctionFactory.class,
                     StdDevSampDoubleWindowFunctionFactory.class,
                     StdDevDoubleWindowFunctionFactory.class,
+                    VarPopDoubleWindowFunctionFactory.class,
+                    VarSampDoubleWindowFunctionFactory.class,
+                    VarDoubleWindowFunctionFactory.class,
                     KSumDoubleWindowFunctionFactory.class,
                     CountConstWindowFunctionFactory.class,
                     CountDoubleWindowFunctionFactory.class,
@@ -13100,7 +13259,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     static {
-        FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "ksum(#COLUMN)", "stddev_pop(#COLUMN)", "stddev_samp(#COLUMN)", "stddev(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
+        FRAME_FUNCTIONS = Arrays.asList("avg(#COLUMN)", "sum(#COLUMN)", "ksum(#COLUMN)", "stddev_pop(#COLUMN)", "stddev_samp(#COLUMN)", "stddev(#COLUMN)", "var_pop(#COLUMN)", "var_samp(#COLUMN)", "variance(#COLUMN)", "first_value(#COLUMN)", "first_value(#COLUMN) ignore nulls",
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",
                 "last_value(#COLUMN)", "last_value(#COLUMN) ignore nulls", "last_value(#COLUMN) respect nulls");
 

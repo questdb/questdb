@@ -37,6 +37,11 @@ public class StdDevPopDoubleWindowFunctionFactory extends AbstractStdDevDoubleWi
     }
 
     @Override
+    protected boolean isSqrt() {
+        return true;
+    }
+
+    @Override
     protected String name() {
         return "stddev_pop";
     }

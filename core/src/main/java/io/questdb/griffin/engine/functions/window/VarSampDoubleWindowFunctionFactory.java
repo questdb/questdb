@@ -24,11 +24,11 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-public class StdDevSampDoubleWindowFunctionFactory extends AbstractStdDevDoubleWindowFunctionFactory {
+public class VarSampDoubleWindowFunctionFactory extends AbstractStdDevDoubleWindowFunctionFactory {
 
     @Override
     public String getSignature() {
-        return "stddev_samp(D)";
+        return "var_samp(D)";
     }
 
     @Override
@@ -38,11 +38,11 @@ public class StdDevSampDoubleWindowFunctionFactory extends AbstractStdDevDoubleW
 
     @Override
     protected boolean isSqrt() {
-        return true;
+        return false;
     }
 
     @Override
     protected String name() {
-        return "stddev_samp";
+        return "var_samp";
     }
 }

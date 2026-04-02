@@ -24,25 +24,15 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-public class StdDevSampDoubleWindowFunctionFactory extends AbstractStdDevDoubleWindowFunctionFactory {
+public class VarDoubleWindowFunctionFactory extends VarSampDoubleWindowFunctionFactory {
 
     @Override
     public String getSignature() {
-        return "stddev_samp(D)";
-    }
-
-    @Override
-    protected boolean isSample() {
-        return true;
-    }
-
-    @Override
-    protected boolean isSqrt() {
-        return true;
+        return "variance(D)";
     }
 
     @Override
     protected String name() {
-        return "stddev_samp";
+        return "variance";
     }
 }
