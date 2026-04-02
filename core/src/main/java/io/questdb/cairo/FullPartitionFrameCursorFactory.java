@@ -62,6 +62,7 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, @NotNull IntList columnIndexes, int order) throws SqlException {
         authorizeSelect(executionContext, columnIndexes);
         final TableReader reader = getReader(executionContext);
+        reader.setActiveColumns(columnIndexes);
         try {
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
                 if (fwdCursor == null) {

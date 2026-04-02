@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
+import io.questdb.std.IntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -55,6 +56,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.BitSet;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
@@ -66,6 +68,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
+    private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
@@ -88,6 +91,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCountShl;
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
+    private boolean hasActiveColumns;
     private int openPartitionCount;
     private LongList openPartitionInfo;
     private ObjList<PartitionDecoder> parquetPartitionDecoders;
@@ -612,6 +616,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             checkSchedulePurgeO3Partitions();
         }
         closeExcessPartitions();
+        hasActiveColumns = false;
         streamingMode = false;
     }
 
@@ -680,6 +685,18 @@ public class TableReader implements Closeable, SymbolTableSource {
             releaseTxn();
             throw e;
         }
+    }
+
+    public void setActiveColumns(@Nullable IntList columnIndexes) {
+        if (columnIndexes == null) {
+            hasActiveColumns = false;
+            return;
+        }
+        activeColumns.clear();
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            activeColumns.set(columnIndexes.getQuick(i));
+        }
+        hasActiveColumns = true;
     }
 
     /**
@@ -1319,6 +1336,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void openPartitionColumns(int partitionIndex, Path path, int columnBase, long partitionRowCount) {
         try {
             for (int i = 0; i < columnCount; i++) {
+                if (hasActiveColumns && !activeColumns.get(i)) {
+                    continue;
+                }
                 reloadColumnAt(
                         partitionIndex,
                         path,
@@ -1692,6 +1712,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean reloadColumnFiles(int partitionIndex, long rowCount) {
         int columnBase = getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
+            if (hasActiveColumns && !activeColumns.get(i)) {
+                continue;
+            }
             final int index = getPrimaryColumnIndex(columnBase, i);
             MemoryCMR mem1 = columns.getQuick(index);
 
