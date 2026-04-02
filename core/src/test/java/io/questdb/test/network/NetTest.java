@@ -82,7 +82,16 @@ public class NetTest {
     public void testGetAddrInfoConnect() {
         NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
         final long pAddrInfo = nf.getAddrInfo("questdb.io", 443);
-        Assert.assertNotEquals(-1, pAddrInfo);
+        if (pAddrInfo == -1) {
+            try {
+                //noinspection ResultOfMethodCallIgnored
+                java.net.InetAddress.getByName("questdb.io");
+                Assert.fail("getAddrInfo failed but Java DNS resolved questdb.io");
+            } catch (java.net.UnknownHostException e) {
+                // no internet connection, skip the test
+                return;
+            }
+        }
         long fd = nf.socketTcp(true);
         try {
             Assert.assertEquals(0, nf.connectAddrInfo(fd, pAddrInfo));
