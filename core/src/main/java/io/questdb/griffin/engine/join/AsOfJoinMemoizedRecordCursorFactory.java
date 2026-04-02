@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -44,7 +44,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-
+import io.questdb.std.Rows;
 
 /**
  * Optimized ASOF JOIN implementation for single symbol column joins that uses memoization
@@ -169,11 +169,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     }
 
     private class AsOfJoinMemoizedRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
-
         private static final long NOT_REMEMBERED = Long.MIN_VALUE;
         private static final int SLOT_REMEMBERED_ROWID = 0;
         private static final int SLOT_VALIDITY_PERIOD_END = 2;
         private static final int SLOT_VALIDITY_PERIOD_START = 1;
+
         private final Map rememberedSymbols;
         private long earliestRowId = Long.MIN_VALUE;
         // These track a contiguous range of slave timestamps that we've already scanned.
@@ -364,7 +364,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             }
 
             long rowId = slaveRecB.getRowId();
-            long frameRowLo = TimeFrameCursor.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowLo());
+            long frameRowLo = Rows.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowLo());
 
             boolean didJumpOverScannedRange = false;
             for (; ; ) {
@@ -429,11 +429,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         // So, why don't we set rowId to one less? Because that rowId may be less than the
                         // earliest legal rowId, and we don't want to repeat the entire logic related to that here.
                         didJumpOverScannedRange = true;
-                        int frameIndex = TimeFrameCursor.toPartitionIndex(rowId);
+                        int frameIndex = Rows.toPartitionIndex(rowId);
                         slaveTimeFrameCursor.jumpTo(frameIndex);
                         slaveTimeFrameCursor.open();
                         slaveTimeFrameCursor.recordAt(slaveRecB, rowId);
-                        frameRowLo = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
+                        frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                         slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                     }
                 }
@@ -464,12 +464,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                     rowId--;
                 } else {
                     // We exhausted this frame, let's try the previous one.
-                    if (slaveTimeFrameCursor.prev()) {
-                        slaveTimeFrameCursor.open();
-                        int frameIndex = slaveTimeFrame.getFrameIndex();
-                        frameRowLo = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
-                        rowId = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
-                    } else {
+                    if (!slaveTimeFrameCursor.prev()) {
                         // There is no previous frame, our scan reached the beginning of the table.
                         earliestRowId = rowId;
                         // Memorize that we didn't find the matching symbol by saving rowId as (-rowId - 1).
@@ -486,6 +481,11 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
                         record.hasSlave(false);
                         break;
                     }
+                    slaveTimeFrameCursor.open();
+
+                    int frameIndex = slaveTimeFrame.getFrameIndex();
+                    frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
+                    rowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
                 slaveTimeFrameCursor.recordAt(slaveRecB, rowId);
                 circuitBreaker.statefulThrowExceptionIfTripped();

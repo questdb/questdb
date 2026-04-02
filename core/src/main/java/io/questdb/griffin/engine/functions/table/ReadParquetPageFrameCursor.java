@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -62,7 +62,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private final IntList columnIndexes;
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
-    private long filterBufEnd;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     private final ReadParquetPageFrame frame = new ReadParquetPageFrame();
@@ -71,6 +70,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     private long addr = 0;
     private long fd = -1;
     private long fileSize = 0;
+    private long filterBufEnd;
     private boolean isFilterListPrepared;
     private long rowCount;
     private int rowGroupCount;
@@ -187,7 +187,11 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
             }
             isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    decoder.metadata(), pushdownFilterConditions, filterList, filterValues);
+                    decoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList,
+                    filterValues
+            );
             if (isFilterListPrepared) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             } else {

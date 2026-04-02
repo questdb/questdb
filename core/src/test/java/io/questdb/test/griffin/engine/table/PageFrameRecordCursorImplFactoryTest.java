@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -36,6 +36,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
@@ -787,9 +788,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 int sIndex = -1;
                 for (int i = 0; i < rowCount; i++) {
                     if (i == startTopAt) {
-                        writer.addColumn("j", ColumnType.LONG);
+                        writer.addColumn("j", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
                         jIndex = writer.getColumnIndex("j");
-                        writer.addColumn("s", ColumnType.STRING);
+                        writer.addColumn("s", ColumnType.STRING, AllowAllSecurityContext.INSTANCE);
                         sIndex = writer.getColumnIndex("s");
                     }
 
@@ -1178,9 +1179,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 int sIndex = -1;
                 for (int i = 0; i < rowCount; i++) {
                     if (i == startTopAt) {
-                        writer.addColumn("j", ColumnType.LONG);
+                        writer.addColumn("j", ColumnType.LONG, AllowAllSecurityContext.INSTANCE);
                         jIndex = writer.getColumnIndex("j");
-                        writer.addColumn("s", ColumnType.STRING);
+                        writer.addColumn("s", ColumnType.STRING, AllowAllSecurityContext.INSTANCE);
                         sIndex = writer.getColumnIndex("s");
                     }
 

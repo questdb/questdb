@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,7 +33,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
-        while (partitionIndex < partitionHi) {
+        while (partitionIndex < partitionScanHi) {
             final long hi = reader.openPartition(partitionIndex);
             if (hi > 0) {
                 counter.add(hi);

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -71,8 +71,8 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             @Nullable ObjList<Function> perWorkerJoinFilters,
             int masterSymbolIndex,
             int slaveSymbolIndex,
-            long joinWindowLo,
-            long joinWindowHi,
+            long windowLo,
+            long windowHi,
             boolean includePrevailing,
             int columnSplit,
             int masterTimestampIndex,
@@ -96,8 +96,17 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
                 slaveFactory,
                 ownerJoinFilter,
                 perWorkerJoinFilters,
-                joinWindowLo,
-                joinWindowHi,
+                windowLo,
+                windowHi,
+                null,
+                null,
+                null,
+                null,
+                0,
+                0,
+                (char) 0,
+                (char) 0,
+                null,
                 includePrevailing,
                 columnSplit,
                 masterTimestampIndex,

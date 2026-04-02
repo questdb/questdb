@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -732,8 +732,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return getDelegate().getPartitionEncoderParquetMinCompressionRatio();
+    }
+
+    @Override
     public int getPartitionEncoderParquetDataPageSize() {
         return getDelegate().getPartitionEncoderParquetDataPageSize();
+    }
+
+    @Override
+    public long getPartitionEncoderParquetO3RewriteUnusedMaxBytes() {
+        return getDelegate().getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
+    }
+
+    @Override
+    public double getPartitionEncoderParquetO3RewriteUnusedRatio() {
+        return getDelegate().getPartitionEncoderParquetO3RewriteUnusedRatio();
     }
 
     @Override
@@ -954,6 +969,21 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlHashJoinValuePageSize() {
         return getDelegate().getSqlHashJoinValuePageSize();
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanAbsoluteThreshold() {
+        return getDelegate().getSqlHorizonJoinBwdScanAbsoluteThreshold();
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanMinGap() {
+        return getDelegate().getSqlHorizonJoinBwdScanMinGap();
+    }
+
+    @Override
+    public long getSqlHorizonJoinBwdScanSwitchFactor() {
+        return getDelegate().getSqlHorizonJoinBwdScanSwitchFactor();
     }
 
     @Override

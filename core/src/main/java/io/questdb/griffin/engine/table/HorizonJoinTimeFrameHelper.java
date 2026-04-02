@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
@@ -48,27 +49,72 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  */
 public class HorizonJoinTimeFrameHelper {
     private static final int LINEAR_SCAN_LIMIT = 64;
+    // Adaptive scan thresholds (set at construction, used by findKeyedAsOfMatch)
+    private final long bwdScanAbsoluteThreshold;
+    private final long bwdScanMinGap;
+    private final long bwdScanSwitchFactor;
     private final long lookahead;
     // Scale factor for slave timestamps to normalize to nanoseconds (1 if no scaling needed)
     private final long slaveTsScale;
+    // Backward scan row counter, used by the adaptive switching logic
+    private long backwardScanRows;
     // Backward watermark: lowest rowId we've backward-scanned (inclusive)
     private long backwardWatermark = Long.MAX_VALUE;
     // Bookmark position: where to start the next findAsOfRow search (optimization for sequential access)
     private int bookmarkedFrameIndex = -1;
     private long bookmarkedRowIndex = Long.MIN_VALUE;
+    // Adaptive scan state (managed by findKeyedAsOfMatch, reset by toTop)
+    private long bwdScanRowsAtPositionStart;
     // Cached findAsOfRow result: valid while target timestamp < cachedNextRowTs
     private long cachedAsOfRowId = Long.MIN_VALUE;
     private long cachedNextRowTs = Long.MIN_VALUE;
     // Forward watermark: highest rowId we've forward-scanned (inclusive)
     private long forwardWatermark = Long.MIN_VALUE;
+    private boolean isForwardScanMode;
+    private long prevAsOfRowId = Long.MIN_VALUE;
     private Record record;
     private TimeFrame timeFrame;
     private TimeFrameCursor timeFrameCursor;
     private int timestampIndex;
 
-    public HorizonJoinTimeFrameHelper(long lookahead, long slaveTsScale) {
+    public HorizonJoinTimeFrameHelper(
+            long lookahead,
+            long slaveTsScale,
+            long bwdScanAbsoluteThreshold,
+            long bwdScanMinGap,
+            long bwdScanSwitchFactor
+    ) {
         this.lookahead = lookahead;
         this.slaveTsScale = slaveTsScale;
+        this.bwdScanAbsoluteThreshold = bwdScanAbsoluteThreshold;
+        this.bwdScanMinGap = bwdScanMinGap;
+        this.bwdScanSwitchFactor = bwdScanSwitchFactor;
+    }
+
+    /**
+     * Decides whether backward scan cost justifies switching to forward scan mode.
+     * Uses a relative check (cost vs gap * factor) with overflow protection via
+     * {@link Math#multiplyExact}, plus an absolute threshold for cross-frame gaps
+     * where the relative check can't trigger (gap encodes frame index bits, >= 2^44).
+     *
+     * @return true if forward scan mode should be activated
+     */
+    public static boolean shouldSwitchToForwardScan(
+            long bwdScanCost,
+            long gap,
+            long bwdScanMinGap,
+            long bwdScanSwitchFactor,
+            long bwdScanAbsoluteThreshold
+    ) {
+        boolean relativeSwitch = false;
+        if (gap > bwdScanMinGap) {
+            try {
+                relativeSwitch = bwdScanCost > Math.multiplyExact(gap, bwdScanSwitchFactor);
+            } catch (ArithmeticException ignore) {
+                // overflow: gap is huge, relative switch won't help
+            }
+        }
+        return relativeSwitch || bwdScanCost > bwdScanAbsoluteThreshold;
     }
 
     /**
@@ -131,8 +177,8 @@ public class HorizonJoinTimeFrameHelper {
             effectiveStart = startRowId;
         }
 
-        int frameIndex = TimeFrameCursor.toPartitionIndex(effectiveStart);
-        long rowIndex = TimeFrameCursor.toLocalRowID(effectiveStart);
+        int frameIndex = Rows.toPartitionIndex(effectiveStart);
+        long rowIndex = Rows.toLocalRowID(effectiveStart);
 
         // Jump to the starting frame
         timeFrameCursor.jumpTo(frameIndex);
@@ -148,7 +194,8 @@ public class HorizonJoinTimeFrameHelper {
         final long masterHash = masterKey.hash();
 
         while (true) {
-            final long currentRowId = TimeFrameCursor.toRowID(frameIndex, rowIndex);
+            final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
+            backwardScanRows++;
 
             // Update backward watermark
             if (backwardWatermark == Long.MAX_VALUE || currentRowId < backwardWatermark) {
@@ -217,7 +264,6 @@ public class HorizonJoinTimeFrameHelper {
      * @return rowId if found, Long.MIN_VALUE otherwise
      */
     public long findAsOfRow(long targetTimestamp) {
-        // Ultra-fast path: cached result is still valid (no frame navigation needed)
         if (cachedAsOfRowId != Long.MIN_VALUE && targetTimestamp < cachedNextRowTs) {
             return cachedAsOfRowId;
         }
@@ -254,7 +300,7 @@ public class HorizonJoinTimeFrameHelper {
                                 timeFrameCursor.recordAtRowIndex(record, nextRowIndex);
                                 final long nextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
                                 if (nextRowTs > targetTimestamp) {
-                                    final long result = TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
+                                    final long result = Rows.toRowID(timeFrame.getFrameIndex(), bookmarkedRowIndex);
                                     cachedAsOfRowId = result;
                                     cachedNextRowTs = nextRowTs;
                                     return result;
@@ -327,7 +373,6 @@ public class HorizonJoinTimeFrameHelper {
                 // Navigate through remaining frames to find one containing or before the target
                 while (timeFrameCursor.next()) {
                     final long frameEstimateHi = scaleTimestamp(timeFrame.getTimestampEstimateHi(), slaveTsScale);
-
                     if (frameEstimateHi <= targetTimestamp) {
                         // Frame is entirely before target, record as candidate
                         if (timeFrameCursor.open() > 0) {
@@ -366,7 +411,7 @@ public class HorizonJoinTimeFrameHelper {
                         if (bestRowIndex != Long.MIN_VALUE) {
                             bookmarkedFrameIndex = bestFrameIndex;
                             bookmarkedRowIndex = bestRowIndex;
-                            return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
+                            return Rows.toRowID(bestFrameIndex, bestRowIndex);
                         }
                         // Bookmark current frame so subsequent searches with larger timestamps can find it
                         bookmarkCurrentFrame(0);
@@ -377,7 +422,7 @@ public class HorizonJoinTimeFrameHelper {
                     if (bestRowIndex != Long.MIN_VALUE) {
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
-                        return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
+                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
                     }
                     // Bookmark current frame so subsequent searches with larger timestamps can find it
                     bookmarkCurrentFrame(0);
@@ -389,7 +434,7 @@ public class HorizonJoinTimeFrameHelper {
                     if (bestRowIndex != Long.MIN_VALUE) {
                         bookmarkedFrameIndex = bestFrameIndex;
                         bookmarkedRowIndex = bestRowIndex;
-                        return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
+                        return Rows.toRowID(bestFrameIndex, bestRowIndex);
                     }
                     return Long.MIN_VALUE;
                 }
@@ -398,19 +443,18 @@ public class HorizonJoinTimeFrameHelper {
 
         // Search within the current frame for the ASOF row
         bookmarkCurrentFrame(rowLo);
-        timeFrameCursor.recordAt(record, timeFrame.getFrameIndex(), rowLo);
+        timeFrameCursor.recordAt(record, timeFrame.getFrameIndex(), timeFrame.getRowLo());
 
         // Try linear scan first
         long scanResult = linearScanAsOf(targetTimestamp, rowLo);
         if (scanResult >= 0) {
-            bookmarkCurrentFrame(scanResult);
-            return TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), scanResult);
+            return bookmarkAndCache(scanResult);
         } else if (scanResult == Long.MIN_VALUE) {
             // All rows in scan range are > target, check if we have a previous best
             if (bestRowIndex != Long.MIN_VALUE) {
                 bookmarkedFrameIndex = bestFrameIndex;
                 bookmarkedRowIndex = bestRowIndex;
-                return TimeFrameCursor.toRowID(bestFrameIndex, bestRowIndex);
+                return Rows.toRowID(bestFrameIndex, bestRowIndex);
             }
             return Long.MIN_VALUE;
         }
@@ -419,16 +463,77 @@ public class HorizonJoinTimeFrameHelper {
         final long searchStart = -scanResult - 1;
         final long searchResult = binarySearchAsOf(targetTimestamp, searchStart);
         if (searchResult != Long.MIN_VALUE) {
-            bookmarkCurrentFrame(searchResult);
-            return TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), searchResult);
+            return bookmarkAndCache(searchResult);
         }
 
         // Binary search found no rows <= target from searchStart onward.
         // The linear scan confirmed all rows in [rowLo, searchStart) were <= target,
         // so the ASOF match is the last one: searchStart - 1.
-        final long lastLinearRow = searchStart - 1;
-        bookmarkCurrentFrame(lastLinearRow);
-        return TimeFrameCursor.toRowID(timeFrame.getFrameIndex(), lastLinearRow);
+        return bookmarkAndCache(searchStart - 1);
+    }
+
+    /**
+     * Keyed ASOF match with adaptive backward/forward scanning.
+     * <p>
+     * Manages position tracking and scan mode switching internally.
+     * Call {@link #toTop()} before processing a new frame to reset state.
+     *
+     * @param asOfRowId               the ASOF position (from {@link #findAsOfRow}), or Long.MIN_VALUE if none
+     * @param masterKeyRecord         master record containing the target key
+     * @param masterAsOfJoinMapSink   copier for master's join key columns
+     * @param slaveAsOfJoinMapSink    copier for slave's join key columns
+     * @param keyToRowIdMap           map to update with (key -> rowId) entries
+     * @param symbolTranslatingRecord nullable; when non-null, used to skip scan for non-existent slave symbols
+     * @return the rowId where the target key was found, or Long.MIN_VALUE if not found
+     */
+    public long findKeyedAsOfMatch(
+            long asOfRowId,
+            Record masterKeyRecord,
+            RecordSink masterAsOfJoinMapSink,
+            RecordSink slaveAsOfJoinMapSink,
+            Map keyToRowIdMap,
+            @Nullable SymbolTranslatingRecord symbolTranslatingRecord
+    ) {
+        if (asOfRowId == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+
+        if (asOfRowId != prevAsOfRowId) {
+            if (!isForwardScanMode) {
+                long bwdScanCost = backwardScanRows - bwdScanRowsAtPositionStart;
+                if (prevAsOfRowId != Long.MIN_VALUE) {
+                    long gap = asOfRowId - prevAsOfRowId;
+                    if (shouldSwitchToForwardScan(
+                            bwdScanCost,
+                            gap,
+                            bwdScanMinGap,
+                            bwdScanSwitchFactor,
+                            bwdScanAbsoluteThreshold
+                    )) {
+                        isForwardScanMode = true;
+                        initForwardWatermark(prevAsOfRowId);
+                    }
+                }
+                if (!isForwardScanMode) {
+                    keyToRowIdMap.clear();
+                    resetBackwardWatermark();
+                    bwdScanRowsAtPositionStart = backwardScanRows;
+                }
+            }
+            if (isForwardScanMode) {
+                forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, keyToRowIdMap);
+            }
+            prevAsOfRowId = asOfRowId;
+        }
+
+        return backwardScanForKeyMatch(
+                asOfRowId,
+                masterKeyRecord,
+                masterAsOfJoinMapSink,
+                slaveAsOfJoinMapSink,
+                keyToRowIdMap,
+                symbolTranslatingRecord
+        );
     }
 
     /**
@@ -485,8 +590,8 @@ public class HorizonJoinTimeFrameHelper {
             startRowIndex = timeFrame.getRowLo();
         } else {
             // Start from just after forward watermark
-            startFrameIndex = TimeFrameCursor.toPartitionIndex(forwardWatermark);
-            startRowIndex = TimeFrameCursor.toLocalRowID(forwardWatermark) + 1;
+            startFrameIndex = Rows.toPartitionIndex(forwardWatermark);
+            startRowIndex = Rows.toLocalRowID(forwardWatermark) + 1;
 
             timeFrameCursor.jumpTo(startFrameIndex);
             if (timeFrameCursor.open() == 0 || startRowIndex >= timeFrame.getRowHi()) {
@@ -511,7 +616,7 @@ public class HorizonJoinTimeFrameHelper {
         timeFrameCursor.recordAt(record, frameIndex, rowIndex);
 
         while (true) {
-            long currentRowId = TimeFrameCursor.toRowID(frameIndex, rowIndex);
+            long currentRowId = Rows.toRowID(frameIndex, rowIndex);
 
             // Check if we've reached the target
             if (currentRowId > targetRowId) {
@@ -555,6 +660,10 @@ public class HorizonJoinTimeFrameHelper {
         }
     }
 
+    public long getBackwardScanRows() {
+        return backwardScanRows;
+    }
+
     /**
      * Returns the current forward watermark (highest rowId we've forward-scanned).
      * Returns Long.MIN_VALUE if no forward scanning has been done yet.
@@ -591,23 +700,38 @@ public class HorizonJoinTimeFrameHelper {
     }
 
     /**
+     * Reset the backward watermark so the next backward scan starts from scratch.
+     * Called when the ASOF position changes and cached key→rowId entries are no longer valid.
+     */
+    public void resetBackwardWatermark() {
+        backwardWatermark = Long.MAX_VALUE;
+    }
+
+    /**
      * Reset state for processing a new master page frame.
      * <p>
-     * Resets forward/backward watermarks (used for keyed ASOF caching within a frame),
-     * but preserves the bookmark position (used by findAsOfRow) to speed up ASOF lookups
-     * when timestamps increase across frames. findAsOfRow() handles the case where horizon
-     * timestamps decrease between frames by scanning backward from the bookmark.
+     * Resets all state including bookmarks. Bookmarks are reset because workers process
+     * master page frames in non-deterministic order (dispatched via ring queue). A stale
+     * bookmark from a previously processed frame could point to a slave position far from
+     * the current target, causing findAsOfRow() to linearly scan through O(N) slave frames
+     * instead of using seekEstimate's O(log N) binary search. Resetting bookmarks forces
+     * seekEstimate on the first findAsOfRow() call per frame, which is fast and eliminates
+     * the jitter caused by out-of-order frame processing.
      */
     public void toTop() {
         if (timeFrameCursor != null) {
             timeFrameCursor.toTop();
         }
-        // Note: bookmarkedFrameIndex/bookmarkedRowIndex are intentionally NOT reset.
-        // They help findAsOfRow() start closer to the target when processing subsequent frames.
+        bookmarkedFrameIndex = -1;
+        bookmarkedRowIndex = Long.MIN_VALUE;
+        bwdScanRowsAtPositionStart = 0;
         forwardWatermark = Long.MIN_VALUE;
         backwardWatermark = Long.MAX_VALUE;
         cachedAsOfRowId = Long.MIN_VALUE;
         cachedNextRowTs = Long.MIN_VALUE;
+        backwardScanRows = 0;
+        isForwardScanMode = false;
+        prevAsOfRowId = Long.MIN_VALUE;
     }
 
     /**
@@ -642,6 +766,22 @@ public class HorizonJoinTimeFrameHelper {
             }
         }
 
+        return result;
+    }
+
+    /**
+     * Bookmark the result row and populate the ASOF cache for the ultra-fast path.
+     * Reads the next row's timestamp to determine how long the cached result stays valid.
+     */
+    private long bookmarkAndCache(long resultRowIndex) {
+        bookmarkCurrentFrame(resultRowIndex);
+        final long result = Rows.toRowID(timeFrame.getFrameIndex(), resultRowIndex);
+        final long nextRow = resultRowIndex + 1;
+        if (nextRow < timeFrame.getRowHi()) {
+            timeFrameCursor.recordAtRowIndex(record, nextRow);
+            cachedAsOfRowId = result;
+            cachedNextRowTs = scaleTimestamp(record.getTimestamp(timestampIndex), slaveTsScale);
+        }
         return result;
     }
 

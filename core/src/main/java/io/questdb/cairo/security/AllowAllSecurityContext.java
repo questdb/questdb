@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -79,6 +79,14 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableConvertPartitionToNative(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableConvertPartitionToParquet(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeAlterTableDedupDisable(TableToken tableToken) {
     }
 
@@ -108,6 +116,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeAlterTableSetParam(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeAlterTableSetParquetSettings(TableToken tableToken) {
     }
 
     @Override

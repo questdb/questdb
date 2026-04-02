@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -110,6 +110,10 @@ public final class Files {
         }
         // failed to close
         return -1;
+    }
+
+    public static int closeDetached(int osFd) {
+        return close0(osFd);
     }
 
     public static int copy(LPSZ from, LPSZ to) {

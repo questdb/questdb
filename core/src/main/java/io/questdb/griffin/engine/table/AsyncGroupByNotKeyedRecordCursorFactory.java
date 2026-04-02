@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -454,6 +454,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         Misc.free(base);
         Misc.free(cursor);
         Misc.free(frameSequence);
-        Misc.freeObjListAndClear(groupByFunctions);
+        Misc.freeObjList(groupByFunctions);
     }
 }

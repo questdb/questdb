@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -253,15 +253,6 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             }
         }
         return null;
-    }
-
-    @Override
-    public void toPartition(int targetPartitionIndex) {
-        partitionLo = targetPartitionIndex;
-        partitionHi = targetPartitionIndex + 1;
-        intervalsLo = initialIntervalsLo;
-        intervalsHi = initialIntervalsHi;
-        partitionLimit = 0;
     }
 
     @Override

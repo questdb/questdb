@@ -5,7 +5,7 @@
 
 #![allow(clippy::should_implement_trait)]
 
-use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::decoders::plain::BOOLEAN_BITMAP_LUT;
 use crate::parquet_read::ColumnChunkBuffers;
@@ -19,6 +19,7 @@ pub struct RepeatN {
     pub remaining: usize,
 }
 
+#[allow(clippy::should_implement_trait)]
 impl RepeatN {
     #[inline]
     pub fn new(value: u32, count: usize) -> Self {
@@ -57,6 +58,7 @@ pub enum RleIterator<'a> {
     },
 }
 
+#[allow(clippy::should_implement_trait)]
 impl RleIterator<'_> {
     #[inline(always)]
     #[allow(clippy::should_implement_trait)]
@@ -127,7 +129,6 @@ pub struct RleBooleanDecoder<'a> {
     buffers_ptr: *mut u8,
     buffers_offset: usize,
     null_value: u8,
-    error: ParquetResult<()>,
 }
 
 impl<'a> RleBooleanDecoder<'a> {
@@ -159,19 +160,11 @@ impl<'a> RleBooleanDecoder<'a> {
             buffers,
             buffers_offset,
             null_value,
-            error: Ok(()),
         })
     }
 
     #[inline]
-    fn set_not_enough_values_error(&mut self) {
-        if self.error.is_ok() {
-            self.error = Err(fmt_err!(Layout, "not enough RLE boolean values"));
-        }
-    }
-
-    #[inline]
-    fn load_next_run(&mut self) -> bool {
+    fn load_next_run(&mut self) -> ParquetResult<()> {
         match self.decoder.next() {
             Some(Ok(HybridRun::Bitpacked(data))) => {
                 // Each byte carries 8 booleans (LSB-first).
@@ -181,32 +174,34 @@ impl<'a> RleBooleanDecoder<'a> {
                     bit_offset: 0,
                     remaining: data.len() * 8,
                 };
-                true
+                Ok(())
             }
             Some(Ok(HybridRun::Rle(data, run_len))) => {
                 let value = data.first().copied().unwrap_or(0) & 1;
                 self.run = RleBooleanRun::Rle { value, remaining: run_len };
-                true
+                Ok(())
             }
             Some(Err(e)) => {
-                if self.error.is_ok() {
-                    self.error = Err(e.into());
-                }
                 self.run = RleBooleanRun::None;
-                false
+                Err(ParquetError::from(e))
             }
             None => {
-                self.set_not_enough_values_error();
                 self.run = RleBooleanRun::None;
-                false
+                Err(fmt_err!(
+                    Layout,
+                    "boolean RLE stream ended before all values were decoded"
+                ))
             }
         }
     }
 
     #[inline]
-    fn ensure_run(&mut self) -> bool {
+    fn ensure_run(&mut self) -> ParquetResult<()> {
         // Reuse current run while it has values; otherwise pull the next run.
-        self.run.remaining() > 0 || self.load_next_run()
+        if self.run.remaining() == 0 {
+            self.load_next_run()?;
+        }
+        Ok(())
     }
 
     #[inline]
@@ -279,23 +274,15 @@ impl<'a> RleBooleanDecoder<'a> {
         *bit_offset = (total & 7) as u8;
     }
 
-    fn decode_values_into(&mut self, mut out: *mut u8, mut count: usize) {
+    fn decode_values_into(&mut self, mut out: *mut u8, mut count: usize) -> ParquetResult<()> {
         while count > 0 {
             if self.remaining_values == 0 {
-                self.set_not_enough_values_error();
-                // Keep output deterministic after reserve() even on malformed input.
-                unsafe {
-                    ptr::write_bytes(out, 0, count);
-                }
-                return;
+                return Err(fmt_err!(
+                    Layout,
+                    "boolean RLE stream ended before all values were decoded"
+                ));
             }
-
-            if !self.ensure_run() {
-                unsafe {
-                    ptr::write_bytes(out, 0, count);
-                }
-                return;
-            }
+            self.ensure_run()?;
 
             let run_available = self.run.remaining().min(self.remaining_values);
             if run_available == 0 {
@@ -324,18 +311,18 @@ impl<'a> RleBooleanDecoder<'a> {
             count -= take;
             out = unsafe { out.add(take) };
         }
+        Ok(())
     }
 
-    fn skip_values(&mut self, mut count: usize) {
+    fn skip_values(&mut self, mut count: usize) -> ParquetResult<()> {
         while count > 0 {
             if self.remaining_values == 0 {
-                self.set_not_enough_values_error();
-                return;
+                return Err(fmt_err!(
+                    Layout,
+                    "boolean RLE stream ended before all values were skipped"
+                ));
             }
-
-            if !self.ensure_run() {
-                return;
-            }
+            self.ensure_run()?;
 
             let run_available = self.run.remaining().min(self.remaining_values);
             if run_available == 0 {
@@ -360,6 +347,7 @@ impl<'a> RleBooleanDecoder<'a> {
             self.remaining_values -= take;
             count -= take;
         }
+        Ok(())
     }
 }
 
@@ -385,7 +373,7 @@ impl Pushable for RleBooleanDecoder<'_> {
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         if count > 0 {
             let out = unsafe { self.buffers_ptr.add(self.buffers_offset) };
-            self.decode_values_into(out, count);
+            self.decode_values_into(out, count)?;
             self.buffers_offset += count;
         }
         Ok(())
@@ -421,13 +409,9 @@ impl Pushable for RleBooleanDecoder<'_> {
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
         if count > 0 {
-            self.skip_values(count);
+            self.skip_values(count)?;
         }
         Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.error.clone()
     }
 }
 
@@ -476,17 +460,13 @@ mod tests {
             true, false, true, true, false, false, true, false, true, true,
         ];
         let encoded = encode_rle_bools(&values);
-        let result = {
-            let mut decoder =
-                RleBooleanDecoder::try_new(&encoded, values.len(), &mut buffers, 0).unwrap();
-            decoder.reserve(values.len()).unwrap();
-            decoder.push_slice(values.len()).unwrap();
-            decoder.result()
-        };
+        let mut decoder =
+            RleBooleanDecoder::try_new(&encoded, values.len(), &mut buffers, 0).unwrap();
+        decoder.reserve(values.len()).unwrap();
+        decoder.push_slice(values.len()).unwrap();
 
         let expected: Vec<u8> = values.iter().map(|&v| v as u8).collect();
         assert_eq!(&buffers.data_vec[..], expected.as_slice());
-        assert!(result.is_ok());
     }
 
     #[test]
@@ -497,20 +477,16 @@ mod tests {
 
         let values = [true, false, true, true, false, true];
         let encoded = encode_rle_bools(&values);
-        let result = {
-            let mut decoder =
-                RleBooleanDecoder::try_new(&encoded, values.len(), &mut buffers, 9).unwrap();
-            decoder.reserve(6).unwrap();
-            decoder.skip(1).unwrap();
-            decoder.push_slice(3).unwrap();
-            decoder.push_null().unwrap();
-            decoder.push().unwrap();
-            decoder.push_nulls(1).unwrap();
-            decoder.result()
-        };
+        let mut decoder =
+            RleBooleanDecoder::try_new(&encoded, values.len(), &mut buffers, 9).unwrap();
+        decoder.reserve(6).unwrap();
+        decoder.skip(1).unwrap();
+        decoder.push_slice(3).unwrap();
+        decoder.push_null().unwrap();
+        decoder.push().unwrap();
+        decoder.push_nulls(1).unwrap();
 
         assert_eq!(&buffers.data_vec[..], &[0, 1, 1, 9, 0, 9]);
-        assert!(result.is_ok());
     }
 
     #[test]
@@ -521,16 +497,12 @@ mod tests {
 
         let values = [true, false, true];
         let encoded = encode_rle_bools(&values);
-        let result = {
-            let mut decoder = RleBooleanDecoder::try_new(&encoded, 3, &mut buffers, 0).unwrap();
-            decoder.reserve(4).unwrap();
-            decoder.push_slice(2).unwrap();
-            decoder.push_slice(2).unwrap();
-            decoder.result()
-        };
+        let mut decoder = RleBooleanDecoder::try_new(&encoded, 3, &mut buffers, 0).unwrap();
+        decoder.reserve(4).unwrap();
+        decoder.push_slice(2).unwrap();
+        decoder.push_slice(2).unwrap_err(); // only 1 value left
 
-        assert_eq!(&buffers.data_vec[..], &[1, 0, 1, 0]);
-        assert!(result.is_err());
+        assert_eq!(&buffers.data_vec[..3], &[1, 0, 1]);
     }
 
     #[test]

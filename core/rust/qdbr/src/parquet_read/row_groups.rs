@@ -38,6 +38,7 @@ pub struct ParquetDecoder {
     pub metadata: FileMetaData,
     pub qdb_meta: Option<QdbMeta>,
     pub row_group_sizes_acc: AcVec<usize>,
+    pub unused_bytes: u64,
 }
 
 /// The local positional index as it is stored in parquet.

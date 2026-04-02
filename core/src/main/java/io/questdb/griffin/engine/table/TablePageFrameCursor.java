@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -35,6 +35,10 @@ import io.questdb.griffin.SqlExecutionContext;
  */
 public interface TablePageFrameCursor extends PageFrameCursor {
 
+    default boolean hasIntervalFilter() {
+        return false;
+    }
+
     TableReader getTableReader();
 
     @Override
@@ -42,7 +46,7 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         return false;
     }
 
-    TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) throws SqlException;
+    TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException;
 
     /**
      * Positions the cursor at the given partition. The next call to

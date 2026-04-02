@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -43,6 +43,16 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
      * @return the table reader
      */
     TableReader getTableReader();
+
+    /**
+     * Returns true if this cursor applies interval filtering to partitions.
+     * When true, the cursor may produce narrowed row ranges per partition
+     * and skip partitions entirely, making page frame counts unpredictable
+     * from metadata alone.
+     */
+    default boolean hasIntervalFilter() {
+        return false;
+    }
 
     /**
      * @return the next element in the partition frame

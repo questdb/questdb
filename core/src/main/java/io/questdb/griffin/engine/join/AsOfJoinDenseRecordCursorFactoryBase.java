@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -42,7 +42,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-
+import io.questdb.std.Rows;
 
 /**
  * Dense ASOF JOIN cursor is an improvement over the Light cursor for the case where
@@ -203,11 +203,9 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             }
 
             if (!slaveCursorReadyForForwardScan) {
-                if (!forwardScanExhausted) {
-                    slaveTimeFrameCursor.jumpTo(TimeFrameCursor.toPartitionIndex(forwardRowId));
-                    slaveTimeFrameCursor.open();
-                    slaveTimeFrameCursor.recordAt(slaveRecB, forwardRowId);
-                }
+                slaveTimeFrameCursor.jumpTo(Rows.toPartitionIndex(forwardRowId));
+                slaveTimeFrameCursor.open();
+                slaveTimeFrameCursor.recordAt(slaveRecB, forwardRowId);
                 slaveCursorReadyForForwardScan = true;
             }
 
@@ -239,9 +237,9 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
 
             // Resume the backward scan
             slaveCursorReadyForForwardScan = false;
-            slaveTimeFrameCursor.jumpTo(TimeFrameCursor.toPartitionIndex(backwardRowId));
+            slaveTimeFrameCursor.jumpTo(Rows.toPartitionIndex(backwardRowId));
             slaveTimeFrameCursor.open();
-            long frameRowLo = TimeFrameCursor.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowLo());
+            long frameRowLo = Rows.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowLo());
             while (true) {
                 slaveTimeFrameCursor.recordAt(slaveRecB, backwardRowId);
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
@@ -263,15 +261,14 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 if (backwardRowId > frameRowLo) {
                     backwardRowId--;
                 } else {
-                    if (slaveTimeFrameCursor.prev()) {
-                        slaveTimeFrameCursor.open();
-                        int frameIndex = slaveTimeFrame.getFrameIndex();
-                        frameRowLo = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
-                        backwardRowId = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
-                    } else {
+                    if (!slaveTimeFrameCursor.prev()) {
                         backwardScanExhausted = true;
                         break;
                     }
+                    slaveTimeFrameCursor.open();
+                    int frameIndex = slaveTimeFrame.getFrameIndex();
+                    frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
+                    backwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
                 }
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
@@ -306,7 +303,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         private void scanForward(long masterTimestamp, long minSlaveTimestamp) {
             MapValue value;
             MapKey key;
-            long frameRowHi = TimeFrameCursor.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowHi());
+            long frameRowHi = Rows.toRowID(slaveTimeFrame.getFrameIndex(), slaveTimeFrame.getRowHi());
             while (true) {
                 slaveTimeFrameCursor.recordAt(slaveRecB, forwardRowId);
                 long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
@@ -327,8 +324,8 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                     }
                     slaveTimeFrameCursor.open();
                     int frameIndex = slaveTimeFrame.getFrameIndex();
-                    frameRowHi = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowHi());
-                    forwardRowId = TimeFrameCursor.toRowID(frameIndex, slaveTimeFrame.getRowLo());
+                    frameRowHi = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
+                    forwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                 }
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }

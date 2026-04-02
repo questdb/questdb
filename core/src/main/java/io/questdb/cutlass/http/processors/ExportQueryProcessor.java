@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -700,7 +700,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         null,
                         state.getExportModel().getBloomFilterColumns(),
                         0,
-                        state.getExportModel().getBloomFilterFpp()
+                        state.getExportModel().getBloomFilterFpp(),
+                        sqlExecutionContext.getBindVariableService()
                 );
                 exporter.of(state.task);
                 exporter.setExportMode(exportMode);
@@ -1175,7 +1176,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.columnValueFullySent = true;
         } catch (Throwable e) {
             // we have to disambiguate here if this is the first attempt to send the value, which failed,
-            // and we have any partial value we can send to the clint, or our state did not bookmark anything?
+            // and we have any partial value we can send to the client, or our state did not bookmark anything?
             state.columnValueFullySent = state.arrayState.isNothingWritten();
             state.arrayState.reset(arrayView);
             throw e;

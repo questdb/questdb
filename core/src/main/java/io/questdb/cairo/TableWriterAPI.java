@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,10 +34,6 @@ import java.io.Closeable;
 
 public interface TableWriterAPI extends Closeable {
 
-    default void addColumn(@NotNull CharSequence columnName, int columnType) {
-        addColumn(columnName, columnType, null);
-    }
-
     void addColumn(@NotNull CharSequence columnName, int columnType, @Nullable SecurityContext securityContext);
 
     /**
@@ -61,14 +57,15 @@ public interface TableWriterAPI extends Closeable {
      * still have committed transaction.
      *
      * @param columnName              of column either ASCII or UTF8 encoded.
+     * @param columnType              {@link ColumnType}
      * @param symbolCapacity          when column columnType is SYMBOL this parameter specifies approximate capacity for symbol map.
      *                                It should be equal to number of unique symbol values stored in the table and getting this
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
-     * @param columnType              {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            unused, should be false
+     * @param securityContext         security context of the caller
      */
     void addColumn(
             CharSequence columnName,
@@ -77,8 +74,8 @@ public interface TableWriterAPI extends Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
-    );
+            boolean isSequential,
+            @Nullable SecurityContext securityContext);
 
     long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
 

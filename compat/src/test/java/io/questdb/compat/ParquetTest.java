@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -280,7 +280,8 @@ public class ParquetTest extends AbstractTest {
                         ParquetVersion.PARQUET_VERSION_V2,
                         bloomFilterIndexes.getAddress(),
                         (int) bloomFilterIndexes.size(),
-                        0.01
+                        0.01,
+                        0.0
                 );
                 Configuration configuration = new Configuration();
                 final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
@@ -555,7 +556,8 @@ public class ParquetTest extends AbstractTest {
                         ParquetVersion.PARQUET_VERSION_V2,
                         bloomFilterIndexes.getAddress(),
                         (int) bloomFilterIndexes.size(),
-                        0.01
+                        0.01,
+                        0.0
                 );
 
                 Configuration configuration = new Configuration();
@@ -650,7 +652,8 @@ public class ParquetTest extends AbstractTest {
                         ParquetVersion.PARQUET_VERSION_V1,
                         bloomFilterIndexes.getAddress(),
                         (int) bloomFilterIndexes.size(),
-                        0.01
+                        0.01,
+                        0.0
                 );
 
                 Configuration configuration = new Configuration();
@@ -736,7 +739,8 @@ public class ParquetTest extends AbstractTest {
                         ParquetVersion.PARQUET_VERSION_V1,
                         bloomFilterIndexes.getAddress(),
                         (int) bloomFilterIndexes.size(),
-                        0.01
+                        0.01,
+                        0.0
                 );
 
                 Configuration configuration = new Configuration();
@@ -1057,7 +1061,8 @@ public class ParquetTest extends AbstractTest {
                         false,
                         10,
                         DATA_PAGE_SIZE,
-                        parquetVersion
+                        parquetVersion,
+                        0.0
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
@@ -1155,7 +1160,8 @@ public class ParquetTest extends AbstractTest {
                         false,
                         10,
                         DATA_PAGE_SIZE,
-                        parquetVersion
+                        parquetVersion,
+                        0.0
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
@@ -1363,7 +1369,8 @@ public class ParquetTest extends AbstractTest {
                         rawArrayEncoding,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,
-                        ParquetVersion.PARQUET_VERSION_V1
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();

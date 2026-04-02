@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -127,7 +127,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
-            @SuppressWarnings("resource") final ParquetBuffers parquetBuffers = nextFreeBufferAndDecode(frameIndex, usageBit);
+            final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, usageBit);
+            if (!parquetBuffers.cacheHit) {
+                final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+                final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+                final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+                parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            }
+
             record.init(
                     frameIndex,
                     format,
@@ -166,7 +173,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.currentRowGroupBuffer = null;
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
-            copyFrameBufferToFrameMemory(frameIndex);
+            final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
+            if (!parquetBuffers.cacheHit) {
+                final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+                final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+                final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+                parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            }
+
+            frameMemory.currentRowGroupBuffer = parquetBuffers;
+            frameMemory.pageAddresses = parquetBuffers.pageAddresses;
+            frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
+            frameMemory.pageSizes = parquetBuffers.pageSizes;
+            frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
+            frameMemory.columnOffset = 0; // parquet buffers use 0 offset
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -190,7 +210,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.currentRowGroupBuffer = null;
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex, columnIndexes, true);
-            copyFrameBufferToFrameMemory(frameIndex);
+            final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
+            if (!parquetBuffers.cacheHit) {
+                final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+                final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+                final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+                parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+            }
+
+            frameMemory.currentRowGroupBuffer = parquetBuffers;
+            frameMemory.pageAddresses = parquetBuffers.pageAddresses;
+            frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
+            frameMemory.pageSizes = parquetBuffers.pageSizes;
+            frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
+            frameMemory.columnOffset = 0; // parquet buffers use 0 offset
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -216,43 +249,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         cachedParquetBuffers.clear();
         Misc.freeObjListAndKeepObjects(freeParquetBuffers);
         frameMemory.clear();
-    }
-
-    /**
-     * Switches the address cache for a different partition.
-     * Invalidates the cached frame memory and Parquet buffer cache
-     * because partition-local frame indices (0-based) can collide
-     * across partitions, and cached buffers from a previous partition
-     * must not be reused.
-     */
-    public void switchAddressCache(PageFrameAddressCache addressCache) {
-        this.addressCache = addressCache;
-        frameMemory.clear();
-        // Move cached parquet buffers back to the free pool so they
-        // get re-decoded on the next navigateTo() call.
-        freeParquetBuffers.addAll(cachedParquetBuffers);
-        cachedParquetBuffers.clear();
-    }
-
-    private void copyFrameBufferToFrameMemory(int frameIndex) {
-        final ParquetBuffers parquetBuffers = nextFreeBufferAndDecode(frameIndex, FRAME_MEMORY_MASK);
-        frameMemory.currentRowGroupBuffer = parquetBuffers;
-        frameMemory.pageAddresses = parquetBuffers.pageAddresses;
-        frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
-        frameMemory.pageSizes = parquetBuffers.pageSizes;
-        frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
-        frameMemory.columnOffset = 0; // parquet buffers use 0 offset
-    }
-
-    private @NotNull ParquetBuffers nextFreeBufferAndDecode(int frameIndex, byte frameMemoryMask) {
-        final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, frameMemoryMask);
-        if (!parquetBuffers.cacheHit) {
-            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-            parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
-        }
-        return parquetBuffers;
     }
 
     // We don't use additional data structures to speed up the lookups

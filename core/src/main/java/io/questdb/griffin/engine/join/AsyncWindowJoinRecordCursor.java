@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -63,7 +63,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     private final PageFrameMemoryRecord masterRecord;
     private final Record record;
     private final RecordMetadata slaveMetadata;
-    private final ConcurrentTimeFrameState slaveTimeFrameState = new ConcurrentTimeFrameState();
+    private final ConcurrentTimeFrameState slaveTimeFrameState;
     private boolean allFramesActive;
     private long cursor = -1;
     private SqlExecutionContext executionContext;
@@ -89,6 +89,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     ) {
         try {
             this.isOpen = true;
+            this.slaveTimeFrameState = new ConcurrentTimeFrameState();
             this.groupByFunctions = groupByFunctions;
             this.slaveMetadata = slaveMetadata;
             this.columnSplit = columnSplit;
@@ -217,7 +218,10 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     slaveFrameCursor,
                     slaveMetadata,
                     slaveFrameCursor.getColumnIndexes(),
-                    slaveFrameCursor.isExternal()
+                    slaveFrameCursor.isExternal(),
+                    executionContext.getPageFrameMinRows(),
+                    executionContext.getPageFrameMaxRows(),
+                    executionContext.getSharedQueryWorkerCount()
             );
             try {
                 masterFrameSequence.getAtom().initTimeFrameCursors(

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -49,7 +50,7 @@ public class TableWriterInteractionTest extends AbstractCairoTest {
                 // this used to caused dense indexer list to be freed
                 r.cancel();
 
-                w.addColumn("y", ColumnType.STRING);
+                w.addColumn("y", ColumnType.STRING, AllowAllSecurityContext.INSTANCE);
 
                 r = w.newRow(ts);
                 r.putSym(1, "ELLO");

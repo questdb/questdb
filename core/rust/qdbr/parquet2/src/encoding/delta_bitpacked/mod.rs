@@ -3,6 +3,7 @@ mod encoder;
 
 pub use decoder::Decoder;
 pub use encoder::encode;
+pub use encoder::encode_i32;
 
 #[cfg(test)]
 mod tests {

@@ -57,7 +57,7 @@ Launch the following agents in parallel. Each agent receives the full PR diff an
 
 **Agent 7 — PR metadata & conventions:** Title format, description quality, commit messages, labels, SQL style in tests.
 
-**Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`, `expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release mode, `slice::from_raw_parts` with invalid inputs. In mission-critical software a panic in Rust code called via JNI/FFI will abort the entire JVM process with no recovery. Every fallible operation must use `Result`/`Option` with proper error propagation. Flag every potential panic site.
+**Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`, `expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release mode, `slice::from_raw_parts` with invalid inputs. In mission-critical software a panic in Rust code called via JNI/FFI will abort the entire JVM process with no recovery. Every fallible operation must use `Result`/`Option` with proper error propagation. Flag every potential panic site that might be triggered by external/corrupt inputs.
 
 Combine all agent findings into a single deduplicated **draft** report. Do NOT present this draft to the user yet — it goes straight into verification.
 
@@ -128,6 +128,13 @@ Review the diff for:
 - No DELETE statements (suggest DROP PARTITION or soft delete)
 - Tests use `assertMemoryLeak()`, `assertQueryNoLeakCheck()`, `execute()` for DDL
 - Single INSERT for multiple rows
+
+### Enterprise permissions & ACL (if PR introduces new SQL statements or ALTER operations)
+- New ALTER TABLE operations almost always require a new enterprise permission. If the PR adds a new ALTER statement (or any new SQL statement that modifies state), flag it if there is no corresponding `SecurityContext.authorize*()` call in the execution path.
+- New features in OSS should have an enterprise counterpart that wires up ACL. Check whether the PR introduces `authorize*` methods in `SecurityContext` and whether all enterprise `SecurityContext` implementations (`EntSecurityContextBase`, `AdminSecurityContext`, `AbstractReplicaSecurityContext`, and test mocks) are updated.
+- New permissions must be registered in `Permission.java` (constant, name maps, and included in `TABLE_PERMISSIONS`/`ALL_PERMISSIONS` as appropriate).
+- The `PermissionParser` must be able to parse GRANT/REVOKE for the new permission name — especially if the name contains SQL keywords like `ON`, `TO`, or `FROM` that could conflict with parser grammar.
+- Replica security contexts must deny new write operations (`deniedOnReplica()`).
 
 ### Test review
 - **Coverage gaps:** For every new or changed code path, verify a corresponding test exists. If not, flag it explicitly as "missing test for X".

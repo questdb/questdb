@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -266,7 +266,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
             }
             isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    decoder.metadata(), pushdownFilterConditions, filterList, filterValues);
+                    decoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList, filterValues
+            );
             if (isFilterListPrepared) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }

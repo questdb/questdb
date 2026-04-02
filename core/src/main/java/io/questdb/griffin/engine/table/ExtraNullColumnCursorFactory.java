@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -432,6 +432,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public boolean hasIntervalFilter() {
+            return baseCursor.hasIntervalFilter();
+        }
+
+        @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
         }
@@ -456,7 +461,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         // The base factory's getPageFrameCursor() handles partition-level initialization internally,
         // then we wrap the already-initialized result.
         @Override
-        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) {
+        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
             throw new UnsupportedOperationException();
         }
 

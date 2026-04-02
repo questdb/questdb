@@ -111,3 +111,73 @@ pub fn deserialize_metadata<R: Read>(reader: R, max_size: usize) -> Result<FileM
 
     FileMetaData::try_from_thrift(metadata)
 }
+
+/// Reads a [`FileMetaData`] and returns the raw Thrift-serialized footer bytes
+/// alongside the parsed metadata. The raw bytes can be used by
+/// [`FooterCache`](crate::write::footer_cache::FooterCache) for incremental
+/// footer serialization.
+///
+/// Returns `(metadata, raw_metadata_bytes, footer_size)` where `footer_size`
+/// is the total footer size in bytes (metadata + 8-byte trailer).
+pub fn read_metadata_with_footer_bytes<R: Read + Seek>(
+    reader: &mut R,
+    file_size: u64,
+) -> Result<(FileMetaData, Vec<u8>, u64)> {
+    let actual_file_size = reader.seek(SeekFrom::End(0))?;
+    if file_size > actual_file_size {
+        return Err(Error::oos(
+            "Provided file_size is greater than the actual file size",
+        ));
+    }
+
+    if file_size < HEADER_SIZE + FOOTER_SIZE {
+        return Err(Error::oos(
+            "A parquet file must contain a header and footer with at least 12 bytes",
+        ));
+    }
+
+    let default_end_len = min(DEFAULT_FOOTER_READ_SIZE, file_size) as usize;
+    reader.seek(SeekFrom::Start(file_size - default_end_len as u64))?;
+
+    let mut buffer = Vec::with_capacity(default_end_len);
+    reader
+        .by_ref()
+        .take(default_end_len as u64)
+        .read_to_end(&mut buffer)?;
+
+    if buffer[default_end_len - 4..] != PARQUET_MAGIC {
+        return Err(Error::oos("The file must end with PAR1"));
+    }
+
+    let metadata_len = metadata_len(&buffer, default_end_len);
+    let metadata_len: u64 = metadata_len.try_into()?;
+
+    let footer_len = FOOTER_SIZE + metadata_len;
+    if footer_len > file_size {
+        return Err(Error::oos(
+            "The footer size must be smaller or equal to the file's size",
+        ));
+    }
+
+    if (footer_len as usize) < buffer.len() {
+        // The whole footer fits in the speculative read. Deserialize from the
+        // buffer slice, then drain the prefix so buffer holds only the raw
+        // metadata bytes (no trailing 8-byte length+magic).
+        let remaining = buffer.len() - footer_len as usize;
+        let max_size = footer_len as usize * 2 + 1024;
+        let metadata = deserialize_metadata(&buffer[remaining..], max_size)?;
+        buffer.drain(..remaining);
+        buffer.truncate(metadata_len as usize);
+        Ok((metadata, buffer, footer_len))
+    } else {
+        // Need a second read for the full footer.
+        reader.seek(SeekFrom::Start(file_size - footer_len))?;
+        buffer.clear();
+        buffer.try_reserve(footer_len as usize)?;
+        reader.take(footer_len).read_to_end(&mut buffer)?;
+        let max_size = buffer.len() * 2 + 1024;
+        let metadata = deserialize_metadata(&buffer[..], max_size)?;
+        buffer.truncate(metadata_len as usize);
+        Ok((metadata, buffer, footer_len))
+    }
+}

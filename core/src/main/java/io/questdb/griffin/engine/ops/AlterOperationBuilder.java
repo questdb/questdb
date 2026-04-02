@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -297,6 +297,16 @@ public class AlterOperationBuilder implements Mutable {
         this.tableToken = tableToken;
         this.extraInfo.add(maxUncommittedRows);
         this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofSetParquetEncoding(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int parquetEncodingConfig) {
+        this.command = SET_PARQUET_ENCODING;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        this.extraStrInfo.add(columnName);
+        this.extraInfo.add(parquetEncodingConfig);
         return this;
     }
 
