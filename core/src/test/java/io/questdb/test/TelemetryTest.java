@@ -83,15 +83,15 @@ public class TelemetryTest extends AbstractCairoTest {
 
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
                 String expected = """
-                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                        id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                        enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                        version\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                        os\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                        package\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse
-                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
-                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
+                        id\tLONG256\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
+                        enabled\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
+                        version\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\tfalse
+                        os\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\tfalse
+                        package\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\tfalse
+                        instance_name\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\tfalse
+                        instance_type\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\tfalse
+                        instance_desc\tSYMBOL\tfalse\t256\ttrue\t128\t2\tfalse\tfalse\tfalse
                         """;
                 assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
                 expected = """
@@ -305,8 +305,8 @@ public class TelemetryTest extends AbstractCairoTest {
             String start = "ddl\n" +
                     "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
                     "\tcreated TIMESTAMP,\n" +
-                    "\tevent SHORT,\n" +
-                    "\torigin SHORT\n" +
+                    "\tevent SHORT NOT NULL,\n" +
+                    "\torigin SHORT NOT NULL\n" +
                     ") timestamp(created)";
             String middle = " PARTITION BY NONE";
             String end = " BYPASS WAL;\n";
@@ -331,8 +331,8 @@ public class TelemetryTest extends AbstractCairoTest {
             String start = "ddl\n" +
                     "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
                     "\tcreated TIMESTAMP,\n" +
-                    "\tevent SHORT,\n" +
-                    "\torigin SHORT\n" +
+                    "\tevent SHORT NOT NULL,\n" +
+                    "\torigin SHORT NOT NULL\n" +
                     ") timestamp(created)";
             String middle = " PARTITION BY DAY TTL 1 WEEK";
             String end = " BYPASS WAL;\n";
@@ -402,7 +402,7 @@ public class TelemetryTest extends AbstractCairoTest {
             String header = "ddl\n" +
                     "CREATE TABLE '" + tableName + "' ( \n" +
                     "\tcreated TIMESTAMP,\n" +
-                    "\tevent SHORT,\n" +
+                    "\tevent SHORT NOT NULL,\n" +
                     "\ttableId INT,\n" +
                     "\twalId INT,\n" +
                     "\tseqTxn LONG,\n" +

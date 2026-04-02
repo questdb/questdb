@@ -171,11 +171,11 @@ public class ConcurrentViewCycleTest extends AbstractViewTest {
             // Verify views are still queryable (no corrupted state)
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            k2\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            v\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse
+                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
+                            k2\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
+                            v\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             """,
                     "SHOW COLUMNS FROM " + VIEW1
             );
