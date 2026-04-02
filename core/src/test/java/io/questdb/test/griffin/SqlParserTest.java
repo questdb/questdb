@@ -6423,7 +6423,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) AS h",
                 81,
-                "'range' or 'list' expected",
+                "unexpected token [AS]",
                 modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
                 modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
         );
@@ -6466,6 +6466,75 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "SELECT avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (t.sym = p.sym) RANGE FROM 0s TO 3d STEP 1h AS h",
                 modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
                 modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinMultiNoRangeOrListOnAny() throws Exception {
+        assertSyntaxError(
+                "SELECT avg(b.bid) FROM trades AS t HORIZON JOIN bids AS b ON (t.sym = b.sym) HORIZON JOIN asks AS a ON (t.sym = a.sym)",
+                35,
+                "HORIZON JOIN requires offset configuration (RANGE or LIST)",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).timestamp(),
+                modelOf("bids").col("sym", ColumnType.SYMBOL).col("bid", ColumnType.DOUBLE).timestamp(),
+                modelOf("asks").col("sym", ColumnType.SYMBOL).col("ask", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinMultiNonHorizonAfterHorizon() throws Exception {
+        assertSyntaxError(
+                "SELECT avg(p.price) FROM trades AS t HORIZON JOIN bids AS b ON (t.sym = b.sym) ASOF JOIN prices AS p ON (t.sym = p.sym) LIST (0s) AS h",
+                79,
+                "only horizon joins can follow a horizon join",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).timestamp(),
+                modelOf("bids").col("sym", ColumnType.SYMBOL).col("bid", ColumnType.DOUBLE).timestamp(),
+                modelOf("prices").col("sym", ColumnType.SYMBOL).col("price", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinMultiThreeSlavesList() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(b.bid) avg_bid, avg(a.ask) avg_ask, avg(m.mid) avg_mid from (select [sym] from trades t timestamp (timestamp) horizon join select [bid, sym] from bids b timestamp (timestamp) on b.sym = t.sym horizon join select [ask, sym] from asks a timestamp (timestamp) on a.sym = t.sym horizon join select [mid, sym] from mids m timestamp (timestamp) on m.sym = t.sym cross join  h list (0s) as h) t",
+                "SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask, avg(m.mid) AS avg_mid FROM trades AS t HORIZON JOIN bids AS b ON (t.sym = b.sym) HORIZON JOIN asks AS a ON (t.sym = a.sym) HORIZON JOIN mids AS m ON (t.sym = m.sym) LIST (0s) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("bids").col("sym", ColumnType.SYMBOL).col("bid", ColumnType.DOUBLE).timestamp(),
+                modelOf("asks").col("sym", ColumnType.SYMBOL).col("ask", ColumnType.DOUBLE).timestamp(),
+                modelOf("mids").col("sym", ColumnType.SYMBOL).col("mid", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinMultiTwoSlavesList() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(b.bid) avg_bid, avg(a.ask) avg_ask from (select [sym] from trades t timestamp (timestamp) horizon join select [bid, sym] from bids b timestamp (timestamp) on b.sym = t.sym horizon join select [ask, sym] from asks a timestamp (timestamp) on a.sym = t.sym cross join  h list (-1s, 0s, 1s) as h) t",
+                "SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask FROM trades AS t HORIZON JOIN bids AS b ON (t.sym = b.sym) HORIZON JOIN asks AS a ON (t.sym = a.sym) LIST (-1s, 0s, 1s) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("bids").col("sym", ColumnType.SYMBOL).col("bid", ColumnType.DOUBLE).timestamp(),
+                modelOf("asks").col("sym", ColumnType.SYMBOL).col("ask", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinMultiTwoSlavesListNotKeyed() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(b.bid) avg_bid, avg(a.ask) avg_ask from (trades t timestamp (timestamp) horizon join select [bid] from bids b timestamp (timestamp) horizon join select [ask] from asks a timestamp (timestamp) cross join  h list (0s) as h) t",
+                "SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask FROM trades AS t HORIZON JOIN bids AS b HORIZON JOIN asks AS a LIST (0s) AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("bids").col("bid", ColumnType.DOUBLE).timestamp(),
+                modelOf("asks").col("ask", ColumnType.DOUBLE).timestamp()
+        );
+    }
+
+    @Test
+    public void testHorizonJoinMultiTwoSlavesRange() throws SqlException {
+        assertQuery(
+                "select-horizon-join avg(b.bid) avg_bid, avg(a.ask) avg_ask from (select [sym] from trades t timestamp (timestamp) horizon join select [bid, sym] from bids b timestamp (timestamp) on b.sym = t.sym horizon join select [ask, sym] from asks a timestamp (timestamp) on a.sym = t.sym cross join  h range from -1s to 1s step 1s as h) t",
+                "SELECT avg(b.bid) AS avg_bid, avg(a.ask) AS avg_ask FROM trades AS t HORIZON JOIN bids AS b ON (t.sym = b.sym) HORIZON JOIN asks AS a ON (t.sym = a.sym) RANGE FROM -1s TO 1s STEP 1s AS h",
+                modelOf("trades").col("sym", ColumnType.SYMBOL).col("qty", ColumnType.DOUBLE).timestamp(),
+                modelOf("bids").col("sym", ColumnType.SYMBOL).col("bid", ColumnType.DOUBLE).timestamp(),
+                modelOf("asks").col("sym", ColumnType.SYMBOL).col("ask", ColumnType.DOUBLE).timestamp()
         );
     }
 

@@ -29,7 +29,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
@@ -60,11 +59,9 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -88,7 +85,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
     private final JoinRecordMetadata horizonJoinMetadata;
     private final RecordCursorFactory masterFactory;
     // Pre-computed offset values (in microseconds)
-    private final LongList offsets;
+    private final long[] offsets;
     private final ObjList<Function> recordFunctions;
     private final RecordCursorFactory slaveFactory;
     private final int workerCount;
@@ -102,7 +99,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
@@ -114,15 +111,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
-            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
-            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
-            @Transient @Nullable BitSet asOfWriteSymbolAsString,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
-            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
-            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -168,15 +156,6 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     asOfJoinKeyTypes,
                     masterAsOfJoinMapSinkClass,
                     slaveAsOfJoinMapSinkClass,
-                    masterAsOfJoinColumnTypes,
-                    masterAsOfJoinColumnFilter,
-                    slaveAsOfJoinColumnTypes,
-                    slaveAsOfJoinColumnFilter,
-                    asOfWriteSymbolAsString,
-                    asOfWriteStringAsVarcharMaster,
-                    asOfWriteStringAsVarcharSlave,
-                    writeTimestampAsNanosMaster,
-                    writeTimestampAsNanosSlave,
                     masterColumnCount,
                     masterSymbolKeyColumnIndices,
                     slaveSymbolKeyColumnIndices,
@@ -244,7 +223,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             sink.type("Async Horizon Join");
         }
         sink.meta("workers").val(workerCount);
-        sink.meta("offsets").val(offsets.size());
+        sink.meta("offsets").val(offsets.length);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         // GroupByFunctions reference columns from the combined markout metadata (master + sequence + slave)
         sink.setMetadata(horizonJoinMetadata);
@@ -480,86 +459,40 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         final SymbolTranslatingRecord symbolTranslatingRecord =
                 masterKeyRecord instanceof SymbolTranslatingRecord rec ? rec : null;
 
-        // Reset helper state and clear the ASOF join map for this frame
         slaveTimeFrameHelper.toTop();
         if (keyedAsOfJoin) {
             asOfJoinMap.clear();
         }
 
         final long masterTsScale = atom.getMasterTimestampScale();
-        final long bwdScanAbsoluteThreshold = atom.getBwdScanAbsoluteThreshold();
-        final long bwdScanMinGap = atom.getBwdScanMinGap();
-        final long bwdScanSwitchFactor = atom.getBwdScanSwitchFactor();
-        long prevAsOfRowId = Long.MIN_VALUE;
-        boolean isForwardScanMode = false;
-        long bwdScanRowsAtPositionStart = 0;
 
         while (horizonIterator.next()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            // horizonTs is in master's resolution (master_ts + offset)
             final long horizonTs = horizonIterator.getHorizonTimestamp();
             final long masterRowIdx = horizonIterator.getMasterRowIndex();
             final int offsetIdx = horizonIterator.getOffsetIndex();
             final long offset = atom.getOffset(offsetIdx);
 
-            // Position master record at the correct row
             masterRecord.setRowIndex(masterRowIdx, horizonIterator.getMasterRowCompactIndex());
             final long masterRowId = baseRowId + masterRowIdx;
 
-            // Scale horizon timestamp for ASOF lookup (when master/slave have different timestamp types)
             final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
-
-            // Find ASOF row for this horizon timestamp (sequential due to sorted iteration)
             long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
             long matchRowId = Long.MIN_VALUE;
             if (keyedAsOfJoin) {
-                if (asOfRowId != Long.MIN_VALUE) {
-                    if (asOfRowId != prevAsOfRowId) {
-                        // ASOF position changed — decide scanning strategy
-                        if (!isForwardScanMode) {
-                            long bwdScanCost = slaveTimeFrameHelper.getBackwardScanRows() - bwdScanRowsAtPositionStart;
-                            if (prevAsOfRowId != Long.MIN_VALUE) {
-                                long gap = asOfRowId - prevAsOfRowId;
-                                if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
-                                        bwdScanCost,
-                                        gap,
-                                        bwdScanMinGap,
-                                        bwdScanSwitchFactor,
-                                        bwdScanAbsoluteThreshold
-                                )) {
-                                    isForwardScanMode = true;
-                                    slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
-                                }
-                            }
-                            if (!isForwardScanMode) {
-                                // Stay in backward-only: clear map, reset watermark
-                                asOfJoinMap.clear();
-                                slaveTimeFrameHelper.resetBackwardWatermark();
-                                bwdScanRowsAtPositionStart = slaveTimeFrameHelper.getBackwardScanRows();
-                            }
-                        }
-                        if (isForwardScanMode) {
-                            slaveTimeFrameHelper.forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, asOfJoinMap);
-                        }
-                        prevAsOfRowId = asOfRowId;
-                    }
-                    // Look up key in map; backward scan on miss
-                    matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                            asOfRowId,
-                            masterKeyRecord,
-                            masterAsOfJoinMapSink,
-                            slaveAsOfJoinMapSink,
-                            asOfJoinMap,
-                            symbolTranslatingRecord
-                    );
-                }
+                matchRowId = slaveTimeFrameHelper.findKeyedAsOfMatch(
+                        asOfRowId,
+                        masterKeyRecord,
+                        masterAsOfJoinMapSink,
+                        slaveAsOfJoinMapSink,
+                        asOfJoinMap,
+                        symbolTranslatingRecord
+                );
             } else {
-                // Timestamp-only ASOF JOIN: ASOF row IS the match
                 matchRowId = asOfRowId;
             }
 
-            // Aggregate the result
             Record matchedSlaveRecord = null;
             if (matchRowId != Long.MIN_VALUE) {
                 slaveTimeFrameHelper.recordAt(matchRowId);
@@ -663,6 +596,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(horizonJoinMetadata);
+        // recordFunctions includes groupByFunctions (same object references)
         Misc.freeObjList(recordFunctions);
     }
 }

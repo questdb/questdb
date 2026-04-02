@@ -579,7 +579,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnAliasRefCounts.clear();
         correlatedDepths.clear();
         Misc.clearObjList(correlatedColumns);
-        correlatedColumns.clear();
     }
 
     public void clearColumnMapStructs() {
