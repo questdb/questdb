@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.functions.window.LeadLongFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.CumeDistFunctionFactory;
 import io.questdb.griffin.engine.functions.window.NtileFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
@@ -11215,6 +11216,112 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCumeDistBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertSql(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t10.0\t0.3333333333333333
+                            1970-01-01T00:00:00.000002Z\t20.0\t0.6666666666666666
+                            1970-01-01T00:00:00.000003Z\t30.0\t1.0
+                            """),
+                    "select ts, val, cume_dist() over (order by ts) cd from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistWithPeers() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1), (2, 1), (3, 2), (4, 2), (5, 3)");
+
+            assertSql(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t0.4
+                            1970-01-01T00:00:00.000002Z\t1\t0.4
+                            1970-01-01T00:00:00.000003Z\t2\t0.8
+                            1970-01-01T00:00:00.000004Z\t2\t0.8
+                            1970-01-01T00:00:00.000005Z\t3\t1.0
+                            """),
+                    "select ts, val, cume_dist() over (order by val) cd from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
+
+            assertSql(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t0.3333333333333333
+                            1970-01-01T00:00:00.000002Z\t1\t0.6666666666666666
+                            1970-01-01T00:00:00.000003Z\t1\t1.0
+                            1970-01-01T00:00:00.000004Z\t2\t0.5
+                            1970-01-01T00:00:00.000005Z\t2\t1.0
+                            """),
+                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistNoOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
+
+            assertSql(
+                    replaceTimestampSuffix1("""
+                            ts\tcd
+                            1970-01-01T00:00:00.000001Z\t1.0
+                            1970-01-01T00:00:00.000002Z\t1.0
+                            1970-01-01T00:00:00.000003Z\t1.0
+                            """),
+                    "select ts, cume_dist() over () cd from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistSingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0)");
+
+            assertSql(
+                    replaceTimestampSuffix1("""
+                            ts\tcd
+                            1970-01-01T00:00:00.000001Z\t1.0
+                            """),
+                    "select ts, cume_dist() over (order by ts) cd from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistRejectsFraming() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select cume_dist() over (order by ts rows between 1 preceding and current row) from tab",
+                    -1,
+                    "cume_dist() does not support framing",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
     public void testStdDevPopCurrentRowSemantics() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
@@ -13368,6 +13475,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     DenseRankFunctionFactory.class,
                     RowNumberFunctionFactory.class,
                     NtileFunctionFactory.class,
+                    CumeDistFunctionFactory.class,
                     AvgDoubleWindowFunctionFactory.class,
                     SumDoubleWindowFunctionFactory.class,
                     StdDevPopDoubleWindowFunctionFactory.class,
@@ -14594,7 +14702,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "first_value(#COLUMN) respect nulls", "count(#COLUMN)", "max(#COLUMN)", "min(#COLUMN)",
                 "last_value(#COLUMN)", "last_value(#COLUMN) ignore nulls", "last_value(#COLUMN) respect nulls");
 
-        WINDOW_ONLY_FUNCTIONS = Arrays.asList("rank()", "dense_rank()", "row_number()", "ntile(4)", "first_value(1.0)", "last_value(1.0)", "lag(1.0)", "lead(1.0)",
+        WINDOW_ONLY_FUNCTIONS = Arrays.asList("rank()", "dense_rank()", "row_number()", "ntile(4)", "cume_dist()", "first_value(1.0)", "last_value(1.0)", "lag(1.0)", "lead(1.0)",
                 "lag(1.0) ignore nulls", "lead(1.0) ignore nulls", "lag(1.0) respect nulls", "lead(1.0) respect nulls",
                 "first_value(1.0) ignore nulls", "last_value(1.0) ignore nulls", "first_value(1.0) respect nulls", "last_value(1.0) respect nulls");
 
