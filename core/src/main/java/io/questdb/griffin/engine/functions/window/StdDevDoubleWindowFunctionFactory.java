@@ -24,20 +24,15 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-public class StdDevPopDoubleWindowFunctionFactory extends AbstractStdDevDoubleWindowFunctionFactory {
+public class StdDevDoubleWindowFunctionFactory extends StdDevSampDoubleWindowFunctionFactory {
 
     @Override
     public String getSignature() {
-        return "stddev_pop(D)";
-    }
-
-    @Override
-    protected boolean isSample() {
-        return false;
+        return "stddev(D)";
     }
 
     @Override
     protected String name() {
-        return "stddev_pop";
+        return "stddev";
     }
 }
