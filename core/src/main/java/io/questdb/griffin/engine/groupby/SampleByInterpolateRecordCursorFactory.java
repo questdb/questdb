@@ -322,6 +322,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         @Override
         public void close() {
+            super.close();
             if (isOpen) {
                 isOpen = false;
                 recordKeyMap.close();

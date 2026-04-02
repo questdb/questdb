@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongLongSortedList;
@@ -61,6 +62,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
     private final ObjList<Function> recordFunctions;
+    private ObjList<GroupBySharedCursor> sharedCursors;
 
     public GroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -129,6 +131,25 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (sharedId == 0) {
+            return getCursor(executionContext);
+        }
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        GroupBySharedCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            // todo need a different recordFunctions
+            shared = new GroupBySharedCursor(recordFunctions);
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of(cursor.dataMap);
+        return shared;
+    }
+
+    @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
         final int columnType = getMetadata().getColumnType(columnIndex);
         return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
@@ -136,6 +157,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsSharedCursors() {
         return true;
     }
 
@@ -164,6 +190,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.freeObjList(keyFunctions);
         Misc.free(base);
         Misc.free(cursor);
+        Misc.clear(sharedCursors);
     }
 
     private class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
@@ -270,6 +297,54 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (!isDataMapBuilt) {
                 buildDataMap();
             }
+        }
+    }
+
+    private class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {
+        private Map dataMap;
+        private MapRecordCursor cachedMapCursor;
+
+        GroupBySharedCursor(ObjList<Function> functions) {
+            super(functions, true);
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            buildMapConditionally();
+            baseCursor.calculateSize(circuitBreaker, counter);
+        }
+
+        @Override
+        public boolean hasNext() {
+            buildMapConditionally();
+            return super.hasNext();
+        }
+
+        @Override
+        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+            buildMapConditionally();
+            ((MapRecordCursor) baseCursor).longTopK(list, recordFunctions.getQuick(columnIndex));
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        private void buildMapConditionally() {
+            if (baseCursor == null) {
+                cursor.buildMapConditionally();
+                if (cachedMapCursor != null) {
+                    dataMap.initCursor(cachedMapCursor);
+                } else {
+                    cachedMapCursor = dataMap.newCursor();
+                }
+                of(cachedMapCursor);
+            }
+        }
+
+        void of(Map dataMap) {
+            this.dataMap = dataMap;
         }
     }
 }
