@@ -52,6 +52,9 @@ import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
 import io.questdb.griffin.engine.functions.window.StdDevDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.StdDevPopDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.StdDevSampDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.CorrDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.CovarPopDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.CovarSampDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.VarDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.VarPopDoubleWindowFunctionFactory;
@@ -11033,6 +11036,171 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCovarPopOverOrderByDefaultFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "covar_pop(y, x) over (order by ts) cv, " +
+                            "(avg(x * y) over (order by ts) - avg(x) over (order by ts) * avg(y) over (order by ts)) cv_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarSampOverPartitionRowsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "covar_samp(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv, " +
+                            "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row)::double / " +
+                            "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
+                            "covar_pop(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv_ref " +
+                            "from tab" +
+                            ") where cv is not null"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopCurrentRowSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, null, 3.0), (3, 4.0, null)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tcv
+                            1970-01-01T00:00:00.000001Z\t0.0
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            """),
+                    "select ts, covar_pop(y, x) over (order by ts rows between current row and current row) cv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCovarRejectsGroupsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select covar_pop(y, x) over (order by ts groups between 1 preceding and current row) from tab",
+                    -1,
+                    "function not implemented for given window parameters",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCorrOverOrderByDefaultFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "corr(y, x) over (order by ts) cr, " +
+                            "case when stddev_pop(x) over (order by ts) = 0 or stddev_pop(y) over (order by ts) = 0 then null " +
+                            "else covar_pop(y, x) over (order by ts) / (stddev_pop(x) over (order by ts) * stddev_pop(y) over (order by ts)) end cr_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testCorrCurrentRowSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, null, 3.0), (3, 4.0, 5.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tcr
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\tnull
+                            1970-01-01T00:00:00.000003Z\tnull
+                            """),
+                    "select ts, corr(y, x) over (order by ts rows between current row and current row) cr from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCorrOverPartitionRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 5.0), (5, 2, 20.0, 10.0), (6, 2, 30.0, 15.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "corr(y, x) over (partition by i order by ts range between 2 microseconds preceding and current row) cr, " +
+                            "case when stddev_pop(x) over (partition by i order by ts range between 2 microseconds preceding and current row) = 0 " +
+                            "or stddev_pop(y) over (partition by i order by ts range between 2 microseconds preceding and current row) = 0 then null " +
+                            "else covar_pop(y, x) over (partition by i order by ts range between 2 microseconds preceding and current row) / " +
+                            "(stddev_pop(x) over (partition by i order by ts range between 2 microseconds preceding and current row) * " +
+                            "stddev_pop(y) over (partition by i order by ts range between 2 microseconds preceding and current row)) end cr_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testCorrRejectsGroupsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select corr(y, x) over (order by ts groups between 1 preceding and current row) from tab",
+                    -1,
+                    "function not implemented for given window parameters",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
     public void testVarianceAliasEqualsVarSamp() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
@@ -12171,6 +12339,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     VarPopDoubleWindowFunctionFactory.class,
                     VarSampDoubleWindowFunctionFactory.class,
                     VarDoubleWindowFunctionFactory.class,
+                    CovarPopDoubleWindowFunctionFactory.class,
+                    CovarSampDoubleWindowFunctionFactory.class,
+                    CorrDoubleWindowFunctionFactory.class,
                     KSumDoubleWindowFunctionFactory.class,
                     CountConstWindowFunctionFactory.class,
                     CountDoubleWindowFunctionFactory.class,
