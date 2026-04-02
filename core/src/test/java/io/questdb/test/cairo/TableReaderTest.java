@@ -3151,6 +3151,68 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetActiveColumnsGoPassiveRetainsPartitionWithNarrowSet() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            // 3 days = 3 partitions
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 72; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                // open last partition with only column "a"
+                IntList narrowSet = new IntList();
+                narrowSet.add(0);
+                reader.setActiveColumns(narrowSet);
+                reader.openPartition(2);
+
+                int columnBase = reader.getColumnBase(2);
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+
+                // simulate pool return and re-checkout
+                reader.goPassive();
+                reader.goActive();
+
+                // partition 2 should still be open (within maxOpenPartitions)
+                // now set active columns to all columns
+                IntList allColumns = new IntList();
+                allColumns.add(0);
+                allColumns.add(1);
+                allColumns.add(2);
+                allColumns.add(3);
+                reader.setActiveColumns(allColumns);
+
+                // all columns should now be mapped in the retained partition
+                columnBase = reader.getColumnBase(2);
+                for (int i = 0; i < reader.getColumnCount(); i++) {
+                    Assert.assertNotNull(
+                            "column " + i + " should be mapped after goPassive/goActive + setActiveColumns",
+                            reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i))
+                    );
+                    Assert.assertNotSame(
+                            NullMemoryCMR.INSTANCE,
+                            reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i))
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSetActiveColumnsNarrowing() throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)

@@ -692,11 +692,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             hasActiveColumns = false;
             return;
         }
-        boolean broadened = false;
+        boolean needsOpen = !hasActiveColumns;
         if (hasActiveColumns) {
             for (int i = 0, n = columnIndexes.size(); i < n; i++) {
                 if (!activeColumns.get(columnIndexes.getQuick(i))) {
-                    broadened = true;
+                    needsOpen = true;
                     break;
                 }
             }
@@ -706,7 +706,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             activeColumns.set(columnIndexes.getQuick(i));
         }
         hasActiveColumns = true;
-        if (broadened) {
+        if (needsOpen) {
             openActiveColumnsInOpenPartitions();
         }
     }
