@@ -38,7 +38,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-class EarliestByAllRecordCursor extends AbstractDescendingRecordListCursor {
+class EarliestByAllRecordCursor extends AbstractAscendingRecordListCursor {
     private final Map map;
     private final RecordSink recordSink;
 
@@ -73,7 +73,7 @@ class EarliestByAllRecordCursor extends AbstractDescendingRecordListCursor {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Row backward scan");
+        sink.type("Row forward scan");
     }
 
     @Override
@@ -87,9 +87,8 @@ class EarliestByAllRecordCursor extends AbstractDescendingRecordListCursor {
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
-            recordA.setRowIndex(partitionHi);
 
-            for (long row = partitionHi - partitionLo; row <= 0; row--) {
+            for (long row = 0; row <= partitionHi - partitionLo; row++) {
                 recordA.setRowIndex(row);
                 MapKey key = map.withKey();
                 key.put(recordA, recordSink);

@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -52,7 +53,8 @@ public class EarliestByAllFilteredRecordCursorFactory extends AbstractTreeSetRec
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts,
+                configuration.getSqlEarliestByRowCount(), MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST);
 
         try {
             this.filter = filter;

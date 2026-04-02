@@ -266,7 +266,7 @@ public class EarliestByRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
                     long newTimestamp = baseRecord.getTimestamp(timestampIndex);
-                    if (newTimestamp <= prevTimestamp) {
+                    if (newTimestamp < prevTimestamp) {
                         value.putLong(RECORD_INDEX_VALUE_IDX, index);
                         value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                     }

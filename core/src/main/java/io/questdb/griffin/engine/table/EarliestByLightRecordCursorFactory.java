@@ -72,15 +72,20 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
         assert base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.recordSink = recordSink;
-        ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
-        mapValueTypes.add(ROW_ID_VALUE_IDX, ColumnType.LONG);
-        if (!orderedByTimestampAsc) {
-            mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
+        try {
+            ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
+            mapValueTypes.add(ROW_ID_VALUE_IDX, ColumnType.LONG);
+            if (!orderedByTimestampAsc) {
+                mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
+            }
+            Map earliestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
+            this.cursor = new EarliestByLightRecordCursor(earliestByMap);
+            this.timestampIndex = timestampIndex;
+            this.orderedByTimestampAsc = orderedByTimestampAsc;
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-        Map earliestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
-        this.cursor = new EarliestByLightRecordCursor(earliestByMap);
-        this.timestampIndex = timestampIndex;
-        this.orderedByTimestampAsc = orderedByTimestampAsc;
     }
 
     @Override
@@ -91,9 +96,14 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        cursor.of(baseCursor, circuitBreaker);
-        return cursor;
+        try {
+            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+            cursor.of(baseCursor, circuitBreaker);
+            return cursor;
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -261,7 +271,7 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
                 } else {
                     long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
                     long newTimestamp = baseRecord.getTimestamp(timestampIndex);
-                    if (newTimestamp <= prevTimestamp) {
+                    if (newTimestamp < prevTimestamp) {
                         value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
                         value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                     }

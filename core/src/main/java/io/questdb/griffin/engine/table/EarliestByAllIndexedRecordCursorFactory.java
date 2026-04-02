@@ -25,50 +25,38 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.map.Map;
-import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-public class EarliestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+public class EarliestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    protected final DirectLongList prefixes;
 
-    public EarliestByAllSymbolsFilteredRecordCursorFactory(
+    public EarliestByAllIndexedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
-            @NotNull RecordSink recordSink,
-            @Transient @NotNull ColumnTypes partitionByColumnTypes,
-            @NotNull IntList partitionByColumnIndexes,
-            @Nullable IntList partitionBySymbolCounts,
-            @Nullable Function filter,
+            int columnIndex,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizeShifts
+            @NotNull IntList columnSizeShifts,
+            @NotNull LongList prefixes
     ) {
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts,
                 configuration.getSqlEarliestByRowCount(), MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST);
 
         try {
-            Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes);
-            this.cursor = new EarliestByAllSymbolsFilteredRecordCursor(
-                    configuration,
-                    metadata,
-                    map,
-                    rows,
-                    recordSink,
-                    filter,
-                    partitionByColumnIndexes,
-                    partitionBySymbolCounts
-            );
+            this.prefixes = new DirectLongList(Math.max(2, prefixes.size()), MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST);
+            for (int i = 0; i < prefixes.size(); i++) {
+                this.prefixes.add(prefixes.get(i));
+            }
+
+            this.cursor = new EarliestByAllIndexedRecordCursor(configuration, metadata, columnIndex, rows, this.prefixes);
         } catch (Throwable th) {
             close();
             throw th;
@@ -82,15 +70,20 @@ public class EarliestByAllSymbolsFilteredRecordCursorFactory extends AbstractTre
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("EarliestByAllSymbolsFiltered");
-        sink.optAttr("filter", ((EarliestByAllSymbolsFilteredRecordCursor) cursor).getFilter());
+        sink.type("EarliestByAllIndexed");
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
     }
 
     @Override
+    public boolean usesIndex() {
+        return true;
+    }
+
+    @Override
     protected void _close() {
         super._close();
+        Misc.free(prefixes);
         Misc.free(cursor);
     }
 }

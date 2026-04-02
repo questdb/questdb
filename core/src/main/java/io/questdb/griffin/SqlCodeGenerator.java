@@ -303,6 +303,10 @@ import io.questdb.griffin.engine.table.LatestByValueDeferredIndexedRowCursorFact
 import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByAllFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByAllIndexedRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByAllSymbolsFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestByDeferredListValuesFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
@@ -5547,6 +5551,179 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    private RecordCursorFactory generateEarliestByTableQuery(
+            QueryModel model,
+            @Transient TableReader reader,
+            RecordMetadata metadata,
+            TableToken tableToken,
+            IntrinsicModel intrinsicModel,
+            Function filter,
+            @Transient SqlExecutionContext executionContext,
+            int timestampIndex,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts,
+            @NotNull LongList prefixes,
+            int hasInterval
+    ) throws SqlException {
+        final ExpressionNode viewExpr = model.getViewNameExpr();
+        final PartitionFrameCursorFactory partitionFrameCursorFactory;
+        if (intrinsicModel.hasIntervalFilters()) {
+            RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
+            if (hasInterval == 0) {
+                executionContext.popIntervalModel();
+                executionContext.pushIntervalModel(intervalModel);
+            }
+            partitionFrameCursorFactory = new IntervalPartitionFrameCursorFactory(
+                    tableToken,
+                    model.getMetadataVersion(),
+                    intervalModel,
+                    timestampIndex,
+                    GenericRecordMetadata.copyOfNew(reader.getMetadata()),
+                    ORDER_ASC,
+                    getViewName(viewExpr),
+                    getViewPosition(viewExpr),
+                    model.isUpdate()
+            );
+        } else {
+            partitionFrameCursorFactory = new FullPartitionFrameCursorFactory(
+                    tableToken,
+                    model.getMetadataVersion(),
+                    GenericRecordMetadata.copyOfNew(reader.getMetadata()),
+                    ORDER_ASC,
+                    getViewName(viewExpr),
+                    getViewPosition(viewExpr),
+                    model.isUpdate()
+            );
+        }
+
+        try {
+            if (intrinsicModel.filter != null && partitionFrameCursorFactory.hasParquetFormatPartitions(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
+                partitionFrameCursorFactory.setPushdownFilterCondition(pushdownFilterExtractor.extractAndCompile(
+                        sqlNodeStack, sqlNodeStack2, intrinsicModel.filter, partitionFrameCursorFactory.getMetadata(), functionParser, executionContext));
+            }
+
+            assert model.getEarliestBy() != null && model.getEarliestBy().size() > 0;
+            ObjList<ExpressionNode> earliestBy = new ObjList<>(model.getEarliestBy().size());
+            earliestBy.addAll(model.getEarliestBy());
+            final ExpressionNode earliestByNode = earliestBy.get(0);
+            final int earliestByIndex = metadata.getColumnIndexQuiet(earliestByNode.token);
+            final boolean indexed = metadata.isColumnIndexed(earliestByIndex);
+
+            // 'earliest by' clause takes over the filter and the earliest by nodes,
+            // so that the later generateFilter() and generateEarliestBy() are no-op
+            model.setWhereClause(null);
+            model.getEarliestBy().clear();
+
+            // if there are > 1 columns in the earliest by statement, we cannot use indexes
+            if (earliestBy.size() > 1 || !isSymbol(metadata.getColumnType(earliestByIndex))) {
+                boolean symbolKeysOnly = true;
+                for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                    symbolKeysOnly &= isSymbol(keyTypes.getColumnType(i));
+                }
+                if (symbolKeysOnly) {
+                    final IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
+                    for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
+                        partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
+                    }
+                    final IntList partitionBySymbolCounts = symbolEstimator.estimate(
+                            model,
+                            intrinsicModel.filter,
+                            metadata,
+                            partitionByColumnIndexes
+                    );
+                    return new EarliestByAllSymbolsFilteredRecordCursorFactory(
+                            configuration,
+                            metadata,
+                            partitionFrameCursorFactory,
+                            RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
+                            keyTypes,
+                            partitionByColumnIndexes,
+                            partitionBySymbolCounts,
+                            filter,
+                            columnIndexes,
+                            columnSizeShifts
+                    );
+                }
+                return new EarliestByAllFilteredRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        partitionFrameCursorFactory,
+                        RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA),
+                        keyTypes,
+                        filter,
+                        columnIndexes,
+                        columnSizeShifts
+                );
+            }
+
+            if (intrinsicModel.keyColumn != null) {
+                // key column must always be the same as earliest by column
+                assert earliestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
+
+                // Route all key-value cases through EarliestByDeferredListValuesFiltered
+                final int nKeyValues = intrinsicModel.keyValueFuncs.size();
+                final int nExcludedKeyValues = intrinsicModel.keyExcludedValueFuncs.size();
+
+                if (intrinsicModel.keySubQuery != null || nKeyValues > 1 || nExcludedKeyValues > 0) {
+                    return new EarliestByDeferredListValuesFilteredRecordCursorFactory(
+                            configuration,
+                            metadata,
+                            partitionFrameCursorFactory,
+                            earliestByIndex,
+                            intrinsicModel.keyValueFuncs,
+                            intrinsicModel.keyExcludedValueFuncs,
+                            filter,
+                            columnIndexes,
+                            columnSizeShifts
+                    );
+                }
+
+                assert nKeyValues == 1 && nExcludedKeyValues == 0;
+                // single key value, no excluded values
+                return new EarliestByDeferredListValuesFilteredRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        partitionFrameCursorFactory,
+                        earliestByIndex,
+                        intrinsicModel.keyValueFuncs,
+                        null,
+                        filter,
+                        columnIndexes,
+                        columnSizeShifts
+                );
+            }
+
+            // we select all values of "earliest by" column
+            assert intrinsicModel.keyValueFuncs.size() == 0;
+
+            if (indexed && filter == null && configuration.useWithinLatestByOptimisation()) {
+                return new EarliestByAllIndexedRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        partitionFrameCursorFactory,
+                        earliestByIndex,
+                        columnIndexes,
+                        columnSizeShifts,
+                        prefixes
+                );
+            } else {
+                return new EarliestByDeferredListValuesFilteredRecordCursorFactory(
+                        configuration,
+                        metadata,
+                        partitionFrameCursorFactory,
+                        earliestByIndex,
+                        filter,
+                        columnIndexes,
+                        columnSizeShifts
+                );
+            }
+        } catch (Throwable e) {
+            Misc.free(filter);
+            Misc.free(partitionFrameCursorFactory);
+            throw e;
+        }
+    }
+
     @NotNull
     private RecordCursorFactory generateEarliestBy(RecordCursorFactory factory, QueryModel model) throws SqlException {
         final ObjList<ExpressionNode> earliestBy = model.getEarliestBy();
@@ -8832,6 +9009,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
+        final ObjList<ExpressionNode> earliestBy = model.getEarliestBy();
 
         final boolean supportsRandomAccess;
         CharSequence tableName = model.getTableName();
@@ -8845,18 +9023,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final TableToken tableToken = executionContext.getTableToken(tableName);
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
-            // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
-            // to allow the client to succeed even if WAL apply does not run.
             try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
-                // it is not enough to rely on execution context to be different for WAL APPLY;
-                // in WAL APPLY we also must supply reader, outside of WAL APPLY reader is null
-                return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
+                return generateTableQuery0(model, executionContext, latestBy, earliestBy, supportsRandomAccess, null, metadata);
             }
         } else {
-            // this is server side execution of the update. It executes against the reader metadata, which by now
-            // has to be fully up-to-date due to WAL apply execution order.
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
-                return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
+                return generateTableQuery0(model, executionContext, latestBy, earliestBy, supportsRandomAccess, reader, reader.getMetadata());
             }
         }
     }
@@ -8865,6 +9037,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Transient QueryModel model,
             @Transient SqlExecutionContext executionContext,
             ObjList<ExpressionNode> latestBy,
+            ObjList<ExpressionNode> earliestBy,
             boolean supportsRandomAccess,
             @Transient @Nullable TableReader reader,
             @Transient TableRecordMetadata metadata
@@ -8876,6 +9049,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Latest by on a table requires the provided timestamp column to be the designated timestamp.
         if (latestBy.size() > 0 && readerTimestampIndex != metadata.getTimestampIndex()) {
             throw SqlException.$(model.getTimestamp().position, "latest by over a table requires designated TIMESTAMP");
+        }
+        // Earliest by on a table requires the provided timestamp column to be the designated timestamp.
+        if (earliestBy.size() > 0 && readerTimestampIndex != metadata.getTimestampIndex()) {
+            throw SqlException.$(model.getTimestamp().position, "earliest by over a table requires designated TIMESTAMP");
         }
 
         boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
@@ -8897,10 +9074,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         GenericRecordMetadata dfcFactoryMeta = GenericRecordMetadata.copyOfNew(metadata);
         final int latestByColumnCount = prepareLatestByColumnIndexes(latestBy, queryMeta);
+        // Compute earliest by column count only if latest by is not active (they are mutually exclusive).
+        // prepareLatestByColumnIndexes reuses listColumnFilterA/keyTypes, so we call it for earliestBy
+        // only when latestBy is empty.
+        final int earliestByColumnCount = latestByColumnCount == 0 ? prepareLatestByColumnIndexes(earliestBy, queryMeta) : 0;
         final TableToken tableToken = metadata.getTableToken();
         ExpressionNode withinExtracted;
 
-        if (latestByColumnCount > 0 && configuration.useWithinLatestByOptimisation()) {
+        final int byColumnCount = latestByColumnCount > 0 ? latestByColumnCount : earliestByColumnCount;
+        if (byColumnCount > 0 && configuration.useWithinLatestByOptimisation()) {
             withinExtracted = whereClauseParser.extractWithin(
                     model,
                     model.getWhereClause(),
@@ -8912,7 +9094,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             boolean allSymbolsAreIndexed = true;
             if (prefixes.size() > 0) {
-                for (int i = 0; i < latestByColumnCount; i++) {
+                for (int i = 0; i < byColumnCount; i++) {
                     int idx = listColumnFilterA.getColumnIndexFactored(i);
                     if (!isSymbol(queryMeta.getColumnType(idx)) || !queryMeta.isColumnIndexed(idx)) {
                         allSymbolsAreIndexed = false;
@@ -8944,6 +9126,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (isSymbol(queryMeta.getColumnType(latestByIndex))) {
                         preferredKeyColumn = latestBy.getQuick(0).token;
                     }
+                } else if (earliestByColumnCount == 1) {
+                    final int earliestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+                    if (isSymbol(queryMeta.getColumnType(earliestByIndex))) {
+                        preferredKeyColumn = earliestBy.getQuick(0).token;
+                    }
                 }
 
                 intrinsicModel = whereClauseParser.extract(
@@ -8956,7 +9143,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functionParser,
                         queryMeta,
                         executionContext,
-                        latestByColumnCount > 1,
+                        byColumnCount > 1,
                         reader
                 );
             } else {
@@ -9017,6 +9204,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 prepareLatestByColumnIndexes(latestBy, queryMeta);
 
                 return generateLatestByTableQuery(
+                        model,
+                        reader,
+                        queryMeta,
+                        tableToken,
+                        intrinsicModel,
+                        filter,
+                        executionContext,
+                        metadata.getTimestampIndex(),
+                        columnIndexes,
+                        columnSizeShifts,
+                        prefixes,
+                        hasInterval
+                );
+            }
+
+            if (earliestByColumnCount > 0) {
+                Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
+                if (filter != null && filter.isConstant() && !filter.getBool(null)) {
+                    model.getEarliestBy().clear();
+                    Misc.free(filter);
+                    return new EmptyTableRecordCursorFactory(queryMeta);
+                }
+
+                // regenerate column index lists after potential sub-query compilation
+                prepareLatestByColumnIndexes(earliestBy, queryMeta);
+
+                return generateEarliestByTableQuery(
                         model,
                         reader,
                         queryMeta,
@@ -9388,7 +9602,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         // no where clause
-        if (latestByColumnCount == 0) {
+        if (latestByColumnCount == 0 && earliestByColumnCount == 0) {
             // construct new metadata, which is a copy of what we constructed just above, but
             // in the interest of isolating problems we will only affect this factory
 
@@ -9417,6 +9631,104 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnSizeShifts,
                     supportsRandomAccess,
                     false
+            );
+        }
+
+        // Handle earliestBy no-where-clause path
+        if (earliestByColumnCount > 0) {
+            model.getEarliestBy().clear();
+
+            if (earliestByColumnCount == 1) {
+                int earliestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
+                if (queryMeta.isColumnIndexed(earliestByColumnIndex)) {
+                    return new EarliestByAllIndexedRecordCursorFactory(
+                            configuration,
+                            queryMeta,
+                            new FullPartitionFrameCursorFactory(
+                                    tableToken,
+                                    model.getMetadataVersion(),
+                                    dfcFactoryMeta,
+                                    ORDER_ASC,
+                                    getViewName(viewExpr),
+                                    getViewPosition(viewExpr),
+                                    model.isUpdate()
+                            ),
+                            listColumnFilterA.getColumnIndexFactored(0),
+                            columnIndexes,
+                            columnSizeShifts,
+                            prefixes
+                    );
+                }
+
+                if (isSymbol(queryMeta.getColumnType(earliestByColumnIndex))
+                        && queryMeta.isSymbolTableStatic(earliestByColumnIndex)) {
+                    return new EarliestByDeferredListValuesFilteredRecordCursorFactory(
+                            configuration,
+                            queryMeta,
+                            new FullPartitionFrameCursorFactory(tableToken,
+                                    model.getMetadataVersion(),
+                                    dfcFactoryMeta,
+                                    ORDER_ASC,
+                                    getViewName(viewExpr),
+                                    getViewPosition(viewExpr),
+                                    model.isUpdate()
+                            ),
+                            earliestByColumnIndex,
+                            null,
+                            columnIndexes,
+                            columnSizeShifts
+                    );
+                }
+            }
+
+            boolean symbolKeysOnly = true;
+            for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                symbolKeysOnly &= isSymbol(keyTypes.getColumnType(i));
+            }
+            if (symbolKeysOnly) {
+                IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
+                for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
+                    partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
+                }
+                return new EarliestByAllSymbolsFilteredRecordCursorFactory(
+                        configuration,
+                        queryMeta,
+                        new FullPartitionFrameCursorFactory(
+                                tableToken,
+                                model.getMetadataVersion(),
+                                dfcFactoryMeta,
+                                ORDER_ASC,
+                                getViewName(viewExpr),
+                                getViewPosition(viewExpr),
+                                model.isUpdate()
+                        ),
+                        RecordSinkFactory.getInstance(configuration, asm, queryMeta, listColumnFilterA),
+                        keyTypes,
+                        partitionByColumnIndexes,
+                        null,
+                        null,
+                        columnIndexes,
+                        columnSizeShifts
+                );
+            }
+
+            return new EarliestByAllFilteredRecordCursorFactory(
+                    configuration,
+                    queryMeta,
+                    new FullPartitionFrameCursorFactory(
+                            tableToken,
+                            model.getMetadataVersion(),
+                            dfcFactoryMeta,
+                            ORDER_ASC,
+                            getViewName(viewExpr),
+                            getViewPosition(viewExpr),
+                            model.isUpdate()
+                    ),
+                    RecordSinkFactory.getInstance(configuration, asm, queryMeta, listColumnFilterA),
+                    keyTypes,
+                    null,
+                    columnIndexes,
+                    columnSizeShifts
             );
         }
 
@@ -9845,17 +10157,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return getTimestampIndex(model, factory.getMetadata());
     }
 
-    private int getTimestampIndex(QueryModel model, RecordMetadata metadata) throws SqlException {
+     private int getTimestampIndex(QueryModel model, RecordMetadata metadata) throws SqlException {
         final ExpressionNode timestamp = model.getTimestamp();
         if (timestamp != null) {
             int timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
-            if (timestampIndex == -1) {
-                throw SqlException.invalidColumn(timestamp.position, timestamp.token);
+            if (timestampIndex != -1) {
+                if (!isTimestamp(metadata.getColumnType(timestampIndex))) {
+                    throw SqlException.$(timestamp.position, "not a TIMESTAMP");
+                }
+                return timestampIndex;
             }
-            if (!isTimestamp(metadata.getColumnType(timestampIndex))) {
-                throw SqlException.$(timestamp.position, "not a TIMESTAMP");
-            }
-            return timestampIndex;
+            // Timestamp column not found in metadata - this can happen when earliest on
+            // references a column not in the select list. The caller should handle this.
+            return -1;
         }
         return metadata.getTimestampIndex();
     }

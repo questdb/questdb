@@ -28,7 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -40,7 +44,7 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class EarliestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor {
+class EarliestByAllSymbolsFilteredRecordCursor extends AbstractAscendingRecordListCursor {
     private static final Function NO_OP_FILTER = BooleanConstant.TRUE;
     private final Function filter;
     private final Map map;
@@ -93,7 +97,7 @@ class EarliestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordL
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Row backward scan");
+        sink.type("Row forward scan");
         sink.attr("expectedSymbolsCount").val(countSymbolCombinationsSimple());
     }
 
@@ -147,7 +151,7 @@ class EarliestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordL
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
 
-            for (long row = partitionHi - partitionLo; row <= 0; row--) {
+            for (long row = 0; row <= partitionHi - partitionLo; row++) {
                 recordA.setRowIndex(row);
                 if (filter.getBool(recordA)) {
                     MapKey key = map.withKey();

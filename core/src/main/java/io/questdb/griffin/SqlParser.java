@@ -2751,6 +2751,9 @@ public class SqlParser {
             }
             // expect [earliest by] (deprecated syntax)
             if (tok != null && isEarliestKeyword(tok)) {
+                if (model.getLatestBy().size() > 0) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "cannot use both LATEST and EARLIEST in the same query");
+                }
                 parseEarliestBy(lexer, model);
                 tok = optTok(lexer);
             }
@@ -2849,6 +2852,9 @@ public class SqlParser {
         if (tok != null && isEarliestKeyword(tok)) {
             if (model.getEarliestByType() == QueryModel.EARLIEST_BY_DEPRECATED) {
                 throw SqlException.$((lexer.lastTokenPosition()), "mix of new and deprecated 'earliest by' syntax");
+            }
+            if (model.getLatestBy().size() > 0) {
+                throw SqlException.$(lexer.lastTokenPosition(), "cannot use both LATEST and EARLIEST in the same query");
             }
             expectTok(lexer, "on");
             parseEarliestByNew(lexer, model);

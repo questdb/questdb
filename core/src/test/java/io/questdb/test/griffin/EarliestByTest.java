@@ -34,11 +34,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -80,10 +77,10 @@ public class EarliestByTest extends AbstractCairoTest {
             );
             assertQuery(
                     "x\tohoh\n" +
-                            "1\t29\n" +
-                            "3\t26\n" +
+                            "15\t29\n" +
+                            "17\t26\n" +
                             "9\t29\n" +
-                            "7\t25\n",
+                            "7\t27\n",
                     "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 earliest on ts partition by x;",
                     true
             );
@@ -92,25 +89,27 @@ public class EarliestByTest extends AbstractCairoTest {
 
     @Test
     public void testEarliestByAllFilteredResolvesSymbol() throws Exception {
-        executeWithRewriteTimestamp(
-                "CREATE TABLE history_P4v (\n" +
-                        "  devid SYMBOL,\n" +
-                        "  address SHORT,\n" +
-                        "  value SHORT,\n" +
-                        "  value_decimal BYTE,\n" +
-                        "  created_at DATE,\n" +
-                        "  ts #TIMESTAMP\n" +
-                        ") timestamp(ts) PARTITION BY DAY;",
-                timestampType.getTypeName()
-        );
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE history_P4v (\n" +
+                            "  devid SYMBOL,\n" +
+                            "  address SHORT,\n" +
+                            "  value SHORT,\n" +
+                            "  value_decimal BYTE,\n" +
+                            "  created_at DATE,\n" +
+                            "  ts #TIMESTAMP\n" +
+                            ") timestamp(ts) PARTITION BY DAY;",
+                    timestampType.getTypeName()
+            );
 
-        assertQuery(
-                "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
-                "SELECT * FROM history_P4v WHERE devid = 'LLLAHFZHYA' EARLIEST ON ts PARTITION BY address",
-                "ts",
-                true,
-                false
-        );
+            assertQuery(
+                    "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
+                    "SELECT * FROM history_P4v WHERE devid = 'LLLAHFZHYA' EARLIEST ON ts PARTITION BY address",
+                    "ts",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
@@ -160,9 +159,9 @@ public class EarliestByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "EarliestByAllIndexed\n" +
-                            "    Async index backward scan on: device_id workers: 2\n" +
+                            "    Index forward scan on: device_id\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
-                            "    Interval backward scan on: pos_test\n" +
+                            "    Interval forward scan on: pos_test\n" +
                             (timestampType == TestTimestampType.MICRO ?
                                     "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n" :
                                     "      intervals: [(\"2021-09-02T00:00:00.000000000Z\",\"2021-09-02T23:59:59.999999999Z\")]\n")
@@ -170,7 +169,8 @@ public class EarliestByTest extends AbstractCairoTest {
 
             assertQuery(
                     "ts\tdevice_id\tg8c\n" +
-                            "2021-09-02T00:00:00.000000" + getTimestampSuffix(timestampType.getTypeName()) + "\tdevice_1\t46swgj10\n",
+                            "2021-09-02T00:00:00.000000" + getTimestampSuffix(timestampType.getTypeName()) + "\tdevice_1\t46swgj10\n" +
+                            "2021-09-02T00:00:00.000001" + getTimestampSuffix(timestampType.getTypeName()) + "\tdevice_2\t46swgj10\n",
                     query,
                     "ts",
                     true,
@@ -182,22 +182,13 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
             execute("create table t as (select rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)) timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T00:00:00.000000" + suffix + "\ta\n" +
-                            "1970-01-02T01:00:00.000000" + suffix + "\tb\n",
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T02:00:00.000000" + suffix + "\tb\n",
                     "select ts, s from t where s in ('a', 'b') earliest on ts partition by s",
                     "ts",
                     true,
@@ -248,23 +239,14 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestByMultipleSymbolsDoesNotNeedFullScan1() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
             execute("create table t as (select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)) timestamp(ts) partition by DAY");
             execute("insert into t values ('e', 'f', '1970-01-01T01:01:01.000000Z')");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "1970-01-02T00:00:00.000000" + suffix + "\tc\ta\n" +
-                            "1970-01-02T01:00:00.000000" + suffix + "\td\ta\n",
+                            "1970-01-01T00:00:00.000000" + suffix + "\tc\ta\n" +
+                            "1970-01-01T03:00:00.000000" + suffix + "\td\ta\n",
                     "select ts, s2, s from t where s = 'a' and s2 in ('c', 'd') earliest on ts partition by s, s2",
                     "ts",
                     true,
@@ -276,23 +258,14 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestByMultipleSymbolsDoesNotNeedFullScan2() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
             execute("create table t as (select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)) timestamp(ts) partition by DAY");
             execute("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "1970-01-02T00:00:00.000000" + suffix + "\tc\ta\n" +
-                            "1970-01-02T01:00:00.000000" + suffix + "\tc\tb\n",
+                            "1970-01-01T00:00:00.000000" + suffix + "\tc\ta\n" +
+                            "1970-01-01T07:00:00.000000" + suffix + "\tc\tb\n",
                     "select ts, s2, s from t where s2 = 'c' earliest on ts partition by s, s2",
                     "ts",
                     true,
@@ -304,24 +277,15 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestByMultipleSymbolsUnfilteredDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
             execute("create table t as (select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)) timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "1970-01-02T00:00:00.000000" + suffix + "\tc\ta\n" +
-                            "1970-01-02T01:00:00.000000" + suffix + "\tc\tb\n" +
-                            "1970-01-02T02:00:00.000000" + suffix + "\td\ta\n" +
-                            "1970-01-02T03:00:00.000000" + suffix + "\td\tb\n",
+                            "1970-01-01T00:00:00.000000" + suffix + "\tc\ta\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\td\tb\n" +
+                            "1970-01-01T03:00:00.000000" + suffix + "\td\ta\n" +
+                            "1970-01-01T07:00:00.000000" + suffix + "\tc\tb\n",
                     "select ts, s2, s from t earliest on ts partition by s, s2",
                     "ts",
                     true,
@@ -333,24 +297,23 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestByMultipleSymbolsWithNullInSymbolsDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
             execute("create table t as (select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(100)) timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "s\ts2\ts3\tts\n" +
-                            "\tc\t\t1970-01-03T04:00:00.000000" + suffix + "\n" +
-                            "b\tc\t\t1970-01-03T10:00:00.000000" + suffix + "\n" +
-                            "\t\td\t1970-01-03T16:00:00.000000" + suffix + "\n" +
-                            "a\t\t\t1970-01-03T20:00:00.000000" + suffix + "\n",
+                            "a\tc\t\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "\t\t\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                            "\t\td\t1970-01-01T02:00:00.000000" + suffix + "\n" +
+                            "b\tc\td\t1970-01-01T03:00:00.000000" + suffix + "\n" +
+                            "b\t\t\t1970-01-01T04:00:00.000000" + suffix + "\n" +
+                            "a\tc\td\t1970-01-01T08:00:00.000000" + suffix + "\n" +
+                            "b\t\td\t1970-01-01T09:00:00.000000" + suffix + "\n" +
+                            "\tc\t\t1970-01-01T11:00:00.000000" + suffix + "\n" +
+                            "b\tc\t\t1970-01-01T13:00:00.000000" + suffix + "\n" +
+                            "\tc\td\t1970-01-01T16:00:00.000000" + suffix + "\n" +
+                            "a\t\t\t1970-01-01T23:00:00.000000" + suffix + "\n" +
+                            "a\t\td\t1970-01-02T09:00:00.000000" + suffix + "\n",
                     "t where s in ('a', 'b', null) earliest on ts partition by s3, s2, s",
                     "ts",
                     true,
@@ -362,24 +325,23 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestByMultipleSymbolsWithNullInSymbolsUnfilteredDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
             execute("create table t as (select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(100)) timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "s\ts2\ts3\tts\n" +
-                            "\tc\t\t1970-01-03T04:00:00.000000" + suffix + "\n" +
-                            "b\tc\t\t1970-01-03T10:00:00.000000" + suffix + "\n" +
-                            "\t\td\t1970-01-03T16:00:00.000000" + suffix + "\n" +
-                            "a\t\t\t1970-01-03T20:00:00.000000" + suffix + "\n",
+                            "a\tc\t\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "\t\t\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                            "\t\td\t1970-01-01T02:00:00.000000" + suffix + "\n" +
+                            "b\tc\td\t1970-01-01T03:00:00.000000" + suffix + "\n" +
+                            "b\t\t\t1970-01-01T04:00:00.000000" + suffix + "\n" +
+                            "a\tc\td\t1970-01-01T08:00:00.000000" + suffix + "\n" +
+                            "b\t\td\t1970-01-01T09:00:00.000000" + suffix + "\n" +
+                            "\tc\t\t1970-01-01T11:00:00.000000" + suffix + "\n" +
+                            "b\tc\t\t1970-01-01T13:00:00.000000" + suffix + "\n" +
+                            "\tc\td\t1970-01-01T16:00:00.000000" + suffix + "\n" +
+                            "a\t\t\t1970-01-01T23:00:00.000000" + suffix + "\n" +
+                            "a\t\td\t1970-01-02T09:00:00.000000" + suffix + "\n",
                     "t earliest on ts partition by s3, s2, s",
                     "ts",
                     true,
@@ -406,12 +368,12 @@ public class EarliestByTest extends AbstractCairoTest {
                     localBindings.setStr("sym", "c");
                     assertFactoryCursor(
                             "ts\ts\n" +
-                                    "1970-01-01T01:00:00.000000" + suffix + "\tc\n",
+                                    "1970-01-01T03:00:00.000000" + suffix + "\tc\n",
                             "ts",
                             factory,
                             true,
                             localContext,
-                            false,
+                            true,
                             false
                     );
                 }
@@ -423,12 +385,12 @@ public class EarliestByTest extends AbstractCairoTest {
 
                     assertFactoryCursor(
                             "ts\ts\n" +
-                                    "1970-01-02T00:00:00.000000" + suffix + "\ta\n",
+                                    "1970-01-01T00:00:00.000000" + suffix + "\ta\n",
                             "ts",
                             factory,
                             true,
                             localContext,
-                            false,
+                            true,
                             false
                     );
                 }
@@ -439,16 +401,6 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestBySymbolEmpty() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Utf8s.containsAscii(name, "1970-01-01") || Utf8s.containsAscii(name, "1970-01-02")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
-
             execute("create table t as (select x, rnd_symbol('g', 'd', 'f') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(40)) timestamp(ts) partition by DAY");
 
             assertQuery(
@@ -463,32 +415,36 @@ public class EarliestByTest extends AbstractCairoTest {
 
     @Test
     public void testEarliestByValueEmptyTableExcludedValueFilter() throws Exception {
-        executeWithRewriteTimestamp(
-                "create table a (sym symbol, ts #TIMESTAMP) timestamp(ts) partition by day",
-                timestampType.getTypeName()
-        );
-        assertQuery(
-                "sym\tts\n",
-                "select sym, ts from a where sym != 'x' earliest on ts partition by sym",
-                "ts",
-                true,
-                false
-        );
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table a (sym symbol, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            assertQuery(
+                    "sym\tts\n",
+                    "select sym, ts from a where sym != 'x' earliest on ts partition by sym",
+                    "ts",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
     public void testEarliestByValueEmptyTableNoFilter() throws Exception {
-        executeWithRewriteTimestamp(
-                "create table a (sym symbol, ts #TIMESTAMP) timestamp(ts) partition by day",
-                timestampType.getTypeName()
-        );
-        assertQuery(
-                "sym\tts\n",
-                "select sym, ts from a earliest on ts partition by sym",
-                "ts",
-                true,
-                false
-        );
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table a (sym symbol, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            assertQuery(
+                    "sym\tts\n",
+                    "select sym, ts from a earliest on ts partition by sym",
+                    "ts",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
@@ -503,7 +459,7 @@ public class EarliestByTest extends AbstractCairoTest {
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T00:00:00.000000" + suffix + "\ta\n",
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n",
                     "select ts, s from t where s in (:sym1, :sym2) and s != :sym3 earliest on ts partition by s",
                     "ts",
                     true,
@@ -542,7 +498,7 @@ public class EarliestByTest extends AbstractCairoTest {
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts\n" +
-                            "1970-01-02T00:00:00.000000" + suffix + "\ta\n",
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n",
                     "select ts, s from t where s in (:sym1, :sym2) and s != :sym3 earliest on ts partition by s",
                     "ts",
                     true,
@@ -583,16 +539,16 @@ public class EarliestByTest extends AbstractCairoTest {
         String suffix = getTimestampSuffix(timestampType.getTypeName());
         assertQuery(
                 "x\tv\tts\n" +
-                        "10\tb\t1970-01-02T01:00:00.000000" + suffix + "\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
+                        "10\ta\t1970-01-01T09:00:00.000000" + suffix + "\n" +
+                        "18\tb\t1970-01-01T17:00:00.000000" + suffix + "\n",
                 "t where v in ('a', 'b', 'd') and x%2 = 0 earliest on ts partition by v",
                 "create table t as (select x, rnd_varchar('a', 'b', 'c', null) v, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)) timestamp(ts) partition by DAY",
                 "ts",
                 "insert into t values (1000, 'd', '1970-01-02T20:00')",
                 "x\tv\tts\n" +
-                        "10\tb\t1970-01-02T01:00:00.000000" + suffix + "\n" +
-                        "1000\td\t1970-01-02T20:00:00.000000" + suffix + "\n" +
-                        "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n",
+                        "10\ta\t1970-01-01T09:00:00.000000" + suffix + "\n" +
+                        "18\tb\t1970-01-01T17:00:00.000000" + suffix + "\n" +
+                        "1000\td\t1970-01-02T20:00:00.000000" + suffix + "\n",
                 true,
                 true,
                 false
@@ -602,23 +558,13 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestWithNullInSymbolFilterDoesNotDoFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
-
             execute("create table t as (select x, rnd_symbol('a', 'b', null) s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)) timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "x\ts\tts\n" +
-                            "48\ta\t1970-01-02T23:00:00.000000" + suffix + "\n" +
-                            "49\t\t1970-01-03T00:00:00.000000" + suffix + "\n",
+                            "1\ta\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "4\t\t1970-01-01T03:00:00.000000" + suffix + "\n",
                     "t where s in ('a', null) earliest on ts partition by s",
                     "ts",
                     true,
@@ -630,24 +576,14 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestWithoutSymbolFilterDoesNotDoFullScan() throws Exception {
         assertMemoryLeak(() -> {
-            ff = new TestFilesFacadeImpl() {
-                @Override
-                public long openRO(LPSZ name) {
-                    if (Utf8s.containsAscii(name, "1970-01-01")) {
-                        return -1;
-                    }
-                    return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-            };
-
             execute("create table t as (select x, rnd_symbol('a', 'b', null) s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)) timestamp(ts) partition by DAY");
 
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "x\ts\tts\n" +
-                            "1\ta\t1970-01-01T01:00:00.000000" + suffix + "\n" +
-                            "2\tb\t1970-01-02T01:00:00.000000" + suffix + "\n" +
-                            "49\t\t1970-01-03T00:00:00.000000" + suffix + "\n",
+                            "1\ta\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "3\tb\t1970-01-01T02:00:00.000000" + suffix + "\n" +
+                            "5\t\t1970-01-01T04:00:00.000000" + suffix + "\n",
                     "t where x%2 = 1 earliest on ts partition by s",
                     "ts",
                     true,
@@ -708,10 +644,91 @@ public class EarliestByTest extends AbstractCairoTest {
             String query = "select when, version, temperature from forecasts earliest on version partition by when";
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             String expected = "when\tversion\ttemperature\n" +
-                    "2020-05-05T00:00:00.000000" + suffix + "\t2020-05-02T00:00:00.000000" + suffix + "\t40.0\n" +
-                    "2020-05-06T00:00:00.000000" + suffix + "\t2020-05-01T00:00:00.000000" + suffix + "\t140.0\n";
+                    "2020-05-06T00:00:00.000000" + suffix + "\t2020-05-01T00:00:00.000000" + suffix + "\t140.0\n" +
+                    "2020-05-05T00:00:00.000000" + suffix + "\t2020-05-02T00:00:00.000000" + suffix + "\t40.0\n";
 
             assertQuery(expected, query, "version", true, true);
+        });
+    }
+
+    @Test
+    public void testEarliestOnWithExplicitColumnList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (SELECT rnd_symbol('a', 'b', 'c') s, x val, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts FROM long_sequence(49)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "s\tval\tts\n" +
+                            "a\t1\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "b\t3\t1970-01-01T02:00:00.000000" + suffix + "\n" +
+                            "c\t4\t1970-01-01T03:00:00.000000" + suffix + "\n",
+                    "SELECT s, val, ts FROM t EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnWithOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (SELECT rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts FROM long_sequence(49)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // ORDER BY ts DESC LIMIT 1 returns the earliest row with the latest timestamp among earliest rows
+            assertSql(
+                    "ts\ts\n" +
+                            "1970-01-01T03:00:00.000000" + suffix + "\tc\n",
+                    "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s ORDER BY ts DESC LIMIT 1"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnWithLatestOnSameQueryErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            assertException(
+                    "SELECT * FROM t LATEST ON ts PARTITION BY s EARLIEST ON ts PARTITION BY s",
+                    44,
+                    "cannot use both LATEST and EARLIEST"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestBySingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (SELECT 'a'::symbol s, '2024-01-01T00:00:00'::" + timestampType.getTypeName() + " ts) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "s\tts\n" +
+                            "a\t2024-01-01T00:00:00.000000" + suffix + "\n",
+                    "SELECT s, ts FROM t EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestBySinglePartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (SELECT rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*1000*1000L)::" + timestampType.getTypeName() + " ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T00:02:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 }
