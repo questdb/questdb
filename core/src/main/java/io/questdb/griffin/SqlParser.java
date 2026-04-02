@@ -163,6 +163,7 @@ public class SqlParser {
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
+            ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo
@@ -172,8 +173,8 @@ public class SqlParser {
         this.expressionNodePool = expressionNodePool;
         this.queryModelPool = queryModelPool;
         this.queryColumnPool = queryColumnPool;
+        this.windowExpressionPool = windowExpressionPool;
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
-        this.windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
         this.createTableColumnModelPool = new ObjectPool<>(CreateTableColumnModel.FACTORY, configuration.getCreateTableColumnModelPoolCapacity());
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
@@ -3355,18 +3356,35 @@ public class SqlParser {
             } else if (isHorizonKeyword(tok)) {
                 tok = tok(lexer, "join");
                 joinType = QueryModel.JOIN_HORIZON;
+            } else if (isLateralKeyword(tok)) {
+                joinType = QueryModel.JOIN_LATERAL_CROSS;
             } else {
                 tok = tok(lexer, "join");
             }
-            if (isNotJoinKeyword(tok)) {
+            if (joinType != QueryModel.JOIN_LATERAL_CROSS && isNotJoinKeyword(tok)) {
                 throw SqlException.position(errorPos).put("'join' expected");
             }
         }
 
-        joinModel.setJoinType(joinType);
         joinModel.setJoinKeywordPosition(errorPos);
-
         tok = expectTableNameOrSubQuery(lexer);
+
+        if (isLateralKeyword(tok) && joinType != QueryModel.JOIN_LATERAL_CROSS) {
+            joinType = switch (joinType) {
+                case QueryModel.JOIN_LEFT_OUTER -> QueryModel.JOIN_LATERAL_LEFT;
+                case QueryModel.JOIN_INNER -> QueryModel.JOIN_LATERAL_INNER;
+                case QueryModel.JOIN_CROSS -> QueryModel.JOIN_LATERAL_CROSS;
+                default -> throw SqlException.position(lexer.lastTokenPosition())
+                        .put("LATERAL is only supported with INNER, LEFT, or CROSS joins");
+            };
+            tok = expectTableNameOrSubQuery(lexer);
+        }
+
+        if (QueryModel.isLateralJoin(joinType) && !Chars.equals(tok, '(')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("LATERAL requires a subquery");
+        }
+
+        joinModel.setJoinType(joinType);
 
         final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
         if (tt != null && tt.isView()) {
@@ -3380,7 +3398,7 @@ public class SqlParser {
 
         tok = setModelAliasAndGetOptTok(lexer, joinModel);
 
-        if (joinType == QueryModel.JOIN_CROSS && tok != null && isOnKeyword(tok)) {
+        if ((joinType == QueryModel.JOIN_CROSS || joinType == QueryModel.JOIN_LATERAL_CROSS) && tok != null && isOnKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "Cross joins cannot have join clauses");
         }
 
@@ -3391,6 +3409,8 @@ public class SqlParser {
             case QueryModel.JOIN_SPLICE:
             case QueryModel.JOIN_WINDOW:
             case QueryModel.JOIN_HORIZON:
+            case QueryModel.JOIN_LATERAL_INNER:
+            case QueryModel.JOIN_LATERAL_LEFT:
                 if (tok == null || !isOnKeyword(tok)) {
                     lexer.unparseLast();
                     break;
@@ -5294,6 +5314,7 @@ public class SqlParser {
         joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
         joinStartSet.put("lt", QueryModel.JOIN_LT);
         joinStartSet.put("horizon", QueryModel.JOIN_HORIZON);
+        joinStartSet.put("lateral", QueryModel.JOIN_LATERAL_CROSS);
         joinStartSet.put(",", QueryModel.JOIN_CROSS);
         //
         setOperations.add("union");
