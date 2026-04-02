@@ -772,4 +772,80 @@ mod tests {
         let f = StatFlags::new().with_max(true, false);
         assert!(!f.is_max_exact());
     }
+
+    // ── Codec → parquet2::Compression tests ─────────────────────────────
+
+    #[test]
+    fn codec_to_parquet2_compression() {
+        use parquet2::compression::Compression;
+
+        assert_eq!(
+            Compression::from(Codec::Uncompressed),
+            Compression::Uncompressed
+        );
+        assert_eq!(Compression::from(Codec::Snappy), Compression::Snappy);
+        assert_eq!(Compression::from(Codec::Gzip), Compression::Gzip);
+        assert_eq!(Compression::from(Codec::Lzo), Compression::Lzo);
+        assert_eq!(Compression::from(Codec::Brotli), Compression::Brotli);
+        assert_eq!(Compression::from(Codec::Lz4), Compression::Lz4);
+        assert_eq!(Compression::from(Codec::Zstd), Compression::Zstd);
+        assert_eq!(Compression::from(Codec::Lz4Raw), Compression::Lz4Raw);
+    }
+
+    #[test]
+    fn codec_parquet2_round_trip() {
+        use parquet2::compression::Compression;
+
+        let all_codecs = [
+            Codec::Uncompressed,
+            Codec::Snappy,
+            Codec::Gzip,
+            Codec::Lzo,
+            Codec::Brotli,
+            Codec::Lz4,
+            Codec::Zstd,
+            Codec::Lz4Raw,
+        ];
+        for codec in all_codecs {
+            let compression = Compression::from(codec);
+            let back = Codec::from(compression);
+            assert_eq!(back, codec, "round-trip failed for {:?}", codec);
+        }
+    }
+
+    // ── FieldRepetition → parquet2::Repetition tests ────────────────────
+
+    #[test]
+    fn field_repetition_to_parquet2() {
+        use parquet2::schema::Repetition;
+
+        assert_eq!(
+            Repetition::from(FieldRepetition::Required),
+            Repetition::Required
+        );
+        assert_eq!(
+            Repetition::from(FieldRepetition::Optional),
+            Repetition::Optional
+        );
+        assert_eq!(
+            Repetition::from(FieldRepetition::Repeated),
+            Repetition::Repeated
+        );
+    }
+
+    #[test]
+    fn field_repetition_parquet2_round_trip() {
+        use parquet2::schema::Repetition;
+
+        let all_reps = [
+            FieldRepetition::Required,
+            FieldRepetition::Optional,
+            FieldRepetition::Repeated,
+        ];
+        for rep in all_reps {
+            let parquet_rep = Repetition::from(rep);
+            let back = FieldRepetition::from(parquet_rep);
+            assert_eq!(back, rep, "round-trip failed for {:?}", rep);
+        }
+    }
 }

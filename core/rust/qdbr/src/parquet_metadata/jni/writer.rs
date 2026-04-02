@@ -139,8 +139,6 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
     wrapper.column_count += 1;
 }
 
-
-
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addSortingColumn(
     mut env: JNIEnv,

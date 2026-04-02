@@ -489,3 +489,401 @@ fn finish_varchar_slice(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::reconstruct_descriptor;
+    use parquet2::schema::types::PhysicalType;
+    use parquet2::schema::Repetition;
+
+    use std::io::Cursor;
+    use std::sync::Arc;
+
+    use parquet::basic::Repetition as P1Repetition;
+    use parquet::data_type::Int64Type;
+    use parquet::file::properties::{WriterProperties, WriterVersion};
+    use parquet::file::writer::SerializedFileWriter;
+    use parquet::format::KeyValue;
+    use parquet::schema::types::Type;
+    use parquet2::read::read_metadata_with_size;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+
+    use crate::allocator::TestAllocatorState;
+    use crate::parquet::qdb_metadata::QdbMetaCol;
+    use crate::parquet_read::{ColumnChunkBuffers, DecodeContext};
+
+    /// Write a parquet file containing a single REQUIRED INT64 column
+    /// with values `0, 1, 2, ..., row_count - 1`.
+    fn write_i64_parquet(row_count: usize) -> Vec<u8> {
+        let data: Vec<i64> = (0..row_count as i64).collect();
+        let schema = Arc::new(
+            Type::group_type_builder("schema")
+                .with_fields(vec![Arc::new(
+                    Type::primitive_type_builder("col", parquet::basic::Type::INT64)
+                        .with_repetition(P1Repetition::REQUIRED)
+                        .build()
+                        .unwrap(),
+                )])
+                .build()
+                .unwrap(),
+        );
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_writer_version(WriterVersion::PARQUET_2_0)
+                .set_dictionary_enabled(false)
+                .set_key_value_metadata(Some(vec![KeyValue::new(
+                    "questdb".to_string(),
+                    format!(
+                        r#"{{"version":1,"schema":[{{"column_type":{},"column_top":0}}]}}"#,
+                        ColumnTypeTag::Long as u8
+                    ),
+                )]))
+                .build(),
+        );
+
+        let mut cursor = Cursor::new(Vec::new());
+        let mut writer = SerializedFileWriter::new(&mut cursor, schema, props).unwrap();
+        let mut rg = writer.next_row_group().unwrap();
+        if let Some(mut col) = rg.next_column().unwrap() {
+            col.typed::<Int64Type>()
+                .write_batch(&data, None, None)
+                .unwrap();
+            col.close().unwrap();
+        }
+        rg.close().unwrap();
+        writer.close().unwrap();
+        cursor.into_inner()
+    }
+
+    /// Decode a row range `[row_lo, row_hi)` from the first (and only) column
+    /// of the given parquet buffer. Returns the raw decoded data bytes.
+    fn decode_row_range(buf: &[u8], row_lo: usize, row_hi: usize) -> Vec<u8> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let buf_len = buf.len() as u64;
+
+        let mut cursor = Cursor::new(buf);
+        let metadata = read_metadata_with_size(&mut cursor, buf_len).unwrap();
+        let schema_col = &metadata.schema_descr.columns()[0];
+        let desc = &schema_col.descriptor;
+        let prim = &desc.primitive_type;
+
+        let descriptor = super::reconstruct_descriptor(
+            2, // Int64
+            0,
+            desc.max_rep_level as u8,
+            desc.max_def_level as u8,
+            "col",
+            prim.field_info.repetition,
+        );
+
+        let rg = &metadata.row_groups[0];
+        let chunk = &rg.columns()[0];
+        let (col_start, col_len) = chunk.byte_range();
+        let compression = chunk.compression();
+        let num_values = chunk.num_values();
+
+        let col_info = QdbMetaCol {
+            column_type: ColumnType::new(ColumnTypeTag::Long, 0),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+
+        super::decode_column_chunk_with_params(
+            &mut ctx,
+            &mut bufs,
+            buf,
+            col_start as usize,
+            col_len as usize,
+            compression,
+            descriptor,
+            num_values,
+            col_info,
+            row_lo,
+            row_hi,
+            "col",
+            0,
+        )
+        .unwrap();
+
+        bufs.data_vec.to_vec()
+    }
+
+    /// Interpret a byte slice as a sequence of little-endian i64 values.
+    fn read_i64s(data: &[u8]) -> Vec<i64> {
+        assert_eq!(data.len() % 8, 0, "data length must be a multiple of 8");
+        data.chunks_exact(8)
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn reconstruct_boolean() {
+        let desc = reconstruct_descriptor(0, 0, 0, 1, "flag", Repetition::Optional);
+        assert_eq!(desc.primitive_type.physical_type, PhysicalType::Boolean);
+    }
+
+    #[test]
+    fn reconstruct_int32() {
+        let desc = reconstruct_descriptor(1, 0, 0, 1, "count", Repetition::Required);
+        assert_eq!(desc.primitive_type.physical_type, PhysicalType::Int32);
+    }
+
+    #[test]
+    fn reconstruct_int64() {
+        let desc = reconstruct_descriptor(2, 0, 0, 0, "big_count", Repetition::Required);
+        assert_eq!(desc.primitive_type.physical_type, PhysicalType::Int64);
+    }
+
+    #[test]
+    fn reconstruct_int96() {
+        let desc = reconstruct_descriptor(3, 0, 0, 1, "nano_ts", Repetition::Optional);
+        assert_eq!(desc.primitive_type.physical_type, PhysicalType::Int96);
+    }
+
+    #[test]
+    fn reconstruct_float() {
+        let desc = reconstruct_descriptor(4, 0, 0, 1, "temperature", Repetition::Optional);
+        assert_eq!(desc.primitive_type.physical_type, PhysicalType::Float);
+    }
+
+    #[test]
+    fn reconstruct_double() {
+        let desc = reconstruct_descriptor(5, 0, 0, 0, "price", Repetition::Required);
+        assert_eq!(desc.primitive_type.physical_type, PhysicalType::Double);
+    }
+
+    #[test]
+    fn reconstruct_byte_array() {
+        let desc = reconstruct_descriptor(6, 0, 0, 1, "payload", Repetition::Optional);
+        assert_eq!(desc.primitive_type.physical_type, PhysicalType::ByteArray);
+    }
+
+    #[test]
+    fn reconstruct_flba_16() {
+        let desc = reconstruct_descriptor(7, 16, 0, 1, "uuid", Repetition::Optional);
+        assert_eq!(
+            desc.primitive_type.physical_type,
+            PhysicalType::FixedLenByteArray(16)
+        );
+    }
+
+    #[test]
+    fn reconstruct_flba_32() {
+        let desc = reconstruct_descriptor(7, 32, 0, 1, "hash256", Repetition::Optional);
+        assert_eq!(
+            desc.primitive_type.physical_type,
+            PhysicalType::FixedLenByteArray(32)
+        );
+    }
+
+    #[test]
+    fn reconstruct_flba_arbitrary() {
+        let desc = reconstruct_descriptor(7, 5, 0, 0, "short_fixed", Repetition::Required);
+        assert_eq!(
+            desc.primitive_type.physical_type,
+            PhysicalType::FixedLenByteArray(5)
+        );
+    }
+
+    #[test]
+    fn reconstruct_invalid_phys_fallback() {
+        let desc = reconstruct_descriptor(99, 0, 0, 0, "unknown", Repetition::Required);
+        assert_eq!(desc.primitive_type.physical_type, PhysicalType::Int64);
+    }
+
+    #[test]
+    fn reconstruct_logical_converted_always_none() {
+        let type_ids: &[(u8, PhysicalType)] = &[
+            (0, PhysicalType::Boolean),
+            (1, PhysicalType::Int32),
+            (2, PhysicalType::Int64),
+            (3, PhysicalType::Int96),
+            (4, PhysicalType::Float),
+            (5, PhysicalType::Double),
+            (6, PhysicalType::ByteArray),
+            (7, PhysicalType::FixedLenByteArray(12)),
+        ];
+        for &(phys_id, ref expected_phys) in type_ids {
+            let flba_len = if phys_id == 7 { 12 } else { 0 };
+            let desc = reconstruct_descriptor(phys_id, flba_len, 0, 0, "col", Repetition::Required);
+            assert_eq!(&desc.primitive_type.physical_type, expected_phys);
+            assert!(
+                desc.primitive_type.logical_type.is_none(),
+                "logical_type should be None for phys_id={}",
+                phys_id
+            );
+            assert!(
+                desc.primitive_type.converted_type.is_none(),
+                "converted_type should be None for phys_id={}",
+                phys_id
+            );
+        }
+    }
+
+    #[test]
+    fn reconstruct_preserves_rep_def_name() {
+        // rep=2, def=3
+        let desc = reconstruct_descriptor(2, 0, 2, 3, "nested_val", Repetition::Repeated);
+        assert_eq!(desc.max_rep_level, 2);
+        assert_eq!(desc.max_def_level, 3);
+        assert_eq!(desc.primitive_type.field_info.name, "nested_val");
+        assert_eq!(
+            desc.primitive_type.field_info.repetition,
+            Repetition::Repeated
+        );
+
+        // rep=0, def=0, Required
+        let desc = reconstruct_descriptor(1, 0, 0, 0, "flat_req", Repetition::Required);
+        assert_eq!(desc.max_rep_level, 0);
+        assert_eq!(desc.max_def_level, 0);
+        assert_eq!(desc.primitive_type.field_info.name, "flat_req");
+        assert_eq!(
+            desc.primitive_type.field_info.repetition,
+            Repetition::Required
+        );
+
+        // rep=1, def=1, Optional
+        let desc = reconstruct_descriptor(5, 0, 1, 1, "opt_col", Repetition::Optional);
+        assert_eq!(desc.max_rep_level, 1);
+        assert_eq!(desc.max_def_level, 1);
+        assert_eq!(desc.primitive_type.field_info.name, "opt_col");
+        assert_eq!(
+            desc.primitive_type.field_info.repetition,
+            Repetition::Optional
+        );
+
+        // field_info.id is always None
+        assert!(desc.primitive_type.field_info.id.is_none());
+    }
+
+    #[test]
+    fn reconstruct_flba_zero_length() {
+        let desc = reconstruct_descriptor(7, 0, 0, 0, "empty_flba", Repetition::Required);
+        assert_eq!(
+            desc.primitive_type.physical_type,
+            PhysicalType::FixedLenByteArray(0)
+        );
+    }
+
+    #[test]
+    fn row_range_single_first_row() {
+        let buf = write_i64_parquet(10);
+        let data = decode_row_range(&buf, 0, 1);
+        assert_eq!(data.len(), 8, "expected exactly 1 i64 (8 bytes)");
+        let values = read_i64s(&data);
+        assert_eq!(values, vec![0i64]);
+    }
+
+    #[test]
+    fn row_range_single_last_row() {
+        let row_count = 10usize;
+        let buf = write_i64_parquet(row_count);
+        let data = decode_row_range(&buf, row_count - 1, row_count);
+        assert_eq!(data.len(), 8, "expected exactly 1 i64 (8 bytes)");
+        let values = read_i64s(&data);
+        assert_eq!(values, vec![(row_count - 1) as i64]);
+    }
+
+    #[test]
+    fn row_range_middle_slice() {
+        let buf = write_i64_parquet(20);
+        let data = decode_row_range(&buf, 5, 10);
+        assert_eq!(data.len(), 5 * 8, "expected 5 i64 values (40 bytes)");
+        let values = read_i64s(&data);
+        assert_eq!(values, vec![5, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn invalid_byte_range_returns_error() {
+        let buf = write_i64_parquet(5);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let buf_len = buf.len() as u64;
+
+        let mut cursor = Cursor::new(&*buf);
+        let metadata = read_metadata_with_size(&mut cursor, buf_len).unwrap();
+        let schema_col = &metadata.schema_descr.columns()[0];
+        let desc = &schema_col.descriptor;
+        let prim = &desc.primitive_type;
+
+        let descriptor = super::reconstruct_descriptor(
+            2,
+            0,
+            desc.max_rep_level as u8,
+            desc.max_def_level as u8,
+            "col",
+            prim.field_info.repetition,
+        );
+
+        let rg = &metadata.row_groups[0];
+        let chunk = &rg.columns()[0];
+        let (col_start, col_len) = chunk.byte_range();
+        let compression = chunk.compression();
+        let num_values = chunk.num_values();
+
+        let col_info = QdbMetaCol {
+            column_type: ColumnType::new(ColumnTypeTag::Long, 0),
+            column_top: 0,
+            format: None,
+            ascii: None,
+        };
+
+        // Truncate the buffer so col_start + col_len > truncated.len()
+        let truncated = &buf[..col_start as usize + col_len as usize / 2];
+        let mut ctx = DecodeContext::new(truncated.as_ptr(), truncated.len() as u64);
+        let mut bufs = ColumnChunkBuffers::new(allocator);
+
+        let result = super::decode_column_chunk_with_params(
+            &mut ctx,
+            &mut bufs,
+            truncated,
+            col_start as usize,
+            col_len as usize,
+            compression,
+            descriptor,
+            num_values,
+            col_info,
+            0,
+            5,
+            "col",
+            0,
+        );
+        assert!(
+            result.is_err(),
+            "expected error for out-of-bounds byte range"
+        );
+    }
+
+    #[test]
+    fn column_type_new_raw_tests() {
+        // code 0 should return None (undefined type)
+        assert!(
+            ColumnType::new_raw(0).is_none(),
+            "ColumnType::new_raw(0) should be None"
+        );
+
+        // valid type codes should return Some
+        let long_code = ColumnTypeTag::Long as i32; // 6
+        let ct = ColumnType::new_raw(long_code);
+        assert!(
+            ct.is_some(),
+            "ColumnType::new_raw({}) should be Some",
+            long_code
+        );
+        let ct = ct.unwrap();
+        assert_eq!(ct.tag(), ColumnTypeTag::Long);
+        assert_eq!(ct.code(), long_code);
+
+        // negative codes are non-zero, so new_raw succeeds
+        let neg = ColumnType::new_raw(-1);
+        assert!(
+            neg.is_some(),
+            "ColumnType::new_raw(-1) should be Some (non-zero)"
+        );
+    }
+}

@@ -87,7 +87,9 @@ impl<'a> SlicePageReader<'a> {
         if col_end > data.len() {
             return Err(Error::oos(format!(
                 "Column chunk range {}..{} exceeds data length {}",
-                col_start, col_end, data.len()
+                col_start,
+                col_end,
+                data.len()
             )));
         }
         Ok(Self {
@@ -201,3 +203,70 @@ impl<'a> Iterator for SlicePageReader<'a> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compression::Compression;
+    use crate::metadata::Descriptor;
+    use crate::schema::types::{FieldInfo, PhysicalType, PrimitiveType};
+    use crate::schema::Repetition;
+
+    fn test_descriptor() -> Descriptor {
+        Descriptor {
+            primitive_type: PrimitiveType {
+                field_info: FieldInfo {
+                    name: "test".to_string(),
+                    repetition: Repetition::Required,
+                    id: None,
+                },
+                logical_type: None,
+                converted_type: None,
+                physical_type: PhysicalType::Int64,
+            },
+            max_def_level: 0,
+            max_rep_level: 0,
+        }
+    }
+
+    #[test]
+    fn from_parts_range_out_of_bounds() {
+        let data = vec![0u8; 100];
+        let result = SlicePageReader::from_parts(
+            &data,
+            50, // col_start
+            60, // col_len: 50 + 60 = 110 > 100
+            Compression::Uncompressed,
+            test_descriptor(),
+            1,
+            1024,
+        );
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected an error for out-of-bounds range"),
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeds data length"),
+            "expected 'exceeds data length' in error, got: {msg}",
+        );
+    }
+
+    #[test]
+    fn from_parts_zero_length_no_values() {
+        let data = vec![0u8; 100];
+        let mut reader = SlicePageReader::from_parts(
+            &data,
+            0,
+            0, // col_len = 0
+            Compression::Uncompressed,
+            test_descriptor(),
+            0, // num_values = 0
+            1024,
+        )
+        .unwrap();
+        assert!(
+            reader.next().is_none(),
+            "expected no pages from a zero-length, zero-values reader",
+        );
+    }
+}
