@@ -10746,6 +10746,142 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStdDevPopToPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            String tenSeconds = timestampType == TestTimestampType.MICRO ? "10000000" : "10000000000";
+            String twoSeconds = timestampType == TestTimestampType.MICRO ? "2000000" : "2000000000";
+
+            // partition + range frame
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [stddev_pop(val) over (partition by [i] range between " + tenSeconds + " preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, i, stddev_pop(val) over (partition by i order by ts range between 10 second preceding and current row) from tab"
+            );
+
+            // partition + rows frame
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [stddev_pop(val) over (partition by [i] rows between 3 preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, i, stddev_pop(val) over (partition by i order by ts rows between 3 preceding and current row) from tab"
+            );
+
+            // no partition + range frame
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [stddev_pop(val) over (range between " + tenSeconds + " preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, stddev_pop(val) over (order by ts range between 10 second preceding and current row) from tab"
+            );
+
+            // no partition + rows frame
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [stddev_pop(val) over ( rows between 3 preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, stddev_pop(val) over (order by ts rows between 3 preceding and current row) from tab"
+            );
+
+            // unbounded preceding range
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [stddev_pop(val) over (partition by [i] range between unbounded preceding and " + twoSeconds + " preceding)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, i, stddev_pop(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab"
+            );
+
+            // unbounded preceding to current row (Welford path)
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [stddev_pop(val) over (partition by [i] rows between unbounded preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, i, stddev_pop(val) over (partition by i order by ts) from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopUnboundedPrecedingRangeFrame() throws Exception {
+        // Covers the !frameLoBounded path in StdDevOverRangeFrameFunction
+        // RANGE BETWEEN UNBOUNDED PRECEDING AND 2 microseconds PRECEDING
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "('1970-01-01T00:00:01', 10.0), " +
+                    "('1970-01-01T00:00:02', 20.0), " +
+                    "('1970-01-01T00:00:03', 30.0), " +
+                    "('1970-01-01T00:00:04', 40.0), " +
+                    "('1970-01-01T00:00:05', 50.0)");
+
+            // frame upper bound = ts - 2µs (exclusive of current row)
+            // At ts=1s: frame = [all ts <= 1s-2µs] = empty → null
+            // At ts=2s: frame = [ts <= 2s-2µs] = {10} → stddev=0
+            // At ts=3s: frame = [ts <= 3s-2µs] = {10, 20} → stddev=5
+            // At ts=4s: {10, 20, 30} → stddev=8.165
+            // At ts=5s: {10, 20, 30, 40} → stddev=11.18
+            assertSql(
+                    replaceTimestampSuffix("""
+                            ts\tsd
+                            1970-01-01T00:00:01.000000Z\tnull
+                            1970-01-01T00:00:02.000000Z\t0.0
+                            1970-01-01T00:00:03.000000Z\t5.0
+                            1970-01-01T00:00:04.000000Z\t8.16496580927726
+                            1970-01-01T00:00:05.000000Z\t11.180339887498949
+                            """),
+                    "select ts, stddev_pop(val) over (order by ts range between unbounded preceding and 2 microseconds preceding) sd from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopPartitionedUnboundedPrecedingRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "('1970-01-01T00:00:01', 1, 10.0), " +
+                    "('1970-01-01T00:00:02', 1, 20.0), " +
+                    "('1970-01-01T00:00:03', 1, 30.0), " +
+                    "('1970-01-01T00:00:04', 2, 100.0), " +
+                    "('1970-01-01T00:00:05', 2, 200.0), " +
+                    "('1970-01-01T00:00:06', 2, 300.0)");
+
+            assertSql(
+                    replaceTimestampSuffix("""
+                            ts\ti\tsd
+                            1970-01-01T00:00:01.000000Z\t1\tnull
+                            1970-01-01T00:00:02.000000Z\t1\t0.0
+                            1970-01-01T00:00:03.000000Z\t1\t5.0
+                            1970-01-01T00:00:04.000000Z\t2\tnull
+                            1970-01-01T00:00:05.000000Z\t2\t0.0
+                            1970-01-01T00:00:06.000000Z\t2\t50.0
+                            """),
+                    "select ts, i, stddev_pop(val) over (partition by i order by ts range between unbounded preceding and 2 microseconds preceding) sd from tab"
+            );
+        });
+    }
+
+    @Test
     public void testTwoWindowColumns() throws Exception {
         // Test two window functions with different specifications
         assertQuery(
