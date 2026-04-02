@@ -55,6 +55,7 @@ import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
@@ -293,7 +294,12 @@ public class Services {
         } else {
             receiver = new QwpUdpReceiver(config, cairoEngine, workerPool);
         }
-        receiver.start();
+        try {
+            receiver.start();
+        } catch (Throwable th) {
+            Misc.free(receiver);
+            throw th;
+        }
         return receiver;
     }
 }
