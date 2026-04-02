@@ -1073,6 +1073,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                 if (isWindowContext != factory.isWindow()) {
                     match = MATCH_FUZZY_MATCH;
+                    sigArgTypeScore += 20;
                 } else if (factory.isWindow()) { // make windowFunction high priority when isWindowContext
                     sigArgTypeScore -= 20;
                 }
