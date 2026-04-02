@@ -10102,7 +10102,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if ((masterRef & 1) != 0) {
             for (int i = 0; i < columnCount; i++) {
                 if (rowValueIsNotNull.getQuick(i) < masterRef) {
-                    if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i))) {
+                    if (TableUtils.isEnforceableNotNull(metadata.getColumnType(i), metadata.isNotNull(i), configuration.getImplicitNotNullDefaultValues())) {
                         throw CairoException.nonCritical()
                                 .put("NOT NULL constraint violation, column is required [column=")
                                 .put(metadata.getColumnName(i))

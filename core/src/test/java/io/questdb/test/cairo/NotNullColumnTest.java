@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -383,10 +384,24 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImplicitNotNullBooleanNotEnforced() throws Exception {
+    public void testImplicitNotNullBooleanEnforcedByDefault() throws Exception {
         assertMemoryLeak(() -> {
-            // BOOLEAN is implicitly NOT NULL (no null sentinel), but enforcement
-            // is skipped for implicit types — the null setter writes 0 (false) which is valid
+            execute("CREATE TABLE t (b BOOLEAN, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
+                fail("Expected NOT NULL violation for BOOLEAN column");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "NOT NULL constraint violation");
+                assertContains(e.getFlyweightMessage(), "column=b");
+            }
+        });
+    }
+
+    @Test
+    public void testImplicitNotNullBooleanDefaultValues() throws Exception {
+        setProperty(PropertyKey.CAIRO_IMPLICIT_NOT_NULL_DEFAULT_VALUES, "true");
+        assertMemoryLeak(() -> {
+            // With the config flag enabled, BOOLEAN auto-fills with false when not provided
             execute("CREATE TABLE t (b BOOLEAN, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
 

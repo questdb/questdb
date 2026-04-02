@@ -363,6 +363,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getImplicitNotNullDefaultValues() {
+        return false;
+    }
+
+    @Override
     public int getFileOperationRetryCount() {
         return 30;
     }

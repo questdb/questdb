@@ -269,6 +269,8 @@ public interface CairoConfiguration {
 
     boolean getFileDescriptorCacheEnabled();
 
+    boolean getImplicitNotNullDefaultValues();
+
     int getFileOperationRetryCount();
 
     @NotNull
