@@ -33,13 +33,13 @@ use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 // ── File format constants ──────────────────────────────────────────────
 
 /// Current file format version.
-pub const FILE_FORMAT_VERSION: u32 = 1;
+pub const FILE_FORMAT_VERSION: u32 = 2;
 
 /// Fixed portion of the file header (version + designated_ts + sorting_col_count + col_count).
 pub const HEADER_FIXED_SIZE: usize = 16;
 
 /// Size of a single column descriptor in the header.
-pub const COLUMN_DESCRIPTOR_SIZE: usize = 32;
+pub const COLUMN_DESCRIPTOR_SIZE: usize = 40;
 
 /// Size of a single column chunk inside a row group block.
 pub const COLUMN_CHUNK_SIZE: usize = 64;
@@ -155,6 +155,22 @@ impl From<parquet2::compression::Compression> for Codec {
             Compression::Lz4 => Codec::Lz4,
             Compression::Zstd => Codec::Zstd,
             Compression::Lz4Raw => Codec::Lz4Raw,
+        }
+    }
+}
+
+impl From<Codec> for parquet2::compression::Compression {
+    fn from(c: Codec) -> Self {
+        use parquet2::compression::Compression;
+        match c {
+            Codec::Uncompressed => Compression::Uncompressed,
+            Codec::Snappy => Compression::Snappy,
+            Codec::Gzip => Compression::Gzip,
+            Codec::Lzo => Compression::Lzo,
+            Codec::Brotli => Compression::Brotli,
+            Codec::Lz4 => Compression::Lz4,
+            Codec::Zstd => Compression::Zstd,
+            Codec::Lz4Raw => Compression::Lz4Raw,
         }
     }
 }
@@ -332,6 +348,17 @@ impl From<parquet2::schema::Repetition> for FieldRepetition {
             Repetition::Required => FieldRepetition::Required,
             Repetition::Optional => FieldRepetition::Optional,
             Repetition::Repeated => FieldRepetition::Repeated,
+        }
+    }
+}
+
+impl From<FieldRepetition> for parquet2::schema::Repetition {
+    fn from(r: FieldRepetition) -> Self {
+        use parquet2::schema::Repetition;
+        match r {
+            FieldRepetition::Required => Repetition::Required,
+            FieldRepetition::Optional => Repetition::Optional,
+            FieldRepetition::Repeated => Repetition::Repeated,
         }
     }
 }

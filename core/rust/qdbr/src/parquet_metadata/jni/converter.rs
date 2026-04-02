@@ -55,7 +55,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetMetad
         return err.into_cairo_exception().throw::<i64>(&mut env);
     }
     match generate_pm(parquet_fd, parquet_file_size as u64, pm_fd) {
-        Ok(pm_file_size) => pm_file_size as i64,
+        Ok(parquet_meta_file_size) => parquet_meta_file_size as i64,
         Err(mut err) => {
             err.add_context("error in ParquetMetadataWriter.generate");
             err.into_cairo_exception().throw::<i64>(&mut env)
@@ -101,16 +101,16 @@ fn generate_pm(parquet_fd: i32, parquet_file_size: u64, pm_fd: i32) -> ParquetRe
     )
     .context("could not convert parquet metadata to pm")?;
 
-    let pm_file_size = pm_bytes.len() as u64;
+    let parquet_meta_file_size = pm_bytes.len() as u64;
 
     // Write the _pm file. ManuallyDrop ensures the fd is never closed by Rust.
-    let mut pm_file = ManuallyDrop::new(unsafe { File::from_raw_fd_i32(pm_fd) });
-    pm_file
+    let mut parquet_meta_file = ManuallyDrop::new(unsafe { File::from_raw_fd_i32(pm_fd) });
+    parquet_meta_file
         .write_all(&pm_bytes)
         .map_err(ParquetError::from)
         .context("could not write pm file")?;
 
-    Ok(pm_file_size)
+    Ok(parquet_meta_file_size)
 }
 
 fn extract_qdb_meta(metadata: &parquet2::metadata::FileMetaData) -> ParquetResult<Option<QdbMeta>> {

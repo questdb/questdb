@@ -29,8 +29,8 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -540,12 +540,11 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     continue;
                 }
                 reader.openPartition(i);
-                PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
-                PartitionDecoder.Metadata meta = decoder.metadata();
+                ParquetMetaFileReader meta = reader.getAndInitParquetMetaPartitionDecoder(i).metadata();
                 int rgCount = meta.getRowGroupCount();
                 int smallRgCount = 0;
                 for (int rg = 0; rg < rgCount; rg++) {
-                    int rgSize = meta.getRowGroupSize(rg);
+                    int rgSize = (int) meta.getRowGroupSize(rg);
                     Assert.assertTrue(
                             "row group " + rg + " has " + rgSize + " rows, exceeds 1.5x configured size " + rowGroupSize,
                             rgSize <= rowGroupSize + rowGroupSize / 2

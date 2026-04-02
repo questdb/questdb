@@ -31,7 +31,7 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -115,27 +115,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         FilesFacade ff = tableWriter.getFilesFacade();
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         ctx.clear();
-        final PartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
+        final ParquetMetaPartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
         final RowGroupBuffers rowGroupBuffers = ctx.getRowGroupBuffers();
         final DirectIntList parquetColumns = ctx.getParquetColumns();
         final RowGroupStatBuffers rowGroupStatBuffers = ctx.getRowGroupStatBuffers();
         final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
         final PartitionDescriptor partitionDescriptor = ctx.getPartitionDescriptor();
         long parquetSize = 0;
+        long parquetMetaAddr = 0;
         try {
             // Derive parquet file size from _pm metadata.
             int parquetNameLen = path.size();
             int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             {
-                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                try {
-                    ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
-                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize);
-                    parquetSize = parquetMetaReader.getParquetFileSize();
-                } finally {
-                    ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                }
+                ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize);
+                parquetSize = parquetMetaReader.getParquetFileSize();
             }
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
 
@@ -143,6 +140,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             try {
                 parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 partitionDecoder.of(
+                        parquetMetaAddr,
+                        parquetMetaFileSize,
                         parquetAddr,
                         parquetSize,
                         MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER
@@ -152,7 +151,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // This allows O3 merge to work after ADD/DROP COLUMN: columns are
                 // matched by their writer index (stored as field_id in parquet),
                 // not by position.
-                final PartitionDecoder.Metadata parquetMeta = partitionDecoder.metadata();
+                final ParquetMetaFileReader parquetMeta = partitionDecoder.metadata();
                 final int parquetColumnCount = parquetMeta.getColumnCount();
                 final int columnCount = tableWriterMetadata.getColumnCount();
                 final IntIntHashMap parquetColIdToIdx = ctx.getParquetColIdToIdx();
@@ -206,7 +205,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // mode, untouched row groups would retain the old column layout while
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
-                final long unusedBytes = partitionDecoder.metadata().getUnusedBytes();
+                // The _pm metadata file does not track unused bytes; default to 0
+                // so the rewrite decision falls to other criteria.
+                final long unusedBytes = 0;
                 isRewrite = hasSchemaChange
                         || rowGroupCount == 1
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
@@ -358,16 +359,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 for (int rg = 0; rg < rowGroupCount; rg++) {
                     final long rgMin, rgMax;
-                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, parquetColumns, rg);
-                    boolean hasTimestampStats = rowGroupStatBuffers.getMinValueSize(0) == Long.BYTES;
+                    final ParquetMetaFileReader meta = partitionDecoder.metadata();
+                    final int statFlags = meta.getChunkStatFlags(rg, timestampParquetIdx);
+                    final boolean hasTimestampStats = (statFlags & 0x01) != 0 && (statFlags & 0x08) != 0;
                     if (hasTimestampStats) {
-                        rgMin = rowGroupStatBuffers.getMinValueLong(0);
-                        rgMax = rowGroupStatBuffers.getMaxValueLong(0);
+                        rgMin = meta.getChunkMinStat(rg, timestampParquetIdx);
+                        rgMax = meta.getChunkMaxStat(rg, timestampParquetIdx);
                     } else {
                         rgMin = partitionDecoder.rowGroupMinTimestamp(rg, timestampParquetIdx);
                         rgMax = partitionDecoder.rowGroupMaxTimestamp(rg, timestampParquetIdx);
                     }
-                    final long rgRowCount = partitionDecoder.metadata().getRowGroupSize(rg);
+                    final long rgRowCount = meta.getRowGroupSize(rg);
                     O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, rgMin, rgMax, rgRowCount);
                 }
                 parquetColumns.clear();
@@ -406,7 +408,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         switch (action.type) {
                             case MERGE -> {
-                                final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
+                                final int rgSize = (int) partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
                                 LOG.info()
                                         .$("parquet merge row group [table=").$(tableWriter.getTableToken())
                                         .$(", partition=").$ts(partitionTimestamp)
@@ -448,7 +450,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 metadataPosition += numOutputRGs;
                             }
                             case COPY_ROW_GROUP_SLICE -> {
-                                final int rgSize = partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
+                                final int rgSize = (int) partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
                                 // The merge strategy always produces full-range COPY_ROW_GROUP_SLICE
                                 // actions (the entire row group). Partial slicing is not supported.
                                 assert action.rgLo == 0 && action.rgHi == rgSize - 1
@@ -543,6 +545,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         o3Basket,
                         newPartitionSize,
                         newParquetSize,
+                        newParquetMetaFileSize,
                         pathToTable,
                         path,
                         ff,
@@ -598,6 +601,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Rewrite mode: original is intact, new dir already removed by the inner catch.
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
         } finally {
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
             ctx.releaseResources();
             // Use the _pm file size from the Rust result if available (success path).
             // Fall back to reading from disk (error path — the file may have been truncated).
@@ -2071,7 +2077,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             ReadOnlyObjList<? extends MemoryCR> oooColumns,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
-            PartitionDecoder decoder,
+            ParquetMetaPartitionDecoder decoder,
             RowGroupBuffers rowGroupBuffers,
             int rowGroupIndex,
             int timestampIndex,
@@ -2118,7 +2124,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             activeColCount++;
         }
 
-        final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
+        final int rowGroupSize = (int) decoder.metadata().getRowGroupSize(rowGroupIndex);
         decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, rowGroupSize);
 
         assert timestampColumnChunkIndex > -1;
@@ -3218,32 +3224,40 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             O3Basket o3Basket,
             long newPartitionSize,
             long newParquetSize,
+            long newParquetMetaFileSize,
             Path pathToTable,
             Path path,
             FilesFacade ff,
-            PartitionDecoder partitionDecoder,
+            ParquetMetaPartitionDecoder partitionDecoder,
             TableRecordMetadata tableWriterMetadata,
             DirectIntList parquetColumns,
             RowGroupBuffers rowGroupBuffers,
             boolean isRewrite
     ) {
         long parquetAddr = 0;
+        long parquetMetaAddr = 0;
         try {
+            // Map the _pm sidecar file from the same directory as the parquet file.
+            int parquetNameLen = path.size();
+            int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, newParquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
             parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             partitionDecoder.of(
+                    parquetMetaAddr,
+                    newParquetMetaFileSize,
                     parquetAddr,
                     newParquetSize,
                     MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
             );
 
-            final long newUnusedBytes = partitionDecoder.metadata().getUnusedBytes();
             LOG.info()
                     .$("parquet o3 done [table=").$(tableWriter.getTableToken())
                     .$(", partition=").$(partitionTimestamp)
                     .$(", rowGroups=").$(partitionDecoder.metadata().getRowGroupCount())
                     .$(", fileSize=").$size(newParquetSize)
-                    .$(", unusedBytes=").$size(newUnusedBytes)
-                    .$(", unusedPct=").$(newParquetSize > 0 ? (100.0 * newUnusedBytes / newParquetSize) : 0)
                     .I$();
 
             path.of(pathToTable);
@@ -3294,7 +3308,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
 
                     try {
-                        final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.metadata();
+                        final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
 
                         int parquetColumnIndex = -1;
                         final int writerIndex = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
@@ -3327,7 +3341,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long rowCount = 0;
                             final int rowGroupCount = parquetMetadata.getRowGroupCount();
                             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                                final int rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+                                final int rowGroupSize = (int) parquetMetadata.getRowGroupSize(rowGroupIndex);
                                 if (rowCount + rowGroupSize <= columnTop) {
                                     rowCount += rowGroupSize;
                                     continue;
@@ -3364,6 +3378,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         } finally {
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, newParquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
     }

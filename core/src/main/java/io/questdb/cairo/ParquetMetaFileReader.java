@@ -37,7 +37,7 @@ import io.questdb.std.Unsafe;
  *   [4]  DESIGNATED_TS   i32
  *   [8]  SORTING_COL_CNT u32
  *   [12] COLUMN_COUNT    u32
- *   [16..] column descriptors (32B each), sorting columns (4B each), name strings
+ *   [16..] column descriptors (40B each), sorting columns (4B each), name strings
  *
  * ROW GROUP BLOCK (8-byte aligned, per row group):
  *   [0]  NUM_ROWS        u64
@@ -54,7 +54,7 @@ import io.questdb.std.Unsafe;
  */
 public class ParquetMetaFileReader {
 
-    private static final int EXPECTED_FORMAT_VERSION = 1;
+    private static final int EXPECTED_FORMAT_VERSION = 2;
 
     // Header offsets
     private static final int HEADER_FORMAT_VERSION_OFF = 0;
@@ -73,8 +73,29 @@ public class ParquetMetaFileReader {
     // Row group block offsets are stored right-shifted by this amount
     private static final int BLOCK_ALIGNMENT_SHIFT = 3;
 
+    // Column descriptor layout (40B each, starting at header offset 16)
+    private static final int COLUMN_DESCRIPTOR_SIZE = 40;
+    private static final int COL_DESC_NAME_OFFSET_OFF = 0;
+    private static final int COL_DESC_TOP_OFF = 8;
+    private static final int COL_DESC_ID_OFF = 16;
+    private static final int COL_DESC_COL_TYPE_OFF = 20;
+    private static final int COL_DESC_FLAGS_OFF = 24;
+    private static final int COL_DESC_FIXED_BYTE_LEN_OFF = 28;
+    private static final int COL_DESC_NAME_LENGTH_OFF = 32;
+    private static final int COL_DESC_PHYSICAL_TYPE_OFF = 36;
+    private static final int COL_DESC_MAX_REP_LEVEL_OFF = 37;
+    private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 38;
+    private static final int HEADER_FIXED_SIZE = 16;
+
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
+    private static final int COLUMN_CHUNK_CODEC_OFF = 0;
+    private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
+    private static final int COLUMN_CHUNK_BLOOM_FILTER_OFF = 4;
+    private static final int COLUMN_CHUNK_NUM_VALUES_OFF = 8;
+    private static final int COLUMN_CHUNK_BYTE_RANGE_START_OFF = 16;
+    private static final int COLUMN_CHUNK_TOTAL_COMPRESSED_OFF = 24;
+    private static final int COLUMN_CHUNK_NULL_COUNT_OFF = 32;
     private static final int COLUMN_CHUNK_MIN_STAT_OFF = 48;
     private static final int COLUMN_CHUNK_MAX_STAT_OFF = 56;
 
@@ -217,8 +238,131 @@ public class ParquetMetaFileReader {
         return Unsafe.getUnsafe().getInt(addr + HEADER_DESIGNATED_TS_OFF);
     }
 
+    // ── Column descriptor accessors ──────────────────────────────────────
+
+    public int getColumnType(int columnIndex) {
+        return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_COL_TYPE_OFF);
+    }
+
+    public int getColumnId(int columnIndex) {
+        return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_ID_OFF);
+    }
+
+    public long getColumnTop(int columnIndex) {
+        return Unsafe.getUnsafe().getLong(columnDescriptorAddr(columnIndex) + COL_DESC_TOP_OFF);
+    }
+
+    public int getColumnFlags(int columnIndex) {
+        return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_FLAGS_OFF);
+    }
+
+    public int getColumnPhysicalType(int columnIndex) {
+        return Unsafe.getUnsafe().getByte(columnDescriptorAddr(columnIndex) + COL_DESC_PHYSICAL_TYPE_OFF) & 0xFF;
+    }
+
+    public int getColumnFixedByteLen(int columnIndex) {
+        return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_FIXED_BYTE_LEN_OFF);
+    }
+
+    /**
+     * Returns the column name for the given column index.
+     * Reads the name_offset and name_length from the descriptor, then reads
+     * the UTF-8 bytes from the name strings area (skipping the 4-byte length prefix).
+     */
+    public CharSequence getColumnName(int columnIndex) {
+        long descAddr = columnDescriptorAddr(columnIndex);
+        long nameOffset = Unsafe.getUnsafe().getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
+        int nameLength = Unsafe.getUnsafe().getInt(descAddr + COL_DESC_NAME_LENGTH_OFF);
+        // Name is stored as [u32 length][utf8 bytes] at nameOffset. Skip the 4-byte prefix.
+        long nameAddr = addr + nameOffset + 4;
+        byte[] bytes = new byte[nameLength];
+        for (int i = 0; i < nameLength; i++) {
+            bytes[i] = Unsafe.getUnsafe().getByte(nameAddr + i);
+        }
+        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Finds a column by name (linear scan). Returns -1 if not found.
+     */
+    public int getColumnIndex(CharSequence name) {
+        for (int i = 0; i < columnCount; i++) {
+            CharSequence colName = getColumnName(i);
+            if (io.questdb.std.Chars.equals(colName, name)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Alias for {@link #getPartitionRowCount()}.
+     */
+    public long getRowCount() {
+        return getPartitionRowCount();
+    }
+
+    /**
+     * Alias for {@link #getDesignatedTimestampColumnIndex()}.
+     */
+    public int getTimestampIndex() {
+        return getDesignatedTimestampColumnIndex();
+    }
+
+    // ── Column chunk accessors (per row group, per column) ────────────
+
+    public long getChunkByteRangeStart(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_BYTE_RANGE_START_OFF);
+    }
+
+    public long getChunkTotalCompressed(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_TOTAL_COMPRESSED_OFF);
+    }
+
+    public int getChunkCodec(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getUnsafe().getByte(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_CODEC_OFF) & 0xFF;
+    }
+
+    public long getChunkNumValues(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_NUM_VALUES_OFF);
+    }
+
+    public long getChunkNullCount(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_NULL_COUNT_OFF);
+    }
+
+    public int getChunkStatFlags(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getUnsafe().getByte(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_STAT_FLAGS_OFF) & 0xFF;
+    }
+
+    public long getChunkMinStat(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_MIN_STAT_OFF);
+    }
+
+    public long getChunkMaxStat(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_MAX_STAT_OFF);
+    }
+
+    /**
+     * Returns the bloom filter byte offset in the parquet file for the given chunk.
+     * The stored value is right-shifted by 3 (block-aligned). Returns 0 if no bloom filter.
+     */
+    public long getChunkBloomFilterOffset(int rowGroupIndex, int columnIndex) {
+        int stored = Unsafe.getUnsafe().getInt(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_BLOOM_FILTER_OFF);
+        return Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
+    }
+
     public boolean isOpen() {
         return addr != 0;
+    }
+
+    /**
+     * Computes the absolute memory address of a column descriptor in the header.
+     * Descriptors start at offset 16 (after fixed header) and are 40 bytes each.
+     */
+    private long columnDescriptorAddr(int columnIndex) {
+        assert columnIndex >= 0 && columnIndex < columnCount;
+        return addr + HEADER_FIXED_SIZE + (long) columnIndex * COLUMN_DESCRIPTOR_SIZE;
     }
 
     /**

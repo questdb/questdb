@@ -33,7 +33,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -417,7 +417,7 @@ public class TableSnapshotRestore implements QuietCloseable {
      */
     private static int getIndexedParquetColumnIndex(
             RecordMetadata metadata,
-            PartitionDecoder.Metadata parquetMetadata,
+            ParquetMetaFileReader parquetMetadata,
             ColumnVersionReader columnVersionReader,
             int columnIndex,
             long partitionTimestamp,
@@ -599,7 +599,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
         try (
                 Path path = new Path().put(tablePathStr);
-                PartitionDecoder partitionDecoder = new PartitionDecoder();
+                ParquetMetaPartitionDecoder partitionDecoder = new ParquetMetaPartitionDecoder();
                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 DirectIntList parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)
         ) {
@@ -610,30 +610,27 @@ public class TableSnapshotRestore implements QuietCloseable {
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             int partitionDirLen = path.size();
 
-            // Derive parquet file size from _pm metadata.
+            // mmap _pm metadata to read parquet file size and provide metadata to the decoder.
             path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             final long parquetSize;
             {
-                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                try {
-                    ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
-                    parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
-                    parquetSize = parquetMetaReader.getParquetFileSize();
-                } finally {
-                    ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                }
+                ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
+                parquetSize = parquetMetaReader.getParquetFileSize();
             }
 
             // mmap data.parquet
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
             if (!ff.exists(path.$())) {
+                ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                 LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
                 return;
             }
 
             long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             try {
-                partitionDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                partitionDecoder.of(parquetMetaAddr, parquetMetadataFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
                 // Set path to native partition directory (where index files go)
                 path.trimTo(pathTableLen);
@@ -662,6 +659,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 throw e;
             } finally {
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
     }
@@ -843,7 +841,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             CairoConfiguration configuration,
             Path path,
             int partitionPathLen,
-            PartitionDecoder partitionDecoder,
+            ParquetMetaPartitionDecoder partitionDecoder,
             RowGroupBuffers rowGroupBuffers,
             DirectIntList parquetColumns,
             ObjList<BitmapIndexWriter> indexWriters,
@@ -852,7 +850,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             long partitionTimestamp,
             long partitionRowCount
     ) {
-        final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.metadata();
+        final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
         final int columnCount = metadata.getColumnCount();
         final StringSink columnNamesSink = new StringSink();
 
@@ -938,7 +936,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             long rowCount = 0;
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                final int rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+                final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
 
                 // Check if any column needs data from this row group
                 boolean needsDecode = false;
@@ -956,7 +954,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
                 // Decode all indexed columns for this row group
                 try {
-                    partitionDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, rowGroupSize);
+                    partitionDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, (int) rowGroupSize);
                 } catch (CairoException e) {
                     LOG.error().$("could not decode parquet row group [path=").$(path.trimTo(partitionPathLen))
                             .$(", rowGroupIndex=").$(rowGroupIndex)

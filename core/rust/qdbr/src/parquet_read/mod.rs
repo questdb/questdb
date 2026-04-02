@@ -3,6 +3,7 @@ use qdb_core::col_type::ColumnType;
 
 pub mod column_sink;
 pub mod decode;
+pub mod decode_column;
 pub mod decoders;
 pub mod jni;
 pub mod meta;

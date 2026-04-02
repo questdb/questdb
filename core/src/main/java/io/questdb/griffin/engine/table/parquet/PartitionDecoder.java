@@ -43,7 +43,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 
 
-public class PartitionDecoder implements QuietCloseable {
+public class PartitionDecoder implements ParquetDecoder, QuietCloseable {
     private static final long COLUMNS_PTR_OFFSET;
     private static final long COLUMN_COUNT_OFFSET;
     private final static long COLUMN_IDS_OFFSET;
@@ -235,6 +235,16 @@ public class PartitionDecoder implements QuietCloseable {
     public long getFileSize() {
         assert fileSize > 0 || fileAddr == 0;
         return fileSize;
+    }
+
+    @Override
+    public int getColumnCount() {
+        return metadata.getColumnCount();
+    }
+
+    @Override
+    public int getColumnId(int columnIndex) {
+        return metadata.getColumnId(columnIndex);
     }
 
     public Metadata metadata() {

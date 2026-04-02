@@ -85,7 +85,15 @@ pub fn read_from_slice<'a>(
     let Some(offset) = column_metadata.metadata().bloom_filter_offset else {
         return Ok(&[]);
     };
-    let offset: usize = offset.try_into()?;
+    read_from_slice_at_offset(offset as u64, data)
+}
+
+/// Reads the bloom filter bitset from `data` at the given byte `offset`.
+/// Returns an empty slice if the bloom filter is absent or unsupported.
+pub fn read_from_slice_at_offset(offset: u64, data: &[u8]) -> Result<&[u8], Error> {
+    let offset: usize = offset
+        .try_into()
+        .map_err(|_| Error::oos("bloom filter offset overflow"))?;
     let remaining = data
         .get(offset..)
         .ok_or_else(|| Error::oos("bloom filter offset exceeds data length"))?;

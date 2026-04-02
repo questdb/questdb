@@ -732,8 +732,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                         streamWriter,
                         allocator,
                         columnData.getAddress(),
-                        frame.getParquetPartitionDecoder().getFileAddr(),
-                        frame.getParquetPartitionDecoder().getFileSize(),
+                        frame.getParquetDecoder().getFileAddr(),
+                        frame.getParquetDecoder().getFileSize(),
                         frame.getParquetRowGroup(),
                         frame.getParquetRowGroupLo(),
                         frame.getParquetRowGroupHi()

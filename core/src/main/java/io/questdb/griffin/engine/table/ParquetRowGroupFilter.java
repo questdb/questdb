@@ -29,6 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -69,7 +71,7 @@ public final class ParquetRowGroupFilter {
      */
     public static boolean canSkipRowGroup(
             int rowGroupIndex,
-            PartitionDecoder decoder,
+            ParquetDecoder decoder,
             DirectLongList filterList,
             long filterBufEnd
     ) {
@@ -110,6 +112,27 @@ public final class ParquetRowGroupFilter {
             DirectLongList filterList,
             MemoryCARWImpl filterValues
     ) {
+        return prepareFilterListImpl(metadata::getColumnIndex, pushdownFilterConditions, filterList, filterValues);
+    }
+
+    /**
+     * Overload for ParquetMetaFileReader -- resolves columns from the _pm sidecar metadata.
+     */
+    public static boolean prepareFilterList(
+            ParquetMetaFileReader metadata,
+            ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
+            DirectLongList filterList,
+            MemoryCARWImpl filterValues
+    ) {
+        return prepareFilterListImpl(metadata::getColumnIndex, pushdownFilterConditions, filterList, filterValues);
+    }
+
+    private static boolean prepareFilterListImpl(
+            java.util.function.ToIntFunction<CharSequence> columnIndexLookup,
+            ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
+            DirectLongList filterList,
+            MemoryCARWImpl filterValues
+    ) {
         try {
             if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
                 return false;
@@ -124,7 +147,7 @@ public final class ParquetRowGroupFilter {
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();
 
-                int columnIndex = metadata.getColumnIndex(condition.getColumnName());
+                int columnIndex = columnIndexLookup.applyAsInt(condition.getColumnName());
                 if (columnIndex < 0) {
                     continue;
                 }

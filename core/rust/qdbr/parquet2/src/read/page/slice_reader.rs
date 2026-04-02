@@ -63,24 +63,41 @@ pub struct SlicePageReader<'a> {
 impl<'a> SlicePageReader<'a> {
     pub fn new(data: &'a [u8], column: &ColumnChunkMetaData, max_page_size: usize) -> Result<Self> {
         let (col_start, col_len) = column.byte_range();
-        let col_start = col_start as usize;
-        let col_end = col_start + col_len as usize;
+        Self::from_parts(
+            data,
+            col_start as usize,
+            col_len as usize,
+            column.compression(),
+            column.descriptor().descriptor.clone(),
+            column.num_values(),
+            max_page_size,
+        )
+    }
+
+    pub fn from_parts(
+        data: &'a [u8],
+        col_start: usize,
+        col_len: usize,
+        compression: Compression,
+        descriptor: Descriptor,
+        num_values: i64,
+        max_page_size: usize,
+    ) -> Result<Self> {
+        let col_end = col_start + col_len;
         if col_end > data.len() {
             return Err(Error::oos(format!(
                 "Column chunk range {}..{} exceeds data length {}",
-                col_start,
-                col_end,
-                data.len()
+                col_start, col_end, data.len()
             )));
         }
         Ok(Self {
             data,
             offset: col_start,
             end: col_end,
-            compression: column.compression(),
-            descriptor: column.descriptor().descriptor.clone(),
+            compression,
+            descriptor,
             seen_num_values: 0,
-            total_num_values: column.num_values(),
+            total_num_values: num_values,
             max_page_size,
         })
     }

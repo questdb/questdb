@@ -29,8 +29,10 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -881,7 +883,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         continue;
                     }
                     reader.openPartition(i);
-                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
+                    ParquetMetaPartitionDecoder decoder = reader.getAndInitParquetMetaPartitionDecoder(i);
                     rowGroupCountBefore = decoder.metadata().getRowGroupCount();
                     Assert.assertEquals("initial row group count", 2, rowGroupCountBefore);
                 }
@@ -906,9 +908,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         continue;
                     }
                     reader.openPartition(i);
-                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
-                    rowGroupCountAfterFirst = decoder.metadata().getRowGroupCount();
-                    unusedAfterFirst = decoder.metadata().getUnusedBytes();
+                    rowGroupCountAfterFirst = reader.getAndInitParquetMetaPartitionDecoder(i).metadata().getRowGroupCount();
+                    try (PartitionDecoder footerDecoder = new PartitionDecoder()) {
+                        footerDecoder.of(reader.getParquetAddr(i), reader.getParquetFileSize(i), MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        unusedAfterFirst = footerDecoder.metadata().getUnusedBytes();
+                    }
                     Assert.assertTrue(
                             "row group count should increase after first O3 update, was 2, got " + rowGroupCountAfterFirst,
                             rowGroupCountAfterFirst > 2
@@ -940,9 +944,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         continue;
                     }
                     reader.openPartition(i);
-                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
-                    rowGroupCountAfterSecond = decoder.metadata().getRowGroupCount();
-                    unusedAfterSecond = decoder.metadata().getUnusedBytes();
+                    rowGroupCountAfterSecond = reader.getAndInitParquetMetaPartitionDecoder(i).metadata().getRowGroupCount();
+                    try (PartitionDecoder footerDecoder = new PartitionDecoder()) {
+                        footerDecoder.of(reader.getParquetAddr(i), reader.getParquetFileSize(i), MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        unusedAfterSecond = footerDecoder.metadata().getUnusedBytes();
+                    }
                     Assert.assertTrue(
                             "row group count should increase after second O3 update, was " + rowGroupCountAfterFirst + ", got " + rowGroupCountAfterSecond,
                             rowGroupCountAfterSecond > rowGroupCountAfterFirst
@@ -2863,8 +2869,10 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         continue;
                     }
                     reader.openPartition(i);
-                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
-                    unusedAfterUpdate = decoder.metadata().getUnusedBytes();
+                    try (PartitionDecoder footerDecoder = new PartitionDecoder()) {
+                        footerDecoder.of(reader.getParquetAddr(i), reader.getParquetFileSize(i), MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        unusedAfterUpdate = footerDecoder.metadata().getUnusedBytes();
+                    }
                     Assert.assertTrue("unused_bytes should be > 0 after update, got " + unusedAfterUpdate, unusedAfterUpdate > 0);
                 }
             }
@@ -2886,9 +2894,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         continue;
                     }
                     reader.openPartition(i);
-                    PartitionDecoder decoder = reader.getAndInitParquetPartitionDecoders(i);
-                    long unusedAfterRewrite = decoder.metadata().getUnusedBytes();
-                    Assert.assertEquals("unused_bytes should be 0 after rewrite", 0, unusedAfterRewrite);
+                    try (PartitionDecoder footerDecoder = new PartitionDecoder()) {
+                        footerDecoder.of(reader.getParquetAddr(i), reader.getParquetFileSize(i), MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        long unusedAfterRewrite = footerDecoder.metadata().getUnusedBytes();
+                        Assert.assertEquals("unused_bytes should be 0 after rewrite", 0, unusedAfterRewrite);
+                    }
                 }
             }
 

@@ -41,7 +41,7 @@ use crate::parquet_metadata::types::{
 /// ```ignore
 /// let bytes = ParquetMetaWriter::new()
 ///     .designated_timestamp(0)
-///     .add_column(0, "ts", 0, 8, ColumnFlags::new(), 0, 0, 0)
+///     .add_column(0, "ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0)
 ///     .add_row_group(rg_builder)
 ///     .parquet_footer(offset, length)
 ///     .finish()?;
@@ -82,6 +82,7 @@ impl ParquetMetaWriter {
         id: i32,
         col_type: i32,
         flags: ColumnFlags,
+        fixed_byte_len: i32,
         physical_type: u8,
         max_rep_level: u8,
         max_def_level: u8,
@@ -92,6 +93,7 @@ impl ParquetMetaWriter {
             id,
             col_type,
             flags,
+            fixed_byte_len,
             physical_type,
             max_rep_level,
             max_def_level,
@@ -335,8 +337,9 @@ mod tests {
             0,
             0,
             0,
+            0,
         );
-        w.add_column(0, "val", 1, 10, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "val", 1, 10, ColumnFlags::new(), 0, 0, 0, 0);
         w.add_sorting_column(0);
 
         let mut rg = RowGroupBlockBuilder::new(2);
@@ -371,7 +374,7 @@ mod tests {
     #[test]
     fn create_empty() {
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
 
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
@@ -422,7 +425,7 @@ mod tests {
     fn update_replace_row_group() {
         // Build a file with 2 row groups.
         let mut w = ParquetMetaWriter::new();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
 
         let mut rg0 = RowGroupBlockBuilder::new(1);
         rg0.set_num_rows(100);
@@ -470,7 +473,7 @@ mod tests {
     #[test]
     fn default_creates_same_as_new() {
         let mut w = ParquetMetaWriter::default();
-        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        w.add_column(0, "x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let (bytes, footer_offset) = w.finish().unwrap();
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert_eq!(reader.column_count(), 1);

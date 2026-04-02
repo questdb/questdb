@@ -777,7 +777,7 @@ impl ParquetUpdater {
         self.result_file_size = file_size;
 
         // Generate _pm metadata from the in-memory thrift row groups.
-        if let Some(ref mut pm_file) = self.parquet_meta_fd {
+        if let Some(ref mut parquet_meta_file) = self.parquet_meta_fd {
             let footer_offset = self.parquet_file.parquet_footer_offset();
             let footer_length = file_size
                 .checked_sub(footer_offset)
@@ -823,7 +823,7 @@ impl ParquetUpdater {
                     footer_length,
                 )?;
                 self.result_parquet_meta_size = pm_bytes.len() as i64;
-                pm_file
+                parquet_meta_file
                     .write_all(&pm_bytes)
                     .map_err(ParquetError::from)
                     .context("could not write _pm file")?;
@@ -831,10 +831,10 @@ impl ParquetUpdater {
                 // Incremental update: read existing _pm, append new/changed blocks.
                 let existing_size = self.parquet_meta_file_size;
                 let mut existing_pm = vec![0u8; existing_size as usize];
-                pm_file
+                parquet_meta_file
                     .seek(SeekFrom::Start(0))
                     .map_err(ParquetError::from)?;
-                pm_file
+                parquet_meta_file
                     .read_exact(&mut existing_pm)
                     .map_err(ParquetError::from)
                     .context("could not read existing _pm file")?;
@@ -851,10 +851,10 @@ impl ParquetUpdater {
 
                 // Write: append after existing data, or full rewrite from offset 0.
                 let write_offset = if result.is_append { existing_size } else { 0 };
-                pm_file
+                parquet_meta_file
                     .seek(SeekFrom::Start(write_offset))
                     .map_err(ParquetError::from)?;
-                pm_file
+                parquet_meta_file
                     .write_all(&result.bytes)
                     .map_err(ParquetError::from)
                     .context("could not write _pm file")?;
@@ -1293,6 +1293,7 @@ fn build_column_infos_from_qdb_meta<'a>(
                 }
             }
 
+            let phys_type = col_desc.descriptor.primitive_type.physical_type;
             crate::parquet_metadata::ParquetMetaColumnInfo {
                 name: &field_info.name,
                 top: cm.map(|c| c.column_top as u64).unwrap_or(0),
@@ -1300,9 +1301,11 @@ fn build_column_infos_from_qdb_meta<'a>(
                 col_type_tag,
                 id: field_info.id.unwrap_or(-1),
                 flags,
-                physical_type: crate::parquet_metadata::physical_type_to_u8(
-                    col_desc.descriptor.primitive_type.physical_type,
-                ),
+                fixed_byte_len: match phys_type {
+                    parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
+                    _ => 0,
+                },
+                physical_type: crate::parquet_metadata::physical_type_to_u8(phys_type),
                 max_rep_level: col_desc.descriptor.max_rep_level as u8,
                 max_def_level: col_desc.descriptor.max_def_level as u8,
             }

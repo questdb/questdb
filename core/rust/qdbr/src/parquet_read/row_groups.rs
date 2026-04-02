@@ -81,7 +81,7 @@ impl RowGroupBuffers {
 /// the data page buffer (they point to the dict buffer or `data_vec`), so
 /// the buffer can be reused. For other encodings (Plain, DeltaLengthByteArray),
 /// aux entries point directly into the page buffer, so it must persist.
-fn decompress_varchar_slice_data<'a>(
+pub(crate) fn decompress_varchar_slice_data<'a>(
     page: &'a SlicedDataPage<'a>,
     reusable_buf: &'a mut Vec<u8>,
     persistent_bufs: &'a mut Vec<Vec<u8>>,
@@ -1101,7 +1101,7 @@ impl ParquetDecoder {
         millis.div_euclid(MILLIS_PER_DAY) as i32
     }
 
-    fn all_values_absent_from_bloom(
+    pub(crate) fn all_values_absent_from_bloom(
         bitset: &[u8],
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
@@ -1289,7 +1289,7 @@ impl ParquetDecoder {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn all_values_outside_min_max_with_stats(
+    pub(crate) fn all_values_outside_min_max_with_stats(
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
         has_nulls: bool,
@@ -1560,7 +1560,7 @@ impl ParquetDecoder {
     /// For BETWEEN (count=2): auto-swaps bounds, so we compute
     ///   lo=min(a,b), hi=max(a,b) and skip if max_stat < lo || min_stat > hi.
     #[allow(clippy::too_many_arguments)]
-    fn value_outside_range(
+    pub(crate) fn value_outside_range(
         physical_type: &PhysicalType,
         filter_desc: &ColumnFilterValues,
         is_decimal: bool,

@@ -25,7 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 
 /**
  * Represents a contiguous fragment of a table partition.
@@ -96,7 +96,9 @@ public interface PageFrame {
      */
     long getPageSize(int columnIndex);
 
-    PartitionDecoder getParquetPartitionDecoder();
+    default ParquetDecoder getParquetDecoder() {
+        return null;
+    }
 
     /**
      * Returns row group index corresponding to the Parquet page frame.

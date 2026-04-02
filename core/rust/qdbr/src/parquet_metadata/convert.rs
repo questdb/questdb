@@ -149,7 +149,12 @@ pub fn convert_from_parquet(
         let top = qdb_meta
             .map(|meta| meta.schema[i].column_top as u64)
             .unwrap_or(0);
-        let physical_type = physical_type_to_u8(col_desc.descriptor.primitive_type.physical_type);
+        let phys_type = col_desc.descriptor.primitive_type.physical_type;
+        let physical_type = physical_type_to_u8(phys_type);
+        let fixed_byte_len = match phys_type {
+            PhysicalType::FixedLenByteArray(len) => len as i32,
+            _ => 0,
+        };
         let max_rep_level = col_desc.descriptor.max_rep_level as u8;
         let max_def_level = col_desc.descriptor.max_def_level as u8;
         writer.add_column(
@@ -158,6 +163,7 @@ pub fn convert_from_parquet(
             id,
             col_type_code,
             flags,
+            fixed_byte_len,
             physical_type,
             max_rep_level,
             max_def_level,
@@ -634,6 +640,7 @@ pub struct ParquetMetaColumnInfo<'a> {
     pub col_type_tag: Option<ColumnTypeTag>,
     pub id: i32,
     pub flags: ColumnFlags,
+    pub fixed_byte_len: i32,
     pub physical_type: u8,
     pub max_rep_level: u8,
     pub max_def_level: u8,
@@ -679,6 +686,7 @@ pub fn generate_parquet_metadata(
             col.id,
             col.col_type_code,
             col.flags,
+            col.fixed_byte_len,
             col.physical_type,
             col.max_rep_level,
             col.max_def_level,
@@ -2216,6 +2224,10 @@ mod tests {
                     col_type_tag,
                     id: field_info.id.unwrap_or(-1),
                     flags,
+                    fixed_byte_len: match col_desc.descriptor.primitive_type.physical_type {
+                        PhysicalType::FixedLenByteArray(len) => len as i32,
+                        _ => 0,
+                    },
                     physical_type: physical_type_to_u8(
                         col_desc.descriptor.primitive_type.physical_type,
                     ),
@@ -2286,6 +2298,10 @@ mod tests {
                     col_type_tag,
                     id: field_info.id.unwrap_or(-1),
                     flags,
+                    fixed_byte_len: match col_desc.descriptor.primitive_type.physical_type {
+                        PhysicalType::FixedLenByteArray(len) => len as i32,
+                        _ => 0,
+                    },
                     physical_type: physical_type_to_u8(
                         col_desc.descriptor.primitive_type.physical_type,
                     ),

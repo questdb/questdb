@@ -30,9 +30,9 @@ use crate::parquet_metadata::types::{
     ColumnFlags, COLUMN_DESCRIPTOR_SIZE, FILE_FORMAT_VERSION, HEADER_FIXED_SIZE,
 };
 
-// ── On-disk column descriptor (32 bytes) ───────────────────────────────
+// ── On-disk column descriptor (40 bytes) ───────────────────────────────
 
-/// On-disk layout of a column descriptor (32 bytes).
+/// On-disk layout of a column descriptor (40 bytes).
 ///
 /// The column name is stored externally as a length-prefixed string at
 /// `name_offset`: `[u32 length][utf8 bytes][padding to 4-byte alignment]`.
@@ -44,6 +44,8 @@ pub struct ColumnDescriptorRaw {
     pub id: i32,
     pub col_type: i32,
     pub flags: i32,
+    pub fixed_byte_len: i32,
+    pub name_length: u32,
     pub physical_type: u8,
     pub max_rep_level: u8,
     pub max_def_level: u8,
@@ -169,7 +171,7 @@ impl<'a> FileHeader<'a> {
         let offset = HEADER_FIXED_SIZE + index * COLUMN_DESCRIPTOR_SIZE;
         let ptr = self.data[offset..].as_ptr();
         // Safety: ColumnDescriptorRaw is #[repr(C)] with 8-byte natural alignment.
-        // offset = 16 + index * 32, which is always 8-byte aligned.
+        // offset = 16 + index * 40, which is always 8-byte aligned.
         debug_assert_eq!(ptr.align_offset(align_of::<ColumnDescriptorRaw>()), 0);
         Ok(unsafe { &*(ptr as *const ColumnDescriptorRaw) })
     }
@@ -234,7 +236,7 @@ impl<'a> FileHeader<'a> {
         let end = offset + (self.raw.sorting_column_count as usize) * 4;
         debug_assert!(end <= self.data.len());
         let ptr = self.data[offset..end].as_ptr() as *const u32;
-        // Safety: u32 requires 4-byte alignment. offset = 16 + n*32 is always 4-byte aligned.
+        // Safety: u32 requires 4-byte alignment. offset = 16 + n*40 is always 4-byte aligned.
         // Bounds checked: min_size() validated offset + sorting_column_count * 4 <= data.len().
         debug_assert_eq!(ptr.align_offset(align_of::<u32>()), 0);
         unsafe { std::slice::from_raw_parts(ptr, self.raw.sorting_column_count as usize) }
@@ -272,6 +274,7 @@ struct ColumnEntry {
     id: i32,
     col_type: i32,
     flags: ColumnFlags,
+    fixed_byte_len: i32,
     physical_type: u8,
     max_rep_level: u8,
     max_def_level: u8,
@@ -301,6 +304,7 @@ impl FileHeaderBuilder {
         id: i32,
         col_type: i32,
         flags: ColumnFlags,
+        fixed_byte_len: i32,
         physical_type: u8,
         max_rep_level: u8,
         max_def_level: u8,
@@ -311,6 +315,7 @@ impl FileHeaderBuilder {
             id,
             col_type,
             flags,
+            fixed_byte_len,
             physical_type,
             max_rep_level,
             max_def_level,
@@ -370,6 +375,8 @@ impl FileHeaderBuilder {
                 id: col.id,
                 col_type: col.col_type,
                 flags: col.flags.0,
+                fixed_byte_len: col.fixed_byte_len,
+                name_length: col.name.len() as u32,
                 physical_type: col.physical_type,
                 max_rep_level: col.max_rep_level,
                 max_def_level: col.max_def_level,
@@ -392,8 +399,8 @@ mod tests {
     use crate::parquet_metadata::types::FieldRepetition;
 
     #[test]
-    fn descriptor_size_is_32() {
-        assert_eq!(size_of::<ColumnDescriptorRaw>(), 32);
+    fn descriptor_size_is_40() {
+        assert_eq!(size_of::<ColumnDescriptorRaw>(), 40);
     }
 
     #[test]
@@ -421,6 +428,7 @@ mod tests {
             0,
             0,
             0,
+            0,
         );
         builder.add_column(
             0,
@@ -428,6 +436,7 @@ mod tests {
             1,
             10, // ColumnTypeTag::Double
             ColumnFlags::new().with_repetition(FieldRepetition::Optional),
+            0,
             0,
             0,
             0,
@@ -474,6 +483,7 @@ mod tests {
                 i,
                 5, // Int
                 ColumnFlags::new(),
+                0,
                 0,
                 0,
                 0,
@@ -533,7 +543,7 @@ mod tests {
         buf[4..8].copy_from_slice(&(-1i32).to_le_bytes()); // designated_ts
         buf[8..12].copy_from_slice(&0u32.to_le_bytes()); // sorting count
         buf[12..16].copy_from_slice(&10u32.to_le_bytes()); // claim 10 columns
-                                                           // Buffer is only 16 bytes but needs 16 + 10*32 = 336.
+                                                           // Buffer is only 16 bytes but needs 16 + 10*40 = 416.
         assert!(FileHeader::new(&buf).is_err());
     }
 
@@ -542,7 +552,7 @@ mod tests {
         // Build a valid header, then manually corrupt a name_offset to point
         // past the end of the buffer.
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column(0, "ok", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        builder.add_column(0, "ok", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
@@ -560,7 +570,7 @@ mod tests {
     fn column_name_invalid_utf8() {
         // Build a header, then overwrite the name bytes with invalid UTF-8.
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column(0, "ab", 0, 5, ColumnFlags::new(), 0, 0, 0);
+        builder.add_column(0, "ab", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
@@ -580,8 +590,8 @@ mod tests {
     #[test]
     fn sorting_columns_end_offset_value() {
         let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column(0, "a", 0, 5, ColumnFlags::new(), 0, 0, 0);
-        builder.add_column(0, "b", 1, 6, ColumnFlags::new(), 0, 0, 0);
+        builder.add_column(0, "a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column(0, "b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
         builder.add_sorting_column(0);
         builder.add_sorting_column(1);
         let mut buf = Vec::new();

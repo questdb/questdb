@@ -676,17 +676,21 @@ fn build_column_infos_from_partition<'a>(
                 }
             }
 
-            let (physical_type, max_rep_level, max_def_level) =
+            let (physical_type, fixed_byte_len, max_rep_level, max_def_level) =
                 if let Some(col_desc) = schema_columns.get(i) {
+                    let phys_type = col_desc.descriptor.primitive_type.physical_type;
+                    let fbl = match phys_type {
+                        parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
+                        _ => 0,
+                    };
                     (
-                        crate::parquet_metadata::physical_type_to_u8(
-                            col_desc.descriptor.primitive_type.physical_type,
-                        ),
+                        crate::parquet_metadata::physical_type_to_u8(phys_type),
+                        fbl,
                         col_desc.descriptor.max_rep_level as u8,
                         col_desc.descriptor.max_def_level as u8,
                     )
                 } else {
-                    (0, 0, 0)
+                    (0, 0, 0, 0)
                 };
 
             crate::parquet_metadata::ParquetMetaColumnInfo {
@@ -696,6 +700,7 @@ fn build_column_infos_from_partition<'a>(
                 col_type_tag: Some(col.data_type.tag()),
                 id: col.id,
                 flags,
+                fixed_byte_len,
                 physical_type,
                 max_rep_level,
                 max_def_level,

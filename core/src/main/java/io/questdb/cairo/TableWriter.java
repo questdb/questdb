@@ -75,6 +75,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
+import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -238,7 +239,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
     private final DirectIntList parquetColumnIdsAndTypes;
-    private final PartitionDecoder parquetDecoder = new PartitionDecoder();
+    private final ParquetMetaPartitionDecoder parquetDecoder = new ParquetMetaPartitionDecoder();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
@@ -1822,8 +1823,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long parquetRowCount = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)) {
-            parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-            final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+            parquetDecoder.of(parquetMetaAddr, parquetMetaFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+            final ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
 
             // Build the list of columns to decode, mapping parquet indices to
             // table column indices via the column ID stored in the parquet schema.
@@ -1877,7 +1878,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         parquetColumnIdsAndTypes,
                         rowGroupIndex,
                         0,
-                        parquetMetadata.getRowGroupSize(rowGroupIndex)
+                        (int) parquetMetadata.getRowGroupSize(rowGroupIndex)
                 );
                 parquetRowCount += rowGroupRowCount;
                 for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
@@ -5662,6 +5663,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Long.MAX_VALUE;
     }
 
+    private int findParquetColumnIndex(ParquetMetaFileReader parquetMetadata, int metadataColumnIndex) {
+        final int writerIndex = metadata.getColumnMetadata(metadataColumnIndex).getWriterIndex();
+        for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
+            if (parquetMetadata.getColumnId(idx) == writerIndex) {
+                return idx;
+            }
+        }
+        return -1;
+    }
+
     private int findParquetColumnIndex(PartitionDecoder.Metadata parquetMetadata, int metadataColumnIndex) {
         final int writerIndex = metadata.getColumnMetadata(metadataColumnIndex).getWriterIndex();
         for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
@@ -6169,12 +6180,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long parquetAddr = 0;
         long parquetSize = 0;
+        long parquetMetaAddr = 0;
+        long parquetMetaSize = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER)) {
-            final long parquetMetaFileSize = txWriter.getPartitionParquetMetaFileSize(partitionIndex);
-            parquetSize = readParquetFileSizeFromParquetMetadata(plen, parquetMetaFileSize);
+            parquetMetaSize = txWriter.getPartitionParquetMetaFileSize(partitionIndex);
+            // mmap _pm file to read the parquet file size and provide metadata to the decoder
+            path.trimTo(plen).concat(PARQUET_METADATA_FILE_NAME).$();
+            parquetMetaAddr = mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+            parquetSize = parquetMetaReader.getParquetFileSize();
+            path.trimTo(plen).concat(PARQUET_PARTITION_NAME).$();
             parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+            parquetDecoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            final ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
 
             int parquetColumnIndex = findParquetColumnIndex(parquetMetadata, columnIndex);
             if (parquetColumnIndex == -1) {
@@ -6200,7 +6218,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final int rowGroupCount = parquetMetadata.getRowGroupCount();
                 final BitmapIndexWriter indexWriter = indexer.getWriter();
                 for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                    final int rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+                    final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
                     if (rowCount + rowGroupSize <= columnTop) {
                         rowCount += rowGroupSize;
                         continue;
@@ -6211,7 +6229,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             parquetColumnIdsAndTypes,
                             rowGroupIndex,
                             (int) Math.max(0, columnTop - rowCount),
-                            rowGroupSize
+                            (int) rowGroupSize
                     );
 
                     long rowId = Math.max(rowCount, columnTop);
@@ -6228,6 +6246,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             Misc.free(parquetDecoder);
         }
@@ -9351,22 +9372,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long readParquetMinMaxTimestamps(Path filePath, long parquetSize) {
         assert parquetSize > 0;
         long parquetAddr = 0;
-        try {
+        try (PartitionDecoder tmpDecoder = new PartitionDecoder()) {
             parquetAddr = mapRO(ff, filePath.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            parquetDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
+            tmpDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
             final int timestampIndex = metadata.getTimestampIndex();
-            final int parquetTsIndex = findParquetColumnIndex(parquetDecoder.metadata(), timestampIndex);
+            final int parquetTsIndex = findParquetColumnIndex(tmpDecoder.metadata(), timestampIndex);
             assert parquetTsIndex > -1;
-            final int rowGroupCount = parquetDecoder.metadata().getRowGroupCount();
+            final int rowGroupCount = tmpDecoder.metadata().getRowGroupCount();
             assert rowGroupCount > 0;
-            attachMinTimestamp = parquetDecoder.rowGroupMinTimestamp(0, parquetTsIndex);
-            attachMaxTimestamp = parquetDecoder.rowGroupMaxTimestamp(rowGroupCount - 1, parquetTsIndex);
-            return parquetDecoder.metadata().getRowCount();
+            attachMinTimestamp = tmpDecoder.rowGroupMinTimestamp(0, parquetTsIndex);
+            attachMaxTimestamp = tmpDecoder.rowGroupMaxTimestamp(rowGroupCount - 1, parquetTsIndex);
+            return tmpDecoder.metadata().getRowCount();
         } finally {
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
-            Misc.free(parquetDecoder);
         }
     }
 
