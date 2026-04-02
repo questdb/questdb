@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
@@ -40,6 +41,7 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
+import io.questdb.griffin.engine.table.TimeFrameCursorImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -87,6 +89,54 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 }
                 // ConcurrentTimeFrameCursorImpl: same scenario.
                 testWithConcurrentCursor(factory, cursor -> assertForwardScanWithColumnData(cursor, metadata, sink));
+            }
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
+    public void testBuildFrameCacheDoesNotOpenPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            // 72 rows across 3 partitions (days 1970-01-01, 1970-01-02, 1970-01-03).
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_int() a," +
+                    " timestamp_sequence(0, 60 * 60 * 1_000_000L) t" +
+                    " FROM long_sequence(72)" +
+                    ") TIMESTAMP (t) PARTITION BY DAY");
+
+            try (RecordCursorFactory factory = select("x")) {
+                RecordCursorFactory baseFactory = factory instanceof QueryProgress ? factory.getBaseFactory() : factory;
+                TablePageFrameCursor pageFrameCursor = (TablePageFrameCursor) baseFactory.getPageFrameCursor(
+                        sqlExecutionContext,
+                        PartitionFrameCursorFactory.ORDER_ASC
+                );
+                TableReader reader = pageFrameCursor.getTableReader();
+                RecordMetadata metadata = baseFactory.getMetadata();
+
+                try (TimeFrameCursorImpl cursor = new TimeFrameCursorImpl(configuration, metadata)) {
+                    cursor.of(
+                            pageFrameCursor,
+                            sqlExecutionContext.getPageFrameMinRows(),
+                            sqlExecutionContext.getPageFrameMaxRows(),
+                            1
+                    );
+
+                    Assert.assertEquals(0, reader.getOpenPartitionCount());
+
+                    // Iterating next() builds the frame cache but must not open partitions.
+                    int frameCount = 0;
+                    while (cursor.next()) {
+                        frameCount++;
+                        Assert.assertEquals(0, reader.getOpenPartitionCount());
+                    }
+                    Assert.assertTrue(frameCount > 0);
+
+                    // Opening frames must open partitions lazily.
+                    cursor.toTop();
+                    Assert.assertTrue(cursor.next());
+                    cursor.open();
+                    Assert.assertTrue(reader.getOpenPartitionCount() > 0);
+                }
             }
             execute("DROP TABLE x");
         });
