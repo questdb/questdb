@@ -40,9 +40,8 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     protected int partitionHi;
     // Current partition index.
     protected int partitionIndex;
-    // The scan high boundary. Defaults to {@link #partitionHi} but can be
-    // narrowed by {@link #toPartition(int)} to limit iteration to a single
-    // partition.
+    // The scan high boundary. Defaults to partitionHi but can be narrowed
+    // by toPartition(int) to limit iteration to a single partition.
     protected int partitionScanHi;
     protected TableReader reader;
 
