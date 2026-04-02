@@ -1306,7 +1306,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     static class StdDevOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
         private final boolean isSample;
         private final String name;
-        private double stddev;
+        private double stddev = Double.NaN;
 
         StdDevOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isSample, String name) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -1525,10 +1525,14 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     }
 
     static {
+        // Used by Welford classes (OverPartition, OverUnboundedPartitionRows):
+        //   [0] = mean (pass1) / stddev result (pass2), [1] = m2, [2] = count
+        // Used by naive classes (sliding-frame variants):
+        //   [0] = sum, [1] = sumSq, [2] = count
         STDDEV_COLUMN_TYPES = new ArrayColumnTypes();
-        STDDEV_COLUMN_TYPES.add(ColumnType.DOUBLE); // sum (pass1), stddev result (pass2)
-        STDDEV_COLUMN_TYPES.add(ColumnType.DOUBLE); // sumSq
-        STDDEV_COLUMN_TYPES.add(ColumnType.LONG);   // count
+        STDDEV_COLUMN_TYPES.add(ColumnType.DOUBLE);
+        STDDEV_COLUMN_TYPES.add(ColumnType.DOUBLE);
+        STDDEV_COLUMN_TYPES.add(ColumnType.LONG);
 
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
         STDDEV_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.DOUBLE); // sum

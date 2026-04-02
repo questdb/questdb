@@ -10250,13 +10250,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(j) over (order by ts) sd, " +
                             "sqrt(avg(j * j) over (order by ts) - avg(j) over (order by ts) * avg(j) over (order by ts)) sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10272,7 +10272,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(j) over (order by ts range between 2 microseconds preceding and current row) sd, " +
@@ -10282,7 +10282,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(j) over (order by ts range between 2 microseconds preceding and current row)" +
                             ") sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10298,7 +10298,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(j) over (order by ts rows between 2 preceding and current row) sd, " +
@@ -10308,7 +10308,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(j) over (order by ts rows between 2 preceding and current row)" +
                             ") sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10348,13 +10348,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_pop(j) over (partition by i order by ts) sd, " +
                             "sqrt(avg(j * j) over (partition by i order by ts) - avg(j) over (partition by i order by ts) * avg(j) over (partition by i order by ts)) sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10370,7 +10370,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd, " +
@@ -10380,7 +10380,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(j) over (partition by i order by ts range between 2 microseconds preceding and current row)" +
                             ") sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10396,7 +10396,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_pop(j) over (partition by i order by ts rows between 2 preceding and current row) sd, " +
@@ -10406,7 +10406,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "avg(j) over (partition by i order by ts rows between 2 preceding and current row)" +
                             ") sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10422,7 +10422,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_pop(j) over (partition by i) sd, " +
@@ -10472,7 +10472,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_pop(j) over () sd, " +
@@ -10540,13 +10540,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_samp(j) over (order by ts) sd, " +
                             "sqrt(count(j) over (order by ts)::double / (count(j) over (order by ts) - 1)) * stddev_pop(j) over (order by ts) sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10562,7 +10562,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_samp(j) over (order by ts range between 2 microseconds preceding and current row) sd, " +
@@ -10571,7 +10571,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(j) over (order by ts range between 2 microseconds preceding and current row) - 1)) * " +
                             "stddev_pop(j) over (order by ts range between 2 microseconds preceding and current row) sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10587,7 +10587,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_samp(j) over (order by ts rows between 2 preceding and current row) sd, " +
@@ -10596,7 +10596,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(j) over (order by ts rows between 2 preceding and current row) - 1)) * " +
                             "stddev_pop(j) over (order by ts rows between 2 preceding and current row) sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10612,13 +10612,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_samp(j) over (partition by i order by ts) sd, " +
                             "sqrt(count(j) over (partition by i order by ts)::double / (count(j) over (partition by i order by ts) - 1)) * stddev_pop(j) over (partition by i order by ts) sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10634,7 +10634,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_samp(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd, " +
@@ -10643,7 +10643,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(j) over (partition by i order by ts range between 2 microseconds preceding and current row) - 1)) * " +
                             "stddev_pop(j) over (partition by i order by ts range between 2 microseconds preceding and current row) sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10659,7 +10659,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select i, " +
                             "stddev_samp(j) over (partition by i order by ts rows between 2 preceding and current row) sd, " +
@@ -10668,7 +10668,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(j) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
                             "stddev_pop(j) over (partition by i order by ts rows between 2 preceding and current row) sd_ref " +
                             "from tab" +
-                            ") where sd is not null and sd_ref is not null"
+                            ")"
             );
         });
     }
@@ -10712,7 +10712,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev_samp(j) over () sd, " +
@@ -10734,13 +10734,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             max_diff
                             0.0
                             """,
-                    "select round(max(abs(sd - sd_ref)), 12) max_diff " +
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 12) max_diff " +
                             "from (" +
                             "select " +
                             "stddev(j) over (partition by i order by ts) sd, " +
                             "stddev_samp(j) over (partition by i order by ts) sd_ref " +
                             "from tab" +
-                            ") where sd is not null"
+                            ")"
             );
         });
     }
@@ -11748,23 +11748,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         func.contains("first_value") || func.contains("last_value") ?
                                 "Window\n" +
                                         "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME(1)", replace) +
-                                "    FilterOnValues\n" +
-                                "        Table-order scan\n" +
-                                "            Index forward scan on: sym deferred: true\n" +
-                                "              filter: sym='B'\n" +
-                                "            Index forward scan on: sym deferred: true\n" +
-                                "              filter: sym='A'\n" +
-                                "        Frame forward scan on: tab\n"
+                                        "    FilterOnValues\n" +
+                                        "        Table-order scan\n" +
+                                        "            Index forward scan on: sym deferred: true\n" +
+                                        "              filter: sym='B'\n" +
+                                        "            Index forward scan on: sym deferred: true\n" +
+                                        "              filter: sym='A'\n" +
+                                        "        Frame forward scan on: tab\n"
                                 :
                                 "CachedWindow\n" +
                                         "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
-                                "    FilterOnValues symbolOrder: desc\n" +
-                                "        Cursor-order scan\n" +
-                                "            Index forward scan on: sym deferred: true\n" +
-                                "              filter: sym='B'\n" +
-                                "            Index forward scan on: sym deferred: true\n" +
-                                "              filter: sym='A'\n" +
-                                "        Frame forward scan on: tab\n"
+                                        "    FilterOnValues symbolOrder: desc\n" +
+                                        "        Cursor-order scan\n" +
+                                        "            Index forward scan on: sym deferred: true\n" +
+                                        "              filter: sym='B'\n" +
+                                        "            Index forward scan on: sym deferred: true\n" +
+                                        "              filter: sym='A'\n" +
+                                        "        Frame forward scan on: tab\n"
 
                 );
 
@@ -11857,6 +11857,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     AvgDoubleWindowFunctionFactory.class,
                     SumDoubleWindowFunctionFactory.class,
                     StdDevPopDoubleWindowFunctionFactory.class,
+                    StdDevSampDoubleWindowFunctionFactory.class,
+                    StdDevDoubleWindowFunctionFactory.class,
                     KSumDoubleWindowFunctionFactory.class,
                     CountConstWindowFunctionFactory.class,
                     CountDoubleWindowFunctionFactory.class,
