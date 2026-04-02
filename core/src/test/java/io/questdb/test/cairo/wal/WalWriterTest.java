@@ -56,9 +56,11 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -3898,6 +3900,88 @@ public class WalWriterTest extends AbstractCairoTest {
                 Assert.assertTrue(e.isTableDropped());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table is dropped");
             }
+        });
+    }
+
+    @Test
+    public void testTruncateFollowedByTwoInserts() throws Exception {
+        // Reproduces a block-sizing bug: after TRUNCATE, two INSERT WAL transactions
+        // are visible to the applier, but the second INSERT gets LAST_ROW_COMMIT
+        // (mapped to FORCE_FULL_COMMIT) because it's the last loaded transaction.
+        // calculateInsertTransactionBlock() breaks before including the second INSERT,
+        // so the first INSERT is processed alone with block size 1.
+        // With few rows and an empty table (post-TRUNCATE), processWalCommit() sends
+        // the data to LAG instead of committing fully, creating an artificial 0-row
+        // partition that can race with backup.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            // Insert initial data and apply so the table has committed data.
+            execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // Now add TRUNCATE + 2 INSERTs without draining.
+            // This ensures all 3 sequencer txns are visible when the applier loads them.
+            execute("TRUNCATE TABLE " + tableName);
+            execute("INSERT INTO " + tableName + " VALUES " +
+                    "(2, '2022-02-26T20:00:00.000000Z')," +
+                    "(3, '2022-02-26T21:00:00.000000Z')");
+            execute("INSERT INTO " + tableName + " VALUES " +
+                    "(4, '2022-02-27T06:00:00.000000Z')," +
+                    "(5, '2022-02-27T07:00:00.000000Z')");
+
+            // Load WalTxnDetails and check block calculation directly.
+            try (TableWriter writer = getWriter(tableToken)) {
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(
+                        tableToken, writer.getAppliedSeqTxn())) {
+                    writer.readWalTxnDetails(cursor);
+                }
+
+                WalTxnDetails walTxnDetails = writer.getWalTnxDetails();
+                long startTxn = writer.getAppliedSeqTxn();
+                // seqTxn layout (startTxn = last applied seqTxn):
+                //   startTxn+1 = TRUNCATE   → FORCE_FULL_COMMIT
+                //   startTxn+2 = INSERT_A   → commitToTimestamp = minTs(INSERT_B)
+                //   startTxn+3 = INSERT_B   → LAST_ROW_COMMIT → mapped to FORCE_FULL_COMMIT
+
+                // TRUNCATE must have FORCE_FULL_COMMIT
+                assertEquals(WalTxnDetails.FORCE_FULL_COMMIT, walTxnDetails.getCommitToTimestamp(startTxn + 1));
+
+                // INSERT_A should have a real timestamp (minTs of INSERT_B), NOT FORCE_FULL_COMMIT
+                long insertACommitTo = walTxnDetails.getCommitToTimestamp(startTxn + 2);
+                Assert.assertNotEquals(WalTxnDetails.FORCE_FULL_COMMIT, insertACommitTo);
+
+                // INSERT_B is the last loaded transaction → LAST_ROW_COMMIT → mapped to FORCE_FULL_COMMIT
+                assertEquals(WalTxnDetails.FORCE_FULL_COMMIT, walTxnDetails.getCommitToTimestamp(startTxn + 3));
+
+                // INSERT_A and INSERT_B should form a block of 2.
+                // Previously, INSERT_B's LAST_ROW_COMMIT (mapped to FORCE_FULL_COMMIT)
+                // caused a break before including it, leaving INSERT_A alone (block=1).
+                int blockSize = walTxnDetails.calculateInsertTransactionBlock(
+                        startTxn + 2,
+                        TableWriterPressureControl.EMPTY,
+                        Long.MAX_VALUE,
+                        Long.MIN_VALUE
+                );
+
+                assertEquals(2, blockSize);
+            }
+
+            // Drain and verify data correctness.
+            drainWalQueue();
+            assertSql(
+                    """
+                            val\tts
+                            2\t2022-02-26T20:00:00.000000Z
+                            3\t2022-02-26T21:00:00.000000Z
+                            4\t2022-02-27T06:00:00.000000Z
+                            5\t2022-02-27T07:00:00.000000Z
+                            """,
+                    tableName
+            );
         });
     }
 
