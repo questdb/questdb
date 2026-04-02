@@ -2228,6 +2228,8 @@ public class PostingIndexWriter implements IndexWriter {
 
             if (init) {
                 this.activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
+                // Fresh index — VALUE_FILE_TXN will be -1 (written by initKeyMemory)
+                this.columnNameTxn = -1;
             } else {
                 determineActivePageOffset();
 
@@ -2237,6 +2239,15 @@ public class PostingIndexWriter implements IndexWriter {
                             .put("Unsupported Posting index version [fd=").put(keyMem.getFd())
                             .put(", expected=").put(FORMAT_VERSION)
                             .put(", actual=").put(version).put(']');
+                }
+                // Preserve VALUE_FILE_TXN from the .pk metadata so that
+                // writeMetadataPage propagates the correct txn. After a seal,
+                // this points to the versioned .pv file that the caller opened.
+                long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
+                if (metaValueTxn > 0) {
+                    this.columnNameTxn = metaValueTxn;
+                } else {
+                    this.columnNameTxn = -1;
                 }
             }
 
@@ -3290,22 +3301,27 @@ public class PostingIndexWriter implements IndexWriter {
             spillArraysCapacity = cap;
         } else if (needed > spillArraysCapacity) {
             int newCap = Math.max(keyCapacity, needed);
-            long oldAddrsSize = (long) spillArraysCapacity * Long.BYTES;
+            int savedCapacity = spillArraysCapacity;
+
+            long oldAddrsSize = (long) savedCapacity * Long.BYTES;
             long newAddrsSize = (long) newCap * Long.BYTES;
             spillKeyAddrsAddr = Unsafe.realloc(spillKeyAddrsAddr, oldAddrsSize, newAddrsSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.getUnsafe().setMemory(spillKeyAddrsAddr + oldAddrsSize, newAddrsSize - oldAddrsSize, (byte) 0);
 
-            long oldCountsSize = (long) spillArraysCapacity * Integer.BYTES;
+            // Update spillArraysCapacity after each successful realloc so that
+            // if the next realloc fails OOM, close() computes correct sizes for
+            // already-grown buffers.
+            spillArraysCapacity = newCap;
+
+            long oldCountsSize = (long) savedCapacity * Integer.BYTES;
             long newCountsSize = (long) newCap * Integer.BYTES;
             spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, oldCountsSize, newCountsSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.getUnsafe().setMemory(spillKeyCountsAddr + oldCountsSize, newCountsSize - oldCountsSize, (byte) 0);
 
-            long oldCapsSize = (long) spillArraysCapacity * Integer.BYTES;
+            long oldCapsSize = (long) savedCapacity * Integer.BYTES;
             long newCapsSize = (long) newCap * Integer.BYTES;
             spillKeyCapacitiesAddr = Unsafe.realloc(spillKeyCapacitiesAddr, oldCapsSize, newCapsSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.getUnsafe().setMemory(spillKeyCapacitiesAddr + oldCapsSize, newCapsSize - oldCapsSize, (byte) 0);
-
-            spillArraysCapacity = newCap;
         }
     }
 
@@ -3380,25 +3396,23 @@ public class PostingIndexWriter implements IndexWriter {
     private void growKeyBuffers(int minCapacity) {
         int newCapacity = Math.max(keyCapacity * 2, minCapacity);
 
-        // Realloc both buffers before updating keyCapacity. If the second
-        // realloc fails, freeNativeBuffers() still uses the old keyCapacity
-        // to compute correct sizes for both buffers. The first buffer was
-        // successfully grown but Unsafe.free ignores the size parameter —
-        // it frees the entire allocation. The accounting counters are still
-        // wrong by (newCapacity - keyCapacity) * SLOT * BYTES for the first
-        // buffer, but that's the best we can do without per-buffer capacity.
         long oldValSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         long newValSize = (long) newCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, oldValSize, newValSize, MemoryTag.NATIVE_INDEX_READER);
         Unsafe.getUnsafe().setMemory(pendingValuesAddr + oldValSize, newValSize - oldValSize, (byte) 0);
 
-        long oldCountSize = (long) keyCapacity * Integer.BYTES;
+        // Update keyCapacity now so that if the next realloc fails OOM,
+        // freeNativeBuffers() computes the correct size for the already-grown
+        // pendingValuesAddr buffer.
+        int savedCapacity = keyCapacity;
+        keyCapacity = newCapacity;
+
+        long oldCountSize = (long) savedCapacity * Integer.BYTES;
         long newCountSize = (long) newCapacity * Integer.BYTES;
         pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, oldCountSize, newCountSize, MemoryTag.NATIVE_INDEX_READER);
         Unsafe.getUnsafe().setMemory(pendingCountsAddr + oldCountSize, newCountSize - oldCountSize, (byte) 0);
 
         activeKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
-        keyCapacity = newCapacity;
     }
 
     /**

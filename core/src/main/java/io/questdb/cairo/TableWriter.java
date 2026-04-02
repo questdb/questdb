@@ -9454,7 +9454,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // Include last partition — its sidecars also need rebuilding after O3
 
-            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
             setStateForTimestamp(path, partitionTimestamp);
             int plen = path.size();
             try {
@@ -9492,11 +9491,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 break;
                             }
                             long fileSize = ff.length(fd);
-                            if (fileSize > 0) {
-                                long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-                                addrs[c] = addr;
-                                mappedSizes[c] = fileSize;
+                            if (fileSize <= 0) {
+                                ff.close(fd);
+                                mapped = false;
+                                break;
                             }
+                            long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
+                            addrs[c] = addr;
+                            mappedSizes[c] = fileSize;
                             ff.close(fd);
                         }
 

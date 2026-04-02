@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -1861,7 +1862,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
                 byte indexType = indexWriter.getIndexType();
                 dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
+                dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
         } catch (Throwable e) {
             LOG.error().$("append fix error [table=").$(tableWriter.getTableToken())
@@ -2191,7 +2193,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 if (indexBlockCapacity > -1) {
                     byte indexType = indexWriter.getIndexType();
                     dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
+                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
         } catch (Throwable e) {
@@ -3285,6 +3288,37 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partitionUpdateSinkAddr
         );
         tableWriter.getO3CopyPubSeq().done(cursor);
+    }
+
+    /**
+     * For posting indexes, the seal creates a versioned .pv.{txn} file and
+     * records that txn in the .pk metadata (VALUE_FILE_TXN). O3 append must
+     * open the correct versioned file, not the base .pv, to avoid a
+     * data/metadata mismatch that leads to SIGSEGV during sidecar rebuild.
+     * For non-posting indexes this is a no-op and returns columnNameTxn.
+     */
+    private static long resolvePostingValueFileTxn(FilesFacade ff, long keyFd, byte indexType, long columnNameTxn) {
+        if (indexType != IndexType.POSTING) {
+            return columnNameTxn;
+        }
+        long fileSize = ff.length(keyFd);
+        if (fileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
+            return columnNameTxn;
+        }
+        long seqA = ff.readNonNegativeLong(keyFd, PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        long seqEndA = ff.readNonNegativeLong(keyFd, PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+        long seqB = ff.readNonNegativeLong(keyFd, PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+        long seqEndB = ff.readNonNegativeLong(keyFd, PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+        long pageOffset;
+        long validA = (seqA == seqEndA) ? seqA : 0;
+        long validB = (seqB == seqEndB) ? seqB : 0;
+        if (validA == 0 && validB == 0) {
+            return columnNameTxn;
+        }
+        pageOffset = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+        long valueTxn = ff.readNonNegativeLong(keyFd, pageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
+        return valueTxn > 0 ? valueTxn : columnNameTxn;
     }
 
     @Override
