@@ -116,7 +116,7 @@ public final class QwpSchema {
         if (schemaMode == SCHEMA_MODE_REFERENCE) {
             QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
             QwpVarint.decode(buf, bufOffset + offset, bufOffset + length, decodeResult);
-            int schemaId = (int) decodeResult.value;
+            int schemaId = validateSchemaId(decodeResult.value);
             offset += decodeResult.bytesRead;
             return ParseResult.reference(schemaId, offset);
         } else if (schemaMode == SCHEMA_MODE_FULL) {
@@ -153,7 +153,7 @@ public final class QwpSchema {
             // Schema reference mode - just a varint schemaId (zero-alloc path)
             QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
             QwpVarint.decode(address + offset, address + length, decodeResult);
-            int schemaId = (int) decodeResult.value;
+            int schemaId = validateSchemaId(decodeResult.value);
             offset += decodeResult.bytesRead;
             result.setReference(schemaId, offset);
         } else if (schemaMode == SCHEMA_MODE_FULL) {
@@ -298,7 +298,7 @@ public final class QwpSchema {
 
         // Read schema ID
         QwpVarint.decode(address + offset, limit, decodeResult);
-        int schemaId = (int) decodeResult.value;
+        int schemaId = validateSchemaId(decodeResult.value);
         offset += decodeResult.bytesRead;
 
         for (int i = 0; i < columnCount; i++) {
@@ -354,7 +354,7 @@ public final class QwpSchema {
 
         // Read schema ID
         QwpVarint.decode(buf, bufOffset + offset, limit, decodeResult);
-        int schemaId = (int) decodeResult.value;
+        int schemaId = validateSchemaId(decodeResult.value);
         offset += decodeResult.bytesRead;
 
         for (int i = 0; i < columnCount; i++) {
@@ -397,6 +397,16 @@ public final class QwpSchema {
         }
 
         return ParseResult.fullSchema(new QwpSchema(columns), schemaId, offset);
+    }
+
+    private static int validateSchemaId(long value) throws QwpParseException {
+        if (value > Integer.MAX_VALUE) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INVALID_SCHEMA_ID,
+                    "schema ID exceeds int range: " + value
+            );
+        }
+        return (int) value;
     }
 
     /**
