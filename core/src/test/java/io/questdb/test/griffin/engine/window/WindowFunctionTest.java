@@ -10882,6 +10882,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStdDevResolvesToGroupByWithoutOver() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0), (2, 1, 3.0), (3, 2, 10.0), (4, 2, 20.0)");
+
+            assertSql(
+                    """
+                            i\tsd
+                            1\t1.4142135623730951
+                            2\t7.0710678118654755
+                            """,
+                    "select i, stddev(j) sd from tab order by i"
+            );
+        });
+    }
+
+    @Test
     public void testTwoWindowColumns() throws Exception {
         // Test two window functions with different specifications
         assertQuery(
