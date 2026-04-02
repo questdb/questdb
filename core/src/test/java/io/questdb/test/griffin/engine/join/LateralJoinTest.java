@@ -2437,6 +2437,267 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testT111LatestByPartitionByCorrelationColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 40.0, '2024-01-01T01:20:00.000000Z')
+                    """);
+
+            // PARTITION BY order_id is the same as the correlation column
+            // compensateLatestBy should detect it's already present and skip adding
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            1\t20.0
+                            2\t40.0
+                            """,
+                    """
+                            SELECT o.id, sub.qty
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty
+                                FROM trades
+                                WHERE order_id = o.id
+                                LATEST ON ts PARTITION BY order_id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T112: Correlated subquery as join branch — triggers decorrelateJoinModelSubqueries
+    @Test
+    public void testT112CorrelatedSubqueryJoinBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, tag_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tags (id INT, order_id INT, label STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO tags VALUES
+                    (1, 1, 'urgent', '2024-01-01T00:05:00.000000Z'),
+                    (2, 2, 'normal', '2024-01-01T01:05:00.000000Z')
+                    """);
+
+            // JOIN with a correlated subquery: (SELECT ... WHERE order_id = o.id) is a
+            // correlated nested model, triggering decorrelateJoinModelSubqueries to
+            // clone the __qdb_outer_ref__ into the subquery
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tlabel
+                            1\t10.0\turgent
+                            2\t30.0\tnormal
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.label
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT t.qty, g.label
+                                FROM trades t
+                                JOIN (SELECT id, label FROM tags WHERE order_id = o.id) g ON g.id = t.tag_id
+                                WHERE t.order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    // T113: LATERAL JOIN without explicit alias — triggers lateralAlias==null path
+    @Test
+    public void testT113LateralJoinNoAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrdersAndTrades();
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty
+                            1\t10.0
+                            1\t20.0
+                            2\t30.0
+                            3\t40.0
+                            3\t50.0
+                            """,
+                    """
+                            SELECT o.id, qty
+                            FROM orders o
+                            JOIN LATERAL (SELECT qty FROM trades WHERE order_id = o.id)
+                            ORDER BY o.id, qty
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T114: 3-branch CASE expression with outer refs — triggers args path
+    // (paramCount >= 3 stores children in ExpressionNode.args, not lhs/rhs)
+    @Test
+    public void testT114CaseExprWithOuterRef() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, lo DOUBLE, hi DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 10.0, 20.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, 25.0, 35.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 5.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 15.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 25.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 20.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:20:00.000000Z'),
+                    (2, 40.0, '2024-01-01T01:30:00.000000Z')
+                    """);
+
+            // 3-branch CASE (paramCount >= 3 → uses args list)
+            // order 1 (lo=10,hi=20): 5→low, 15→mid, 25→high
+            // order 2 (lo=25,hi=35): 20→low, 30→mid, 40→high
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\tlevel
+                            1\t5.0\tlow
+                            1\t15.0\tmid
+                            1\t25.0\thigh
+                            2\t20.0\tlow
+                            2\t30.0\tmid
+                            2\t40.0\thigh
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.level
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty,
+                                       CASE WHEN qty < o.lo THEN 'low'
+                                            WHEN qty < o.hi THEN 'mid'
+                                            ELSE 'high' END AS level
+                                FROM trades
+                                WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T115: LEFT LATERAL with count in COALESCE — triggers wrapCountRefsWithCoalesce args path
+    @Test
+    public void testT115LeftLateralCountInCoalesce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // LEFT lateral + count(*): order 3 has no trades → count should be 0
+            // CASE wrapping count(*) tests the args path in wrapCountRefsWithCoalesce
+            assertQueryNoLeakCheck(
+                    """
+                            id\tcnt\tlabel
+                            1\t2\tmulti
+                            2\t1\tsingle
+                            3\t0\tnone
+                            """,
+                    """
+                            SELECT o.id, sub.cnt,
+                                   CASE
+                                       WHEN sub.cnt > 1 THEN 'multi'
+                                       WHEN sub.cnt = 1 THEN 'single'
+                                       ELSE 'none'
+                                   END AS label
+                            FROM orders o
+                            LEFT JOIN LATERAL (
+                                SELECT count(*) AS cnt
+                                FROM trades
+                                WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id
+                            """,
+                    null, true, false
+            );
+        });
+    }
+
+    // T116: Window function with correlated PARTITION BY inside lateral
+    // Triggers hasCorrelatedExprAtDepth window expression args path
+    @Test
+    public void testT116WindowFunctionCorrelatedPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'A', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'B', '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            // row_number() OVER (PARTITION BY o.category) — correlated PARTITION BY
+            assertQueryNoLeakCheck(
+                    """
+                            id\tqty\trn
+                            1\t10.0\t1
+                            1\t20.0\t2
+                            2\t30.0\t1
+                            """,
+                    """
+                            SELECT o.id, sub.qty, sub.rn
+                            FROM orders o
+                            JOIN LATERAL (
+                                SELECT qty,
+                                       row_number() OVER (PARTITION BY o.category ORDER BY ts) AS rn
+                                FROM trades
+                                WHERE order_id = o.id
+                            ) sub
+                            ORDER BY o.id, sub.qty
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+
     // T11: Inner JOIN inside LATERAL, INNER, equality correlation — inner JOIN ON rewrite
     @Test
     public void testT11InnerJoinInLateral() throws Exception {
