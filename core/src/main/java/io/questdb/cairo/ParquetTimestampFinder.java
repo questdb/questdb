@@ -161,7 +161,8 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         partitionDecoder.of(decoder);
         rowGroupBuffers.reopen();
 
-        int parquetTimestampIndex = findTimestampIndex(partitionDecoder, timestampIndex);
+        int writerIndex = reader.getMetadata().getWriterIndex(timestampIndex);
+        int parquetTimestampIndex = findTimestampIndex(partitionDecoder, writerIndex);
         if (parquetTimestampIndex == -1) {
             throw CairoException.critical(0).put("missing timestamp column in parquet partition [table=").put(tableToken)
                     .put(", partitionIndex=").put(partitionIndex)
