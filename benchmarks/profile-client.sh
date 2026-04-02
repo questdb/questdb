@@ -1,24 +1,48 @@
 #!/bin/bash
+################################################################################
+#     ___                  _   ____  ____
+#    / _ \ _   _  ___  ___| |_|  _ \| __ )
+#   | | | | | | |/ _ \/ __| __| | | |  _ \
+#   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+#    \__\_\\__,_|\___||___/\__|____/|____/
 #
-# ILP Allocation Profiling Test Script
+#  Copyright (c) 2014-2019 Appsicle
+#  Copyright (c) 2019-2026 QuestDB
 #
-# This script helps run the allocation profiling test for ILP protocols.
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#  http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+################################################################################
+
+#
+# Ingestion Client Profiler
+#
+# This script helps run profiling tests and benchmarks for the QuestDB ingestion client.
 #
 # Usage:
-#   ./run-alloc-test.sh server              - Start QuestDB server
-#   ./run-alloc-test.sh client [options]    - Run test client
-#   ./run-alloc-test.sh profile [options]   - Run with async-profiler (allocation)
-#   ./run-alloc-test.sh cpu [options]       - CPU profiling (find hot methods)
-#   ./run-alloc-test.sh wall [options]      - Wall-clock profiling (find I/O waits)
-#   ./run-alloc-test.sh lock [options]      - Lock contention profiling
-#   ./run-alloc-test.sh jfr [options]       - Run with Java Flight Recorder
-#   ./run-alloc-test.sh compare [options]   - Compare all protocols
+#   ./profile-client.sh server              - Start QuestDB server
+#   ./profile-client.sh client [options]    - Run test client
+#   ./profile-client.sh profile [options]   - Run with async-profiler (allocation)
+#   ./profile-client.sh cpu [options]       - CPU profiling (find hot methods)
+#   ./profile-client.sh wall [options]      - Wall-clock profiling (find I/O waits)
+#   ./profile-client.sh lock [options]      - Lock contention profiling
+#   ./profile-client.sh jfr [options]       - Run with Java Flight Recorder
+#   ./profile-client.sh compare [options]   - Compare all protocols
 #
 # Server-side profiling (attach to running server):
-#   ./run-alloc-test.sh server-cpu [options]   - Profile server CPU during client test
-#   ./run-alloc-test.sh server-wall [options]  - Profile server wall-clock
-#   ./run-alloc-test.sh server-alloc [options] - Profile server allocations
-#   ./run-alloc-test.sh server-lock [options]  - Profile server lock contention
+#   ./profile-client.sh server-cpu [options]   - Profile server CPU during client test
+#   ./profile-client.sh server-wall [options]  - Profile server wall-clock
+#   ./profile-client.sh server-alloc [options] - Profile server allocations
+#   ./profile-client.sh server-lock [options]  - Profile server lock contention
 #
 # Options (passed to client):
 #   --protocol=PROTOCOL      Protocol: ilp-tcp, ilp-http, qwp-websocket, qwp-udp
@@ -40,23 +64,23 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-QDB_ROOT="$SCRIPT_DIR/qdb-alloc-test"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
+QDB_ROOT="$PROJECT_ROOT/qdb-profiler"
 
 # Find JARs dynamically (don't rely on specific version)
 find_jars() {
     # Find server JAR (questdb-*.jar but not -tests.jar or -sources.jar)
-    MAIN_JAR=$(find "$SCRIPT_DIR/core/target" -maxdepth 1 -name "questdb-*.jar" \
+    MAIN_JAR=$(find "$PROJECT_ROOT/core/target" -maxdepth 1 -name "questdb-*.jar" \
                ! -name "*-tests.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
                2>/dev/null | head -1)
 
     # Find client JAR
-    CLIENT_JAR=$(find "$SCRIPT_DIR/java-questdb-client/core/target" -maxdepth 1 -name "questdb-client-*.jar" \
+    CLIENT_JAR=$(find "$PROJECT_ROOT/java-questdb-client/core/target" -maxdepth 1 -name "questdb-client-*.jar" \
                  ! -name "*-tests.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" \
                  2>/dev/null | head -1)
 
     # Find client test JAR (contains benchmark clients)
-    CLIENT_TEST_JAR=$(find "$SCRIPT_DIR/java-questdb-client/core/target" -maxdepth 1 -name "questdb-client-*-tests.jar" \
+    CLIENT_TEST_JAR=$(find "$PROJECT_ROOT/java-questdb-client/core/target" -maxdepth 1 -name "questdb-client-*-tests.jar" \
                       2>/dev/null | head -1)
 
     # Find slf4j-api JAR (client dependency)
@@ -75,19 +99,19 @@ check_jars() {
     find_jars
 
     if [ -z "$MAIN_JAR" ] || [ ! -f "$MAIN_JAR" ]; then
-        echo "ERROR: Server JAR not found in $SCRIPT_DIR/core/target/"
+        echo "ERROR: Server JAR not found in $PROJECT_ROOT/core/target/"
         echo "Run: mvn clean package -DskipTests -pl core"
         exit 1
     fi
 
     if [ -z "$CLIENT_JAR" ] || [ ! -f "$CLIENT_JAR" ]; then
-        echo "ERROR: Client JAR not found in $SCRIPT_DIR/java-questdb-client/core/target/"
+        echo "ERROR: Client JAR not found in $PROJECT_ROOT/java-questdb-client/core/target/"
         echo "Run: mvn clean package -DskipTests -f java-questdb-client/core/pom.xml"
         exit 1
     fi
 
     if [ -z "$CLIENT_TEST_JAR" ] || [ ! -f "$CLIENT_TEST_JAR" ]; then
-        echo "ERROR: Client test JAR not found in $SCRIPT_DIR/java-questdb-client/core/target/"
+        echo "ERROR: Client test JAR not found in $PROJECT_ROOT/java-questdb-client/core/target/"
         echo "Run: mvn test-compile -f java-questdb-client/core/pom.xml"
         exit 1
     fi
@@ -198,7 +222,7 @@ case "$1" in
         fi
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/ilp-alloc-profile-${PROTOCOL}.jfr"
+        PROFILE_OUTPUT="$PROJECT_ROOT/ilp-alloc-profile-${PROTOCOL}.jfr"
         echo "Running ILP test client with allocation profiling..."
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
@@ -227,7 +251,7 @@ case "$1" in
         fi
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/ilp-cpu-profile-${PROTOCOL}.jfr"
+        PROFILE_OUTPUT="$PROJECT_ROOT/ilp-cpu-profile-${PROTOCOL}.jfr"
         echo "Running ILP test client with CPU profiling..."
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
@@ -256,7 +280,7 @@ case "$1" in
         fi
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/ilp-wall-profile-${PROTOCOL}.jfr"
+        PROFILE_OUTPUT="$PROJECT_ROOT/ilp-wall-profile-${PROTOCOL}.jfr"
         echo "Running ILP test client with wall-clock profiling..."
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo "This captures time spent waiting (I/O, locks, sleep) in addition to CPU time."
@@ -286,7 +310,7 @@ case "$1" in
         fi
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/ilp-lock-profile-${PROTOCOL}.jfr"
+        PROFILE_OUTPUT="$PROJECT_ROOT/ilp-lock-profile-${PROTOCOL}.jfr"
         echo "Running ILP test client with lock contention profiling..."
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo "This captures thread contention on synchronized blocks and locks."
@@ -317,7 +341,7 @@ case "$1" in
         echo "Found QuestDB server PID: $SERVER_PID"
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/server-cpu-profile-${PROTOCOL}.jfr"
+        PROFILE_OUTPUT="$PROJECT_ROOT/server-cpu-profile-${PROTOCOL}.jfr"
         echo "Profiling SERVER CPU during client test..."
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
@@ -356,7 +380,7 @@ case "$1" in
         echo "Found QuestDB server PID: $SERVER_PID"
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/server-wall-profile-${PROTOCOL}.jfr"
+        PROFILE_OUTPUT="$PROJECT_ROOT/server-wall-profile-${PROTOCOL}.jfr"
         echo "Profiling SERVER wall-clock during client test..."
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo "This captures time spent waiting (I/O, locks, sleep) in addition to CPU time."
@@ -396,7 +420,7 @@ case "$1" in
         echo "Found QuestDB server PID: $SERVER_PID"
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/server-alloc-profile-${PROTOCOL}.jfr"
+        PROFILE_OUTPUT="$PROJECT_ROOT/server-alloc-profile-${PROTOCOL}.jfr"
         echo "Profiling SERVER allocations during client test..."
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo ""
@@ -435,7 +459,7 @@ case "$1" in
         echo "Found QuestDB server PID: $SERVER_PID"
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        PROFILE_OUTPUT="$SCRIPT_DIR/server-lock-profile-${PROTOCOL}.jfr"
+        PROFILE_OUTPUT="$PROJECT_ROOT/server-lock-profile-${PROTOCOL}.jfr"
         echo "Profiling SERVER lock contention during client test..."
         echo "Output: $PROFILE_OUTPUT (JFR format)"
         echo "This captures thread contention on synchronized blocks and locks."
@@ -465,7 +489,7 @@ case "$1" in
         shift  # remove 'jfr' from args
 
         PROTOCOL=$(get_protocol_from_args "$@")
-        JFR_OUTPUT="$SCRIPT_DIR/ilp-alloc-${PROTOCOL}.jfr"
+        JFR_OUTPUT="$PROJECT_ROOT/ilp-alloc-${PROTOCOL}.jfr"
         echo "Running ILP test client with JFR allocation profiling..."
         echo "Output: $JFR_OUTPUT"
         echo ""
