@@ -5,12 +5,13 @@ use arrow::array::{
     Int64Array, Int8Array, TimestampMicrosecondArray, TimestampMillisecondArray, UInt32Array,
 };
 use common::encode::{
-    generate_nulls, make_primitive_column, read_parquet_batches, write_parquet, EncodeEncoding,
-    ALL_NULL_PATTERNS,
+    generate_nulls, make_primitive_column, read_parquet_batches, write_parquet, ALL_NULL_PATTERNS,
 };
 use common::types::primitives::*;
 use qdb_core::col_type::{self, ColumnType};
 use questdbr::parquet_write::schema::Partition;
+
+use crate::common::Encoding;
 
 const COUNT: usize = 1_000;
 
@@ -21,7 +22,7 @@ fn as_bytes<T>(data: &[T]) -> &[u8] {
 fn encode_to_parquet<T: PrimitiveType>(
     data: &[T::T],
     row_count: usize,
-    encoding: EncodeEncoding,
+    encoding: Encoding,
 ) -> Vec<u8> {
     let bytes = as_bytes(data);
     let column = make_primitive_column(
@@ -288,7 +289,7 @@ impl EncodeVerify for Uuid {
 // =============================================================================
 
 fn run_encode_test<T: EncodeVerify>(name: &str) {
-    for &encoding in T::ENCODE_ENCODINGS {
+    for &encoding in T::ENCODINGS {
         if T::HAS_NULL_SENTINEL {
             for &null_pattern in &ALL_NULL_PATTERNS {
                 let ctx = format!("{name} {encoding:?}/{null_pattern:?}");

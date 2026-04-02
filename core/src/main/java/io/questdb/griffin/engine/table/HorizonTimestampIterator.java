@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
@@ -53,7 +52,7 @@ public class HorizonTimestampIterator implements QuietCloseable {
     private final int[] heapOffsetIdx;
     private final long[] heapPos;
     private final long[] heapTs;
-    private final LongList offsets;
+    private final long[] offsets;
     // Sliding window of discovered master rowIds (off-heap)
     private final DirectLongList rowIds;
     private final boolean singleOffset;
@@ -72,13 +71,13 @@ public class HorizonTimestampIterator implements QuietCloseable {
     // The master position that index 0 of rowIds corresponds to
     private long windowBase;
 
-    public HorizonTimestampIterator(LongList offsets) {
+    public HorizonTimestampIterator(long[] offsets) {
         this.offsets = offsets;
         this.rowIds = new DirectLongList(64, MemoryTag.NATIVE_LONG_LIST, true);
-        int k = offsets.size();
+        int k = offsets.length;
         if (k == 1) {
             this.singleOffset = true;
-            this.singleOffsetValue = offsets.getQuick(0);
+            this.singleOffsetValue = offsets[0];
             this.heapTs = null;
             this.heapPos = null;
             this.heapOffsetIdx = null;
@@ -211,8 +210,8 @@ public class HorizonTimestampIterator implements QuietCloseable {
         long firstRowId = getRowId(0);
         masterCursor.recordAt(recordB, firstRowId);
         long firstMasterTs = recordB.getTimestamp(timestampColumnIndex);
-        for (int k = 0, n = offsets.size(); k < n; k++) {
-            long horizonTs = addTimestampAndOffset(firstMasterTs, offsets.getQuick(k));
+        for (int k = 0, n = offsets.length; k < n; k++) {
+            long horizonTs = addTimestampAndOffset(firstMasterTs, offsets[k]);
             heapInsert(horizonTs, k);
         }
     }
@@ -234,7 +233,7 @@ public class HorizonTimestampIterator implements QuietCloseable {
         if (nextPos < discoveredCount || discoverNextRow()) {
             long nextRowId = getRowId(nextPos);
             masterCursor.recordAt(recordB, nextRowId);
-            long nextHorizonTs = addTimestampAndOffset(recordB.getTimestamp(timestampColumnIndex), offsets.getQuick(offsetIdx));
+            long nextHorizonTs = addTimestampAndOffset(recordB.getTimestamp(timestampColumnIndex), offsets[offsetIdx]);
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;

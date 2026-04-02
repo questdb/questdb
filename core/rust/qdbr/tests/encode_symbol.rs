@@ -3,10 +3,12 @@ mod common;
 use arrow::array::{Array, StringArray};
 use common::encode::{
     generate_nulls, make_symbol_column, read_parquet_batches, serialize_as_symbols, write_parquet,
-    EncodeEncoding, ALL_NULL_PATTERNS,
+    ALL_NULL_PATTERNS,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::schema::Partition;
+
+use crate::common::Encoding;
 
 const COUNT: usize = 1_000;
 
@@ -15,7 +17,7 @@ const LABELS: [&str; 5] = ["alpha", "beta", "gamma", "delta", "epsilon"];
 #[test]
 fn test_encode_symbol() {
     // Symbol only supports RleDictionary
-    let encoding = EncodeEncoding::RleDictionary;
+    let encoding = Encoding::RleDictionary;
     for null_pattern in &ALL_NULL_PATTERNS {
         let nulls = generate_nulls(COUNT, *null_pattern);
         let (chars_data, offsets) = serialize_as_symbols(&LABELS);
@@ -110,7 +112,7 @@ fn test_encode_symbol_all_nulls() {
         offsets.as_ptr(),
         offsets.len(),
         COUNT,
-        EncodeEncoding::RleDictionary.config(),
+        Encoding::RleDictionary.config(),
     );
 
     let partition = Partition {
