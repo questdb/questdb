@@ -362,6 +362,13 @@ public class QwpTableBlockCursor implements Mutable {
                         "schema not found in registry for table: " + tableHeader.getTableName()
                 );
             }
+            if (schema.getColumnCount() != columnCount) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.SCHEMA_MISMATCH,
+                        "schema column count mismatch: header=" + columnCount
+                                + ", schema=" + schema.getColumnCount()
+                );
+            }
         }
 
         this.columnDefs = schema.getColumns();

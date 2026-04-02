@@ -180,6 +180,41 @@ public class QwpCursorBoundsCheckTest {
     }
 
     @Test
+    public void testMessageCursorRejectsSchemaReferenceWithMismatchedColumnCount() throws QwpParseException {
+        byte[] registeredPayload = encodeTablePayloadWithFullSchema("test", 1, 1, 0, "a", TYPE_LONG);
+        byte[] registeredMessage = wrapSingleTableMessage(registeredPayload);
+
+        byte[] referencePayload = encodeTablePayloadWithSchemaReference("test", 1, 2, 0);
+        byte[] referenceMessage = wrapSingleTableMessage(referencePayload);
+
+        long registeredAddress = Unsafe.malloc(registeredMessage.length, MemoryTag.NATIVE_DEFAULT);
+        long referenceAddress = Unsafe.malloc(referenceMessage.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            copyToNative(registeredMessage, registeredAddress);
+            copyToNative(referenceMessage, referenceAddress);
+
+            QwpSchemaRegistry registry = new QwpSchemaRegistry();
+            QwpMessageCursor cursor = new QwpMessageCursor();
+
+            cursor.of(registeredAddress, registeredMessage.length, registry, null);
+            cursor.nextTable();
+
+            cursor.clear();
+            cursor.of(referenceAddress, referenceMessage.length, registry, null);
+            try {
+                cursor.nextTable();
+                Assert.fail("expected QwpParseException for schema reference column count mismatch");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.SCHEMA_MISMATCH, e.getErrorCode());
+                Assert.assertTrue(e.getMessage().contains("schema column count mismatch"));
+            }
+        } finally {
+            Unsafe.free(registeredAddress, registeredMessage.length, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(referenceAddress, referenceMessage.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testStringCursorRejectsAttackerControlledOffset() throws QwpParseException {
         // 1 non-null string row: flag(0) + offset array (8 bytes) + string data (5 bytes)
         int legitimateSize = 14;
@@ -242,5 +277,70 @@ public class QwpCursorBoundsCheckTest {
         offset = QwpVarint.encode(buf, offset, rowCount);
         QwpVarint.encode(buf, offset, columnCount);
         return buf;
+    }
+
+    private static void copyToNative(byte[] src, long address) {
+        for (int i = 0; i < src.length; i++) {
+            Unsafe.getUnsafe().putByte(address + i, src[i]);
+        }
+    }
+
+    private static byte[] encodeTablePayloadWithFullSchema(
+            String tableName,
+            long rowCount,
+            int columnCount,
+            int schemaId,
+            String columnName,
+            byte typeCode
+    ) {
+        byte[] header = encodeTableHeaderPayload(tableName, rowCount, columnCount);
+        QwpSchema schema = QwpSchema.create(new QwpColumnDef[]{new QwpColumnDef(columnName, typeCode)});
+        byte[] schemaBytes = new byte[schema.encodedSize(schemaId)];
+        schema.encode(schemaBytes, 0, schemaId);
+        byte[] columnData = new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+        byte[] payload = new byte[header.length + schemaBytes.length + columnData.length];
+        int offset = 0;
+        System.arraycopy(header, 0, payload, offset, header.length);
+        offset += header.length;
+        System.arraycopy(schemaBytes, 0, payload, offset, schemaBytes.length);
+        offset += schemaBytes.length;
+        System.arraycopy(columnData, 0, payload, offset, columnData.length);
+        return payload;
+    }
+
+    private static byte[] encodeTablePayloadWithSchemaReference(
+            String tableName,
+            long rowCount,
+            int columnCount,
+            int schemaId
+    ) {
+        byte[] header = encodeTableHeaderPayload(tableName, rowCount, columnCount);
+        byte[] schemaRef = new byte[1 + QwpVarint.encodedLength(schemaId)];
+        QwpSchema.encodeReference(schemaRef, 0, schemaId);
+
+        byte[] payload = new byte[header.length + schemaRef.length];
+        System.arraycopy(header, 0, payload, 0, header.length);
+        System.arraycopy(schemaRef, 0, payload, header.length, schemaRef.length);
+        return payload;
+    }
+
+    private static byte[] wrapSingleTableMessage(byte[] payload) {
+        byte[] message = new byte[HEADER_SIZE + payload.length];
+        int offset = 0;
+        message[offset++] = 'Q';
+        message[offset++] = 'W';
+        message[offset++] = 'P';
+        message[offset++] = '1';
+        message[offset++] = 1;
+        message[offset++] = FLAG_GORILLA;
+        message[offset++] = 1;
+        message[offset++] = 0;
+        message[offset++] = (byte) payload.length;
+        message[offset++] = (byte) (payload.length >>> 8);
+        message[offset++] = (byte) (payload.length >>> 16);
+        message[offset++] = (byte) (payload.length >>> 24);
+        System.arraycopy(payload, 0, message, offset, payload.length);
+        return message;
     }
 }

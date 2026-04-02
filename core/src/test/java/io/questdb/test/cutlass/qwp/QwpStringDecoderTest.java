@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
@@ -177,8 +176,9 @@ public class QwpStringDecoderTest {
             // Row 1: offset 10..5 goes backward, must throw
             try {
                 cursor.advanceRow();
-                Assert.fail("expected CairoException for non-monotonic offset array");
-            } catch (CairoException e) {
+                Assert.fail("expected QwpParseException for non-monotonic offset array");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY, e.getErrorCode());
                 Assert.assertTrue(e.getMessage().contains("invalid QWP string offset array"));
             }
         } finally {

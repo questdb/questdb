@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -60,7 +59,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     private byte typeCode;
 
     @Override
-    public boolean advanceRow() {
+    public boolean advanceRow() throws QwpParseException {
         currentRow++;
 
         if (nullBitmapAddress != 0) {
@@ -78,7 +77,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
 
         if (startOffset < 0 || endOffset < startOffset) {
-            throw CairoException.nonCritical()
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
                     .put("invalid QWP string offset array: offset[")
                     .put(currentValueIndex + 1)
                     .put("]=")

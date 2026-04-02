@@ -256,7 +256,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+    public void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -1114,7 +1114,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+    public void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -1137,7 +1137,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putStringToBooleanColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+    public void putStringToBooleanColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
 
@@ -1179,36 +1179,32 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putStringToDecimalColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) {
+    public void putStringToDecimalColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         int columnPrecision = ColumnType.getDecimalPrecision(columnType);
         int columnScale = ColumnType.getDecimalScale(columnType);
 
         cursor.resetRowPosition();
-        try {
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.DECIMAL8 ->
-                        putStringToDecimal8Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
-                case ColumnType.DECIMAL16 ->
-                        putStringToDecimal16Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
-                case ColumnType.DECIMAL32 ->
-                        putStringToDecimal32Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
-                case ColumnType.DECIMAL64 ->
-                        putStringToDecimal64Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
-                case ColumnType.DECIMAL128 ->
-                        putStringToDecimal128Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
-                default ->
-                        putStringToDecimal256Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
-            }
-        } catch (QwpParseException e) {
-            throw CairoException.nonCritical().put("failed to convert STRING to decimal");
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DECIMAL8 ->
+                    putStringToDecimal8Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
+            case ColumnType.DECIMAL16 ->
+                    putStringToDecimal16Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+            case ColumnType.DECIMAL32 ->
+                    putStringToDecimal32Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
+            case ColumnType.DECIMAL64 ->
+                    putStringToDecimal64Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
+            case ColumnType.DECIMAL128 ->
+                    putStringToDecimal128Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+            default ->
+                    putStringToDecimal256Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
-    public void putStringToGeoHashColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) {
+    public void putStringToGeoHashColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         int typeBits = ColumnType.getGeoHashBits(columnType);
@@ -1286,7 +1282,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putStringToLong256Column(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+    public void putStringToLong256Column(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
 
@@ -1312,7 +1308,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putStringToNumericColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) {
+    public void putStringToNumericColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
 
@@ -1432,7 +1428,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putStringToSymbolColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+    public void putStringToSymbolColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(columnIndex);
@@ -1455,7 +1451,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putStringToTimestampColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) {
+    public void putStringToTimestampColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         boolean columnIsNanos = (columnType == ColumnType.TIMESTAMP_NANO);
@@ -1491,7 +1487,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putStringToUuidColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+    public void putStringToUuidColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
 
@@ -1836,7 +1832,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) {
+    public void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);

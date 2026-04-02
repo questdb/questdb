@@ -51,6 +51,11 @@ import io.questdb.std.str.Utf8s;
 
 import java.nio.charset.StandardCharsets;
 
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.STATUS_INTERNAL_ERROR;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.STATUS_OK;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.STATUS_PARSE_ERROR;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.STATUS_SCHEMA_MISMATCH;
+
 /**
  * HTTP request processor that handles WebSocket upgrade for QWP v1.
  * <p>
@@ -72,10 +77,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     private static final byte[] HTTP_HEADER_END = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     private static final Log LOG = LogFactory.getLog(QwpWebSocketUpgradeProcessor.class);
     private static final LocalValue<QwpProcessorState> LV = new LocalValue<>();
-    private static final byte STATUS_INTERNAL_ERROR = (byte) 255;
-    // Response status codes (match WebSocketResponse)
-    private static final byte STATUS_OK = 0;
-    private static final byte STATUS_PARSE_ERROR = 1;
     private static final byte STATUS_SECURITY_ERROR = 4;
     private static final byte STATUS_WRITE_ERROR = 3;
     private static final byte[] UPGRADE_REQUIRED_RESPONSE =
@@ -504,6 +505,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                         .$(", error=").$(errorMessage).I$();
                 responseStatus = switch (state.getStatus()) {
                     case PARSE_ERROR -> STATUS_PARSE_ERROR;
+                    case SCHEMA_MISMATCH -> STATUS_SCHEMA_MISMATCH;
                     case SECURITY_ERROR -> STATUS_SECURITY_ERROR;
                     case INTERNAL_ERROR -> STATUS_INTERNAL_ERROR;
                     default -> STATUS_WRITE_ERROR;

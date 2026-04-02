@@ -156,7 +156,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
 
     /**
      * Writes a DECIMAL128 column with optional scale conversion.
@@ -483,7 +483,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
 
     /**
      * Writes a STRING column cursor to a BOOLEAN column.
@@ -494,7 +494,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putStringToBooleanColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putStringToBooleanColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
 
     /**
      * Writes a STRING column cursor to a DECIMAL column with scale conversion.
@@ -506,7 +506,7 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      * @param columnType  the target QuestDB column type (includes scale metadata)
      */
-    void putStringToDecimalColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType);
+    void putStringToDecimalColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Writes a STRING column cursor to a GeoHash column.
@@ -518,7 +518,7 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      * @param columnType  the target QuestDB column type (GEOBYTE, GEOSHORT, GEOINT, or GEOLONG)
      */
-    void putStringToGeoHashColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType);
+    void putStringToGeoHashColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Writes a STRING column cursor to a LONG256 column.
@@ -529,7 +529,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putStringToLong256Column(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putStringToLong256Column(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
 
     /**
      * Writes a STRING column cursor to a numeric column (BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE).
@@ -541,7 +541,7 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      * @param columnType  the target QuestDB column type
      */
-    void putStringToNumericColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType);
+    void putStringToNumericColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Writes a STRING column cursor to a SYMBOL column.
@@ -552,7 +552,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putStringToSymbolColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putStringToSymbolColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
 
     /**
      * Writes a STRING column cursor to a TIMESTAMP column.
@@ -564,7 +564,7 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      * @param columnType  the target QuestDB column type (TIMESTAMP or TIMESTAMP_NANO)
      */
-    void putStringToTimestampColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType);
+    void putStringToTimestampColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException;
 
     /**
      * Writes a STRING column cursor to a UUID column.
@@ -575,7 +575,7 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putStringToUuidColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putStringToUuidColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
 
     /**
      * Writes a SYMBOL column.
@@ -718,5 +718,5 @@ public interface ColumnarRowAppender {
      * @param cursor      the string column cursor
      * @param rowCount    total number of rows
      */
-    void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount);
+    void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
 }

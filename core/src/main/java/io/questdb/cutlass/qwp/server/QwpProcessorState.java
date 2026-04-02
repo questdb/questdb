@@ -364,7 +364,13 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
         } catch (QwpParseException e) {
             LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getFlyweightMessage()).$();
-            reject(Status.PARSE_ERROR, e.getFlyweightMessage(), fd);
+            reject(
+                    e.getErrorCode() == QwpParseException.ErrorCode.SCHEMA_MISMATCH
+                            ? Status.SCHEMA_MISMATCH
+                            : Status.PARSE_ERROR,
+                    e.getFlyweightMessage(),
+                    fd
+            );
         } catch (CommitFailedException e) {
             LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
             tudCache.setDistressed();
@@ -457,6 +463,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     public enum Status {
         OK,
         PARSE_ERROR,
+        SCHEMA_MISMATCH,
         SECURITY_ERROR,
         INTERNAL_ERROR,
         NOT_ACCEPTING_WRITES
