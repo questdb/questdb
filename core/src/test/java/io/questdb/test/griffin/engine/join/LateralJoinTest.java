@@ -1892,7 +1892,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 2.0, 1, '2024-01-01T01:00:00.000000Z')
                     """);
 
-            // RIGHT JOIN with subquery branch + correlated ON
+            // RIGHT JOIN with subquery branch + correlated ON.
             // Correlated ON rewritten in place, not moved to WHERE
             assertQueryNoLeakCheck(
                     """
@@ -7237,21 +7237,19 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
     public void testT87bCommaLateral() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
-                            x\ty\tz
-                            1\t2\t2
-                            """,
-                    """
-                            SELECT ss1.x, ss2.y, ss3.z FROM
-                              (SELECT 1 AS x) ss1
-                              LEFT JOIN (SELECT 2 AS y) ss2 ON (true),
-                              LATERAL (SELECT ss2.y AS z FROM long_sequence(1) LIMIT 1) ss3
-                            """,
-                    null, false, true
-            );
-        });
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        x\ty\tz
+                        1\t2\t2
+                        """,
+                """
+                        SELECT ss1.x, ss2.y, ss3.z FROM
+                          (SELECT 1 AS x) ss1
+                          LEFT JOIN (SELECT 2 AS y) ss2 ON (true),
+                          LATERAL (SELECT ss2.y AS z FROM long_sequence(1) LIMIT 1) ss3
+                        """,
+                null, false, true
+        ));
     }
 
     // T88: Unqualified correlated ref — exercises rewriteOuterRefs no-dot fallback
