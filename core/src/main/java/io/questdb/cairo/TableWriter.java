@@ -2638,6 +2638,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             case ROW_ACTION_O3:
                 bumpMasterRef();
                 o3TimestampSetter(timestamp);
+                setRowValueNotNull(metadata.getTimestampIndex());
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
@@ -2666,6 +2667,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 break;
             default:
                 throw new AssertionError("Invalid row action constant");
+        }
+        if (metadata.getTimestampIndex() != -1) {
+            setRowValueNotNull(metadata.getTimestampIndex());
         }
         txWriter.append();
         return row;
@@ -6271,6 +6275,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3MasterRef = masterRef;
         rowAction = ROW_ACTION_O3;
         o3TimestampSetter(timestamp);
+        setRowValueNotNull(metadata.getTimestampIndex());
         return row;
     }
 
