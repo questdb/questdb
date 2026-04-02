@@ -1246,8 +1246,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     putStringToDecimal64Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             case ColumnType.DECIMAL128 ->
                     putStringToDecimal128Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
-            default ->
-                    putStringToDecimal256Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
+            default -> putStringToDecimal256Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
