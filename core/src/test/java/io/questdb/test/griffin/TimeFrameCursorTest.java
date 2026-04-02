@@ -626,7 +626,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC
             );
             RecordMetadata metadata = baseFactory.getMetadata();
-            addressCache.of(metadata, pageFrameCursor.getColumnIndexes(), pageFrameCursor.isExternal());
+            addressCache.of(metadata, pageFrameCursor.getColumnMapping(), pageFrameCursor.isExternal());
 
             LongList rowCounts = new LongList();
             LongList partitionTimestamps = new LongList();

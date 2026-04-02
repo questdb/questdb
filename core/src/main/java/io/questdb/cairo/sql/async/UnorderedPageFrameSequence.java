@@ -315,7 +315,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             id = ID_SEQ.incrementAndGet();
             isValid.set(true);
