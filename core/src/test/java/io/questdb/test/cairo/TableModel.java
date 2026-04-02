@@ -163,6 +163,11 @@ public class TableModel implements TableStructure {
     }
 
     @Override
+    public boolean isNotNull(int index) {
+        return index == timestampIndex;
+    }
+
+    @Override
     public boolean isWalEnabled() {
         return walEnabled == -1
                 ? configuration.getWalEnabledDefault()

@@ -50,7 +50,7 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                             "qdb\tpublic\tB\tcol2\t2\t\tyes\treal\n" +
                             "qdb\tpublic\tC\tcol0\t0\t\tyes\tdouble precision\n" +
                             "qdb\tpublic\tC\tcol1\t1\t\tyes\tcharacter\n" +
-                            "qdb\tpublic\tC\tcol2\t2\t\tno\tsmallint\n",
+                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tsmallint\n",
                     "SELECT * FROM information_schema.columns() ORDER BY table_name",
                     null,
                     null,
@@ -100,14 +100,14 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
 
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\n" +
                             "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                     "show columns from test_rename"
             );
 
             assertSql(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_rename\tts\t0\t\tyes\ttimestamp without time zone\n" +
+                            "qdb\tpublic\ttest_rename\tts\t0\t\tno\ttimestamp without time zone\n" +
                             "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tinteger\n",
                     "information_schema.columns()"
             );
@@ -117,14 +117,14 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
 
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\n" +
                             "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                     "show columns from test_renamed"
             );
 
             assertSql(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\ttimestamp without time zone\n" +
+                            "qdb\tpublic\ttest_renamed\tts\t0\t\tno\ttimestamp without time zone\n" +
                             "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tinteger\n",
                     "information_schema.columns()"
             );

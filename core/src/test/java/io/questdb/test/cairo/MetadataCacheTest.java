@@ -52,7 +52,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             \t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
             \t\tCairoColumn [name=sym, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
             \t\tCairoColumn [name=amt, position=2, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
-            \t\tCairoColumn [name=timestamp, position=3, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=3]
+            \t\tCairoColumn [name=timestamp, position=3, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=3]
             \t\tCairoColumn [name=b, position=4, type=BOOLEAN, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=4]
             \t\tCairoColumn [name=c, position=5, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=5]
             \t\tCairoColumn [name=d, position=6, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=6]
@@ -74,7 +74,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     private static final String yMetaString = """
             MetadataCache [tableCount=1]
             \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=1]
-            \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+            \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
             """;
     private static final String zMetaString = """
             MetadataCache [tableCount=1]
@@ -82,7 +82,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             \t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
             \t\tCairoColumn [name=sym, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
             \t\tCairoColumn [name=amt, position=2, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
-            \t\tCairoColumn [name=timestamp, position=3, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=3]
+            \t\tCairoColumn [name=timestamp, position=3, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=3]
             \t\tCairoColumn [name=b, position=4, type=BOOLEAN, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=4]
             \t\tCairoColumn [name=c, position=5, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=5]
             \t\tCairoColumn [name=d, position=6, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=6]
@@ -167,7 +167,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table foo to bah", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n");
+                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -182,7 +182,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
                     while (true) {
                         engine.execute("rename table bah to foo", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n");
+                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n");
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -278,7 +278,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     while (true) {
                         engine.execute("rename table foo to bah", sqlExecutionContext);
                         assertExceptionNoLeakCheck("show columns from foo", 18, "table does not exist", false, sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n");
+                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from bah", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -294,7 +294,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     while (true) {
                         engine.execute("rename table bah to foo", sqlExecutionContext);
                         assertException("show columns from bah", 18, "table does not exist", sqlExecutionContext);
-                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n");
+                        TestUtils.assertSql(engine, sqlExecutionContext, "show columns from foo", new StringSink(), "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\nts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\nx\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n");
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
@@ -377,7 +377,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=VARCHAR, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -387,7 +387,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=3]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=VARCHAR, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     \t\tCairoColumn [name=bah, position=2, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
                     """);
@@ -398,7 +398,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=3, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=3]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=3]
                     \t\tCairoColumn [name=bah, position=2, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
                     """);
@@ -416,7 +416,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -426,7 +426,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -444,7 +444,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -454,7 +454,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -464,7 +464,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -482,7 +482,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -492,7 +492,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -509,7 +509,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=VARCHAR, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -519,7 +519,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
                     """);
         });
@@ -536,7 +536,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=true, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=INT, isDedupKey=true, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -546,7 +546,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=foo, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
         });
@@ -570,7 +570,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     \t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=true, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=sym, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     \t\tCairoColumn [name=amt, position=2, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
-                    \t\tCairoColumn [name=timestamp, position=3, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=3]
+                    \t\tCairoColumn [name=timestamp, position=3, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=3]
                     \t\tCairoColumn [name=b, position=4, type=BOOLEAN, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=4]
                     \t\tCairoColumn [name=c, position=5, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=5]
                     \t\tCairoColumn [name=d, position=6, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=6]
@@ -599,7 +599,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=true, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=1, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=3]
                     \t\tCairoColumn [name=bar, position=0, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
-                    \t\tCairoColumn [name=ts, position=1, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
+                    \t\tCairoColumn [name=ts, position=1, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     \t\tCairoColumn [name=foo, position=2, type=INT, isDedupKey=true, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
                     """);
 
@@ -611,7 +611,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=true, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=1, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
                     \t\tCairoColumn [name=bar, position=0, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, isNotNull=false, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
-                    \t\tCairoColumn [name=ts, position=1, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
+                    \t\tCairoColumn [name=ts, position=1, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
             // drop column in front of designated timestamp
@@ -621,7 +621,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=true, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=1]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
         });
     }
@@ -637,7 +637,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -647,7 +647,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x2, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
         });
@@ -664,7 +664,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -674,7 +674,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=42, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -684,7 +684,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=42, o3MaxLag=42000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -766,7 +766,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -836,7 +836,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=t, id=1, directoryName=t~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=3]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=temp, position=1, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=plain, parquetCompression=zstd 3, writerIndex=1]
                     \t\tCairoColumn [name=status, position=2, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=delta_binary_packed, parquetCompression=Default, writerIndex=2]
                     """);
@@ -847,7 +847,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=t, id=1, directoryName=t~1, hasDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=3]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=temp, position=1, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=plain, parquetCompression=zstd 3, writerIndex=1]
                     \t\tCairoColumn [name=status, position=2, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=delta_binary_packed, parquetCompression=lz4_raw, writerIndex=2]
                     """);
@@ -858,7 +858,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=t, id=1, directoryName=t~1, hasDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=3]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=temp, position=1, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     \t\tCairoColumn [name=status, position=2, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=delta_binary_packed, parquetCompression=lz4_raw, writerIndex=2]
                     """);
@@ -895,7 +895,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y2, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=1]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     """);
 
         });
@@ -912,7 +912,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
 
@@ -922,7 +922,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             assertCairoMetadata("""
                     MetadataCache [tableCount=1]
                     \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]
-                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=true, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
                     \t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, isNotNull=false, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=1]
                     """);
         });

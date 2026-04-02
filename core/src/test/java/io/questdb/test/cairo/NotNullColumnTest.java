@@ -140,7 +140,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             ddl
                             CREATE TABLE 't' (\s
                             \tx INT NOT NULL,
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE t"
@@ -189,7 +189,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                 TableReaderMetadata metadata = reader.getMetadata();
                 assertTrue(metadata.isNotNull(metadata.getColumnIndex("x")));
                 assertFalse(metadata.isNotNull(metadata.getColumnIndex("y")));
-                assertFalse(metadata.isNotNull(metadata.getColumnIndex("ts")));
+                assertTrue(metadata.isNotNull(metadata.getColumnIndex("ts")));
             }
 
             assertSql(
@@ -198,7 +198,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             CREATE TABLE 't' (\s
                             \tx INT NOT NULL,
                             \ty DOUBLE,
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE t"
@@ -371,7 +371,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\tt\tx\t0\t\tno\tinteger
                             qdb\tpublic\tt\ty\t1\t\tyes\tdouble precision
-                            qdb\tpublic\tt\tts\t2\t\tyes\ttimestamp without time zone
+                            qdb\tpublic\tt\tts\t2\t\tno\ttimestamp without time zone
                             """,
                     "SELECT * FROM information_schema.columns() ORDER BY ordinal_position"
             );
@@ -465,7 +465,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
                             x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
                             y\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse
                             """,
                     "SHOW COLUMNS FROM t"
             );
@@ -491,7 +491,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             \ta INT NOT NULL,
                             \tb DOUBLE,
                             \tc STRING NOT NULL,
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE t"

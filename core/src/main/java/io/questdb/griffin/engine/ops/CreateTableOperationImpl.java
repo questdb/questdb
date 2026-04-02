@@ -518,7 +518,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     @Override
     public boolean isNotNull(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_NOT_NULL) != 0;
+        return index == timestampIndex || (getLowAt(index * 2 + 1) & COLUMN_FLAG_NOT_NULL) != 0;
     }
 
     @Override

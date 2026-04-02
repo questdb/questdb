@@ -3288,8 +3288,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void warmUp() {
         Row r = newRow(Math.max(TIMESTAMP_EPOCH, txWriter.getMaxTimestamp()));
         try {
+            int tsIdx = metadata.getTimestampIndex();
             for (int i = 0; i < columnCount; i++) {
-                r.putByte(i, (byte) 0);
+                if (i != tsIdx) {
+                    r.putByte(i, (byte) 0);
+                }
             }
         } finally {
             r.cancel();

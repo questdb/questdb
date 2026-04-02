@@ -37,7 +37,7 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
             assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\n",
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\n",
                     "table_columns('a')"
             );
         });

@@ -94,17 +94,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\tfalse
                             amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse
-                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\tfalse
                             j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             """;
@@ -944,17 +944,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     "\ti INT,\n" +
                                     "\tsym SYMBOL,\n" +
                                     "\tamt DOUBLE,\n" +
-                                    "\ttimestamp TIMESTAMP,\n" +
-                                    "\tb BOOLEAN NOT NULL,\n" +
+                                    "\ttimestamp TIMESTAMP NOT NULL,\n" +
+                                    "\tb BOOLEAN,\n" +
                                     "\tc STRING,\n" +
                                     "\td DOUBLE,\n" +
                                     "\te FLOAT,\n" +
-                                    "\tf SHORT NOT NULL,\n" +
+                                    "\tf SHORT,\n" +
                                     "\tg DATE,\n" +
                                     "\tik SYMBOL,\n" +
                                     "\tj LONG,\n" +
                                     "\tk TIMESTAMP,\n" +
-                                    "\tl BYTE NOT NULL,\n" +
+                                    "\tl BYTE,\n" +
                                     "\tm BINARY,\n" +
                                     "\tn STRING,\n" +
                                     "\tnscol TIMESTAMP_NS\n" +
@@ -1008,17 +1008,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\tfalse
                             amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse
-                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\tfalse
                             j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
                             """;
@@ -1086,17 +1086,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\ti INT,\n" +
                             "\tsym SYMBOL,\n" +
                             "\tamt DOUBLE,\n" +
-                            "\ttimestamp TIMESTAMP,\n" +
-                            "\tb BOOLEAN NOT NULL,\n" +
+                            "\ttimestamp TIMESTAMP NOT NULL,\n" +
+                            "\tb BOOLEAN,\n" +
                             "\tc STRING,\n" +
                             "\td DOUBLE,\n" +
                             "\te FLOAT,\n" +
-                            "\tf SHORT NOT NULL,\n" +
+                            "\tf SHORT,\n" +
                             "\tg DATE,\n" +
                             "\tik SYMBOL,\n" +
                             "\tj LONG,\n" +
                             "\tk TIMESTAMP,\n" +
-                            "\tl BYTE NOT NULL,\n" +
+                            "\tl BYTE,\n" +
                             "\tm BINARY,\n" +
                             "\tn STRING,\n" +
                             "\tarr DOUBLE[]\n" + // <-- array should be present

@@ -148,7 +148,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
                 "COLUMN_NAME\tORDINAL_POSITION\tIS_NULLABLE\tDATA_TYPE\n" +
                         "a\t0\tyes\tinteger\n" +
                         "b\t1\tyes\tdouble precision\n" +
-                        "t\t2\tyes\ttimestamp without time zone\n",
+                        "t\t2\tno\ttimestamp without time zone\n",
                 "select COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, case when (data_type like '%unsigned%') then DATA_TYPE || ' unsigned' else DATA_TYPE end as DATA_TYPE\n" +
                         "from INFORMATION_SCHEMA.columns\n" +
                         "where TABLE_SCHEMA = 'public' and TABLE_NAME = 'trades'\n" +

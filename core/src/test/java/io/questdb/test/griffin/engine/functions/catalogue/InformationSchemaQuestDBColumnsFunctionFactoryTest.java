@@ -46,7 +46,7 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
                             "qdb\tpublic\tB\tcol2\t2\t\tyes\tFLOAT\n" +
                             "qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE\n" +
                             "qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR\n" +
-                            "qdb\tpublic\tC\tcol2\t2\t\tno\tBYTE\n",
+                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE\n",
                     "SELECT * FROM information_schema.questdb_columns() ORDER BY table_name",
                     null,
                     null,
@@ -63,14 +63,14 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
 
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\n" +
                             "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                     "show columns from test_rename"
             );
 
             assertSql(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP\n" +
+                            "qdb\tpublic\ttest_rename\tts\t0\t\tno\tTIMESTAMP\n" +
                             "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT\n",
                     "information_schema.questdb_columns()"
             );
@@ -80,14 +80,14 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
 
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
-                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse\n" +
                             "x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
                     "show columns from test_renamed"
             );
 
             assertSql(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\tTIMESTAMP\n" +
+                            "qdb\tpublic\ttest_renamed\tts\t0\t\tno\tTIMESTAMP\n" +
                             "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tINT\n",
                     "information_schema.questdb_columns()"
             );
