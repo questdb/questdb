@@ -63,7 +63,7 @@ public class QwpMessageCursor implements Mutable {
     // Message state
     private long payloadAddress;
     private long payloadEnd;
-    private QwpSchemaCache schemaCache;
+    private QwpSchemaRegistry schemaRegistry;
     private int tableCount;
 
     public QwpMessageCursor() {
@@ -85,7 +85,7 @@ public class QwpMessageCursor implements Mutable {
         currentTableAddress = 0;
         gorillaEnabled = false;
         deltaSymbolDictEnabled = false;
-        schemaCache = null;
+        schemaRegistry = null;
         connectionSymbolDict = null;
     }
 
@@ -122,7 +122,7 @@ public class QwpMessageCursor implements Mutable {
         }
         int remainingBytes = (int) remaining;
         int consumed = tableBlockCursor.of(
-                currentTableAddress, remainingBytes, gorillaEnabled, schemaCache,
+                currentTableAddress, remainingBytes, gorillaEnabled, schemaRegistry,
                 connectionSymbolDict, deltaSymbolDictEnabled);
         currentTableAddress += consumed;
 
@@ -134,17 +134,17 @@ public class QwpMessageCursor implements Mutable {
      *
      * @param messageAddress       address of message (including header)
      * @param messageLength        total message length in bytes
-     * @param schemaCache          schema cache for reference mode (may be null)
+     * @param schemaRegistry       schema registry for reference mode (may be null)
      * @param connectionSymbolDict connection-level symbol dictionary (may be null)
      * @throws QwpParseException if parsing fails
      */
     public void of(
             long messageAddress,
             int messageLength,
-            QwpSchemaCache schemaCache,
+            QwpSchemaRegistry schemaRegistry,
             ObjList<String> connectionSymbolDict
     ) throws QwpParseException {
-        this.schemaCache = schemaCache;
+        this.schemaRegistry = schemaRegistry;
         this.connectionSymbolDict = connectionSymbolDict;
 
         // Parse message header

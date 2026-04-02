@@ -49,7 +49,7 @@ simplifications imposed by the self-contained datagram constraint:
 
 | WebSocket QWP                          | UDP QWP                                  | Rationale                                           |
 |----------------------------------------|------------------------------------------|-----------------------------------------------------|
-| Schema reference mode (0x01)           | **Full schema only (0x00)**              | No session state to cache schema hashes             |
+| Schema reference mode (0x01)           | **Full schema only (0x00)**              | No session state to store schema definitions        |
 | Delta symbol dictionary (FLAG 0x08)    | **Per-column dictionary only**           | No cross-datagram dictionary accumulation. Each SYMBOL column carries its own dictionary inline (dict_size + entries + indices), same as the existing non-delta wire format in `QwpSymbolColumnCursor`. |
 | Gorilla timestamp encoding (FLAG 0x04) | **Disabled**                             | Marginal benefit at sub-1,400 byte datagram scale; simplifies encoder |
 | Multi-table batches                    | **Single table per datagram**            | Simplicity and predictable sizing                   |

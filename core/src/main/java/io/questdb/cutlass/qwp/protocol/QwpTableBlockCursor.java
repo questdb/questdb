@@ -311,7 +311,7 @@ public class QwpTableBlockCursor implements Mutable {
      * @param dataAddress            address of table block data
      * @param dataLength             available bytes
      * @param gorillaEnabled         whether Gorilla encoding is enabled
-     * @param schemaCache            schema cache for reference mode (may be null)
+     * @param schemaRegistry         schema registry for reference mode (may be null)
      * @param connectionSymbolDict   connection-level symbol dictionary (may be null)
      * @param deltaSymbolDictEnabled whether delta mode is enabled
      * @return bytes consumed from dataAddress
@@ -321,7 +321,7 @@ public class QwpTableBlockCursor implements Mutable {
             long dataAddress,
             int dataLength,
             boolean gorillaEnabled,
-            QwpSchemaCache schemaCache,
+            QwpSchemaRegistry schemaRegistry,
             ObjList<String> connectionSymbolDict,
             boolean deltaSymbolDictEnabled
     ) throws QwpParseException {
@@ -343,23 +343,23 @@ public class QwpTableBlockCursor implements Mutable {
         QwpSchema schema;
         if (!parseResult.isReference) {
             schema = parseResult.schema;
-            // Cache the schema if caching is enabled
-            if (schemaCache != null) {
-                schemaCache.put(parseResult.schemaId, schema);
+            // Register the schema if registry is enabled
+            if (schemaRegistry != null) {
+                schemaRegistry.put(parseResult.schemaId, schema);
             }
         } else {
-            // Schema reference mode - look up in cache
-            if (schemaCache == null) {
+            // Schema reference mode - look up in registry
+            if (schemaRegistry == null) {
                 throw QwpParseException.create(
                         QwpParseException.ErrorCode.SCHEMA_NOT_FOUND,
-                        "schema reference mode requires schema cache"
+                        "schema reference mode requires schema registry"
                 );
             }
-            schema = schemaCache.get(parseResult.schemaId);
+            schema = schemaRegistry.get(parseResult.schemaId);
             if (schema == null) {
                 throw QwpParseException.create(
                         QwpParseException.ErrorCode.SCHEMA_NOT_FOUND,
-                        "schema not found in cache for table: " + tableHeader.getTableName()
+                        "schema not found in registry for table: " + tableHeader.getTableName()
                 );
             }
         }

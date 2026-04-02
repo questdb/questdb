@@ -28,7 +28,7 @@ import io.questdb.cutlass.qwp.protocol.QwpColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -50,7 +50,7 @@ import io.questdb.std.QuietCloseable;
  * <p>
  * <b>Usage:</b>
  * <pre>{@code
- * QwpStreamingDecoder decoder = new QwpStreamingDecoder(schemaCache);
+ * QwpStreamingDecoder decoder = new QwpStreamingDecoder(schemaRegistry);
  * try {
  *     QwpMessageCursor message = decoder.decode(address, length);
  *     while (message.hasNextTable()) {
@@ -80,26 +80,26 @@ import io.questdb.std.QuietCloseable;
 public class QwpStreamingDecoder implements QuietCloseable {
 
     private final QwpMessageCursor messageCursor;
-    private final QwpSchemaCache schemaCache;
+    private final QwpSchemaRegistry schemaRegistry;
 
     /**
-     * Creates a streaming decoder without schema caching.
+     * Creates a streaming decoder without a schema registry.
      */
     public QwpStreamingDecoder() {
         this(null, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
     }
 
     /**
-     * Creates a streaming decoder with schema caching.
+     * Creates a streaming decoder with a schema registry.
      *
-     * @param schemaCache schema cache for reference mode, or null to disable
+     * @param schemaRegistry schema registry for reference mode, or null to disable
      */
-    public QwpStreamingDecoder(QwpSchemaCache schemaCache) {
-        this(schemaCache, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
+    public QwpStreamingDecoder(QwpSchemaRegistry schemaRegistry) {
+        this(schemaRegistry, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
     }
 
-    public QwpStreamingDecoder(QwpSchemaCache schemaCache, int maxRowsPerTable) {
-        this.schemaCache = schemaCache;
+    public QwpStreamingDecoder(QwpSchemaRegistry schemaRegistry, int maxRowsPerTable) {
+        this.schemaRegistry = schemaRegistry;
         this.messageCursor = new QwpMessageCursor(maxRowsPerTable);
     }
 
@@ -124,7 +124,7 @@ public class QwpStreamingDecoder implements QuietCloseable {
     public QwpMessageCursor decode(long messageAddress, int messageLength, ObjList<String> connectionSymbolDict)
             throws QwpParseException {
         messageCursor.clear();
-        messageCursor.of(messageAddress, messageLength, schemaCache, connectionSymbolDict);
+        messageCursor.of(messageAddress, messageLength, schemaRegistry, connectionSymbolDict);
         return messageCursor;
     }
 
@@ -157,8 +157,8 @@ public class QwpStreamingDecoder implements QuietCloseable {
 
     public void resetConnectionState() {
         reset();
-        if (schemaCache != null) {
-            schemaCache.clear();
+        if (schemaRegistry != null) {
+            schemaRegistry.clear();
         }
     }
 }

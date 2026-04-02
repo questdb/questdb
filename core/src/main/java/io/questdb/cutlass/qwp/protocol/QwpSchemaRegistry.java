@@ -27,13 +27,13 @@ package io.questdb.cutlass.qwp.protocol;
 import io.questdb.std.ObjList;
 
 /**
- * Simple cache for QWP v1 schemas, keyed by client-assigned schema ID.
+ * Registry for QWP v1 schemas, keyed by client-assigned schema ID.
  * <p>
  * Schema IDs are dense, monotonically increasing integers starting at 0,
- * so the cache uses a plain list where the index is the schema ID.
+ * so the registry uses a plain list where the index is the schema ID.
  * Single-threaded, zero-allocation on lookups.
  */
-public class QwpSchemaCache {
+public class QwpSchemaRegistry {
 
     private final int maxSchemasPerConnection;
     private int nextExpectedSchemaId;
@@ -41,11 +41,11 @@ public class QwpSchemaCache {
     private long hits;
     private long misses;
 
-    public QwpSchemaCache() {
+    public QwpSchemaRegistry() {
         this(QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION);
     }
 
-    public QwpSchemaCache(int maxSchemasPerConnection) {
+    public QwpSchemaRegistry(int maxSchemasPerConnection) {
         this.maxSchemasPerConnection = maxSchemasPerConnection;
     }
 

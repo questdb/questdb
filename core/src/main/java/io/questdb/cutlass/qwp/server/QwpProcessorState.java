@@ -37,7 +37,7 @@ import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.protocol.QwpSchemaCache;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -101,7 +101,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
         try {
             this.streamingDecoder = new QwpStreamingDecoder(
-                    new QwpSchemaCache(configuration.getQwpMaxSchemasPerConnection()),
+                    new QwpSchemaRegistry(configuration.getQwpMaxSchemasPerConnection()),
                     configuration.getQwpMaxRowsPerTable()
             );
             this.walAppender = new QwpWalAppender(

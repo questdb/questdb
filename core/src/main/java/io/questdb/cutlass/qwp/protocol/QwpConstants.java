@@ -51,7 +51,7 @@ public final class QwpConstants {
      */
     public static final int DEFAULT_MAX_ROWS_PER_TABLE = 1_000_000;
     /**
-     * Default maximum number of distinct schemas allowed on a single connection.
+     * Default maximum number of distinct schemas registered on a single connection.
      */
     public static final int DEFAULT_MAX_SCHEMAS_PER_CONNECTION = 65_535;
     /**
