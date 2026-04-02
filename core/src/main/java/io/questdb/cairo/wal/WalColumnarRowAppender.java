@@ -218,24 +218,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
-    public void putBooleanToStringColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
-        checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
-
-        cursor.resetRowPosition();
-        for (int row = 0; row < rowCount; row++) {
-            cursor.advanceRow();
-            if (cursor.isNull()) {
-                StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
-            } else {
-                StringTypeDriver.appendValue(auxMem, dataMem, cursor.getValue() ? "true" : "false");
-            }
-        }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
-    }
-
-    @Override
     public void putBooleanToNumericColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount, int columnType) {
         checkInColumnarWrite();
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
@@ -280,6 +262,24 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             }
             default -> throw CairoException.nonCritical()
                     .put("unsupported boolean-to-numeric target type: ").put(ColumnType.nameOf(columnType));
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void putBooleanToStringColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+            } else {
+                StringTypeDriver.appendValue(auxMem, dataMem, cursor.getValue() ? "true" : "false");
+            }
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -2399,6 +2399,23 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
     }
 
+    private void rescaleDecimalValue(
+            Decimal256 decimal,
+            int sourceScale,
+            int targetScale,
+            int columnType,
+            int columnIndex
+    ) {
+        try {
+            decimal.rescale(targetScale);
+        } catch (NumericException ignored) {
+            if (sourceScale > targetScale) {
+                throwDecimalPrecisionLoss(decimal, columnType, columnIndex);
+            }
+            throwDecimalOverflow(decimal, columnType, columnIndex);
+        }
+    }
+
     private CairoException stringToDecimalConversionError(DirectUtf8Sequence value, int columnIndex) {
         return CairoException.nonCritical()
                 .put("cannot parse decimal from string [value=")
@@ -2423,23 +2440,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
                 .put(", decimal=").put(decimal)
                 .put(']');
-    }
-
-    private void rescaleDecimalValue(
-            Decimal256 decimal,
-            int sourceScale,
-            int targetScale,
-            int columnType,
-            int columnIndex
-    ) {
-        try {
-            decimal.rescale(targetScale);
-        } catch (NumericException ignored) {
-            if (sourceScale > targetScale) {
-                throwDecimalPrecisionLoss(decimal, columnType, columnIndex);
-            }
-            throwDecimalOverflow(decimal, columnType, columnIndex);
-        }
     }
 
     private void validateAndWriteDecimalValue(MemoryMA dataMem, Decimal256 decimal, int columnType, int columnIndex) {
