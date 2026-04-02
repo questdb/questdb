@@ -989,51 +989,6 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerDouble(
             });
 }
 
-// Returns array length and the type of the first non-null element
-// (or NULL if all elements are null) in a single parse.
-JNIEXPORT jint JNICALL
-Java_io_questdb_std_json_SimdJsonParser_queryArrayInfo(
-        JNIEnv * /*env*/,
-        jclass /*cl*/,
-        simdjson::ondemand::parser *parser,
-        const char *json_chars,
-        size_t json_len,
-        size_t tail_padding,
-        json_result *result
-) {
-    const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
-    auto doc = parser->iterate(json_buf);
-    auto val = doc.get_value();
-    if (!result->from(val)) { return 0; }
-    auto arr = val.get_array();
-    if (!result->set_error(arr)) { return 0; }
-    auto count = arr.count_elements();
-    if (!result->set_error(count)) { return 0; }
-    const auto count_value = count.value_unsafe();
-    if (count_value > static_cast<size_t>(std::numeric_limits<jint>::max())) {
-        result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
-        return 0;
-    }
-    if (count_value == 0) {
-        result->error = simdjson::error_code::SUCCESS;
-        result->type = simdjson::ondemand::json_type::null;
-        return 0;
-    }
-    // Find the type of the first non-null element.
-    result->type = simdjson::ondemand::json_type::null;
-    for (auto element : arr) {
-        auto type_result = element.type();
-        if (type_result.error()) continue;
-        auto t = type_result.value_unsafe();
-        if (t != simdjson::ondemand::json_type::null) {
-            result->type = t;
-            break;
-        }
-    }
-    result->error = simdjson::error_code::SUCCESS;
-    return static_cast<jint>(count_value);
-}
-
 // Parses the JSON document once and extracts all array elements in a single
 // forward pass, writing results into a pre-sized results[element_count * column_count]
 // matrix. String data (VARCHAR/TIMESTAMP) goes into the shared string_sink with

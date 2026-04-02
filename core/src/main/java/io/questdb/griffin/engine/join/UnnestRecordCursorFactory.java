@@ -116,6 +116,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         Misc.freeIfCloseable(getMetadata());
+        Misc.free(cursor);
         Misc.free(baseFactory);
         Misc.freeObjList(functions);
         Misc.freeObjListIfCloseable(sources);
