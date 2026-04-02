@@ -2553,34 +2553,39 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T114: CASE expression with outer ref — triggers args path in hasCorrelatedExprAtDepth and liftExpression
+    // T114: 3-branch CASE expression with outer refs — triggers args path
+    // (paramCount >= 3 stores children in ExpressionNode.args, not lhs/rhs)
     @Test
     public void testT114CaseExprWithOuterRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, threshold DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, lo DOUBLE, hi DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
-                    (1, 15.0, '2024-01-01T00:00:00.000000Z'),
-                    (2, 35.0, '2024-01-01T01:00:00.000000Z')
+                    (1, 10.0, 20.0, '2024-01-01T00:00:00.000000Z'),
+                    (2, 25.0, 35.0, '2024-01-01T01:00:00.000000Z')
                     """);
             execute("""
                     INSERT INTO trades VALUES
-                    (1, 10.0, '2024-01-01T00:10:00.000000Z'),
-                    (1, 20.0, '2024-01-01T00:20:00.000000Z'),
-                    (2, 30.0, '2024-01-01T01:10:00.000000Z'),
-                    (2, 40.0, '2024-01-01T01:20:00.000000Z')
+                    (1, 5.0, '2024-01-01T00:10:00.000000Z'),
+                    (1, 15.0, '2024-01-01T00:20:00.000000Z'),
+                    (1, 25.0, '2024-01-01T00:30:00.000000Z'),
+                    (2, 20.0, '2024-01-01T01:10:00.000000Z'),
+                    (2, 30.0, '2024-01-01T01:20:00.000000Z'),
+                    (2, 40.0, '2024-01-01T01:30:00.000000Z')
                     """);
 
-            // CASE with 3+ branches uses args; outer ref o.threshold in CASE
-            // order 1 (threshold=15): 10<15 → low, 20>=15 → high
-            // order 2 (threshold=35): 30<35 → low, 40>=35 → high
+            // 3-branch CASE (paramCount >= 3 → uses args list)
+            // order 1 (lo=10,hi=20): 5→low, 15→mid, 25→high
+            // order 2 (lo=25,hi=35): 20→low, 30→mid, 40→high
             assertQueryNoLeakCheck(
                     """
                             id\tqty\tlevel
-                            1\t10.0\tlow
-                            1\t20.0\thigh
-                            2\t30.0\tlow
+                            1\t5.0\tlow
+                            1\t15.0\tmid
+                            1\t25.0\thigh
+                            2\t20.0\tlow
+                            2\t30.0\tmid
                             2\t40.0\thigh
                             """,
                     """
@@ -2588,7 +2593,9 @@ public class LateralJoinTest extends AbstractCairoTest {
                             FROM orders o
                             JOIN LATERAL (
                                 SELECT qty,
-                                       CASE WHEN qty < o.threshold THEN 'low' ELSE 'high' END AS level
+                                       CASE WHEN qty < o.lo THEN 'low'
+                                            WHEN qty < o.hi THEN 'mid'
+                                            ELSE 'high' END AS level
                                 FROM trades
                                 WHERE order_id = o.id
                             ) sub
@@ -2689,6 +2696,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             );
         });
     }
+
 
     // T11: Inner JOIN inside LATERAL, INNER, equality correlation — inner JOIN ON rewrite
     @Test
