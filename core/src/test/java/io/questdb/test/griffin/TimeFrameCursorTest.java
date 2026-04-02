@@ -329,7 +329,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
 
                     Assert.assertTrue(sharedState.getFrameCount() > 0);
-                    assertForwardScan(cursor, 48);
+                    TestUtils.printSql(engine, sqlExecutionContext, "x WHERE t < '1970-01-03'", sink);
+                    assertForwardScanWithColumnData(cursor, metadata, sink);
                 } finally {
                     Misc.free(cursor);
                     Misc.free(sharedState);
