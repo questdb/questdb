@@ -281,7 +281,12 @@ public class WalTxnDetails implements QuietCloseable {
                 totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
                 lastWalSegment = currentWalSegment;
 
-                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
+                if (totalRowCount > maxBlockRecordCount) {
+                    // Block is too big, commit what we have so far
+                    break;
+                }
+                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT) {
+                    blockSize++;
                     break;
                 }
                 if (getDedupMode(nextTxn) == WAL_DEDUP_MODE_REPLACE_RANGE) {
