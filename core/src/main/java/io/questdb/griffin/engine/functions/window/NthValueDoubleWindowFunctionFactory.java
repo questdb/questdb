@@ -337,6 +337,13 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(',').val(n).val(')');
+            sink.val(" over (rows between current row and current row)");
+        }
     }
 
     // handles nth_value() over (partition by x)
@@ -404,6 +411,16 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             MapValue value = key.findValue();
             double val = value != null ? value.getDouble(0) : Double.NaN;
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(',').val(n).val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(')');
         }
     }
 
@@ -1354,6 +1371,13 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(',').val(n).val(')');
+            sink.val(" over (rows between unbounded preceding and current row)");
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
             count = 0;
@@ -1423,6 +1447,13 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             count = 0;
             found = false;
             value = Double.NaN;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(',').val(n).val(')');
+            sink.val(" over ()");
         }
 
         @Override

@@ -11476,6 +11476,61 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueRejectsIgnoreNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, 2) ignore nulls over (order by ts) from tab",
+                    -1,
+                    "RESPECT/IGNORE NULLS is not supported for current window function",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertSql(
+                    replaceTimestampSuffix1("""
+                            ts\tnv
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0
+                            1970-01-01T00:00:00.000003Z\t20.0
+                            1970-01-01T00:00:00.000004Z\t20.0
+                            1970-01-01T00:00:00.000005Z\t20.0
+                            """),
+                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) nv from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
+
+            assertSql(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t50.0
+                            1970-01-01T00:00:00.000006Z\t2\t50.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab"
+            );
+        });
+    }
+
+    @Test
     public void testCumeDistRejectsFraming() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
