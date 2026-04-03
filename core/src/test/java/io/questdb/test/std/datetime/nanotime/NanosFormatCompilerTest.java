@@ -894,6 +894,11 @@ public class NanosFormatCompilerTest {
     }
 
     @Test
+    public void testParseOptionalNanos9Present() throws NumericException {
+        assertNanos("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.123456789Z", "2026-03-31T09:02:28.123456789Z");
+    }
+
+    @Test
     public void testParseOptionalNanos9RejectsBareDot() {
         assertException("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.Z");
     }

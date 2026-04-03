@@ -899,6 +899,11 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testParseOptionalMicros6Present() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.U+'Z'", "2026-03-31T09:02:28.123456Z", "2026-03-31T09:02:28.123456Z");
+    }
+
+    @Test
     public void testParseOptionalMicros6RejectsBareDot() {
         assertException("yyyy-MM-dd'T'HH:mm:ss.U+'Z'", "2026-03-31T09:02:28.Z");
     }
@@ -966,6 +971,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testParseOptionalNanos9Absent() throws NumericException {
         assertMicros("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.000000Z", "2026-03-31T09:02:28Z");
+    }
+
+    @Test
+    public void testParseOptionalNanos9Present() throws NumericException {
+        assertMicros("yyyy-MM-dd'T'HH:mm:ss.N+'Z'", "2026-03-31T09:02:28.123456Z", "2026-03-31T09:02:28.123456789Z");
     }
 
     @Test
