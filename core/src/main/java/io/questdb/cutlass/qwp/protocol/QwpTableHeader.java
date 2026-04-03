@@ -31,21 +31,17 @@ import io.questdb.std.str.Utf8s;
 
 import java.nio.charset.StandardCharsets;
 
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_COLUMNS_PER_TABLE;
-import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_TABLE_NAME_LENGTH;
-
 /**
  * Parser for QWP v1 table headers.
  * <p>
  * Table header structure:
  * <pre>
- * ┌─────────────────────────────────────────────────────────────┐
- * │ Table name length: varint                                   │
- * │ Table name: UTF-8 bytes                                     │
- * │ Row count: varint                                           │
- * │ Column count: varint                                        │
- * └─────────────────────────────────────────────────────────────┘
+ * ┌─────────────────────────────┐
+ * │ Table name length: varint   │
+ * │ Table name: UTF-8 bytes     │
+ * │ Row count: varint           │
+ * │ Column count: varint        │
+ * └─────────────────────────────┘
  * </pre>
  * <p>
  * This class is mutable and reusable. Call {@link #reset()} before parsing a new header.
@@ -56,20 +52,20 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_TABLE_NAME_LENGTH
 public class QwpTableHeader {
 
     private final QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
-    private final DirectUtf8String tableNameUtf8 = new DirectUtf8String();
     private final int maxRowCount;
+    private final DirectUtf8String tableNameUtf8 = new DirectUtf8String();
     private int bytesConsumed;
     private int columnCount;
     private long rowCount;
     private String tableNameStr;  // Lazily allocated when getTableName() is called
 
     public QwpTableHeader() {
-        this(DEFAULT_MAX_ROWS_PER_TABLE);
+        this(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
     }
 
     public QwpTableHeader(int maxRowCount) {
-        if (maxRowCount < 1 || maxRowCount > DEFAULT_MAX_ROWS_PER_TABLE) {
-            throw new IllegalArgumentException("maxRowCount must be between 1 and " + DEFAULT_MAX_ROWS_PER_TABLE);
+        if (maxRowCount < 1 || maxRowCount > QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE) {
+            throw new IllegalArgumentException("maxRowCount must be between 1 and " + QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
         }
         this.maxRowCount = maxRowCount;
     }
@@ -191,10 +187,10 @@ public class QwpTableHeader {
                     "empty table name"
             );
         }
-        if (nameLenInt > MAX_TABLE_NAME_LENGTH) {
+        if (nameLenInt > QwpConstants.MAX_TABLE_NAME_LENGTH) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_TABLE_NAME,
-                    "table name too long: " + nameLenInt + " bytes (max " + MAX_TABLE_NAME_LENGTH + ")"
+                    "table name too long: " + nameLenInt + " bytes (max " + QwpConstants.MAX_TABLE_NAME_LENGTH + ")"
             );
         }
         if (offset + nameLenInt > length) {
@@ -226,10 +222,10 @@ public class QwpTableHeader {
         }
         QwpVarint.decode(address + offset, limit, decodeResult);
         long colCount = decodeResult.value;
-        if (colCount > MAX_COLUMNS_PER_TABLE) {
+        if (colCount > QwpConstants.MAX_COLUMNS_PER_TABLE) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.COLUMN_COUNT_EXCEEDED,
-                    "column count exceeds maximum: " + colCount + " (max " + MAX_COLUMNS_PER_TABLE + ")"
+                    "column count exceeds maximum: " + colCount + " (max " + QwpConstants.MAX_COLUMNS_PER_TABLE + ")"
             );
         }
         this.columnCount = (int) colCount;
