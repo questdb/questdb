@@ -366,6 +366,11 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatOptionalMicros6Zero() throws NumericException {
+        assertFormat("2026-03-31T09:02:28.000000", "yyyy-MM-ddTHH:mm:ss.U+", "2026-03-31T09:02:28.000000Z");
+    }
+
+    @Test
     public void testFormatMicros6Three() throws NumericException {
         assertFormat("2022-02-02 02:02:02.000812", "y-MM-dd HH:mm:ss.U+", "2022-02-02T02:02:02.000812Z");
     }
@@ -450,6 +455,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testFormatNano9Six() throws NumericException {
         assertFormat("2022-02-02 02:02:02.374812", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.374812Z");
+    }
+
+    @Test
+    public void testFormatOptionalNano9Zero() throws NumericException {
+        assertFormat("2026-03-31T09:02:28.000000", "yyyy-MM-ddTHH:mm:ss.N+", "2026-03-31T09:02:28.000000Z");
     }
 
     @Test

@@ -426,6 +426,11 @@ public class NanosFormatCompilerTest {
     }
 
     @Test
+    public void testFormatOptionalNano9Zero() throws NumericException {
+        assertFormat("2026-03-31T09:02:28.000000000", "yyyy-MM-ddTHH:mm:ss.N+", "2026-03-31T09:02:28.000000000Z");
+    }
+
+    @Test
     public void testFormatNano9Three() throws NumericException {
         assertFormat("2022-02-02 02:02:02.000812000", "y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.000812000Z");
     }
