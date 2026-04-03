@@ -534,6 +534,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.inactive.writer.ttl\tQDB_CAIRO_INACTIVE_WRITER_TTL\t600000\tdefault\tfalse\tfalse\n" +
                                     "cairo.index.value.block.size\tQDB_CAIRO_INDEX_VALUE_BLOCK_SIZE\t256\tdefault\tfalse\tfalse\n" +
                                     "cairo.iouring.enabled\tQDB_CAIRO_IOURING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.json.unnest.max.value.size\tQDB_CAIRO_JSON_UNNEST_MAX_VALUE_SIZE\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.latestby.queue.capacity\tQDB_CAIRO_LATESTBY_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.legacy.string.column.type.default\tQDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.lexer.pool.capacity\tQDB_CAIRO_LEXER_POOL_CAPACITY\t2048\tdefault\tfalse\tfalse\n" +

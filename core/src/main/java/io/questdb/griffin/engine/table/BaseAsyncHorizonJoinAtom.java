@@ -34,7 +34,6 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -53,7 +52,6 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -450,47 +448,24 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     }
 
     /**
-     * Initialize all time frame cursors with shared frame data.
-     * Must be called after the slave page frame cursor has been fully iterated.
+     * Initialize all time frame cursors with shared state.
+     * Must be called after {@link ConcurrentTimeFrameState#of} has been called.
      */
     public void initTimeFrameCursors(
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
-            PageFrameAddressCache slaveFrameAddressCache,
-            DirectIntList slaveFramePartitionIndexes,
-            LongList slaveFrameRowCounts,
-            LongList slavePartitionTimestamps,
-            LongList slavePartitionCeilings,
-            int frameCount
+            ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         // Initialize owner cursor
         final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
-        ownerSlaveTimeFrameCursor.of(
-                slavePageFrameCursor,
-                slaveFrameAddressCache,
-                slaveFramePartitionIndexes,
-                slaveFrameRowCounts,
-                slavePartitionTimestamps,
-                slavePartitionCeilings,
-                frameCount,
-                timestampIndex
-        );
+        ownerSlaveTimeFrameCursor.of(sharedState, slavePageFrameCursor, timestampIndex);
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
 
-        // Initialize per-worker cursors with the same shared data
+        // Initialize per-worker cursors with the same shared state
         for (int i = 0, n = perWorkerSlaveTimeFrameCursors.size(); i < n; i++) {
-            ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
-            workerCursor.of(
-                    slavePageFrameCursor,
-                    slaveFrameAddressCache,
-                    slaveFramePartitionIndexes,
-                    slaveFrameRowCounts,
-                    slavePartitionTimestamps,
-                    slavePartitionCeilings,
-                    frameCount,
-                    timestampIndex
-            );
+            final ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
+            workerCursor.of(sharedState, slavePageFrameCursor, timestampIndex);
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 

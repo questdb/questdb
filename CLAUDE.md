@@ -42,6 +42,10 @@ infrastructure does not reliably render non-ASCII (e.g., em dashes, curly
 quotes, Unicode symbols). Use only plain ASCII punctuation in all `LOG.info()`,
 `LOG.error()`, etc. calls.
 
+Use `ObjList<T>` instead of `T[]` object arrays. `ObjList` is QuestDB's
+standard resizable list and integrates with `Misc.freeObjList()` /
+`Misc.freeObjListIfCloseable()` for resource cleanup.
+
 ### Tests
 
 - write all tests using assertMemoryLeak(). This isn't needed for narrow unit
