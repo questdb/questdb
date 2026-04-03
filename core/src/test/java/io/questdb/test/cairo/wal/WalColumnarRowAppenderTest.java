@@ -955,9 +955,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
                 String walName;
                 try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                     StringColumnWireFormat varcharWire = new StringColumnWireFormat(varcharValues, false);
-                     SymbolColumnWireFormat symbolWire = new SymbolColumnWireFormat(symbolValues, false);
-                     BooleanColumnWireFormat boolWire = new BooleanColumnWireFormat(boolValues, false)) {
+                     StringColumnWireFormat varcharWire = new StringColumnWireFormat(varcharValues);
+                     SymbolColumnWireFormat symbolWire = new SymbolColumnWireFormat(symbolValues);
+                     BooleanColumnWireFormat boolWire = new BooleanColumnWireFormat(boolValues)) {
                     walName = walWriter.getWalName();
                     ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -1015,7 +1015,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values, false)) {
+                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -1057,7 +1057,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values, false)) {
+                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -1099,7 +1099,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values, false)) {
+                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -1142,7 +1142,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values, true)) {
+                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -1194,12 +1194,12 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 BooleanColumnWireFormat bFmt = new BooleanColumnWireFormat(values, true);
-                 BooleanColumnWireFormat sFmt = new BooleanColumnWireFormat(values, true);
-                 BooleanColumnWireFormat iFmt = new BooleanColumnWireFormat(values, true);
-                 BooleanColumnWireFormat lFmt = new BooleanColumnWireFormat(values, true);
-                 BooleanColumnWireFormat fFmt = new BooleanColumnWireFormat(values, true);
-                 BooleanColumnWireFormat dFmt = new BooleanColumnWireFormat(values, true)) {
+                 BooleanColumnWireFormat bFmt = new BooleanColumnWireFormat(values);
+                 BooleanColumnWireFormat sFmt = new BooleanColumnWireFormat(values);
+                 BooleanColumnWireFormat iFmt = new BooleanColumnWireFormat(values);
+                 BooleanColumnWireFormat lFmt = new BooleanColumnWireFormat(values);
+                 BooleanColumnWireFormat fFmt = new BooleanColumnWireFormat(values);
+                 BooleanColumnWireFormat dFmt = new BooleanColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -1246,7 +1246,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values, true)) {
+                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -1280,7 +1280,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values, true)) {
+                 BooleanColumnWireFormat wireFormat = new BooleanColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -1315,7 +1315,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -1359,7 +1359,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -1397,13 +1397,13 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             // 2-byte UTF-8: é (U+00E9), ñ (U+00F1)
             // 3-byte UTF-8: € (U+20AC)
             int rowCount = 3;
-            String[] values = {"\u00E9", "\u00F1", "\u20AC"};
+            String[] values = {"é", "ñ", "€"};
 
             long[] timestamps = makeTimestamps(rowCount);
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -3405,7 +3405,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] dateValues = {1_630_933_921_000L}; // 1 non-null date in milliseconds
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
-            int dataLength = flagSize + bitmapSize + 1 * 8; // 1 non-null date
+            int dataLength = flagSize + bitmapSize + 8; // 1 non-null date
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 1); // null bitmap present
@@ -3455,7 +3455,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] tsValues = {1_630_933_921_000_000L}; // 1 non-null timestamp in microseconds
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
-            int dataLength = flagSize + bitmapSize + 1 * 8; // 1 non-null timestamp
+            int dataLength = flagSize + bitmapSize + 8; // 1 non-null timestamp
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 1); // null bitmap present
@@ -3505,7 +3505,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] tsNanosValues = {1_630_933_921_000_000_000L}; // 1 non-null timestamp in nanoseconds
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
-            int dataLength = flagSize + bitmapSize + 1 * 8; // 1 non-null timestamp
+            int dataLength = flagSize + bitmapSize + 8; // 1 non-null timestamp
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 1); // null bitmap present
@@ -3557,7 +3557,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
-            int dataLength = flagSize + bitmapSize + 1 * 16; // 1 non-null UUID
+            int dataLength = flagSize + bitmapSize + 16; // 1 non-null UUID
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 1); // null bitmap present
@@ -3698,11 +3698,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             );
 
             int rowCount = 3;
-            // Pattern: [NULL, 7, NULL]
-            long[] nonNullValues = {7};
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
             int flagSize = 1;
-            int dataLength = flagSize + bitmapSize + nonNullValues.length * 8;
+            int dataLength = flagSize + bitmapSize + 8;
             long dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
             try {
                 Unsafe.getUnsafe().putByte(dataAddress, (byte) 1); // null bitmap present
@@ -4046,7 +4044,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     public void testPutFloatToDecimal128Column_NonFinite() throws Exception {
         assertPutFloatToDecimalNonFinite(
                 ColumnType.getDecimalType(38, 2), "test_float_dec128_nonf",
-                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+                456.75, 2.25, "value\n\n456.75\n\n2.25\n"
         );
     }
 
@@ -4111,7 +4109,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     public void testPutFloatToDecimal16Column_NonFinite() throws Exception {
         assertPutFloatToDecimalNonFinite(
                 ColumnType.getDecimalType(4, 2), "test_float_dec16_nonf",
-                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+                7.75, 2.25, "value\n\n7.75\n\n2.25\n"
         );
     }
 
@@ -4216,7 +4214,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     public void testPutFloatToDecimal256Column_NonFinite() throws Exception {
         assertPutFloatToDecimalNonFinite(
                 ColumnType.getDecimalType(76, 2), "test_float_dec256_nonf",
-                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+                1234.50, 2.25, "value\n\n1234.50\n\n2.25\n"
         );
     }
 
@@ -4224,7 +4222,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     public void testPutFloatToDecimal32Column_NonFinite() throws Exception {
         assertPutFloatToDecimalNonFinite(
                 ColumnType.getDecimalType(9, 2), "test_float_dec32_nonf",
-                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+                12.50, 2.25, "value\n\n12.50\n\n2.25\n"
         );
     }
 
@@ -4289,7 +4287,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     public void testPutFloatToDecimal8Column_NonFinite() throws Exception {
         assertPutFloatToDecimalNonFinite(
                 ColumnType.getDecimalType(2, 1), "test_float_dec8_nonf",
-                1.5, 2.5, "value\n\n1.5\n\n2.5\n"
+                3.5, 2.5, "value\n\n3.5\n\n2.5\n"
         );
     }
 
@@ -4450,7 +4448,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     public void testPutFloatToDecimalColumn_NonFinite() throws Exception {
         assertPutFloatToDecimalNonFinite(
                 ColumnType.getDecimalType(18, 2), "test_float_dec_nonf",
-                1.5, 2.25, "value\n\n1.50\n\n2.25\n"
+                99.25, 2.25, "value\n\n99.25\n\n2.25\n"
         );
     }
 
@@ -5563,7 +5561,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5601,10 +5599,8 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             int rowCount = 1;
             String[] values = {"x"};
 
-            long[] timestamps = makeTimestamps(rowCount);
-
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5633,7 +5629,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             String[] values = {"not_a_number"};
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5664,7 +5660,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5699,7 +5695,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5734,7 +5730,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5776,7 +5772,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5811,7 +5807,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5846,7 +5842,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5881,7 +5877,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5916,7 +5912,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5950,7 +5946,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -5984,7 +5980,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6023,7 +6019,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6062,7 +6058,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6096,7 +6092,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6130,7 +6126,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6165,7 +6161,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, false)) {
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -6210,7 +6206,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, false)) {
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -6255,7 +6251,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, false)) {
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6286,7 +6282,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             String[] symbolValues = {"A", "B", "C"};
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(symbolValues, false)) {
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(symbolValues)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6322,7 +6318,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, true)) {
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -6372,7 +6368,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, true)) {
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6412,7 +6408,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, true)) {
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6452,7 +6448,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 DeltaSymbolColumnWireFormat wireFormat = new DeltaSymbolColumnWireFormat(indices, rowCount, true, connectionDict)) {
+                 DeltaSymbolColumnWireFormat wireFormat = new DeltaSymbolColumnWireFormat(indices, rowCount, connectionDict)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6486,7 +6482,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values, true)) {
+                 SymbolColumnWireFormat wireFormat = new SymbolColumnWireFormat(values)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6526,7 +6522,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             long[] timestamps = makeTimestamps(rowCount);
 
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 DeltaSymbolColumnWireFormat wireFormat = new DeltaSymbolColumnWireFormat(indices, rowCount, true, connectionDict)) {
+                 DeltaSymbolColumnWireFormat wireFormat = new DeltaSymbolColumnWireFormat(indices, rowCount, connectionDict)) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
                 appender.beginColumnarWrite(rowCount);
@@ -6991,7 +6987,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -7033,7 +7029,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -7075,7 +7071,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -7122,7 +7118,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -7168,7 +7164,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -7217,7 +7213,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, false)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -7259,7 +7255,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             String walName;
             try (WalWriter walWriter = engine.getWalWriter(tableToken);
-                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values, true)) {
+                 StringColumnWireFormat wireFormat = new StringColumnWireFormat(values)) {
                 walName = walWriter.getWalName();
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
 
@@ -7449,7 +7445,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         long dataAddress;
         int dataLength;
 
-        BooleanColumnWireFormat(Boolean[] values, boolean nullable) throws QwpParseException {
+        BooleanColumnWireFormat(Boolean[] values) throws QwpParseException {
             int rowCount = values.length;
             int nullCount = 0;
 
@@ -7525,7 +7521,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         long dataAddress;
         int dataLength;
 
-        DeltaSymbolColumnWireFormat(int[] indices, int rowCount, boolean nullable, ObjList<String> connectionDict) throws QwpParseException {
+        DeltaSymbolColumnWireFormat(int[] indices, int rowCount, ObjList<String> connectionDict) throws QwpParseException {
             int nullCount = 0;
             for (int i = 0; i < rowCount; i++) {
                 if (indices[i] < 0) {
@@ -7587,7 +7583,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         long dataAddress;
         int dataLength;
 
-        StringColumnWireFormat(String[] values, boolean nullable) throws QwpParseException {
+        StringColumnWireFormat(String[] values) throws QwpParseException {
             // Calculate null count and prepare byte arrays
             int rowCount = values.length;
             int nullCount = 0;
@@ -7677,7 +7673,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         long dataAddress;
         int dataLength;
 
-        SymbolColumnWireFormat(String[] values, boolean nullable) throws QwpParseException {
+        SymbolColumnWireFormat(String[] values) throws QwpParseException {
             int rowCount = values.length;
 
             // Build dictionary

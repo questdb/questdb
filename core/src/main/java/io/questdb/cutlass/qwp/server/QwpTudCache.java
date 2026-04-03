@@ -125,12 +125,7 @@ public class QwpTudCache implements QuietCloseable {
 
     @Override
     public void close() {
-        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
-            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-            Misc.free(tud);
-        }
+        reset();
         tableUpdateDetails.clear();
         ddlMem = Misc.free(ddlMem);
         path = Misc.free(path);

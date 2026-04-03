@@ -88,11 +88,10 @@ public final class QwpSchema {
      * @param buf      destination buffer
      * @param offset   starting offset
      * @param schemaId the schema ID
-     * @return offset after encoded reference
      */
-    public static int encodeReference(byte[] buf, int offset, int schemaId) {
+    public static void encodeReference(byte[] buf, int offset, int schemaId) {
         buf[offset++] = SCHEMA_MODE_REFERENCE;
-        return QwpVarint.encode(buf, offset, schemaId);
+        QwpVarint.encode(buf, offset, schemaId);
     }
 
     /**

@@ -85,7 +85,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     };
     private final ReceiverFactory receiverFactory;
 
-    public QwpUdpInsertTest(String label, ReceiverFactory factory) {
+    public QwpUdpInsertTest(ReceiverFactory factory) {
         this.receiverFactory = factory;
     }
 
@@ -123,13 +123,17 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     "SELECT count() FROM auto_many_types"
             );
             assertSql(
-                    "host\tid\ttemp\tnote\n" +
-                            "srv-0\t0\t20.0\trow-0\n",
+                    """
+                            host\tid\ttemp\tnote
+                            srv-0\t0\t20.0\trow-0
+                            """,
                     "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp LIMIT 1"
             );
             assertSql(
-                    "host\tid\ttemp\tnote\n" +
-                            "srv-1\t19\t21.9\trow-19\n",
+                    """
+                            host\tid\ttemp\tnote
+                            srv-1\t19\t21.9\trow-19
+                            """,
                     "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp DESC LIMIT 1"
             );
         });
@@ -153,8 +157,10 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "count\tsum_id\tmin_id\tmax_id\n" +
-                            "100\t4950\t0\t99\n",
+                    """
+                            count\tsum_id\tmin_id\tmax_id
+                            100\t4950\t0\t99
+                            """,
                     "SELECT count(), sum(id) AS sum_id, min(id) AS min_id, max(id) AS max_id FROM auto_splits"
             );
         });
@@ -247,8 +253,10 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "min_val\tmax_val\n" +
-                            "0.0\t122.5\n",
+                    """
+                            min_val\tmax_val
+                            0.0\t122.5
+                            """,
                     "SELECT min(value) AS min_val, max(value) AS max_val FROM auto_values"
             );
             assertSql(
@@ -280,8 +288,10 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "count\tmin_id\tmax_id\n" +
-                            "30\t0\t29\n",
+                    """
+                            count\tmin_id\tmax_id
+                            30\t0\t29
+                            """,
                     "SELECT count(), min(id) AS min_id, max(id) AS max_id FROM auto_at_now"
             );
         });
@@ -370,8 +380,10 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "count\tmax_id\n" +
-                            "11\t10\n",
+                    """
+                            count\tmax_id
+                            11\t10
+                            """,
                     "SELECT count(), max(id) AS max_id FROM cancel_after_af"
             );
         });
@@ -402,9 +414,11 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "id\n" +
-                            "1\n" +
-                            "3\n",
+                    """
+                            id
+                            1
+                            3
+                            """,
                     "SELECT id FROM cancel_between ORDER BY timestamp"
             );
         });
@@ -432,8 +446,10 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "id\tnote\n" +
-                            "1\tkeep me\n",
+                    """
+                            id\tnote
+                            1\tkeep me
+                            """,
                     "SELECT id, note FROM cancel_partial ORDER BY timestamp"
             );
         });
@@ -587,13 +603,17 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "region\ttemp\n" +
-                            "us-east\t22.5\n",
+                    """
+                            region\ttemp
+                            us-east\t22.5
+                            """,
                     "SELECT region, temp FROM schema_a"
             );
             assertSql(
-                    "count\tlabel\n" +
-                            "42\talpha\n",
+                    """
+                            count\tlabel
+                            42\talpha
+                            """,
                     "SELECT count, label FROM schema_b"
             );
         });
@@ -623,15 +643,19 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "x\n" +
-                            "1\n" +
-                            "2\n",
+                    """
+                            x
+                            1
+                            2
+                            """,
                     "SELECT x FROM interleave_a ORDER BY timestamp"
             );
             assertSql(
-                    "y\n" +
-                            "10\n" +
-                            "20\n",
+                    """
+                            y
+                            10
+                            20
+                            """,
                     "SELECT y FROM interleave_b ORDER BY timestamp"
             );
         });
@@ -695,9 +719,11 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "x\n" +
-                            "1\n" +
-                            "2\n",
+                    """
+                            x
+                            1
+                            2
+                            """,
                     "SELECT x FROM switchback_a ORDER BY timestamp"
             );
             assertSql(
@@ -767,10 +793,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "id\tnote\n" +
-                            "1\thello\n" +
-                            "2\t\n" +
-                            "3\tworld\n",
+                    """
+                            id\tnote
+                            1\thello
+                            2\t
+                            3\tworld
+                            """,
                     "SELECT id, note FROM nullable_test ORDER BY timestamp"
             );
         });
@@ -799,10 +827,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "id\ttemperature\n" +
-                            "1\t36.6\n" +
-                            "2\tnull\n" +
-                            "3\t38.1\n",
+                    """
+                            id\ttemperature
+                            1\t36.6
+                            2\tnull
+                            3\t38.1
+                            """,
                     "SELECT id, temperature FROM nullable_double ORDER BY timestamp"
             );
         });
@@ -831,10 +861,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "id\tcount\n" +
-                            "1\t100\n" +
-                            "2\tnull\n" +
-                            "3\t300\n",
+                    """
+                            id\tcount
+                            1\t100
+                            2\tnull
+                            3\t300
+                            """,
                     "SELECT id, count FROM nullable_long ORDER BY timestamp"
             );
         });
@@ -856,8 +888,10 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "host\tusage\ttimestamp\n" +
-                            "srv-1\t73.2\t1970-01-01T00:00:01.000000Z\n",
+                    """
+                            host\tusage\ttimestamp
+                            srv-1\t73.2\t1970-01-01T00:00:01.000000Z
+                            """,
                     "SELECT * FROM single_row"
             );
         });
@@ -953,7 +987,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @FunctionalInterface
-    interface ReceiverFactory {
+    public interface ReceiverFactory {
         QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
     }
 }

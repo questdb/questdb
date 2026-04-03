@@ -133,14 +133,15 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 CairoEngine engine = serverMain.getEngine();
                 try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     engine.execute(
-                            "CREATE TABLE 'betfairRunners' (\n" +
-                                    "  id INT,\n" +
-                                    "  runner VARCHAR,\n" +
-                                    "  age BYTE,\n" +
-                                    "  remarks SYMBOL CAPACITY 2048 CACHE INDEX CAPACITY 256,\n" +
-                                    "  timestamp TIMESTAMP\n" +
-                                    ") timestamp (timestamp) PARTITION BY MONTH WAL\n" +
-                                    "DEDUP UPSERT KEYS(timestamp, id);",
+                            """
+                                    CREATE TABLE 'betfairRunners' (
+                                      id INT,
+                                      runner VARCHAR,
+                                      age BYTE,
+                                      remarks SYMBOL CAPACITY 2048 CACHE INDEX CAPACITY 256,
+                                      timestamp TIMESTAMP
+                                    ) timestamp (timestamp) PARTITION BY MONTH WAL
+                                    DEDUP UPSERT KEYS(timestamp, id);""",
                             sqlExecutionContext
                     );
 
@@ -362,8 +363,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT dec8, dec16, dec32, dec64, dec128, dec256, value, ts FROM test_decimal_default_values_without_wal",
-                        "dec8\tdec16\tdec32\tdec64\tdec128\tdec256\tvalue\tts\n"
-                                + "\t\t\t\t\t\t1\t1970-01-01T00:00:00.100000Z\n"));
+                        """
+                                dec8\tdec16\tdec32\tdec64\tdec128\tdec256\tvalue\tts
+                                \t\t\t\t\t\t1\t1970-01-01T00:00:00.100000Z
+                                """));
             }
         });
     }
@@ -420,8 +423,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT negative_inf, positive_inf, nan, max_value, min_value, timestamp FROM test_double_edge_values",
-                        "negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n"
-                                + "null\tnull\tnull\t1.7976931348623157E308\t5.0E-324\t2022-02-25T00:00:00.000000Z\n"));
+                        """
+                                negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp
+                                null\tnull\tnull\t1.7976931348623157E308\t5.0E-324\t2022-02-25T00:00:00.000000Z
+                                """));
             }
         });
     }
@@ -519,9 +524,11 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT x, y, a1, timestamp FROM test_insert_binary_to_other_columns ORDER BY timestamp",
-                        "x\ty\ta1\ttimestamp\n"
-                                + "9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z\n"
-                                + "10000.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z\n"));
+                        """
+                                x\ty\ta1\ttimestamp
+                                9999.0\tystr\t1.0\t1970-01-02T03:46:40.000000Z
+                                10000.0\tystr\t1.0\t1970-01-02T03:46:40.000001Z
+                                """));
             }
         });
     }
@@ -564,11 +571,13 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT price, quantity, rate, timestamp FROM test_decimal_text_format_basic ORDER BY timestamp",
-                        "price\tquantity\trate\ttimestamp\n"
-                                + "123.45\t100.0000\t0.12345\t1970-01-02T03:46:40.000000Z\n"
-                                + "-45.67\t-10.5000\t-0.00001\t1970-01-02T03:46:40.000001Z\n"
-                                + "0.01\t0.0001\t0.00000\t1970-01-02T03:46:40.000002Z\n"
-                                + "999.00\t42.0000\t1.00000\t1970-01-02T03:46:40.000003Z\n"));
+                        """
+                                price\tquantity\trate\ttimestamp
+                                123.45\t100.0000\t0.12345\t1970-01-02T03:46:40.000000Z
+                                -45.67\t-10.5000\t-0.00001\t1970-01-02T03:46:40.000001Z
+                                0.01\t0.0001\t0.00000\t1970-01-02T03:46:40.000002Z
+                                999.00\t42.0000\t1.00000\t1970-01-02T03:46:40.000003Z
+                                """));
             }
         });
     }
@@ -604,12 +613,14 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT value, timestamp FROM test_decimal_text_format_edge_cases ORDER BY timestamp",
-                        "value\ttimestamp\n"
-                                + "123.4560000000\t1970-01-02T03:46:40.000000Z\n"
-                                + "123.4500000000\t1970-01-02T03:46:40.000001Z\n"
-                                + "0.0000000001\t1970-01-02T03:46:40.000002Z\n"
-                                + "0.0000000000\t1970-01-02T03:46:40.000003Z\n"
-                                + "0.0000000000\t1970-01-02T03:46:40.000004Z\n"));
+                        """
+                                value\ttimestamp
+                                123.4560000000\t1970-01-02T03:46:40.000000Z
+                                123.4500000000\t1970-01-02T03:46:40.000001Z
+                                0.0000000001\t1970-01-02T03:46:40.000002Z
+                                0.0000000000\t1970-01-02T03:46:40.000003Z
+                                0.0000000000\t1970-01-02T03:46:40.000004Z
+                                """));
             }
         });
     }
@@ -643,10 +654,12 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT text_format, binary_format, timestamp FROM test_decimal_text_format_equivalence ORDER BY timestamp",
-                        "text_format\tbinary_format\ttimestamp\n"
-                                + "123.450\t123.450\t1970-01-02T03:46:40.000000Z\n"
-                                + "-45.670\t-45.670\t1970-01-02T03:46:40.000001Z\n"
-                                + "0.001\t0.001\t1970-01-02T03:46:40.000002Z\n"));
+                        """
+                                text_format\tbinary_format\ttimestamp
+                                123.450\t123.450\t1970-01-02T03:46:40.000000Z
+                                -45.670\t-45.670\t1970-01-02T03:46:40.000001Z
+                                0.001\t0.001\t1970-01-02T03:46:40.000002Z
+                                """));
             }
         });
     }
@@ -707,10 +720,12 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT large, small, timestamp FROM test_decimal_text_format_scientific_notation ORDER BY timestamp",
-                        "large\tsmall\ttimestamp\n"
-                                + "123000.00\t0.000000000123000\t1970-01-02T03:46:40.000000Z\n"
-                                + "4560.00\t0.000000045600000\t1970-01-02T03:46:40.000001Z\n"
-                                + "-999.00\t-0.000000000001500\t1970-01-02T03:46:40.000002Z\n"));
+                        """
+                                large\tsmall\ttimestamp
+                                123000.00\t0.000000000123000\t1970-01-02T03:46:40.000000Z
+                                4560.00\t0.000000045600000\t1970-01-02T03:46:40.000001Z
+                                -999.00\t-0.000000000001500\t1970-01-02T03:46:40.000002Z
+                                """));
             }
         });
     }
@@ -744,10 +759,12 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT value1, value2, timestamp FROM test_decimal_text_format_trailing_zeros ORDER BY timestamp",
-                        "value1\tvalue2\ttimestamp\n"
-                                + "100.000\t50.00000\t1970-01-02T03:46:40.000000Z\n"
-                                + "1.200\t0.12300\t1970-01-02T03:46:40.000001Z\n"
-                                + "0.100\t0.00100\t1970-01-02T03:46:40.000002Z\n"));
+                        """
+                                value1\tvalue2\ttimestamp
+                                100.000\t50.00000\t1970-01-02T03:46:40.000000Z
+                                1.200\t0.12300\t1970-01-02T03:46:40.000001Z
+                                0.100\t0.00100\t1970-01-02T03:46:40.000002Z
+                                """));
             }
         });
     }
@@ -797,14 +814,16 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT a, b, timestamp FROM test_insert_decimals ORDER BY timestamp",
-                        "a\tb\ttimestamp\n"
-                                + "12345\t123.450\t1970-01-02T03:46:40.000000Z\n"
-                                + "\t123.456\t1970-01-02T03:46:40.000001Z\n"
-                                + "42\t42.000\t1970-01-02T03:46:40.000002Z\n"
-                                + "42\t42.123\t1970-01-02T03:46:40.000003Z\n"
-                                + "42\t42.100\t1970-01-02T03:46:40.000004Z\n"
-                                + "42\t42.100\t1970-01-02T03:46:40.000005Z\n"
-                                + "\t\t1970-01-02T03:46:40.000006Z\n"));
+                        """
+                                a\tb\ttimestamp
+                                12345\t123.450\t1970-01-02T03:46:40.000000Z
+                                \t123.456\t1970-01-02T03:46:40.000001Z
+                                42\t42.000\t1970-01-02T03:46:40.000002Z
+                                42\t42.123\t1970-01-02T03:46:40.000003Z
+                                42\t42.100\t1970-01-02T03:46:40.000004Z
+                                42\t42.100\t1970-01-02T03:46:40.000005Z
+                                \t\t1970-01-02T03:46:40.000006Z
+                                """));
             }
         });
     }
@@ -903,15 +922,17 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
                     long tsMicros = MicrosFormatUtils.parseTimestamp("2022-02-25T00:00:00Z");
                     sender.table("test_insert_non_ascii_string_and_uuid")
-                            .stringColumn("s", "non-ascii \u00e4\u00f6\u00fc")
+                            .stringColumn("s", "non-ascii äöü")
                             .stringColumn("u", "11111111-2222-3333-4444-555555555555")
                             .at(tsMicros, ChronoUnit.MICROS);
                     sender.flush();
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT s, u, ts FROM test_insert_non_ascii_string_and_uuid",
-                        "s\tu\tts\n"
-                                + "non-ascii \u00e4\u00f6\u00fc\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000Z\n"));
+                        """
+                                s\tu\tts
+                                non-ascii äöü\t11111111-2222-3333-4444-555555555555\t2022-02-25T00:00:00.000000Z
+                                """));
             }
         });
     }
@@ -919,7 +940,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testInsertNonAsciiStringIntoUuidColumn() throws Exception {
         testValueCannotBeInsertedToUuidColumn("test_insert_non_ascii_string_into_uuid_column",
-                "11111111-1111-1111-1111-1111111111\u00fc");
+                "11111111-1111-1111-1111-1111111111ü");
     }
 
     @Test
@@ -946,8 +967,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT u1, u3, ts FROM test_insert_string_into_uuid_column",
-                        "u1\tu3\tts\n"
-                                + "11111111-1111-1111-1111-111111111111\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000Z\n"));
+                        """
+                                u1\tu3\tts
+                                11111111-1111-1111-1111-111111111111\t33333333-3333-3333-3333-333333333333\t2022-02-25T00:00:00.000000Z
+                                """));
             }
         });
     }
@@ -971,8 +994,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT ts_col, timestamp FROM test_insert_timestamp_as_instant",
-                        "ts_col\ttimestamp\n"
-                                + "2023-02-11T12:30:11.350000Z\t2022-01-10T20:40:22.540000Z\n"));
+                        """
+                                ts_col\ttimestamp
+                                2023-02-11T12:30:11.350000Z\t2022-01-10T20:40:22.540000Z
+                                """));
             }
         });
     }
@@ -1015,12 +1040,14 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT unit, ts, timestamp FROM test_insert_timestamp_misc_units ORDER BY timestamp",
-                        "unit\tts\ttimestamp\n"
-                                + "m\t2023-09-18T12:01:00.000000Z\t2023-09-18T12:01:00.000000Z\n"
-                                + "s\t2023-09-18T12:01:01.000000Z\t2023-09-18T12:01:01.000000Z\n"
-                                + "ns\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z\n"
-                                + "us\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z\n"
-                                + "ms\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z\n"));
+                        """
+                                unit\tts\ttimestamp
+                                m\t2023-09-18T12:01:00.000000Z\t2023-09-18T12:01:00.000000Z
+                                s\t2023-09-18T12:01:01.000000Z\t2023-09-18T12:01:01.000000Z
+                                ns\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z
+                                us\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z
+                                ms\t2023-09-18T12:01:01.010000Z\t2023-09-18T12:01:01.010000Z
+                                """));
             }
         });
     }
@@ -1045,8 +1072,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT ts, timestamp FROM test_insert_timestamp_nano_overflow",
-                        "ts\ttimestamp\n"
-                                + "2323-09-18T12:01:01.011568Z\t2323-09-18T12:01:01.011568Z\n"));
+                        """
+                                ts\ttimestamp
+                                2323-09-18T12:01:01.011568Z\t2323-09-18T12:01:01.011568Z
+                                """));
             }
         });
     }
@@ -1073,8 +1102,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT unit, ts, timestamp FROM test_insert_timestamp_nano_units",
-                        "unit\tts\ttimestamp\n"
-                                + "ns\t2023-09-18T12:01:01.011568Z\t2023-09-18T12:01:01.011568Z\n"));
+                        """
+                                unit\tts\ttimestamp
+                                ns\t2023-09-18T12:01:01.011568Z\t2023-09-18T12:01:01.011568Z
+                                """));
             }
         });
     }
@@ -1123,8 +1154,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT string1, string2, string3, timestamp FROM test_string_table",
-                        "string1\tstring2\tstring3\ttimestamp\n"
-                                + "some string\tanother string\tyet another string\t2024-02-27T00:00:00.000000Z\n"));
+                        """
+                                string1\tstring2\tstring3\ttimestamp
+                                some string\tanother string\tyet another string\t2024-02-27T00:00:00.000000Z
+                                """));
             }
         });
     }
@@ -1260,7 +1293,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
                     long ts = MicrosFormatUtils.parseTimestamp("2024-02-27T00:00:00Z");
-                    String expectedValue = "\u010d\u0107\u017e\u0161\u0111\u00e7\u011f\u00e9\u00ed\u00e1\u00fd\u016f\u0159";
+                    String expectedValue = "čćžšđçğéíáýůř";
                     sender.table("test_varchar_string_table")
                             .stringColumn("string1", expectedValue)
                             .at(ts, ChronoUnit.MICROS);
@@ -1268,8 +1301,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT string1, timestamp FROM test_varchar_string_table",
-                        "string1\ttimestamp\n"
-                                + "\u010d\u0107\u017e\u0161\u0111\u00e7\u011f\u00e9\u00ed\u00e1\u00fd\u016f\u0159\t2024-02-27T00:00:00.000000Z\n"));
+                        """
+                                string1\ttimestamp
+                                čćžšđçğéíáýůř\t2024-02-27T00:00:00.000000Z
+                                """));
             }
         });
     }
@@ -1292,8 +1327,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT int_field, bool_field, string_field, double_field, ts_field, timestamp FROM test_write_all_types",
-                        "int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n"
-                                + "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n"));
+                        """
+                                int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
+                                42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z
+                                """));
             }
         });
     }
@@ -1313,8 +1350,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT max, min, timestamp FROM test_long_min_max_table",
-                        "max\tmin\ttimestamp\n"
-                                + "9223372036854775807\tnull\t2023-02-22T00:00:00.000000Z\n"));
+                        """
+                                max\tmin\ttimestamp
+                                9223372036854775807\tnull\t2023-02-22T00:00:00.000000Z
+                                """));
             }
         });
     }
@@ -1551,8 +1590,10 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
 
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT u1, ts FROM " + tableName,
-                        "u1\tts\n"
-                                + "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n"));
+                        """
+                                u1\tts
+                                11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z
+                                """));
             }
         });
     }

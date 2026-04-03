@@ -77,7 +77,7 @@ public final class QwpBooleanDecoder {
         int bitOffset = bitIndex & 7;
         long addr = address + byteIndex;
         byte b = Unsafe.getUnsafe().getByte(addr);
-        b |= (1 << bitOffset);
+        b |= (byte) (1 << bitOffset);
         Unsafe.getUnsafe().putByte(addr, b);
     }
 
@@ -91,6 +91,6 @@ public final class QwpBooleanDecoder {
     public static void setBit(byte[] bitmap, int offset, int bitIndex) {
         int byteIndex = bitIndex >>> 3;
         int bitOffset = bitIndex & 7;
-        bitmap[offset + byteIndex] |= (1 << bitOffset);
+        bitmap[offset + byteIndex] |= (byte) (1 << bitOffset);
     }
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -110,7 +111,7 @@ public class WalLockerTest {
             Assert.assertTrue("Iteration " + i + " timed out", done.await(5, TimeUnit.SECONDS));
 
             if (error.get() != null) {
-                error.get().printStackTrace();
+                error.get().printStackTrace(System.err);
                 Assert.fail("Iteration " + i + " failed: " + error.get().getMessage());
             }
 
@@ -527,7 +528,7 @@ public class WalLockerTest {
      * where Thread.getState() reports RUNNABLE, falls back to a bounded spin
      * to let the thread enter the native blocking call.
      */
-    private static void awaitThreadBlocked(Thread thread) throws InterruptedException {
+    private static void awaitThreadBlocked(Thread thread) {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200);
         while (System.nanoTime() < deadline) {
             Thread.State state = thread.getState();
@@ -537,7 +538,7 @@ public class WalLockerTest {
             if (state == Thread.State.TERMINATED) {
                 Assert.fail("Thread terminated unexpectedly");
             }
-            Thread.sleep(1);
+            Os.pause();
         }
         // For native blocking (JNI), Thread.getState() remains RUNNABLE.
         // The started latch guarantees the blocking call is the immediate next

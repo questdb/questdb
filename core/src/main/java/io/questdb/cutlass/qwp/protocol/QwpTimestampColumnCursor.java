@@ -209,16 +209,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
 
         if (!gorillaEnabled) {
             // Uncompressed mode
-            this.gorillaEnabled = false;
-            long valuesSize = (long) valueCount * 8;
-            if (offset + valuesSize > dataLength) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                        "timestamp column data truncated: expected " + valueCount + " values"
-                );
-            }
-            this.valuesAddress = dataAddress + offset;
-            offset += (int) valuesSize;
+            offset = getOffset(dataAddress, dataLength, offset);
         } else {
             // Read encoding flag
             if (offset + 1 > dataLength) {
@@ -232,16 +223,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
 
             if (encoding == ENCODING_UNCOMPRESSED) {
                 // Uncompressed fallback within Gorilla-enabled stream
-                this.gorillaEnabled = false;
-                long valuesSize = (long) valueCount * 8;
-                if (offset + valuesSize > dataLength) {
-                    throw QwpParseException.create(
-                            QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                            "timestamp column data truncated: expected " + valueCount + " values"
-                    );
-                }
-                this.valuesAddress = dataAddress + offset;
-                offset += (int) valuesSize;
+                offset = getOffset(dataAddress, dataLength, offset);
             } else if (encoding == ENCODING_GORILLA) {
                 this.gorillaEnabled = true;
 
@@ -321,5 +303,19 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
      */
     public boolean supportsDirectAccess() {
         return !gorillaEnabled;
+    }
+
+    private int getOffset(long dataAddress, int dataLength, int offset) throws QwpParseException {
+        this.gorillaEnabled = false;
+        long valuesSize = (long) valueCount * 8;
+        if (offset + valuesSize > dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "timestamp column data truncated: expected " + valueCount + " values"
+            );
+        }
+        this.valuesAddress = dataAddress + offset;
+        offset += (int) valuesSize;
+        return offset;
     }
 }

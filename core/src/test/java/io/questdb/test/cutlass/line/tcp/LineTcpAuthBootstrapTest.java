@@ -155,8 +155,10 @@ public class LineTcpAuthBootstrapTest extends AbstractBootstrapTest {
                 }
                 assertEventually(() -> serverMain.assertSql(
                         "SELECT int_field, bool_field, string_field, double_field, ts_field, timestamp FROM test_conf_string",
-                        "int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n"
-                                + "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n"));
+                        """
+                                int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp
+                                42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z
+                                """));
             }
         });
     }

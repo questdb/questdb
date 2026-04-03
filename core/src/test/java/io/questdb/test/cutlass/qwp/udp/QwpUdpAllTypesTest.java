@@ -103,7 +103,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     };
     private final ReceiverFactory receiverFactory;
 
-    public QwpUdpAllTypesTest(String label, ReceiverFactory factory) {
+    public QwpUdpAllTypesTest(ReceiverFactory factory) {
         this.receiverFactory = factory;
     }
 
@@ -179,12 +179,14 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "b_bool\tb_byte\tb_short\tb_char\tb_int\tb_float\tb_long\tb_date\tb_double\tb_sym\tb_str\tb_uuid\tb_l256\tb_geo\tb_dec64\tb_dec128\tb_dec256\tb_darr\tb_ts\tb_tsns\n" +
-                            "true\t42\t1234\tX\t56789\t3.14\t99999\t2024-01-15T00:00:00.000Z\t2.718\tabc\thello\t" +
-                            "550e8400-e29b-41d4-a716-446655440000\t" +
-                            "0x4444444444444444333333333333333322222222222222221111111111111111\t" +
-                            "s24se0\t123.45\t12345.6789\t99999.12345\t[1.0,2.0,3.0]\t" +
-                            "2024-01-15T00:00:00.000000Z\t2024-01-15T00:00:00.000000123Z\n",
+                    """
+                            b_bool\tb_byte\tb_short\tb_char\tb_int\tb_float\tb_long\tb_date\tb_double\tb_sym\tb_str\tb_uuid\tb_l256\tb_geo\tb_dec64\tb_dec128\tb_dec256\tb_darr\tb_ts\tb_tsns
+                            true\t42\t1234\tX\t56789\t3.14\t99999\t2024-01-15T00:00:00.000Z\t2.718\tabc\thello\t\
+                            550e8400-e29b-41d4-a716-446655440000\t\
+                            0x4444444444444444333333333333333322222222222222221111111111111111\t\
+                            s24se0\t123.45\t12345.6789\t99999.12345\t[1.0,2.0,3.0]\t\
+                            2024-01-15T00:00:00.000000Z\t2024-01-15T00:00:00.000000123Z
+                            """,
                     "SELECT b_bool, b_byte, b_short, b_char, b_int, b_float, b_long, b_date, b_double, " +
                             "b_sym, b_str, b_uuid, b_l256, b_geo, b_dec64, b_dec128, b_dec256, b_darr, b_ts, b_tsns FROM t_all"
             );
@@ -209,9 +211,11 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql(
-                    "flag\n" +
-                            "true\n" +
-                            "false\n",
+                    """
+                            flag
+                            true
+                            false
+                            """,
                     "SELECT flag FROM t_bool ORDER BY timestamp"
             );
         });
@@ -759,13 +763,17 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
                     "SELECT count_distinct(tag) AS distinct_tags FROM t_sym_overflow"
             );
             assertSql(
-                    "tag\tid\n" +
-                            "unique-0\t0\n",
+                    """
+                            tag\tid
+                            unique-0\t0
+                            """,
                     "SELECT tag, id FROM t_sym_overflow ORDER BY timestamp LIMIT 1"
             );
             assertSql(
-                    "tag\tid\n" +
-                            "unique-199\t199\n",
+                    """
+                            tag\tid
+                            unique-199\t199
+                            """,
                     "SELECT tag, id FROM t_sym_overflow ORDER BY timestamp DESC LIMIT 1"
             );
         });
@@ -926,7 +934,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     }
 
     @FunctionalInterface
-    interface ReceiverFactory {
+    public interface ReceiverFactory {
         QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
     }
 }

@@ -354,7 +354,11 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 }
 
                 recvBufferLen += read;
-                LOG.debug().$("WebSocket recv [fd=").$(context.getFd()).$(", bytes=").$(read).$(", total=").$(recvBufferLen).I$();
+                LOG.debug()
+                        .$("WebSocket recv [fd=").$(context.getFd())
+                        .$(", bytes=").$(read)
+                        .$(", total=").$(recvBufferLen)
+                        .I$();
 
                 processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
             }

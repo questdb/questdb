@@ -102,8 +102,10 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
                 serverMain.awaitTable("tls_multi_col");
                 serverMain.assertSql(
                         "SELECT city, temperature, humidity, raining, note FROM tls_multi_col",
-                        "city\ttemperature\thumidity\training\tnote\n"
-                                + "london\t18.5\t72\ttrue\tovercast skies\n"
+                        """
+                                city\ttemperature\thumidity\training\tnote
+                                london\t18.5\t72\ttrue\tovercast skies
+                                """
                 );
             }
         });

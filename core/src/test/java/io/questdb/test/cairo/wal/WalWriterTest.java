@@ -4001,8 +4001,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("value", ColumnType.INT)
                     .timestamp("ts")
                     .wal();
-            TableToken tableToken = createTable(model);
-
+            createTable(model);
             try (WalWriter walWriter = getWalWriter(tableName)) {
                 // Row 1: Add symbol, then CANCEL
                 TableWriter.Row row1 = walWriter.newRow(1_000_000L);
@@ -4025,8 +4024,10 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // Verify data
             assertSql(
-                    "s\tvalue\tts\n" +
-                            "reused_symbol\t200\t1970-01-01T00:00:02.000000Z\n",
+                    """
+                            s\tvalue\tts
+                            reused_symbol\t200\t1970-01-01T00:00:02.000000Z
+                            """,
                     "select * from " + tableName
             );
 
@@ -4055,8 +4056,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("value", ColumnType.INT)
                     .timestamp("ts")
                     .wal();
-            TableToken tableToken = createTable(model);
-
+            createTable(model);
             try (WalWriter walWriter = getWalWriter(tableName)) {
                 // Cancel 10 rows with unique symbols
                 for (int i = 0; i < 10; i++) {
@@ -4080,8 +4080,10 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // Verify data
             assertSql(
-                    "s\tvalue\tts\n" +
-                            "real_symbol\t999\t1970-01-01T00:01:40.000000Z\n",
+                    """
+                            s\tvalue\tts
+                            real_symbol\t999\t1970-01-01T00:01:40.000000Z
+                            """,
                     "select * from " + tableName
             );
 
@@ -4122,7 +4124,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("value", ColumnType.INT)
                     .timestamp("ts")
                     .wal();
-            TableToken tableToken = createTable(model);
+            createTable(model);
 
             try (WalWriter walWriter = getWalWriter(tableName)) {
                 // Row 1: Add symbol, then CANCEL
@@ -4145,8 +4147,10 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // Query the data - what do we get?
             assertSql(
-                    "s\tvalue\tts\n" +
-                            "sym_committed\t200\t1970-01-01T00:00:02.000000Z\n",
+                    """
+                            s\tvalue\tts
+                            sym_committed\t200\t1970-01-01T00:00:02.000000Z
+                            """,
                     "select * from " + tableName
             );
 

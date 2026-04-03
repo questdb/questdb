@@ -39,12 +39,12 @@ public class QwpWalAppenderTest {
 
     @Test
     public void testConstructor() {
-        new QwpWalAppender(true, 127, 50);
+        new QwpWalAppender(true, 127, 50).close();
     }
 
     @Test
     public void testConstructorAutoCreateDisabled() {
-        new QwpWalAppender(false, 255, 50);
+        new QwpWalAppender(false, 255, 50).close();
     }
 
     @Test

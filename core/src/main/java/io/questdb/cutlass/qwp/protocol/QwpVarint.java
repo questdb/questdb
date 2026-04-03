@@ -72,25 +72,7 @@ public final class QwpVarint {
         long result = 0;
         int shift = 0;
         int bytesRead = 0;
-        byte b;
-
-        do {
-            if (address >= limit) {
-                throw QwpParseException.incompleteVarint();
-            }
-            if (bytesRead >= MAX_VARINT_BYTES) {
-                throw QwpParseException.varintOverflow();
-            }
-            b = Unsafe.getUnsafe().getByte(address++);
-            if (shift == 63 && (b & 0x7E) != 0) {
-                throw QwpParseException.varintOverflow();
-            }
-            result |= (long) (b & DATA_MASK) << shift;
-            shift += 7;
-            bytesRead++;
-        } while ((b & CONTINUATION_BIT) != 0);
-
-        return result;
+        return decode0(address, limit, result, shift, bytesRead);
     }
 
     /**
@@ -150,33 +132,6 @@ public final class QwpVarint {
         decodeMultiByte(address, limit, result, b);
     }
 
-    private static void decodeMultiByte(long address, long limit, DecodeResult result, byte firstByte) throws QwpParseException {
-        long value = firstByte & DATA_MASK;
-        int shift = 7;
-        int bytesRead = 1;
-        address++;
-
-        byte b;
-        do {
-            if (address >= limit) {
-                throw QwpParseException.incompleteVarint();
-            }
-            if (bytesRead >= MAX_VARINT_BYTES) {
-                throw QwpParseException.varintOverflow();
-            }
-            b = Unsafe.getUnsafe().getByte(address++);
-            if (shift == 63 && (b & 0x7E) != 0) {
-                throw QwpParseException.varintOverflow();
-            }
-            value |= (long) (b & DATA_MASK) << shift;
-            shift += 7;
-            bytesRead++;
-        } while ((b & CONTINUATION_BIT) != 0);
-
-        result.value = value;
-        result.bytesRead = bytesRead;
-    }
-
     /**
      * Encodes a long value as a varint to direct memory.
      *
@@ -226,8 +181,37 @@ public final class QwpVarint {
         return (bits + 6) / 7;
     }
 
+    private static long decode0(long address, long limit, long result, int shift, int bytesRead) throws QwpParseException {
+        byte b;
+        do {
+            if (address >= limit) {
+                throw QwpParseException.incompleteVarint();
+            }
+            if (bytesRead >= MAX_VARINT_BYTES) {
+                throw QwpParseException.varintOverflow();
+            }
+            b = Unsafe.getUnsafe().getByte(address++);
+            if (shift == 63 && (b & 0x7E) != 0) {
+                throw QwpParseException.varintOverflow();
+            }
+            result |= (long) (b & DATA_MASK) << shift;
+            shift += 7;
+            bytesRead++;
+        } while ((b & CONTINUATION_BIT) != 0);
+        return result;
+    }
+
+    private static void decodeMultiByte(long address, long limit, DecodeResult result, byte firstByte) throws QwpParseException {
+        long value = firstByte & DATA_MASK;
+        int shift = 7;
+        int bytesRead = 1;
+        address++;
+        result.value = decode0(address, limit, value, shift, bytesRead);
+        result.bytesRead = bytesRead;
+    }
+
     /**
-     * Result holder for decoding varints when the number of bytes consumed matters.
+     * Result holder for decoding variants when the number of bytes consumed matters.
      * This class is mutable and should be reused to avoid allocations.
      */
     public static class DecodeResult {

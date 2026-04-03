@@ -4477,14 +4477,18 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertSql(
                     "SELECT id, name FROM ws_mt_schema_a ORDER BY id",
-                    "id\tname\n" +
-                            "1\talice\n" +
-                            "2\tbob\n"
+                    """
+                            id\tname
+                            1\talice
+                            2\tbob
+                            """
             );
             assertSql(
                     "SELECT price, active FROM ws_mt_schema_b",
-                    "price\tactive\n" +
-                            "99.5\ttrue\n"
+                    """
+                            price\tactive
+                            99.5\ttrue
+                            """
             );
         });
     }
@@ -4650,15 +4654,19 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql("SELECT count() FROM ws_mt_sym_meta", "count\n1\n");
             assertSql(
                     "SELECT ticker, qty FROM ws_mt_sym_trades ORDER BY ticker",
-                    "ticker\tqty\n" +
-                            "AAPL\t100\n" +
-                            "GOOG\t200\n"
+                    """
+                            ticker\tqty
+                            AAPL\t100
+                            GOOG\t200
+                            """
             );
             assertSql(
                     "SELECT ticker, bid FROM ws_mt_sym_quotes ORDER BY ticker",
-                    "ticker\tbid\n" +
-                            "AAPL\t150.0\n" +
-                            "MSFT\t300.0\n"
+                    """
+                            ticker\tbid
+                            AAPL\t150.0
+                            MSFT\t300.0
+                            """
             );
         });
     }
@@ -4712,17 +4720,21 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql("SELECT count() FROM ws_mt_symprog_b", "count\n3\n");
             assertSql(
                     "SELECT sym, v FROM ws_mt_symprog_a ORDER BY v",
-                    "sym\tv\n" +
-                            "AAPL\t1\n" +
-                            "AAPL\t2\n" +
-                            "GOOG\t3\n"
+                    """
+                            sym\tv
+                            AAPL\t1
+                            AAPL\t2
+                            GOOG\t3
+                            """
             );
             assertSql(
                     "SELECT sym, v FROM ws_mt_symprog_b ORDER BY v",
-                    "sym\tv\n" +
-                            "AAPL\t10\n" +
-                            "GOOG\t20\n" +
-                            "MSFT\t30\n"
+                    """
+                            sym\tv
+                            AAPL\t10
+                            GOOG\t20
+                            MSFT\t30
+                            """
             );
         });
     }
@@ -4776,8 +4788,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql("SELECT flag, val FROM ws_mt_types_bools", "flag\tval\ntrue\t42\n");
             assertSql(
                     "SELECT sym, num, frac, label, ok FROM ws_mt_types_mixed",
-                    "sym\tnum\tfrac\tlabel\tok\n" +
-                            "X\t99\t3.14\tpi\tfalse\n"
+                    """
+                            sym\tnum\tfrac\tlabel\tok
+                            X\t99\t3.14\tpi\tfalse
+                            """
             );
         });
     }

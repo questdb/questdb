@@ -584,41 +584,6 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
         );
     }
 
-    /**
-     * Reads a WebSocket binary frame from the input stream and returns the
-     * first byte of the payload (the QWP response status code).
-     */
-    private static byte readBinaryResponseStatus(InputStream in) throws Exception {
-        int byte0 = in.read();
-        Assert.assertNotEquals("Server should send a response frame", -1, byte0);
-
-        int opcode = byte0 & 0x0F;
-        Assert.assertEquals("Expected BINARY frame", WebSocketOpcode.BINARY, opcode);
-
-        int byte1 = in.read();
-        Assert.assertNotEquals(-1, byte1);
-        Assert.assertFalse("Server frames must not be masked", (byte1 & 0x80) != 0);
-
-        int payloadLen = byte1 & 0x7F;
-        if (payloadLen == 126) {
-            int hi = in.read();
-            int lo = in.read();
-            payloadLen = (hi << 8) | lo;
-        }
-        Assert.assertTrue("Response payload should be at least 9 bytes (status + sequence)",
-                payloadLen >= 9);
-
-        byte[] payload = new byte[payloadLen];
-        int totalRead = 0;
-        while (totalRead < payloadLen) {
-            int n = in.read(payload, totalRead, payloadLen - totalRead);
-            Assert.assertNotEquals("Unexpected end of stream", -1, n);
-            totalRead += n;
-        }
-
-        return payload[0]; // status byte
-    }
-
     private static String readHttpResponse(Socket socket) throws Exception {
         InputStream in = socket.getInputStream();
         StringBuilder response = new StringBuilder();

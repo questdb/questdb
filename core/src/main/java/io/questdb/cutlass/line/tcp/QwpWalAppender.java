@@ -854,5 +854,4 @@ public class QwpWalAppender implements QuietCloseable {
         WalWriter walWriter = (WalWriter) writer;
         appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud, metadataVersion);
     }
-
 }

@@ -94,7 +94,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     private static final int VALID_MAGIC = 0x31505751;
     private final ReceiverFactory receiverFactory;
 
-    public QwpUdpMalformedTest(String label, ReceiverFactory factory) {
+    public QwpUdpMalformedTest(ReceiverFactory factory) {
         this.receiverFactory = factory;
     }
 
@@ -723,7 +723,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     }
 
     @FunctionalInterface
-    interface ReceiverFactory {
+    public interface ReceiverFactory {
         QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
     }
 }

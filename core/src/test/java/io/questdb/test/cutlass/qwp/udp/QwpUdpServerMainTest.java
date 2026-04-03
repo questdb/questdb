@@ -33,7 +33,6 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
@@ -98,7 +97,7 @@ public class QwpUdpServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testE2E_gracefulShutdown() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain ignored = startWithEnvVariables(
                     PropertyKey.QWP_UDP_ENABLED.getEnvVarName(), "true",
                     PropertyKey.QWP_UDP_BIND_TO.getEnvVarName(), "0.0.0.0:" + QWP_UDP_PORT,
                     PropertyKey.QWP_UDP_OWN_THREAD.getEnvVarName(), "true",

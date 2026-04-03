@@ -332,7 +332,7 @@ public class LineUdpBootstrapTest extends AbstractBootstrapTest {
                 try (LineUdpSender sender = new LineUdpSender(localhost, localhost, port, 2048, 1)) {
                     sender.table("udp_unicode")
                             .symbol("lang", "ja")
-                            .stringColumn("text", "\u3053\u3093\u306b\u3061\u306f\u4e16\u754c")
+                            .stringColumn("text", "こんにちは世界")
                             .atNow();
                     sender.flush();
                 }

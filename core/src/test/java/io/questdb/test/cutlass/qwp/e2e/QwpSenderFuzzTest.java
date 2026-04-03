@@ -118,21 +118,21 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         initLoadParameters(15 + random.nextInt(100), 5 + random.nextInt(5),
                 2 + random.nextInt(Os.isWindows() ? 5 : 20), 1 + random.nextInt(4),
                 random.nextInt(75));
-        initFuzzParameters(-1, 1, 1 + random.nextInt(3), -1, false, true, false, 0.05);
+        initFuzzParameters(-1, 1, 1 + random.nextInt(3), 6, false, true, false, 0.1);
         runTest();
     }
 
     @Test
     public void testAddColumnsNoSymbols() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, 4, -1, false, false, false, 0.05);
+        initFuzzParameters(-1, -1, 4, 3, true, false, false, 0.15);
         runTest();
     }
 
     @Test
     public void testAddConvertColumns() throws Exception {
         initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, 4, -1, false, true, false, 0.05);
+        initFuzzParameters(-1, -1, 4, -1, false, true, true, 0.2);
         runTest();
     }
 
@@ -167,7 +167,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testCaseVariationReorderingColumns() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, -1, -1, -1, true, true, false);
+        initFuzzParameters(4, -1, 2, -1, true, true, false);
         runTest();
     }
 
@@ -181,7 +181,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testCaseVariationReorderingColumnsSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, -1, -1, -1, true, true, true);
+        initFuzzParameters(4, -1, 3, -1, true, true, true);
         runTest();
     }
 
@@ -221,7 +221,14 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testLoadNoSymbols() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 7, 12, 20);
-        initFuzzParameters(-1, -1, -1, -1, false, false, false, 0.05);
+        initFuzzParameters(-1, -1, -1, 5, true, false, false, 0.05);
+        runTest();
+    }
+
+    @Test
+    public void testLoadSendSymbolsWithSpace() throws Exception {
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 4, 8, 20);
+        initFuzzParameters(-1, -1, 2, -1, false, true, true);
         runTest();
     }
 
@@ -233,16 +240,9 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testLoadSendSymbolsWithSpace() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 4, 8, 20);
-        initFuzzParameters(-1, -1, -1, -1, false, true, true);
-        runTest();
-    }
-
-    @Test
     public void testNonAsciiValues() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(-1, -1, -1, 4, false, true, false);
+        initFuzzParameters(-1, -1, 3, 4, false, true, false);
         runTest();
     }
 
@@ -256,14 +256,14 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testReorderingColumns() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, -1, -1, -1, false, true, false, 0.05);
+        initFuzzParameters(4, -1, -1, 8, false, true, true, 0.05);
         runTest();
     }
 
     @Test
     public void testReorderingColumnsNoSymbols() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, -1, -1, -1, false, false, false, 0.05);
+        initFuzzParameters(4, -1, -1, -1, true, false, false, 0.1);
         runTest();
     }
 
@@ -272,14 +272,28 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         initLoadParameters(15 + random.nextInt(100), 5 + random.nextInt(5),
                 2 + random.nextInt(Os.isWindows() ? 5 : 20), 1 + random.nextInt(4),
                 random.nextInt(75));
-        initFuzzParameters(3, -1, -1, -1, false, true, false);
+        initFuzzParameters(3, -1, 1 + random.nextInt(3), -1, false, true, false);
         runTest();
     }
 
     @Test
     public void testReorderingNonAscii() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, -1, -1, 4, false, true, false);
+        initFuzzParameters(4, -1, 2, 4, false, true, false);
+        runTest();
+    }
+
+    @Test
+    public void testReorderingSkipColumnsWithNonAscii() throws Exception {
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, 2, 4, true, true, false);
+        runTest();
+    }
+
+    @Test
+    public void testReorderingSkipColumnsWithNonAsciiNoSymbols() throws Exception {
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, -1, 4, true, false, false);
         runTest();
     }
 
@@ -294,20 +308,6 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     public void testReorderingSkipDuplicateColumnsWithNonAsciiNoSymbols() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, 4, 4, -1, 4, true, false, false, 0.05);
-        runTest();
-    }
-
-    @Test
-    public void testReorderingSkipColumnsWithNonAscii() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, 4, true, true, false);
-        runTest();
-    }
-
-    @Test
-    public void testReorderingSkipColumnsWithNonAsciiNoSymbols() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, 4, true, false, false);
         runTest();
     }
 
@@ -513,8 +513,10 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     }
 
     private void initFuzzParameters(
-            int columnReorderingFactor, int columnSkipFactor,
-            int newColumnFactor, int nonAsciiValueFactor,
+            int columnReorderingFactor,
+            int columnSkipFactor,
+            int newColumnFactor,
+            int nonAsciiValueFactor,
             boolean diffCasesInColNames, boolean exerciseSymbols, boolean sendSymbolsWithSpace
     ) {
         initFuzzParameters(-1, columnReorderingFactor, columnSkipFactor, newColumnFactor,
@@ -522,9 +524,13 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     }
 
     private void initFuzzParameters(
-            int columnReorderingFactor, int columnSkipFactor,
-            int newColumnFactor, int nonAsciiValueFactor,
-            boolean diffCasesInColNames, boolean exerciseSymbols, boolean sendSymbolsWithSpace,
+            int columnReorderingFactor,
+            int columnSkipFactor,
+            int newColumnFactor,
+            int nonAsciiValueFactor,
+            boolean diffCasesInColNames,
+            boolean exerciseSymbols,
+            boolean sendSymbolsWithSpace,
             double columnConvertProb
     ) {
         initFuzzParameters(-1, columnReorderingFactor, columnSkipFactor, newColumnFactor,
@@ -697,7 +703,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                     Os.sleep(waitBetweenIterationsMillis);
                 }
             } catch (Exception e) {
-                LOG.error().$("Data sending failed [e=").$((Throwable) e).I$();
+                LOG.error().$("Data sending failed [e=").$(e).I$();
                 failureCounter.incrementAndGet();
                 errorMsg = "Data sending failed [e=" + e + "]";
             } finally {

@@ -275,11 +275,9 @@ public class QwpMessageHeader {
      * Sets the maximum allowed payload length.
      *
      * @param maxPayloadLength max payload in bytes
-     * @return this for chaining
      */
-    public QwpMessageHeader setMaxPayloadLength(long maxPayloadLength) {
+    public void setMaxPayloadLength(long maxPayloadLength) {
         this.maxPayloadLength = maxPayloadLength;
-        return this;
     }
 
     @Override
