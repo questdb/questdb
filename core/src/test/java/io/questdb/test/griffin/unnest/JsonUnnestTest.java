@@ -524,24 +524,47 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBaseTableSymbolJoinWithUnnest() throws Exception {
-        // Exercises UnnestRecord.getSymB() via a join, which uses getRecordB()
-        // on the outer cursor to compare the symbol column across records.
+    public void testBaseTableSymbolOrderByWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getSymB() via ORDER BY on a base table symbol
+        // column. The sort comparator needs both A and B copies of the symbol.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s SYMBOL, payload VARCHAR)");
-            execute("CREATE TABLE lookup (s SYMBOL, label VARCHAR)");
-            execute("INSERT INTO t VALUES ('a', '[1, 2]')");
-            execute("INSERT INTO lookup VALUES ('a', 'found')");
+            execute("INSERT INTO t VALUES "
+                    + "('b', '[1]'), "
+                    + "('a', '[2]')");
             assertQueryNoLeakCheck(
                     """
-                            s\tval\tlabel
-                            a\t1\tfound
-                            a\t2\tfound
+                            s\tval
+                            a\t2
+                            b\t1
                             """,
-                    "SELECT t.s, u.val, lookup.label FROM t"
-                            + ", UNNEST(t.payload COLUMNS(val INT)) u"
-                            + " JOIN lookup ON t.s = lookup.s",
-                    null, false, false, true
+                    "SELECT t.s, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u ORDER BY t.s",
+                    null, true, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testUnnestVarcharCastToSymbolOrderBy() throws Exception {
+        // Exercises UnnestRecord.getSymB() by casting an unnest VARCHAR column
+        // to SYMBOL and ordering by it. The sort comparator needs both A and B
+        // copies, which calls getSymB() on the UnnestRecord.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"banana\", \"apple\", \"cherry\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            x
+                            apple
+                            banana
+                            cherry
+                            """,
+                    "SELECT distinct u.val::SYMBOL x FROM t, UNNEST("
+                            + "t.payload COLUMNS(val VARCHAR)"
+                            + ") u order by 1",
+                    null, true, false, true
             );
         });
     }
