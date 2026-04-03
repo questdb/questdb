@@ -89,15 +89,6 @@ public class QwpStreamingDecoder implements QuietCloseable {
         this(null, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
     }
 
-    /**
-     * Creates a streaming decoder with a schema registry.
-     *
-     * @param schemaRegistry schema registry for reference mode, or null to disable
-     */
-    public QwpStreamingDecoder(QwpSchemaRegistry schemaRegistry) {
-        this(schemaRegistry, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
-    }
-
     public QwpStreamingDecoder(QwpSchemaRegistry schemaRegistry, int maxRowsPerTable) {
         this.schemaRegistry = schemaRegistry;
         this.messageCursor = new QwpMessageCursor(maxRowsPerTable);

@@ -24,12 +24,9 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8s;
-
-import java.nio.charset.StandardCharsets;
 
 /**
  * Parser for QWP v1 table headers.
@@ -68,63 +65,6 @@ public class QwpTableHeader {
             throw new IllegalArgumentException("maxRowCount must be between 1 and " + QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
         }
         this.maxRowCount = maxRowCount;
-    }
-
-    /**
-     * Encodes this table header to direct memory.
-     *
-     * @param address destination address
-     * @return address after encoded header
-     */
-    public long encode(long address) {
-        long pos;
-        if (tableNameUtf8.size() > 0) {
-            // Copy directly from flyweight (avoids String allocation)
-            int nameLen = tableNameUtf8.size();
-            pos = QwpVarint.encode(address, nameLen);
-            Unsafe.getUnsafe().copyMemory(tableNameUtf8.ptr(), pos, nameLen);
-            pos += nameLen;
-        } else {
-            byte[] nameBytes = getTableName().getBytes(StandardCharsets.UTF_8);
-            pos = QwpVarint.encode(address, nameBytes.length);
-            for (byte b : nameBytes) {
-                Unsafe.getUnsafe().putByte(pos++, b);
-            }
-        }
-
-        pos = QwpVarint.encode(pos, rowCount);
-        pos = QwpVarint.encode(pos, columnCount);
-
-        return pos;
-    }
-
-    /**
-     * Encodes this table header to a byte array.
-     *
-     * @param buf    destination buffer
-     * @param offset starting offset
-     * @return offset after encoded header
-     */
-    public int encode(byte[] buf, int offset) {
-        if (tableNameUtf8.size() > 0) {
-            // Copy directly from flyweight
-            int nameLen = tableNameUtf8.size();
-            offset = QwpVarint.encode(buf, offset, nameLen);
-            for (int i = 0; i < nameLen; i++) {
-                buf[offset + i] = Unsafe.getUnsafe().getByte(tableNameUtf8.ptr() + i);
-            }
-            offset += nameLen;
-        } else {
-            byte[] nameBytes = getTableName().getBytes(StandardCharsets.UTF_8);
-            offset = QwpVarint.encode(buf, offset, nameBytes.length);
-            System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
-            offset += nameBytes.length;
-        }
-
-        offset = QwpVarint.encode(buf, offset, rowCount);
-        offset = QwpVarint.encode(buf, offset, columnCount);
-
-        return offset;
     }
 
     /**
