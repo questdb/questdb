@@ -9454,6 +9454,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             // Native partition
+            path.trimTo(partitionLen);
             return readNativeSizeMinMaxTimestamps(partitionTimestamp, path, columnName);
         } finally {
             path.trimTo(partitionLen);
