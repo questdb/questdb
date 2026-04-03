@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.server;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -47,6 +48,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
@@ -362,16 +364,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
     }
 
-    private static class CustomHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
-        private final int bufLen;
-        private final QwpUdpReceiverConfiguration configuration;
-        private final CairoEngine engine;
-
-        public CustomHttpProcessorConfiguration(QwpUdpReceiverConfiguration configuration, CairoEngine engine, int bufLen) {
-            this.configuration = configuration;
-            this.engine = engine;
-            this.bufLen = bufLen;
-        }
+    private record CustomHttpProcessorConfiguration(
+            QwpUdpReceiverConfiguration configuration,
+            CairoEngine engine,
+            int bufLen
+    ) implements LineHttpProcessorConfiguration {
 
         @Override
         public boolean autoCreateNewColumns() {
@@ -384,7 +381,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
 
         @Override
-        public io.questdb.cairo.CairoConfiguration getCairoConfiguration() {
+        public CairoConfiguration getCairoConfiguration() {
             return engine.getConfiguration();
         }
 
@@ -419,7 +416,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
 
         @Override
-        public io.questdb.std.datetime.MicrosecondClock getMicrosecondClock() {
+        public MicrosecondClock getMicrosecondClock() {
             return engine.getConfiguration().getMicrosecondClock();
         }
 
