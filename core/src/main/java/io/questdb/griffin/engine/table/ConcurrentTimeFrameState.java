@@ -60,6 +60,7 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  */
 public class ConcurrentTimeFrameState implements QuietCloseable {
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
+    private final IntList columnIndexes = new IntList();
     private final LongList columnTops = new LongList();
     private final DirectIntList framePartitionIndexes;
     private final DirectLongList frameRowCounts;
@@ -177,7 +178,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         partitionCount = partitionTimestamps.size();
 
         // Build column indexes from the mapping for native frame boundary calculation
-        final IntList columnIndexes = new IntList(columnMapping.getColumnCount());
+        columnIndexes.clear();
         for (int i = 0, n = columnMapping.getColumnCount(); i < n; i++) {
             columnIndexes.add(columnMapping.getColumnIndex(i));
         }
