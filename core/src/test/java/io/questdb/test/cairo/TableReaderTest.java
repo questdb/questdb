@@ -70,7 +70,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -3227,8 +3226,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(count, record.getInt(0));
-                        Assert.assertNotNull(record.getStrA(1));
-                        Assert.assertEquals("str_" + count, Objects.requireNonNull(record.getStrA(1)).toString());
+                        TestUtils.assertEquals("str_" + count, record.getStrA(1));
                         count++;
                     }
                     Assert.assertEquals(24, count);

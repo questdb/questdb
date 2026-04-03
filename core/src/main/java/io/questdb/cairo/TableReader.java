@@ -1215,6 +1215,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         );
     }
 
+    private TableReaderMetadata openMetaFile() {
+        TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);
+        try {
+            metadata.loadMetadata();
+            return metadata;
+        } catch (Throwable th) {
+            metadata.close();
+            throw th;
+        }
+    }
+
     private void openMissingColumnsInPartition(int partitionIndex, int offset, long partitionSize) {
         final byte format = (byte) openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT);
         if (format != PartitionFormat.NATIVE) {
@@ -1262,17 +1273,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         if (!hasActiveColumns) {
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
-        }
-    }
-
-    private TableReaderMetadata openMetaFile() {
-        TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);
-        try {
-            metadata.loadMetadata();
-            return metadata;
-        } catch (Throwable th) {
-            metadata.close();
-            throw th;
         }
     }
 

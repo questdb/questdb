@@ -7570,6 +7570,8 @@ public class JoinTest extends AbstractCairoTest {
 
                 @Override
                 public long openRO(LPSZ name) {
+                    // x.d is the first column file opened because the active columns
+                    // optimization skips ts.d when it is not in the query's column set
                     if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
