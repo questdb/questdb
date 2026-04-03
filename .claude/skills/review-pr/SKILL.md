@@ -55,7 +55,7 @@ Launch the following agents in parallel. Each agent receives the full PR diff an
 
 **Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures.
 
-**Agent 3 — Performance & allocations:** Regressions, zero-GC violations, `java.util.*` collections vs `io.questdb.std`, string creation/concatenation on hot paths, SIMD opportunities.
+**Agent 3 — Performance & allocations:** Regressions, zero-GC violations, `java.util.*` collections vs `io.questdb.std`, string creation/concatenation on hot paths, SIMD opportunities. Algorithmic complexity: for each new loop, traversal, or data structure, analyze how it scales with data size (row count, partition count, join fan-out). Flag any O(n^2) or worse patterns that could regress on large tables (1M+ rows, 1000+ partitions). Check whether new code paths are compile-time-only or data-path — compile-time allocations are acceptable, data-path allocations are not.
 
 **Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management.
 
@@ -128,6 +128,8 @@ Review the diff for:
 - Autoboxing on hot paths — primitive-to-wrapper conversions (`int` → `Integer`, `long` → `Long`, etc.) allocate silently. Watch for primitives passed to generic methods, stored in `java.util.*` collections, or returned from methods with wrapper return types.
 - Missing SIMD or vectorization opportunities
 - Inefficient algorithms where QuestDB already provides optimized alternatives
+- Algorithmic complexity at scale: for each new loop or traversal, what is the time complexity as a function of row count, partition count, or join fan-out? Flag O(n^2) or worse patterns. Consider: what happens with 1M outer rows? 10K partitions? 100-way fan-out per row?
+- Compile-time vs data-path distinction: allocations and O(n) scans during SQL compilation/optimization are acceptable; the same on per-row data paths are not
 
 ### Code quality
 - Code smell: overly complex methods, deep nesting, unclear intent, dead code
@@ -169,6 +171,12 @@ Review the diff for:
 - **Test quality:** Are tests actually asserting the right thing? Watch for tests that pass trivially, assert on wrong values, or test implementation details instead of behavior.
 - **Regression tests:** If this PR fixes a bug, is there a test that reproduces the original bug and would fail without the fix?
 - Use Grep/Glob to find existing test files for the changed classes and verify they cover the new behavior.
+
+### Unresolved TODOs and FIXMEs
+- Scan the diff for `TODO`, `FIXME`, `HACK`, `XXX`, and `WORKAROUND` comments. For each one found:
+  - Is it a pre-existing comment that was just moved/reformatted, or newly introduced in this PR?
+  - If newly introduced: does it represent unfinished work that should block the merge, or a known limitation that is acceptable to ship? Flag any that look like deferred bugs or incomplete implementations.
+  - If the TODO references a ticket/issue number, verify the reference exists.
 
 ### Commit messages
 - Plain English titles (no Conventional Commits prefix), under 50 chars

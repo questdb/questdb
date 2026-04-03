@@ -542,6 +542,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
+        if (isUnnestKeyword(node.token)) {
+            Misc.freeObjList(args);
+            return SqlException.position(node.position)
+                    .put("UNNEST cannot be used as an expression; use it in the FROM clause");
+        }
         SqlException ex = SqlException.position(node.position);
         ex.put("unknown function name");
         ex.put(": ");

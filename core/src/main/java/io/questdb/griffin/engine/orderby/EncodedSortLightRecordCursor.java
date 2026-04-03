@@ -115,6 +115,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             isSorted = true;
         }
         if (currentAddr < endAddr) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             long rowId = Unsafe.getUnsafe().getLong(currentAddr);
             currentAddr += entrySize;
             baseCursor.recordAt(baseRecord, rowId);
