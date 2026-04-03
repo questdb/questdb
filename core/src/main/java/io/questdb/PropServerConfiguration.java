@@ -278,7 +278,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
     private final int indexValueBlockSize;
-    private final int jsonUnnestMaxValueSize;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final String installRoot;
     private final long instanceHashHi;
@@ -289,6 +288,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
     private final int jsonCacheSize;
+    private final int jsonUnnestMaxValueSize;
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
