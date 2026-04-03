@@ -106,7 +106,7 @@ public class TableUpdateDetails implements Closeable {
             @Nullable SecurityContext ownSecurityContext,
             TableWriterAPI writer,
             int writerThreadId,
-            NetworkIOJob[] netIoJobs,
+            ObjList<NetworkIOJob> netIoJobs,
             DefaultColumnTypes defaultColumnTypes,
             Utf8String tableNameUtf8
     ) {
@@ -126,11 +126,11 @@ public class TableUpdateDetails implements Closeable {
         this.commitInterval = configuration.getCommitInterval();
         this.nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
-        final int n = netIoJobs.length;
+        final int n = netIoJobs.size();
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
-            this.localDetailsArray[i] = new ThreadLocalDetails(netIoJobs[i].getSymbolCachePool());
+            this.localDetailsArray[i] = new ThreadLocalDetails(netIoJobs.getQuick(i).getSymbolCachePool());
         }
         this.tableNameUtf8 = tableNameUtf8;
         this.commitOnClose = true;
