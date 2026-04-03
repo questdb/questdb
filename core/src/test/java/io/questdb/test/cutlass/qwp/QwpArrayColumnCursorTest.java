@@ -163,9 +163,12 @@ public class QwpArrayColumnCursorTest {
             long p = addr;
             Unsafe.getUnsafe().putByte(p++, (byte) 0);
             Unsafe.getUnsafe().putByte(p++, (byte) 3);   // nDims=3
-            Unsafe.getUnsafe().putInt(p, 2); p += 4;     // dim[0]=2
-            Unsafe.getUnsafe().putInt(p, 3); p += 4;     // dim[1]=3
-            Unsafe.getUnsafe().putInt(p, 4); p += 4;     // dim[2]=4
+            Unsafe.getUnsafe().putInt(p, 2);          // dim[0]=2
+            p += 4;
+            Unsafe.getUnsafe().putInt(p, 3);          // dim[1]=3
+            p += 4;
+            Unsafe.getUnsafe().putInt(p, 4);          // dim[2]=4
+            p += 4;
             for (int i = 0; i < totalElements; i++) {
                 Unsafe.getUnsafe().putDouble(p, (double) i);
                 p += 8;
