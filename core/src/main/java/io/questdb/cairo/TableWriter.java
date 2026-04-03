@@ -3288,11 +3288,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void warmUp() {
         Row r = newRow(Math.max(TIMESTAMP_EPOCH, txWriter.getMaxTimestamp()));
         try {
-            int tsIdx = metadata.getTimestampIndex();
             for (int i = 0; i < columnCount; i++) {
-                if (i != tsIdx) {
-                    r.putByte(i, (byte) 0);
-                }
+                r.putByte(i, (byte) 0);
             }
         } finally {
             r.cancel();
@@ -10216,7 +10213,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void setRowValueNotNull(int columnIndex) {
-        assert rowValueIsNotNull.getQuick(columnIndex) != masterRef;
         rowValueIsNotNull.setQuick(columnIndex, masterRef);
     }
 

@@ -3371,8 +3371,8 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 compiler,
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
                         "id\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
-                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\tfalse\tfalse\n" +
-                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\tfalse\tfalse\n",
+                        "ts\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\t" + (timestampColumn.equals("ts") ? "true" : "false") + "\tfalse\n" +
+                        "ts_ns\tTIMESTAMP_NS\tfalse\t256\tfalse\t0\t0\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\t" + (timestampColumn.equals("ts_ns") ? "true" : "false") + "\tfalse\n",
                 "show columns from timestamp_test",
                 null,
                 sqlExecutionContext,

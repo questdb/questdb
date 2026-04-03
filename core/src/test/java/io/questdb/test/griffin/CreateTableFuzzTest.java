@@ -409,7 +409,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\t")
-                .append(usePartitionBy).append("\tfalse\t").append(useDedup).append('\n');
+                .append(usePartitionBy).append("\t").append(usePartitionBy).append("\t").append(useDedup).append('\n');
         if (columnChaos != DROP_SYM) {
             b.append(symCol).append("\tSYMBOL\t").append(useIndex).append('\t')
                     .append(useIndexCapacity ? INDEX_CAPACITY : useIndex ? defaultIndexCapacity : 0).append('\t')
@@ -437,7 +437,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\t")
-                .append(usePartitionBy).append("\tfalse\t").append(useDedup).append('\n');
+                .append(usePartitionBy).append("\t").append(usePartitionBy).append("\t").append(useDedup).append('\n');
         b.append(symCol).append("\tSYMBOL\t").append(useIndex).append('\t')
                 .append(useIndexCapacity ? INDEX_CAPACITY : useIndex ? defaultIndexCapacity : 0).append('\t')
                 .append(!useIndex).append("\t128\t0\tfalse\tfalse\tfalse\n");
@@ -452,7 +452,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\t")
-                .append(usePartitionBy).append("\tfalse\t").append(useDedup).append('\n');
+                .append(usePartitionBy).append("\t").append(usePartitionBy).append("\t").append(useDedup).append('\n');
         b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n");
         assertSql(b, "show columns from tango");
     }
