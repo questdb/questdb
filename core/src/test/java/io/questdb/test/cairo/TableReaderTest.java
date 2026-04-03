@@ -3937,6 +3937,92 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetActiveColumnsSqlIntegration() throws Exception {
+        // End-to-end test: the active columns optimization must produce correct
+        // results when driven by the SQL engine (FullPartitionFrameCursorFactory
+        // and IntervalPartitionFrameCursorFactory call setActiveColumns internally).
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT
+                                    x::INT AS a,
+                                    (x * 100)::LONG AS b,
+                                    (x * 1.5) AS c,
+                                    timestamp_sequence(0, 36_000_000_000) ts
+                                FROM long_sequence(5)
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """
+            );
+
+            // SELECT subset of columns — only a and ts (FullPartitionFrameCursorFactory)
+            assertQueryNoLeakCheck(
+                    """
+                            a\tts
+                            1\t1970-01-01T00:00:00.000000Z
+                            2\t1970-01-01T10:00:00.000000Z
+                            3\t1970-01-01T20:00:00.000000Z
+                            4\t1970-01-02T06:00:00.000000Z
+                            5\t1970-01-02T16:00:00.000000Z
+                            """,
+                    "SELECT a, ts FROM x",
+                    null,
+                    "ts",
+                    true,
+                    true
+            );
+
+            // SELECT different subset — only b and c
+            assertQueryNoLeakCheck(
+                    """
+                            b\tc
+                            100\t1.5
+                            200\t3.0
+                            300\t4.5
+                            400\t6.0
+                            500\t7.5
+                            """,
+                    "SELECT b, c FROM x",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+
+            // SELECT all columns
+            assertQueryNoLeakCheck(
+                    """
+                            a\tb\tc\tts
+                            1\t100\t1.5\t1970-01-01T00:00:00.000000Z
+                            2\t200\t3.0\t1970-01-01T10:00:00.000000Z
+                            3\t300\t4.5\t1970-01-01T20:00:00.000000Z
+                            4\t400\t6.0\t1970-01-02T06:00:00.000000Z
+                            5\t500\t7.5\t1970-01-02T16:00:00.000000Z
+                            """,
+                    "SELECT * FROM x",
+                    null,
+                    "ts",
+                    true,
+                    true
+            );
+
+            // SELECT with WHERE (interval filter — uses IntervalPartitionFrameCursorFactory)
+            assertQueryNoLeakCheck(
+                    """
+                            a\tts
+                            4\t1970-01-02T06:00:00.000000Z
+                            5\t1970-01-02T16:00:00.000000Z
+                            """,
+                    "SELECT a, ts FROM x WHERE ts IN '1970-01-02'",
+                    null,
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testSetActiveColumnsSymbolColumns() throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
