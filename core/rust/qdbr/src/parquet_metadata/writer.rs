@@ -51,6 +51,7 @@ pub struct ParquetMetaWriter {
     row_groups: Vec<RowGroupBlockBuilder>,
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
+    unused_bytes: u64,
 }
 
 impl Default for ParquetMetaWriter {
@@ -66,6 +67,7 @@ impl ParquetMetaWriter {
             row_groups: Vec::new(),
             parquet_footer_offset: 0,
             parquet_footer_length: 0,
+            unused_bytes: 0,
         }
     }
 
@@ -120,6 +122,11 @@ impl ParquetMetaWriter {
         self
     }
 
+    pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
+        self.unused_bytes = unused_bytes;
+        self
+    }
+
     /// Finishes writing and returns the complete `_pm` file bytes.
     ///
     /// Returns `(bytes, footer_offset)` where `footer_offset` is the byte
@@ -140,6 +147,7 @@ impl ParquetMetaWriter {
 
         // Write footer.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
+        fb.unused_bytes(self.unused_bytes);
         for &offset in &block_offsets {
             fb.add_row_group_offset(offset)?;
         }
@@ -169,6 +177,7 @@ pub struct ParquetMetaUpdateWriter<'a> {
     entries: Vec<RowGroupEntry>,
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
+    unused_bytes: u64,
 }
 
 enum RowGroupEntry {
@@ -209,7 +218,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             entries,
             parquet_footer_offset: footer.parquet_footer_offset(),
             parquet_footer_length: footer.parquet_footer_length(),
+            unused_bytes: footer.unused_bytes(),
         })
+    }
+
+    pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
+        self.unused_bytes = unused_bytes;
+        self
     }
 
     /// Replaces a row group at `index` with a new block.
@@ -309,6 +324,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
 
         // Write the new footer.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
+        fb.unused_bytes(self.unused_bytes);
         for &offset in &final_offsets {
             fb.add_row_group_offset(offset)?;
         }

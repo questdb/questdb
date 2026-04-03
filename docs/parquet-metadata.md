@@ -28,7 +28,7 @@ Currently stored under the `"questdb"` key in the parquet file's key-value metad
 
 Binary file encoded in little-endian. One file per partition, stored in the partition directory alongside `data.parquet`.
 
-The file has a header with column descriptors, row group blocks in the middle, and a footer at the end. The footer ends with a 4-byte trailer that stores the footer length, allowing readers to locate the footer given only the file size. The `_pm` file size is stored in `_txn` field 3 for each partition. Row group blocks are referenced by offset from the footer. On update, only new/changed row group blocks are appended; the footer reuses offsets to unchanged blocks. The file is small (typically tens of KB), memory-mapped and cached in `TableReader`. Bloom filters are not stored here; they remain in the parquet file and are read on demand using the offset/length stored in each column chunk.
+The file has a header with column descriptors, row group blocks in the middle, and a footer at the end. The footer ends with a 4-byte trailer that stores the footer length, allowing readers to locate the footer given only the file size. The `_pm` file size is stored in `_txn` field 3 for each partition. Row group blocks are referenced by offset from the footer. On update, only new/changed row group blocks are appended; the footer reuses offsets to unchanged blocks. The file is small (typically tens of KB), memory-mapped and cached in `TableReader`. Bloom filter bitsets are stored in the out-of-line region of each row group block, referenced by `BLOOM_FILTER_OFF` in the column chunk.
 
 ### Overview
 
@@ -200,7 +200,7 @@ Written sequentially after the header. Each block holds the column chunk metadat
 
 Blocks must be aligned to 8 bytes so that the offset in the footer can be stored as a u32 (actual offset = value << 3).
 
-For types > 8 bytes (LONG128, UUID, LONG256), min/max stat values are stored out-of-line immediately after the row group block that references them. These are considered part of the row group's data and written together with its block.
+For types > 8 bytes (LONG128, UUID, LONG256), min/max stat values are stored out-of-line immediately after the column chunks. Bloom filter bitsets follow the out-of-line stats, each padded to 8-byte alignment so `BLOOM_FILTER_OFF` can use the shifted u32 encoding. All out-of-line data is part of the row group block and written together with it.
 
 #### Row group block
 
@@ -219,7 +219,7 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 | 1      | 1    | ENCODINGS        | u8   | bitmask: bit 0=PLAIN, 1=RLE_DICTIONARY, 2=DELTA_BINARY_PACKED, 3=DELTA_LENGTH_BYTE_ARRAY, 4=DELTA_BYTE_ARRAY, 5=BYTE_STREAM_SPLIT |
 | 2      | 1    | STAT_FLAGS       | u8   |                                                                                                                                   |
 | 3      | 1    | STAT_SIZES       | u8   | low nibble = MIN_STAT byte size (inline only), high nibble = MAX_STAT byte size (inline only)                                     |
-| 4      | 4    | BLOOM_FILTER_OFF | u32  | byte offset from file start >> 3 (actual = value << 3)                                                                            |
+| 4      | 4    | BLOOM_FILTER_OFF | u32  | byte offset from _pm file start >> 3 (actual = value << 3); points to bloom filter bitset in the OOL region; 0 = absent            |
 | 8      | 8    | NUM_VALUES       | u64  | total values (may differ from row count for arrays)                                                                               |
 | 16     | 8    | BYTE_RANGE_START | u64  | byte offset in parquet file to chunk start (dictionary page offset if present, else data page offset)                             |
 | 24     | 8    | TOTAL_COMPRESSED | u64  | total compressed bytes of all pages                                                                                               |
@@ -246,9 +246,9 @@ Column types with fixed size that are <= 8 bytes (BOOLEAN, BYTE, SHORT, CHAR, IN
 
 ### Bloom filter bitset
 
-Bloom filters are stored in the parquet file, not the metadata file. The column chunk metadata has a `BLOOM_FILTER_OFF` field which gives the offset in the parquet file to the bloom filter bitset for that column chunk. If `BLOOM_FILTER_OFF` is 0, there is no bloom filter for that column chunk.
+Bloom filter bitsets are stored in the out-of-line region of each row group block, after out-of-line stats. Each bloom filter entry is padded to 8-byte alignment so `BLOOM_FILTER_OFF` can use the shifted u32 encoding. The column chunk's `BLOOM_FILTER_OFF` field gives the absolute offset in the `_pm` file (right-shifted by 3). If `BLOOM_FILTER_OFF` is 0, there is no bloom filter for that column chunk.
 
-At the start of the bloom filter bitset, there is a 4-byte `BLOOM_FILTER_LEN` field which gives the length in bytes of the bloom filter bitset. The bitset follows immediately after this field.
+At the offset, a 4-byte `LENGTH` field gives the size of the bitset, followed by the bitset bytes.
 
 | offset | size | field  | type | description                                           |
 | ------ | ---- | ------ | ---- | ----------------------------------------------------- |
@@ -267,7 +267,8 @@ The CRC is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENG
 | 8      | 4    | PARQUET_FOOTER_LENGTH | u32  | length of the parquet footer in bytes                                               |
 | 12     | 4    | ROW_GROUP_COUNT       | u32  |                                                                                     |
 | 16     | 8    | FOOTER_FEATURE_FLAGS  | u64  | footer feature flags                                                                |
-| 24     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
+| 24     | 8    | UNUSED_BYTES          | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)  |
+| 32     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
 | ..     | ..   | FOOTER_FEAT_SECTIONS  |      | Feature sections in ascending bit order (if any footer flags set)                   |
 | ..     | 4    | CHECKSUM              | u32  | CRC32 from the start of the file to this field (exclusive)                          |
 | ..     | 4    | FOOTER_LENGTH         | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM |
@@ -317,7 +318,7 @@ Atomicity is provided by the `_txn` file. The `_pm` file size is stored in `_txn
 ### Pruning row groups with bloom filter
 
 - Look up the column chunk from cached metadata.
-- Read `BLOOM_FILTER_LEN` bytes at `BLOOM_FILTER_OFF` from the parquet file.
+- Read `LENGTH` (i32) at `BLOOM_FILTER_OFF` in the `_pm` file, then read `LENGTH` bytes of bitset.
 - Check if the value is in the bitset; skip row group if not present.
 
 ### Retrieving byte ranges for specific columns

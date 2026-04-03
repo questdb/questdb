@@ -673,10 +673,12 @@ pub fn generate_parquet_metadata(
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     parquet_data: &[u8],
+    unused_bytes: u64,
 ) -> ParquetResult<(Vec<u8>, u64)> {
     let mut writer = ParquetMetaWriter::new();
     writer.designated_timestamp(designated_timestamp);
     writer.parquet_footer(parquet_footer_offset, parquet_footer_length);
+    writer.unused_bytes(unused_bytes);
 
     for &sc_idx in sorting_columns {
         writer.add_sorting_column(sc_idx);
@@ -732,6 +734,7 @@ pub fn update_parquet_metadata(
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     parquet_data: &[u8],
+    unused_bytes: u64,
 ) -> ParquetResult<ParquetMetaUpdateResult> {
     // Read the existing _pm to get row group fingerprints (byte_range_start of first column).
     let existing_reader = crate::parquet_metadata::reader::ParquetMetaReader::from_file_size(
@@ -776,6 +779,7 @@ pub fn update_parquet_metadata(
             parquet_footer_offset,
             parquet_footer_length,
             parquet_data,
+            unused_bytes,
         )?;
         let new_file_size = bytes.len() as u64;
         return Ok(ParquetMetaUpdateResult { bytes, new_file_size, is_append: false });
@@ -822,6 +826,7 @@ pub fn update_parquet_metadata(
     }
 
     updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
+    updater.unused_bytes(unused_bytes);
     let (append_bytes, _new_footer_offset) = updater.finish()?;
     let new_file_size = existing_pm_file_size + append_bytes.len() as u64;
 
@@ -2274,7 +2279,8 @@ mod tests {
             &[0], // sorting on column 0
             footer_offset,
             footer_length,
-            &[], // no parquet data for bloom filter extraction in tests
+            &[],
+            0,
         )
         .unwrap();
 
@@ -2347,6 +2353,7 @@ mod tests {
             100,
             50,
             &[],
+            0,
         )
         .unwrap();
 
@@ -2374,6 +2381,7 @@ mod tests {
             200,
             60,
             &[],
+            0,
         )
         .unwrap();
 
@@ -2511,6 +2519,7 @@ mod tests {
             100,
             50,
             &parquet_data,
+            0,
         )
         .unwrap();
 

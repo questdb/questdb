@@ -842,6 +842,7 @@ impl ParquetUpdater {
                     footer_offset,
                     footer_length,
                     &parquet_data,
+                    self.result_unused_bytes,
                 )?;
                 self.result_parquet_meta_size = pm_bytes.len() as i64;
                 parquet_meta_file
@@ -883,6 +884,7 @@ impl ParquetUpdater {
                     footer_offset,
                     footer_length,
                     &parquet_data,
+                    self.result_unused_bytes,
                 )?;
 
                 // Write: append after existing data, or full rewrite from offset 0.

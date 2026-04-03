@@ -229,6 +229,10 @@ impl<'a> ParquetMetaReader<'a> {
         self.footer.parquet_footer_length()
     }
 
+    pub fn unused_bytes(&self) -> u64 {
+        self.footer.unused_bytes()
+    }
+
     /// Returns the footer offset within this file.
     pub fn footer_offset(&self) -> u64 {
         self.footer_offset

@@ -40,6 +40,7 @@ pub struct FooterRaw {
     pub parquet_footer_length: u32,
     pub row_group_count: u32,
     pub footer_feature_flags: FooterFeatureFlags,
+    pub unused_bytes: u64,
 }
 
 // ── Footer (zero-copy reader) ──────────────────────────────────────────
@@ -80,6 +81,7 @@ impl<'a> Footer<'a> {
             footer_feature_flags: FooterFeatureFlags::from_le_bytes(
                 data[16..24].try_into().unwrap(),
             ),
+            unused_bytes: u64::from_le_bytes(data[24..32].try_into().unwrap()),
         };
 
         let unknown_required = raw.footer_feature_flags.unknown_required(0);
@@ -166,6 +168,10 @@ impl<'a> Footer<'a> {
         self.raw.footer_feature_flags
     }
 
+    pub fn unused_bytes(&self) -> u64 {
+        self.raw.unused_bytes
+    }
+
     /// Returns the actual byte offset of the row group block at `index`.
     /// The stored value is right-shifted by [`BLOCK_ALIGNMENT_SHIFT`].
     pub fn row_group_block_offset(&self, index: usize) -> ParquetResult<u64> {
@@ -211,6 +217,7 @@ impl<'a> Footer<'a> {
 pub struct FooterBuilder {
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
+    unused_bytes: u64,
     row_group_offsets: Vec<u64>,
 }
 
@@ -219,8 +226,14 @@ impl FooterBuilder {
         Self {
             parquet_footer_offset,
             parquet_footer_length,
+            unused_bytes: 0,
             row_group_offsets: Vec::new(),
         }
+    }
+
+    pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
+        self.unused_bytes = unused_bytes;
+        self
     }
 
     /// Adds a row group block offset. The offset must be 8-byte aligned
@@ -243,6 +256,7 @@ impl FooterBuilder {
         buf.extend_from_slice(&self.parquet_footer_length.to_le_bytes());
         buf.extend_from_slice(&(self.row_group_offsets.len() as u32).to_le_bytes());
         buf.extend_from_slice(&FooterFeatureFlags::new().0.to_le_bytes());
+        buf.extend_from_slice(&self.unused_bytes.to_le_bytes());
 
         for &offset in &self.row_group_offsets {
             let stored = (offset >> BLOCK_ALIGNMENT_SHIFT) as u32;

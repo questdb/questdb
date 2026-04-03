@@ -46,8 +46,8 @@ pub const COLUMN_DESCRIPTOR_SIZE: usize = 32;
 pub const COLUMN_CHUNK_SIZE: usize = 64;
 
 /// Fixed portion of the footer (parquet_footer_offset(8) + parquet_footer_length(4)
-/// + row_group_count(4) + footer_feature_flags(8)).
-pub const FOOTER_FIXED_SIZE: usize = 24;
+/// + row_group_count(4) + footer_feature_flags(8) + unused_bytes(8)).
+pub const FOOTER_FIXED_SIZE: usize = 32;
 
 // ── Feature flags ─────────────────────────────────────────────────────
 
