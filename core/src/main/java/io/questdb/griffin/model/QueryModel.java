@@ -360,7 +360,7 @@ public class QueryModel implements IQueryModel {
      */
     @Override
     public boolean allowsNestedColumnsChange() {
-        return !hasDependents() && this.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT;
+        return !nestedModel.hasDependents() && this.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT;
     }
 
     @Override

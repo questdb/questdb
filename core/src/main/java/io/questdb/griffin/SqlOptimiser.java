@@ -8829,6 +8829,19 @@ public class SqlOptimiser implements Mutable {
                     m.setNestedModel(rewritten);
                     // since we have rewritten nested model, we also have to update column hash
                     m.copyColumnsFrom(rewritten, queryColumnPool, expressionNodePool);
+                } else if (!nestedModel.supportOptimise()) {
+                    // Wrapper (shared model reference) was skipped by rewriteSelectClause,
+                    // but the delegate's aliasToColumnMap is already populated because
+                    // rewriteSelectClause traverses depth-first left-to-right (joinModels
+                    // order), matching the parser's FROM-clause order. The parser/rewriter
+                    // guarantees that the first tree reference to a shared model embeds the
+                    // original QueryModel (processed first), and subsequent references use
+                    // QueryModelWrapper. So by the time we encounter a wrapper here, its
+                    // delegate has already been processed in an earlier joinModel or nested
+                    // path. This invariant must be maintained by the parser for future CTE
+                    // support: the first FROM-clause reference gets the original, the rest
+                    // get wrappers.
+                    m.copyColumnsFrom(nestedModel, queryColumnPool, expressionNodePool);
                 }
             }
 

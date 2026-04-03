@@ -91,6 +91,7 @@ class LateralJoinRewriter implements Mutable {
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private boolean hasCorrelation;
     private int outerRefId;
+    private int wrapperShareId;
 
     LateralJoinRewriter(
             CharacterStore characterStore,
@@ -138,6 +139,7 @@ class LateralJoinRewriter implements Mutable {
         nonCorrelatedPreds.clear();
         hasCorrelation = false;
         outerRefId = 0;
+        wrapperShareId = 0;
         sharedModels.clear();
     }
 
@@ -987,7 +989,11 @@ class LateralJoinRewriter implements Mutable {
                         current.getModelAliasIndexes().removeEntry(cloneAlias);
                     }
                 }
-                IQueryModel deepOuterRef = cloneOuterRef(outerRefJm);
+
+                IQueryModel deepOuterRef = queryModelPool.next();
+                deepOuterRef.setNestedModel(branchOuterRef.getNestedModel());
+                deepOuterRef.setAlias(branchOuterRef.getAlias());
+                deepOuterRef.setJoinType(IQueryModel.JOIN_CROSS);
                 subCountColAliases.clear();
                 pushDownOuterRefs(
                         current, current.getNestedModel(), outerToInnerAlias,
@@ -1147,7 +1153,7 @@ class LateralJoinRewriter implements Mutable {
         } else if (outerJm.getNestedModel() != null) {
             QueryModel nestModel = (QueryModel) outerJm.getNestedModel();
             QueryModelWrapper wrapper = queryModelWrapperPool.next();
-            wrapper.of(nestModel, outerRefId++);
+            wrapper.of(nestModel, wrapperShareId++);
             nestModel.getDependents().add(wrapper);
             outerRefBase.setNestedModel(wrapper);
             outerRefBase.setNestedModelIsSubQuery(outerJm.isNestedModelIsSubQuery());
@@ -1172,28 +1178,12 @@ class LateralJoinRewriter implements Mutable {
         return outerRefBase;
     }
 
-    private void rebuildGroupingCols() {
-        groupingCols.clear();
-        ObjList<CharSequence> keys = outerToInnerAlias.keys();
-        for (int ki = 0, kn = keys.size(); ki < kn; ki++) {
-            CharSequence key = keys.getQuick(ki);
-            if (key != null) {
-                CharSequence value = outerToInnerAlias.get(key);
-                if (value != null) {
-                    groupingCols.add(expressionNodePool.next().of(
-                            ExpressionNode.LITERAL, value, 0, 0
-                    ));
-                }
-            }
-        }
-    }
-
     private IQueryModel createSharedRef(QueryModel delegate) {
         if (sharedModels.add(delegate)) {
             return delegate;
         }
         QueryModelWrapper wrapper = queryModelWrapperPool.next();
-        wrapper.of(delegate, outerRefId++);
+        wrapper.of(delegate, wrapperShareId++);
         delegate.getDependents().add(wrapper);
         return wrapper;
     }
@@ -2333,6 +2323,22 @@ class LateralJoinRewriter implements Mutable {
         return column;
     }
 
+    private void rebuildGroupingCols() {
+        groupingCols.clear();
+        ObjList<CharSequence> keys = outerToInnerAlias.keys();
+        for (int ki = 0, kn = keys.size(); ki < kn; ki++) {
+            CharSequence key = keys.getQuick(ki);
+            if (key != null) {
+                CharSequence value = outerToInnerAlias.get(key);
+                if (value != null) {
+                    groupingCols.add(expressionNodePool.next().of(
+                            ExpressionNode.LITERAL, value, 0, 0
+                    ));
+                }
+            }
+        }
+    }
+
     private ExpressionNode rebuildOnFromOuterRefCriteria(
             ObjList<ExpressionNode> predicates,
             CharSequence outerRefAlias,
@@ -3010,6 +3016,7 @@ class LateralJoinRewriter implements Mutable {
             outerRefJoinModel.setJoinCriteria(joinCrit);
             outerRefJoinModel.setJoinType(IQueryModel.JOIN_INNER);
         }
+        sharedModels.add((QueryModel) outerRefJoinModel.getNestedModel());
     }
 
     private void tryEliminateOuterRef(
