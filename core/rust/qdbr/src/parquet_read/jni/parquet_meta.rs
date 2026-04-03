@@ -195,10 +195,7 @@ fn pm_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
         return Err(fmt_err!(InvalidType, "filtered rows pointer is null"));
     }
     if parquet_meta_ptr.is_null() || parquet_meta_size == 0 {
-        return Err(fmt_err!(
-            InvalidType,
-            "_pm pointer is null or size is zero"
-        ));
+        return Err(fmt_err!(InvalidType, "_pm pointer is null or size is zero"));
     }
     if parquet_file_ptr.is_null() || parquet_file_size == 0 {
         return Err(fmt_err!(
@@ -359,10 +356,7 @@ fn pm_decode_row_group_impl(
         validate_jni_column_types(col_pairs)?;
     }
     if parquet_meta_ptr.is_null() || parquet_meta_size == 0 {
-        return Err(fmt_err!(
-            InvalidType,
-            "_pm pointer is null or size is zero"
-        ));
+        return Err(fmt_err!(InvalidType, "_pm pointer is null or size is zero"));
     }
     if parquet_file_ptr.is_null() || parquet_file_size == 0 {
         return Err(fmt_err!(
@@ -556,10 +550,7 @@ fn pm_find_row_group_by_timestamp_impl(
     use crate::parquet_metadata::types::StatFlags;
 
     if parquet_meta_ptr.is_null() || parquet_meta_size == 0 {
-        return Err(fmt_err!(
-            InvalidType,
-            "_pm pointer is null or size is zero"
-        ));
+        return Err(fmt_err!(InvalidType, "_pm pointer is null or size is zero"));
     }
 
     let parquet_meta_data =

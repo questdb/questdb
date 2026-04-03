@@ -6,8 +6,8 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_read::jni::{validate_jni_column_types, DecodeMode};
 use crate::parquet_read::row_groups::ParquetColumnIndex;
 use crate::parquet_read::{
-    ColumnFilterPacked, ColumnMeta, DecodeContext, ParquetDecoder,
-    RowGroupBuffers, RowGroupStatBuffers,
+    ColumnFilterPacked, ColumnMeta, DecodeContext, ParquetDecoder, RowGroupBuffers,
+    RowGroupStatBuffers,
 };
 use jni::objects::JClass;
 use jni::JNIEnv;

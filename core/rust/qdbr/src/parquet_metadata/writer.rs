@@ -319,8 +319,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         // entire existing file.  The old CRC covers [0, old_crc_field_offset).
         // We continue from there, hashing only the bytes after the old CRC
         // field (old CRC value + old trailer + new append data).
-        let old_crc_field_offset =
-            footer_usize + footer_length as usize - FOOTER_CHECKSUM_SIZE;
+        let old_crc_field_offset = footer_usize + footer_length as usize - FOOTER_CHECKSUM_SIZE;
         let old_crc = u32::from_le_bytes(
             self.existing[old_crc_field_offset..old_crc_field_offset + FOOTER_CHECKSUM_SIZE]
                 .try_into()
