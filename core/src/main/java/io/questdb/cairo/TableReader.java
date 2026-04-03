@@ -937,6 +937,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             }
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
             openPartitionCount--;
             return -1;
         }
@@ -1169,6 +1170,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
         }
         return openPartitionInfo;
     }
@@ -1195,6 +1197,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();
