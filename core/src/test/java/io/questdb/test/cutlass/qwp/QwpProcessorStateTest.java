@@ -24,13 +24,18 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
+import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
+import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -38,6 +43,9 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Proxy;
 
 public class QwpProcessorStateTest extends AbstractCairoTest {
 
@@ -96,6 +104,41 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearFreesResourcesWhenRollbackThrows() throws Exception {
+        // When tud.rollback() throws during clear(), the cache enters the
+        // distressed path: it frees all TUDs without rolling back and clears
+        // the map. We trigger this by closing the TUD's WAL writer before
+        // calling clear(), so rollback() hits a NullPointerException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE clear_distress (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY);
+            try {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("clear_distress"),
+                        null,
+                        null
+                );
+                Assert.assertNotNull(tud);
+
+                // Close the TUD so its writerAPI becomes null.
+                // This makes rollback() throw NullPointerException.
+                tud.close();
+
+                // clear() should catch the exception, enter the distressed
+                // code path, free the TUD, and clear the map.
+                cache.clear();
+            } finally {
+                cache.close();
+            }
+        });
+    }
+
+    @Test
     public void testCloseFreesWalWriterOnConstructorFailure() throws Exception {
         // Reproduces the pattern in QwpTudCache.getTableUpdateDetails() where
         // engine.getWalWriter() is passed inline to the WalTableUpdateDetails
@@ -125,6 +168,85 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 Assert.fail("should have thrown NullPointerException");
             } catch (Throwable th) {
                 Misc.free(walWriter);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllRemovesDroppedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE commit_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY);
+            try {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("commit_drop"),
+                        null,
+                        null
+                );
+                Assert.assertNotNull(tud);
+
+                // Replace the real writer with a fake that simulates a
+                // table-dropped commit failure. This exercises the
+                // catch (CommitFailedException) branch where
+                // e.isTableDropped() returns true, followed by the
+                // if (tud.isDropped()) removal path.
+                replaceWriterWithFake(tud, true);
+
+                // commitAll() should catch the CommitFailedException, mark
+                // the TUD as dropped, remove it from the cache, and free it.
+                try {
+                    cache.commitAll();
+                } catch (Exception e) {
+                    throw e;
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+            } finally {
+                cache.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllRethrowsNonDropCommitFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE commit_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY);
+            try {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("commit_fail"),
+                        null,
+                        null
+                );
+                Assert.assertNotNull(tud);
+
+                // Replace the real writer with a fake that simulates a
+                // non-drop commit failure. This exercises the
+                // catch (CommitFailedException) branch where
+                // e.isTableDropped() returns false, causing commitAll()
+                // to re-throw the original exception.
+                replaceWriterWithFake(tud, false);
+
+                try {
+                    cache.commitAll();
+                    Assert.fail("commitAll() should have re-thrown the commit failure");
+                } catch (CairoException e) {
+                    Assert.assertFalse(e.isTableDropped());
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable type", t);
+                }
+            } finally {
+                cache.close();
             }
         });
     }
@@ -186,5 +308,35 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.close();
             }
         });
+    }
+
+    private static void replaceWriterWithFake(WalTableUpdateDetails tud, boolean isTableDropped) throws Exception {
+        TableToken tableToken = tud.getTableToken();
+        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
+        writerField.setAccessible(true);
+
+        // Free the real writer to avoid native memory leaks.
+        Misc.free((TableWriterAPI) writerField.get(tud));
+
+        writerField.set(tud, Proxy.newProxyInstance(
+                TableWriterAPI.class.getClassLoader(),
+                new Class[]{TableWriterAPI.class},
+                (proxy, method, args) -> {
+                    switch (method.getName()) {
+                        case "getUncommittedRowCount":
+                            return 1L;
+                        case "commit":
+                            if (isTableDropped) {
+                                throw CairoException.tableDropped(tableToken);
+                            }
+                            throw CairoException.nonCritical().put("simulated commit failure");
+                        case "close":
+                        case "rollback":
+                            return null;
+                        default:
+                            throw new UnsupportedOperationException(method.getName());
+                    }
+                }
+        ));
     }
 }

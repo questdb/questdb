@@ -162,6 +162,51 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testWriteCloseFrameTruncatesLongAsciiReason() {
+        long buf = allocateBuffer(256);
+        try {
+            // 130 ASCII chars -> 130 bytes, exceeds the 123-byte limit
+            String reason = "A".repeat(130);
+            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1001, reason);
+
+            // Payload = 2 (status code) + 123 (truncated reason)
+            int expectedPayload = 2 + 123;
+            // Total = 2 (header) + payload
+            Assert.assertEquals(2 + expectedPayload, totalLen);
+            // Verify the payload-length byte in the frame header
+            Assert.assertEquals((byte) expectedPayload, Unsafe.getUnsafe().getByte(buf + 1));
+            // Verify the reason was truncated to exactly 123 bytes
+            byte[] writtenReason = readBytes(buf + 4, 123);
+            for (int i = 0; i < 123; i++) {
+                Assert.assertEquals((byte) 'A', writtenReason[i]);
+            }
+        } finally {
+            freeBuffer(buf, 256);
+        }
+    }
+
+    @Test
+    public void testWriteCloseFrameTruncatesWithoutSplittingMultiByteChar() {
+        long buf = allocateBuffer(256);
+        try {
+            // Build a string: 122 ASCII bytes + a 2-byte UTF-8 char (U+00E9, "e with accent").
+            // Total UTF-8 length = 124 bytes, which exceeds the 123-byte limit.
+            // Naive truncation at byte 123 would land on the second byte of the
+            // 2-byte sequence (a continuation byte, 0x80..0xBF). The encoder must
+            // back up to byte 122 so it doesn't split the character.
+            String reason = "x".repeat(122) + "\u00E9";
+            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1001, reason);
+
+            // Reason truncated to 122 bytes (the multi-byte char is dropped entirely)
+            int expectedPayload = 2 + 122;
+            Assert.assertEquals(2 + expectedPayload, totalLen);
+            Assert.assertEquals((byte) expectedPayload, Unsafe.getUnsafe().getByte(buf + 1));
+        } finally {
+            freeBuffer(buf, 256);
+        }
+    }
+
+    @Test
     public void testWriteCloseFrameWithEmptyReason() {
         long buf = allocateBuffer(32);
         try {
