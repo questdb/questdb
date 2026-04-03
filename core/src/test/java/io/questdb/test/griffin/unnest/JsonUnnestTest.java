@@ -119,6 +119,434 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseTableBooleanColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getBool() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BOOLEAN, payload VARCHAR)");
+            execute("INSERT INTO t VALUES (true, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            b\tval
+                            true\t1
+                            true\t2
+                            """,
+                    "SELECT t.b, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableDateColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getDate() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DATE, payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('2024-01-15T00:00:00.000Z', '[1.5, 2.5]')");
+            assertQueryNoLeakCheck(
+                    """
+                            d\tval
+                            2024-01-15T00:00:00.000Z\t1.5
+                            2024-01-15T00:00:00.000Z\t2.5
+                            """,
+                    "SELECT t.d, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val DOUBLE)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableDecimal128ColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getDecimal128() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(20, 2), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (123.45m, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            d\tval
+                            123.45\t1
+                            123.45\t2
+                            """,
+                    "SELECT t.d, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableDecimal16ColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getDecimal16() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(3, 1), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (9.5m, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            d\tval
+                            9.5\t1
+                            9.5\t2
+                            """,
+                    "SELECT t.d, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableDecimal256ColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getDecimal256() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(40, 2), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (999.99m, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            d\tval
+                            999.99\t1
+                            999.99\t2
+                            """,
+                    "SELECT t.d, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableDecimal32ColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getDecimal32() (col is always a base table column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(5, 2), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (12.34m, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            d\tval
+                            12.34\t1
+                            12.34\t2
+                            """,
+                    "SELECT t.d, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableDecimal64ColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getDecimal64() (col is always a base table column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(10, 2), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (12345.67m, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            d\tval
+                            12345.67\t1
+                            12345.67\t2
+                            """,
+                    "SELECT t.d, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableDecimal8ColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getDecimal8() (col is always a base table column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(2, 1), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (1.5m, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            d\tval
+                            1.5\t1
+                            1.5\t2
+                            """,
+                    "SELECT t.d, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableFloatColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getFloat() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (f FLOAT, payload VARCHAR)");
+            execute("INSERT INTO t VALUES (3.14, '[10, 20]')");
+            assertQueryNoLeakCheck(
+                    """
+                            f\tval
+                            3.14\t10
+                            3.14\t20
+                            """,
+                    "SELECT t.f, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableShortColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getShort() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SHORT, payload VARCHAR)");
+            execute("INSERT INTO t VALUES (42, '[1.5, 2.5]')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tval
+                            42\t1.5
+                            42\t2.5
+                            """,
+                    "SELECT t.s, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val DOUBLE)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableStringColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getStrA() and getStrB() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s STRING, payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('hello', '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tval
+                            hello\t1
+                            hello\t2
+                            """,
+                    "SELECT t.s, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableStringColumnFilterWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getStrB() via equality comparison in WHERE,
+        // which uses getStrB() for the B-copy needed by the filter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s STRING, payload VARCHAR)");
+            execute("INSERT INTO t VALUES "
+                    + "('keep', '[1, 2]'), "
+                    + "('drop', '[3, 4]')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tval
+                            keep\t1
+                            keep\t2
+                            """,
+                    "SELECT t.s, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u WHERE t.s = 'keep'",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableGeoByteColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getGeoByte() (col is always a base table column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g GEOHASH(1c), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (#s, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            g\tval
+                            s\t1
+                            s\t2
+                            """,
+                    "SELECT t.g, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableGeoIntColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getGeoInt() (col is always a base table column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g GEOHASH(5c), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (#s0000, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            g\tval
+                            s0000\t1
+                            s0000\t2
+                            """,
+                    "SELECT t.g, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableGeoLongColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getGeoLong() (col is always a base table column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g GEOHASH(7c), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (#s000000, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            g\tval
+                            s000000\t1
+                            s000000\t2
+                            """,
+                    "SELECT t.g, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableGeoShortColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getGeoShort() (col is always a base table column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g GEOHASH(3c), payload VARCHAR)");
+            execute("INSERT INTO t VALUES (#s00, '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            g\tval
+                            s00\t1
+                            s00\t2
+                            """,
+                    "SELECT t.g, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableIPv4ColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getIPv4() (col is always a base table column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ip IPv4, payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('192.168.1.1', '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            ip\tval
+                            192.168.1.1\t1
+                            192.168.1.1\t2
+                            """,
+                    "SELECT t.ip, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableLong256ColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getLong256A() and getLong256(col, sink).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (h LONG256, payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('0x01', '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            h\tval
+                            0x01\t1
+                            0x01\t2
+                            """,
+                    "SELECT t.h, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableLong256FilterWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getLong256B() via equality in WHERE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (h LONG256, payload VARCHAR)");
+            execute("INSERT INTO t VALUES "
+                    + "('0x01', '[1, 2]'), "
+                    + "('0x02', '[3, 4]')");
+            assertQueryNoLeakCheck(
+                    """
+                            h\tval
+                            0x01\t1
+                            0x01\t2
+                            """,
+                    "SELECT t.h, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u WHERE t.h = cast('0x01' AS LONG256)",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableSymbolColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getSymA() (col is always a base table column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('abc', '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tval
+                            abc\t1
+                            abc\t2
+                            """,
+                    "SELECT t.s, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableSymbolJoinWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getSymB() via a join, which uses getRecordB()
+        // on the outer cursor to compare the symbol column across records.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, payload VARCHAR)");
+            execute("CREATE TABLE lookup (s SYMBOL, label VARCHAR)");
+            execute("INSERT INTO t VALUES ('a', '[1, 2]')");
+            execute("INSERT INTO lookup VALUES ('a', 'found')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tval\tlabel
+                            a\t1\tfound
+                            a\t2\tfound
+                            """,
+                    "SELECT t.s, u.val, lookup.label FROM t"
+                            + ", UNNEST(t.payload COLUMNS(val INT)) u"
+                            + " JOIN lookup ON t.s = lookup.s",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
     public void testBooleanFromObject() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -841,6 +1269,62 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testErrorUnsupportedTypeBinary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val BINARY)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsupportedTypeByte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val BYTE)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsupportedTypeChar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val CHAR)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsupportedTypeDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val DECIMAL)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
     public void testErrorUnsupportedTypeFloat() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -855,12 +1339,82 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testErrorUnsupportedTypeGeohash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val GEOHASH)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsupportedTypeInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INTERVAL)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsupportedTypeIPv4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val IPv4)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsupportedTypeLong256() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val LONG256)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
     public void testErrorUnsupportedTypeSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             assertException(
                     "SELECT u.val FROM t, UNNEST("
                             + "t.payload COLUMNS(val SYMBOL)"
+                            + ") u",
+                    50,
+                    "unsupported type for JSON UNNEST"
+            );
+        });
+    }
+
+    @Test
+    public void testErrorUnsupportedTypeUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val UUID)"
                             + ") u",
                     50,
                     "unsupported type for JSON UNNEST"
@@ -2203,6 +2757,43 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarDateArray() throws Exception {
+        // Exercises JsonUnnestSource.getDate() and UnnestRecord.getDate()
+        // for unnest columns (col >= split). DATE values are epoch millis.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            // 1705276800000 = 2024-01-15T00:00:00.000Z in millis
+            execute("INSERT INTO t VALUES ('[1705276800000, 0]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2024-01-15T00:00:00.000Z
+                            1970-01-01T00:00:00.000Z
+                            """,
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DATE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarDateNullElement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1705276800000, null]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            2024-01-15T00:00:00.000Z
+
+                            """,
+                    "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DATE)) u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
     public void testScalarDoubleAllNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -2599,6 +3190,108 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             """,
                     "SELECT u.val FROM t, UNNEST("
                             + "t.payload COLUMNS(val VARCHAR)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarStringArray() throws Exception {
+        // Exercises JsonUnnestSource.getStrA() via STRING column type.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"hello\", \"world\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            hello
+                            world
+                            """,
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val STRING)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarStringNullElement() throws Exception {
+        // Exercises NULL handling in JsonUnnestSource.getStrA().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"a\", null, \"b\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            a
+
+                            b
+                            """,
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val STRING)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarStringFilterExercisesStrB() throws Exception {
+        // Exercises JsonUnnestSource.getStrB() via equality filter,
+        // which needs the B-copy for comparison.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"keep\", \"drop\", \"keep\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            keep
+                            keep
+                            """,
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val STRING)"
+                            + ") u WHERE u.val = 'keep'",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarStringFromObjectField() throws Exception {
+        // Exercises JsonUnnestSource.getStrA() with object field extraction.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"name\": \"alice\"}, {\"name\": \"bob\"}]')");
+            assertQueryNoLeakCheck(
+                    """
+                            name
+                            alice
+                            bob
+                            """,
+                    "SELECT u.name FROM t, UNNEST("
+                            + "t.payload COLUMNS(name STRING)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarStringUtf8() throws Exception {
+        // Exercises the UTF-8 to UTF-16 conversion path in getStrA().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"héllo\", \"wörld\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            héllo
+                            wörld
+                            """,
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val STRING)"
                             + ") u",
                     (String) null
             );

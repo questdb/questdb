@@ -905,7 +905,9 @@ public class SqlParser {
                 || tag == ColumnType.SHORT
                 || tag == ColumnType.INT
                 || tag == ColumnType.LONG
+                || tag == ColumnType.DATE
                 || tag == ColumnType.DOUBLE
+                || tag == ColumnType.STRING
                 || tag == ColumnType.VARCHAR
                 || tag == ColumnType.TIMESTAMP;
     }

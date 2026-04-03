@@ -57,14 +57,6 @@ public interface UnnestSource {
         throw new UnsupportedOperationException();
     }
 
-    default byte getByte(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    default char getChar(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
     /**
      * Returns the number of output columns this source produces.
      * For arrays: always 1 (one array = one column).

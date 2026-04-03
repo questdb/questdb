@@ -31,8 +31,6 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -87,20 +85,15 @@ public class UnnestRecord implements Record {
         return sources.getQuick(srcIdx).getArray(srcCol, arrayIndex, columnType);
     }
 
+    // BINARY is not a supported unnest column type; col is always a base table column.
     @Override
     public BinarySequence getBin(int col) {
-        if (col < split) {
-            return baseRecord.getBin(col);
-        }
-        return null;
+        return baseRecord.getBin(col);
     }
 
     @Override
     public long getBinLen(int col) {
-        if (col < split) {
-            return baseRecord.getBinLen(col);
-        }
-        return -1;
+        return baseRecord.getBinLen(col);
     }
 
     @Override
@@ -137,50 +130,35 @@ public class UnnestRecord implements Record {
         return sources.getQuick(srcIdx).getDate(srcCol, arrayIndex);
     }
 
+    // DECIMAL types are not supported unnest column types; col is always a base table column.
     @Override
     public void getDecimal128(int col, Decimal128 sink) {
-        if (col < split) {
-            baseRecord.getDecimal128(col, sink);
-        }
+        baseRecord.getDecimal128(col, sink);
     }
 
     @Override
     public short getDecimal16(int col) {
-        if (col < split) {
-            return baseRecord.getDecimal16(col);
-        }
-        return 0;
+        return baseRecord.getDecimal16(col);
     }
 
     @Override
     public void getDecimal256(int col, Decimal256 sink) {
-        if (col < split) {
-            baseRecord.getDecimal256(col, sink);
-        }
+        baseRecord.getDecimal256(col, sink);
     }
 
     @Override
     public int getDecimal32(int col) {
-        if (col < split) {
-            return baseRecord.getDecimal32(col);
-        }
-        return Numbers.INT_NULL;
+        return baseRecord.getDecimal32(col);
     }
 
     @Override
     public long getDecimal64(int col) {
-        if (col < split) {
-            return baseRecord.getDecimal64(col);
-        }
-        return Numbers.LONG_NULL;
+        return baseRecord.getDecimal64(col);
     }
 
     @Override
     public byte getDecimal8(int col) {
-        if (col < split) {
-            return baseRecord.getDecimal8(col);
-        }
-        return 0;
+        return baseRecord.getDecimal8(col);
     }
 
     @Override
@@ -194,55 +172,37 @@ public class UnnestRecord implements Record {
         return sources.getQuick(srcIdx).getDouble(srcCol, arrayIndex);
     }
 
+    // FLOAT is not a supported unnest column type; col is always a base table column.
     @Override
     public float getFloat(int col) {
-        if (col < split) {
-            return baseRecord.getFloat(col);
-        }
-        int unnestCol = col - split;
-        int srcIdx = colToSourceIndex[unnestCol];
-        int srcCol = colToSourceCol[unnestCol];
-        return sources.getQuick(srcIdx).getFloat(srcCol, arrayIndex);
+        return baseRecord.getFloat(col);
     }
 
+    // GEO types are not supported unnest column types; col is always a base table column.
     @Override
     public byte getGeoByte(int col) {
-        if (col < split) {
-            return baseRecord.getGeoByte(col);
-        }
-        return 0;
+        return baseRecord.getGeoByte(col);
     }
 
     @Override
     public int getGeoInt(int col) {
-        if (col < split) {
-            return baseRecord.getGeoInt(col);
-        }
-        return 0;
+        return baseRecord.getGeoInt(col);
     }
 
     @Override
     public long getGeoLong(int col) {
-        if (col < split) {
-            return baseRecord.getGeoLong(col);
-        }
-        return 0;
+        return baseRecord.getGeoLong(col);
     }
 
     @Override
     public short getGeoShort(int col) {
-        if (col < split) {
-            return baseRecord.getGeoShort(col);
-        }
-        return 0;
+        return baseRecord.getGeoShort(col);
     }
 
+    // IPv4 is not a supported unnest column type; col is always a base table column.
     @Override
     public int getIPv4(int col) {
-        if (col < split) {
-            return baseRecord.getIPv4(col);
-        }
-        return Numbers.IPv4_NULL;
+        return baseRecord.getIPv4(col);
     }
 
     @Override
@@ -256,12 +216,10 @@ public class UnnestRecord implements Record {
         return sources.getQuick(srcIdx).getInt(srcCol, arrayIndex);
     }
 
+    // INTERVAL is not a supported unnest column type; col is always a base table column.
     @Override
     public Interval getInterval(int col) {
-        if (col < split) {
-            return baseRecord.getInterval(col);
-        }
-        return null;
+        return baseRecord.getInterval(col);
     }
 
     @Override
@@ -275,43 +233,30 @@ public class UnnestRecord implements Record {
         return sources.getQuick(srcIdx).getLong(srcCol, arrayIndex);
     }
 
+    // LONG128, LONG256 are not supported unnest column types; col is always a base table column.
     @Override
     public long getLong128Hi(int col) {
-        if (col < split) {
-            return baseRecord.getLong128Hi(col);
-        }
-        return Numbers.LONG_NULL;
+        return baseRecord.getLong128Hi(col);
     }
 
     @Override
     public long getLong128Lo(int col) {
-        if (col < split) {
-            return baseRecord.getLong128Lo(col);
-        }
-        return Numbers.LONG_NULL;
+        return baseRecord.getLong128Lo(col);
     }
 
     @Override
     public void getLong256(int col, CharSink<?> sink) {
-        if (col < split) {
-            baseRecord.getLong256(col, sink);
-        }
+        baseRecord.getLong256(col, sink);
     }
 
     @Override
     public Long256 getLong256A(int col) {
-        if (col < split) {
-            return baseRecord.getLong256A(col);
-        }
-        return Long256Impl.NULL_LONG256;
+        return baseRecord.getLong256A(col);
     }
 
     @Override
     public Long256 getLong256B(int col) {
-        if (col < split) {
-            return baseRecord.getLong256B(col);
-        }
-        return Long256Impl.NULL_LONG256;
+        return baseRecord.getLong256B(col);
     }
 
     @Override
@@ -363,20 +308,15 @@ public class UnnestRecord implements Record {
         return sources.getQuick(srcIdx).getStrLen(srcCol, arrayIndex);
     }
 
+    // SYMBOL is not a supported unnest column type; col is always a base table column.
     @Override
     public CharSequence getSymA(int col) {
-        if (col < split) {
-            return baseRecord.getSymA(col);
-        }
-        return null;
+        return baseRecord.getSymA(col);
     }
 
     @Override
     public CharSequence getSymB(int col) {
-        if (col < split) {
-            return baseRecord.getSymB(col);
-        }
-        return null;
+        return baseRecord.getSymB(col);
     }
 
     @Override
