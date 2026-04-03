@@ -1114,11 +1114,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (candidate == null) {
-            // no signature match
+            // no signature match — find the best descriptor for a helpful error message
             if (overload.size() == 1) {
-                // there is only one possible signature, lets help the user out
-                // with a useful error message
                 candidateDescriptor = overload.getQuick(0);
+            } else {
+                // multiple overloads: filter by context (window vs group-by) to find the relevant one
+                FunctionFactoryDescriptor contextMatch = null;
+                int contextMatchCount = 0;
+                for (int i = 0, n = overload.size(); i < n; i++) {
+                    FunctionFactoryDescriptor d = overload.getQuick(i);
+                    if (isWindowContext == d.getFactory().isWindow()) {
+                        contextMatch = d;
+                        contextMatchCount++;
+                    }
+                }
+                if (contextMatchCount == 1) {
+                    candidateDescriptor = contextMatch;
+                }
             }
             throw invalidArgument(node, args, argPositions, candidateDescriptor);
         }

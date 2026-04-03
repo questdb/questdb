@@ -38,6 +38,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -62,63 +63,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
     private static final ArrayColumnTypes BIVAR_COLUMN_TYPES;
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES;
-
-    // Naive sum-of-products formula, used by sliding-window (removable) frames.
-    static double computeCorr(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count) {
-        if (count <= 1) {
-            return Double.NaN;
-        }
-        double cXY = sumXY - sumX * sumY / count;
-        double cXX = sumXX - sumX * sumX / count;
-        double cYY = sumYY - sumY * sumY / count;
-        if (cXX < 0) {
-            cXX = 0;
-        }
-        if (cYY < 0) {
-            cYY = 0;
-        }
-        double denom = Math.sqrt(cXX * cYY);
-        return denom == 0.0 ? Double.NaN : cXY / denom;
-    }
-
-    // Welford's online algorithm result for correlation.
-    static double computeCorrWelford(double sumXY, double sumXX, double sumYY, long count) {
-        if (count <= 1) {
-            return Double.NaN;
-        }
-        if (sumXX < 0) {
-            sumXX = 0;
-        }
-        if (sumYY < 0) {
-            sumYY = 0;
-        }
-        double denom = Math.sqrt(sumXX * sumYY);
-        return denom == 0.0 ? Double.NaN : sumXY / denom;
-    }
-
-    // Naive sum-of-products formula for covariance, used by sliding-window (removable) frames.
-    static double computeCovar(double sumXY, double sumX, double sumY, long count, boolean isSample) {
-        long denom = isSample ? count - 1 : count;
-        if (denom <= 0) {
-            return Double.NaN;
-        }
-        return (sumXY - sumX * sumY / count) / denom;
-    }
-
-    // Welford's online algorithm result for covariance.
-    static double computeCovarWelford(double sumXY, long count, boolean isSample) {
-        long denom = isSample ? count - 1 : count;
-        if (denom <= 0) {
-            return Double.NaN;
-        }
-        return sumXY / denom;
-    }
-
-    protected abstract boolean isCorrelation();
-
-    protected abstract boolean isSample();
-
-    protected abstract String name();
 
     @Override
     public Function newInstance(
@@ -145,6 +89,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {
+            Misc.free(argX);
             return new DoubleNullFunction(
                     argY,
                     name,
@@ -376,6 +321,71 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
+    private static double computeResultNaive(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count, boolean isCorrelation, boolean isSample) {
+        if (isCorrelation) {
+            return computeCorr(sumXY, sumXX, sumYY, sumX, sumY, count);
+        } else {
+            return computeCovar(sumXY, sumX, sumY, count, isSample);
+        }
+    }
+
+    // Naive sum-of-products formula, used by sliding-window (removable) frames.
+    static double computeCorr(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count) {
+        if (count <= 1) {
+            return Double.NaN;
+        }
+        double cXY = sumXY - sumX * sumY / count;
+        double cXX = sumXX - sumX * sumX / count;
+        double cYY = sumYY - sumY * sumY / count;
+        if (cXX < 0) {
+            cXX = 0;
+        }
+        if (cYY < 0) {
+            cYY = 0;
+        }
+        double denom = Math.sqrt(cXX * cYY);
+        return denom == 0.0 ? Double.NaN : cXY / denom;
+    }
+
+    // Welford's online algorithm result for correlation.
+    static double computeCorrWelford(double sumXY, double sumXX, double sumYY, long count) {
+        if (count <= 1) {
+            return Double.NaN;
+        }
+        if (sumXX < 0) {
+            sumXX = 0;
+        }
+        if (sumYY < 0) {
+            sumYY = 0;
+        }
+        double denom = Math.sqrt(sumXX * sumYY);
+        return denom == 0.0 ? Double.NaN : sumXY / denom;
+    }
+
+    // Naive sum-of-products formula for covariance, used by sliding-window (removable) frames.
+    static double computeCovar(double sumXY, double sumX, double sumY, long count, boolean isSample) {
+        long denom = isSample ? count - 1 : count;
+        if (denom <= 0) {
+            return Double.NaN;
+        }
+        return (sumXY - sumX * sumY / count) / denom;
+    }
+
+    // Welford's online algorithm result for covariance.
+    static double computeCovarWelford(double sumXY, long count, boolean isSample) {
+        long denom = isSample ? count - 1 : count;
+        if (denom <= 0) {
+            return Double.NaN;
+        }
+        return sumXY / denom;
+    }
+
+    protected abstract boolean isCorrelation();
+
+    protected abstract boolean isSample();
+
+    protected abstract String name();
+
     // (rows between current row and current row) processes a 1-element set.
     // covar_pop returns 0.0 (both finite), covar_samp returns NaN, corr always returns NaN.
     static class BivarStatOverCurrentRowFunction extends BaseWindowFunction implements WindowDoubleFunction {
@@ -417,6 +427,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            argX.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return value;
         }
@@ -432,9 +448,28 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            argX.init(symbolTableSource, executionContext);
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(name);
+            sink.val('(').val(argY).val(',').val(argX).val(')');
+            sink.val(" over (rows between current row and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            argX.toTop();
         }
     }
 
@@ -471,6 +506,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            argX.cursorClosed();
+        }
+
+        @Override
         public String getName() {
             return name;
         }
@@ -478,6 +519,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -546,6 +593,22 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 }
                 value.putDouble(0, result);
             }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(name);
+            sink.val('(').val(argY).val(',').val(argX).val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            argX.toTop();
         }
     }
 
@@ -799,6 +862,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            argX.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -811,6 +880,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -857,6 +932,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
+            argX.toTop();
             memory.truncate();
             freeList.clear();
         }
@@ -1032,6 +1108,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            argX.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1044,6 +1126,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1090,6 +1178,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
+            argX.toTop();
             memory.truncate();
         }
     }
@@ -1300,6 +1389,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            argX.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1312,6 +1407,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1364,6 +1465,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
+            argX.toTop();
             result = Double.NaN;
             capacity = initialCapacity;
             memory.truncate();
@@ -1496,6 +1598,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            argX.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1508,6 +1616,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1548,7 +1662,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sink.val(getName());
             sink.val('(').val(argY).val(',').val(argX).val(')');
             sink.val(" over (");
-            sink.val(" rows between ");
+            sink.val("rows between ");
             if (frameLoBounded) {
                 sink.val(bufferSize);
             } else {
@@ -1566,6 +1680,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
+            argX.toTop();
             result = Double.NaN;
             count = 0;
             loIdx = 0;
@@ -1680,6 +1795,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            argX.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1692,6 +1813,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1708,6 +1835,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            argX.toTop();
         }
     }
 
@@ -1765,6 +1898,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            argX.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1777,6 +1916,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1807,6 +1952,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
+            argX.toTop();
             result = Double.NaN;
             count = 0;
             meanX = 0.0;
@@ -1849,6 +1995,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            argX.cursorClosed();
+        }
+
+        @Override
         public String getName() {
             return name;
         }
@@ -1856,6 +2008,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1901,8 +2059,16 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(name);
+            sink.val('(').val(argY).val(',').val(argX).val(')');
+            sink.val(" over ()");
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
+            argX.toTop();
             count = 0;
             result = Double.NaN;
             meanX = 0.0;
@@ -1910,14 +2076,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sumXX = 0.0;
             sumYY = 0.0;
             sumXY = 0.0;
-        }
-    }
-
-    private static double computeResultNaive(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count, boolean isCorrelation, boolean isSample) {
-        if (isCorrelation) {
-            return computeCorr(sumXY, sumXX, sumYY, sumX, sumY, count);
-        } else {
-            return computeCovar(sumXY, sumX, sumY, count, isSample);
         }
     }
 

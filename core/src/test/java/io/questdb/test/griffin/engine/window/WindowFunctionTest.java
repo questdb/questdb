@@ -50,11 +50,11 @@ import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
 import io.questdb.griffin.engine.functions.window.StdDevDoubleWindowFunctionFactory;
-import io.questdb.griffin.engine.functions.window.StdDevPopDoubleWindowFunctionFactory;
-import io.questdb.griffin.engine.functions.window.StdDevSampDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CorrDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CovarPopDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.CovarSampDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.StdDevPopDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.StdDevSampDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.VarDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.VarPopDoubleWindowFunctionFactory;
@@ -10805,7 +10805,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertSql(
                     "QUERY PLAN\n" +
                             "Window\n" +
-                            "  functions: [stddev_pop(val) over ( rows between 3 preceding and current row)]\n" +
+                            "  functions: [stddev_pop(val) over (rows between 3 preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
@@ -11113,7 +11113,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
                             "covar_pop(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv_ref " +
                             "from tab" +
-                            ") where cv is not null"
+                            ")"
             );
         });
     }
@@ -11232,6 +11232,339 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select corr(y, x) over (order by ts groups between 1 preceding and current row) from tab",
                     -1,
                     "function not implemented for given window parameters",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCorrRejectsFollowingFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select corr(y, x) over (order by ts rows between 1 following and 2 following) from tab",
+                    -1,
+                    "frame start supports UNBOUNDED PRECEDING",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopToPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+
+            String tenSeconds = timestampType == TestTimestampType.MICRO ? "10000000" : "10000000000";
+
+            // partition + range frame
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [covar_pop(y,x) over (partition by [i] range between " + tenSeconds + " preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, i, covar_pop(y, x) over (partition by i order by ts range between 10 second preceding and current row) from tab"
+            );
+
+            // partition + rows frame
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [covar_pop(y,x) over (partition by [i] rows between 3 preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, i, covar_pop(y, x) over (partition by i order by ts rows between 3 preceding and current row) from tab"
+            );
+
+            // no partition + rows frame
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Window\n" +
+                            "  functions: [covar_pop(y,x) over (rows between 3 preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n",
+                    "explain select ts, covar_pop(y, x) over (order by ts rows between 3 preceding and current row) from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopOverWholeResultSet() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "covar_pop(y, x) over () cv, " +
+                            "(avg(x * y) over () - avg(x) over () * avg(y) over ()) cv_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopOverPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
+
+            assertSql(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcv
+                            1970-01-01T00:00:00.000001Z\t1\t1.3333333333333333
+                            1970-01-01T00:00:00.000002Z\t1\t1.3333333333333333
+                            1970-01-01T00:00:00.000003Z\t1\t1.3333333333333333
+                            1970-01-01T00:00:00.000004Z\t2\t0.5
+                            1970-01-01T00:00:00.000005Z\t2\t0.5
+                            """),
+                    "select ts, i, covar_pop(y, x) over (partition by i) cv from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopOverPartitionRunning() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0, 2.0), (2, 1, 2.0, 4.0), (3, 1, 3.0, 6.0), (4, 2, 10.0, 20.0), (5, 2, 11.0, 22.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "covar_pop(y, x) over (partition by i order by ts) cv, " +
+                            "(avg(x * y) over (partition by i order by ts) - avg(x) over (partition by i order by ts) * avg(y) over (partition by i order by ts)) cv_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopOverOrderByRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "covar_pop(y, x) over (order by ts range between 10 microseconds preceding and current row) cv, " +
+                            "(avg(x * y) over (order by ts range between 10 microseconds preceding and current row) - " +
+                            "avg(x) over (order by ts range between 10 microseconds preceding and current row) * " +
+                            "avg(y) over (order by ts range between 10 microseconds preceding and current row)) cv_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopOverOrderByRowsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 5.0), (4, 4.0, 8.0), (5, 5.0, 10.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select " +
+                            "covar_pop(y, x) over (order by ts rows between 2 preceding and current row) cv, " +
+                            "(avg(x * y) over (order by ts rows between 2 preceding and current row) - " +
+                            "avg(x) over (order by ts rows between 2 preceding and current row) * " +
+                            "avg(y) over (order by ts rows between 2 preceding and current row)) cv_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopUnboundedPrecedingRangeFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "('1970-01-01T00:00:01', 1.0, 2.0), " +
+                    "('1970-01-01T00:00:02', 2.0, 4.0), " +
+                    "('1970-01-01T00:00:03', 3.0, 6.0), " +
+                    "('1970-01-01T00:00:04', 4.0, 8.0), " +
+                    "('1970-01-01T00:00:05', 5.0, 10.0)");
+
+            assertSql(
+                    replaceTimestampSuffix("""
+                            ts\tcv
+                            1970-01-01T00:00:01.000000Z\tnull
+                            1970-01-01T00:00:02.000000Z\t0.0
+                            1970-01-01T00:00:03.000000Z\t0.5
+                            1970-01-01T00:00:04.000000Z\t1.3333333333333333
+                            1970-01-01T00:00:05.000000Z\t2.5
+                            """),
+                    "select ts, covar_pop(y, x) over (order by ts range between unbounded preceding and 2 microseconds preceding) cv from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopBoundedRangeFrameWithEviction() throws Exception {
+        // Covers the frameLoBounded eviction path in both partitioned and non-partitioned range frame
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "('1970-01-01T00:00:01', 1, 1.0, 2.0), " +
+                    "('1970-01-01T00:00:02', 1, 2.0, 4.0), " +
+                    "('1970-01-01T00:00:03', 1, 3.0, 6.0), " +
+                    "('1970-01-01T00:00:04', 1, 4.0, 8.0), " +
+                    "('1970-01-01T00:00:05', 1, 5.0, 10.0)");
+
+            // non-partitioned: RANGE BETWEEN 2 second PRECEDING AND CURRENT ROW — evicts old rows
+            assertSql(
+                    """
+                            cnt
+                            5
+                            """,
+                    "select count(*) cnt from (" +
+                            "select covar_pop(y, x) over (order by ts range between 2 second preceding and current row) cv from tab" +
+                            ") where cv is not null"
+            );
+
+            // partitioned: same with partition by
+            assertSql(
+                    """
+                            cnt
+                            5
+                            """,
+                    "select count(*) cnt from (" +
+                            "select covar_pop(y, x) over (partition by i order by ts range between 2 second preceding and current row) cv from tab" +
+                            ") where cv is not null"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopPartitionedUnboundedPrecedingRangeFrame() throws Exception {
+        // Covers the !frameLoBounded path in BivarStatOverPartitionRangeFrameFunction
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "('1970-01-01T00:00:01', 1, 1.0, 2.0), " +
+                    "('1970-01-01T00:00:02', 1, 2.0, 4.0), " +
+                    "('1970-01-01T00:00:03', 1, 3.0, 6.0), " +
+                    "('1970-01-01T00:00:04', 2, 10.0, 20.0), " +
+                    "('1970-01-01T00:00:05', 2, 11.0, 22.0), " +
+                    "('1970-01-01T00:00:06', 2, 12.0, 24.0)");
+
+            assertSql(
+                    """
+                            cnt
+                            4
+                            """,
+                    "select count(*) cnt from (" +
+                            "select covar_pop(y, x) over (partition by i order by ts range between unbounded preceding and 2 microseconds preceding) cv from tab" +
+                            ") where cv is not null"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopRangeFrameBufferExpansion() throws Exception {
+        // Force ring buffer expansion in bivariate range frame classes
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 256);
+        try {
+            assertMemoryLeak(() -> {
+                executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+                // RECORD_SIZE = Long.BYTES + 2*Double.BYTES = 24; pageSize=256 → capacity=10
+                execute("insert into tab select (x * 1000000)::timestamp, x % 2, x::double, (x * 2)::double from long_sequence(30)");
+
+                // non-partitioned: 30 rows > capacity 10 → inline buffer doubling
+                assertSql(
+                        """
+                                cnt
+                                30
+                                """,
+                        "select count(*) cnt from (" +
+                                "select covar_pop(y, x) over (order by ts range between 100 second preceding and current row) cv from tab" +
+                                ") where cv is not null"
+                );
+
+                // partitioned: 15 rows per partition > capacity 10 → expandRingBuffer
+                assertSql(
+                        """
+                                cnt
+                                30
+                                """,
+                        "select count(*) cnt from (" +
+                                "select covar_pop(y, x) over (partition by i order by ts range between 100 second preceding and current row) cv from tab" +
+                                ") where cv is not null"
+                );
+            });
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
+        }
+    }
+
+    @Test
+    public void testCovarRejectsRangeOnNonDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, x double, y double)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select covar_pop(y, x) over (order by ts range between 1 microsecond preceding and current row) from nodts",
+                    -1,
+                    "RANGE is supported only for queries ordered by designated timestamp",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCovarRejectsFollowingFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select covar_pop(y, x) over (order by ts rows between 1 following and 2 following) from tab",
+                    -1,
+                    "frame start supports UNBOUNDED PRECEDING",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCorrRejectsRangeOnNonDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, x double, y double)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select corr(y, x) over (order by ts range between 1 microsecond preceding and current row) from nodts",
+                    -1,
+                    "RANGE is supported only for queries ordered by designated timestamp",
                     sqlExecutionContext
             );
         });

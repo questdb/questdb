@@ -382,6 +382,13 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(name);
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (rows between current row and current row)");
+        }
     }
 
     // Handles stddev() over (partition by x), order by absent or whole-partition frame.
@@ -1294,7 +1301,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
-            sink.val(" rows between ");
+            sink.val("rows between ");
             if (frameLoBounded) {
                 sink.val(bufferSize);
             } else {
