@@ -40,8 +40,8 @@ import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -81,7 +81,7 @@ public class SqlUtil {
     private static final ThreadLocal<Long256ConstantFactory> LONG256_FACTORY = new ThreadLocal<>(Long256ConstantFactory::new);
 
     public static void addSelectStar(
-            QueryModel model,
+            IQueryModel model,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
@@ -101,11 +101,11 @@ public class SqlUtil {
     }
 
     public static void collectAllTableAndViewNames(
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             @NotNull ObjList<CharSequence> outTableNames,
             boolean viewsOnly
     ) {
-        QueryModel m = model;
+        IQueryModel m = model;
         do {
             if (!viewsOnly) {
                 final ExpressionNode tableNameExpr = m.getTableNameExpr();
@@ -119,16 +119,16 @@ public class SqlUtil {
                 outTableNames.add(unquote(viewNameExpr.token));
             }
 
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
+                final IQueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel == m) {
                     continue;
                 }
                 collectAllTableAndViewNames(joinModel, outTableNames, viewsOnly);
             }
 
-            final QueryModel unionModel = m.getUnionModel();
+            final IQueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
                 collectAllTableAndViewNames(unionModel, outTableNames, viewsOnly);
             }
@@ -138,11 +138,11 @@ public class SqlUtil {
     }
 
     public static void collectAllTableNames(
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceHashSet outTableNames,
             @Nullable IntList outTableNamePositions
     ) {
-        QueryModel m = model;
+        IQueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
@@ -151,16 +151,16 @@ public class SqlUtil {
                 }
             }
 
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
+                final IQueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel == m) {
                     continue;
                 }
                 collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
             }
 
-            final QueryModel unionModel = m.getUnionModel();
+            final IQueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
                 collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
             }
@@ -171,10 +171,10 @@ public class SqlUtil {
 
     public static void collectTableAndColumnReferences(
             @NotNull CairoEngine engine,
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
-        QueryModel m = model;
+        IQueryModel m = model;
         do {
             // Process columns in SELECT clause
             final ObjList<QueryColumn> columns = m.getColumns();
@@ -232,9 +232,9 @@ public class SqlUtil {
             }
 
             // Process join models
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
+                final IQueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel != m) {
                     collectColumnReferencesFromJoinColumns(engine, joinModel.getJoinColumns(), m, depMap);
                     collectTableAndColumnReferences(engine, joinModel, depMap);
@@ -242,7 +242,7 @@ public class SqlUtil {
             }
 
             // Process union models
-            final QueryModel unionModel = m.getUnionModel();
+            final IQueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
                 collectTableAndColumnReferences(engine, unionModel, depMap);
             }
@@ -596,7 +596,7 @@ public class SqlUtil {
     }
 
     public static RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
-        final QueryModel queryModel = model.getQueryModel();
+        final IQueryModel queryModel = model.getQueryModel();
         assert queryModel != null;
         return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
     }
@@ -1187,11 +1187,11 @@ public class SqlUtil {
         }
     }
 
-    public static boolean isNotPlainSelectModel(QueryModel model) {
+    public static boolean isNotPlainSelectModel(IQueryModel model) {
         return model.getTableName() != null
                 || model.getGroupBy().size() > 0
                 || model.getJoinModels().size() > 1
-                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
+                || model.getLatestByType() != IQueryModel.LATEST_BY_NONE
                 || model.getUnionModel() != null;
     }
 
@@ -1208,12 +1208,12 @@ public class SqlUtil {
      * Returns true if the model stands for a SELECT ... FROM tab; or a SELECT ... FROM tab WHERE ...; query.
      * We're aiming for potential page frame support with this check.
      */
-    public static boolean isPlainSelect(QueryModel model) {
+    public static boolean isPlainSelect(IQueryModel model) {
         while (model != null) {
-            if (model.getSelectModelType() != QueryModel.SELECT_MODEL_NONE
+            if (model.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE
                     || model.getGroupBy().size() > 0
                     || model.getJoinModels().size() > 1
-                    || model.getLatestByType() != QueryModel.LATEST_BY_NONE
+                    || model.getLatestByType() != IQueryModel.LATEST_BY_NONE
                     || model.getUnionModel() != null) {
                 return false;
             }
@@ -1331,7 +1331,7 @@ public class SqlUtil {
     private static void collectColumnReferencesFromExpression(
             @NotNull CairoEngine engine,
             @NotNull ExpressionNode expr,
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
         // Handle column literals (e.g., table.column or column)
@@ -1347,7 +1347,7 @@ public class SqlUtil {
                         addDependency(depMap, tableName, columnName);
                     }
                 } else {
-                    final QueryModel nestedModel = model.getNestedModel();
+                    final IQueryModel nestedModel = model.getNestedModel();
                     final CharSequence tableName = nestedModel != null ? nestedModel.getTableName() : model.getTableName();
                     if (tableName != null && engine.getTableTokenIfExists(tableName) != null) {
                         addDependency(depMap, tableName.toString(), expr.token.toString());
@@ -1373,7 +1373,7 @@ public class SqlUtil {
     private static void collectColumnReferencesFromJoinColumns(
             @NotNull CairoEngine engine,
             @NotNull ObjList<ExpressionNode> joinColumns,
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap
     ) {
         for (int i = 0, n = joinColumns.size(); i < n; i++) {

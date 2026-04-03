@@ -69,7 +69,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public int paramCount;
     public int position;
     public int precedence;
-    public QueryModel queryModel;
+    public IQueryModel queryModel;
     public ExpressionNode rhs;
     public CharSequence token;
     public int type;
@@ -94,7 +94,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static boolean compareNodesGroupBy(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
-            QueryModel translatingModel
+            IQueryModel translatingModel
     ) {
         if (groupByExpr == null && columnExpr == null) {
             return true;
@@ -631,7 +631,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     private static boolean compareArgs(
             ExpressionNode groupByExpr,
             ExpressionNode columnExpr,
-            QueryModel translatingModel
+            IQueryModel translatingModel
     ) {
         final int groupByArgsSize = groupByExpr.args.size();
         final int selectNodeArgsSize = columnExpr.args.size();

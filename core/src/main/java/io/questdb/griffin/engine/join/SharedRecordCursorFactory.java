@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 /**
  * Thin wrapper that delegates to a shared factory's materialized data
  * via {@link RecordCursorFactory#getSharedCursor(SqlExecutionContext, int)}.
- * Multiple instances with different consumer IDs share the same underlying
+ * Multiple instances with different shardIds share the same underlying
  * execution without re-scanning the base data.
  */
 public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {

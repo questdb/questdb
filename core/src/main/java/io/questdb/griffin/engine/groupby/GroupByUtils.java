@@ -64,8 +64,8 @@ import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -86,7 +86,7 @@ public class GroupByUtils {
     public static void assembleGroupByFunctions(
             @NotNull FunctionParser functionParser,
             @NotNull ArrayDeque<ExpressionNode> sqlNodeStack,
-            QueryModel model,
+            IQueryModel model,
             SqlExecutionContext executionContext,
             RecordMetadata baseMetadata,
             int timestampIndex,
@@ -423,7 +423,7 @@ public class GroupByUtils {
     // assembleGroupByFunctions must be called before this call to get the idea of how many map values
     // we will have. Map value count is needed to calculate offsets for map key columns.
     public static void prepareWorkerGroupByFunctions(
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             @NotNull RecordMetadata metadata,
             @NotNull FunctionParser functionParser,
             @NotNull SqlExecutionContext executionContext,
@@ -477,7 +477,7 @@ public class GroupByUtils {
 
     public static void validateGroupByColumns(
             @NotNull ArrayDeque<ExpressionNode> sqlNodeStack,
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             int inferredKeyColumnCount
     ) throws SqlException {
         final ObjList<ExpressionNode> groupByColumns = model.getGroupBy();
@@ -486,10 +486,10 @@ public class GroupByUtils {
             return;
         }
 
-        QueryModel chooseModel = model;
+        IQueryModel chooseModel = model;
         while (chooseModel != null
-                && chooseModel.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE
-                && chooseModel.getSelectModelType() != QueryModel.SELECT_MODEL_NONE) {
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_CHOOSE
+                && chooseModel.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
             chooseModel = chooseModel.getNestedModel();
         }
 
@@ -573,7 +573,7 @@ public class GroupByUtils {
 
     private static boolean compareNodesGroupByFunctionKey(
             ArrayDeque<ExpressionNode> sqlNodeStack,
-            QueryModel chooseModel,
+            IQueryModel chooseModel,
             ExpressionNode functionKey,
             ExpressionNode arg
     ) {
