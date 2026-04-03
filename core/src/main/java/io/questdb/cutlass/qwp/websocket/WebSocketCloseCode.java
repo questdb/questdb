@@ -29,21 +29,6 @@ package io.questdb.cutlass.qwp.websocket;
  */
 public final class WebSocketCloseCode {
     /**
-     * Going away (1001).
-     * The endpoint is going away, e.g., server shutting down or browser navigating away.
-     */
-    public static final int GOING_AWAY = 1001;
-    /**
-     * Internal server error (1011).
-     * The server encountered an unexpected condition that prevented it from fulfilling the request.
-     */
-    public static final int INTERNAL_ERROR = 1011;
-    /**
-     * Invalid frame payload data (1007).
-     * The endpoint received a message with invalid payload data.
-     */
-    public static final int INVALID_PAYLOAD_DATA = 1007;
-    /**
      * Message too big (1009).
      * The endpoint received a message that is too big to process.
      */
