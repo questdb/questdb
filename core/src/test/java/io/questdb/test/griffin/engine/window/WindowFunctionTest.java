@@ -10897,6 +10897,43 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStdDevPopRangeFrameBufferExpansion() throws Exception {
+        // Reduce page size so that initial capacity is small enough to trigger buffer growth
+        // RECORD_SIZE = Long.BYTES + Double.BYTES = 16; pageSize=256 → capacity=16
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 256);
+        try {
+            assertMemoryLeak(() -> {
+                executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+                execute("insert into tab select (x * 1000000)::timestamp, x % 2, x::double from long_sequence(50)");
+
+                // non-partitioned: 50 rows > capacity 16 → inline buffer doubling
+                assertSql(
+                        """
+                                cnt
+                                50
+                                """,
+                        "select count(*) cnt from (" +
+                                "select stddev_pop(val) over (order by ts range between 100 second preceding and current row) sd from tab" +
+                                ") where sd is not null"
+                );
+
+                // partitioned: 25 rows per partition > initial range buffer (32 default, but capacity=16 from pageSize) → expandRingBuffer
+                assertSql(
+                        """
+                                cnt
+                                50
+                                """,
+                        "select count(*) cnt from (" +
+                                "select stddev_pop(val) over (partition by i order by ts range between 100 second preceding and current row) sd from tab" +
+                                ") where sd is not null"
+                );
+            });
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 1024 * 1024);
+        }
+    }
+
+    @Test
     public void testStdDevResolvesToGroupByWithoutOver() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
