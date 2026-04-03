@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.qwp.udp;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
 import io.questdb.client.network.NetworkFacadeImpl;
-import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
 import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
@@ -52,32 +51,8 @@ import java.util.concurrent.TimeUnit;
 @RunWith(Parameterized.class)
 public class QwpUdpMalformedTest extends AbstractCairoTest {
 
-    private static final int VALID_MAGIC = 0x31505751;
-
-    @FunctionalInterface
-    interface ReceiverFactory {
-        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
-    }
-
     private static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
     private static final int PORT = 19_002;
-
-    private final ReceiverFactory receiverFactory;
-
-    public QwpUdpMalformedTest(String label, ReceiverFactory factory) {
-        this.receiverFactory = factory;
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        List<Object[]> params = new ArrayList<>();
-        params.add(new Object[]{"base", (ReceiverFactory) QwpUdpReceiver::new});
-        if (Os.isLinux()) {
-            params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
-        }
-        return params;
-    }
-
     private static final QwpUdpReceiverConfiguration NO_AUTO_CREATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -99,7 +74,6 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             return false;
         }
     };
-
     private static final QwpUdpReceiverConfiguration RCVR_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -116,6 +90,22 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             return false;
         }
     };
+    private static final int VALID_MAGIC = 0x31505751;
+    private final ReceiverFactory receiverFactory;
+
+    public QwpUdpMalformedTest(String label, ReceiverFactory factory) {
+        this.receiverFactory = factory;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        List<Object[]> params = new ArrayList<>();
+        params.add(new Object[]{"base", (ReceiverFactory) QwpUdpReceiver::new});
+        if (Os.isLinux()) {
+            params.add(new Object[]{"recvmmsg", (ReceiverFactory) LinuxMMQwpUdpReceiver::new});
+        }
+        return params;
+    }
 
     @Test
     public void testAutoCreateDisabledSkipsUnknownTable() throws Exception {
@@ -164,6 +154,11 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     public void testContinuesWhenReceiveBufferSizeFails() throws Exception {
         QwpUdpReceiverConfiguration rcvBufFail = new DefaultQwpUdpReceiverConfiguration() {
             @Override
+            public int getCommitRate() {
+                return 10;
+            }
+
+            @Override
             public io.questdb.network.NetworkFacade getNetworkFacade() {
                 return new io.questdb.network.NetworkFacadeImpl() {
                     @Override
@@ -171,11 +166,6 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                         return -1;
                     }
                 };
-            }
-
-            @Override
-            public int getCommitRate() {
-                return 10;
             }
 
             @Override
@@ -729,5 +719,10 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                     .at(ts, ChronoUnit.MICROS);
             sender.flush();
         }
+    }
+
+    @FunctionalInterface
+    interface ReceiverFactory {
+        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
     }
 }

@@ -73,18 +73,6 @@ public class QwpBitWriter {
     }
 
     /**
-     * Finishes writing and returns the number of bytes written since reset.
-     * <p>
-     * This method flushes any remaining bits and returns the total byte count.
-     *
-     * @return bytes written since reset
-     */
-    public int finish() {
-        flush();
-        return (int) (currentAddress - startAddress);
-    }
-
-    /**
      * Flushes any remaining bits in the buffer to memory.
      * <p>
      * If there are partial bits (less than 8), they are written as the last byte

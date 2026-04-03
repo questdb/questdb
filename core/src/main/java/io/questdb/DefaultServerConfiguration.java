@@ -32,31 +32,30 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
-import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.metrics.DefaultMetricsConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 
 public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultCairoConfiguration cairoConfiguration;
+    private final WorkerPoolConfiguration exportPoolConfiguration;
     private final DefaultHttpServerConfiguration httpServerConfiguration;
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration;
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
-    private final DefaultQwpUdpReceiverConfiguration qwpUdpReceiverConfiguration = new DefaultQwpUdpReceiverConfiguration();
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration;
-    private final WorkerPoolConfiguration exportPoolConfiguration;
-    private final WorkerPoolConfiguration viewCompilerPoolConfiguration;
     private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGConfiguration pgWireConfiguration = new DefaultPGConfiguration();
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
+    private final DefaultQwpUdpReceiverConfiguration qwpUdpReceiverConfiguration = new DefaultQwpUdpReceiverConfiguration();
     private final DefaultWorkerPoolConfiguration sharedPoolNetworkConfiguration;
     private final DefaultWorkerPoolConfiguration sharedPoolQueryConfiguration;
     private final DefaultWorkerPoolConfiguration sharedPoolWriteConfiguration;
+    private final WorkerPoolConfiguration viewCompilerPoolConfiguration;
     private final WorkerPoolConfiguration walApplyPoolConfiguration;
 
     public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
@@ -79,6 +78,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public CairoConfiguration getCairoConfiguration() {
         return cairoConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getExportPoolConfiguration() {
+        return exportPoolConfiguration;
     }
 
     @Override
@@ -107,23 +111,8 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
-        return qwpUdpReceiverConfiguration;
-    }
-
-    @Override
-    public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
-        return viewCompilerPoolConfiguration;
-    }
-
-    @Override
     public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
         return matViewRefreshPoolConfiguration;
-    }
-
-    @Override
-    public WorkerPoolConfiguration getExportPoolConfiguration() {
-        return exportPoolConfiguration;
     }
 
     @Override
@@ -152,6 +141,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
+        return qwpUdpReceiverConfiguration;
+    }
+
+    @Override
     public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
         return sharedPoolNetworkConfiguration;
     }
@@ -164,6 +158,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
         return sharedPoolWriteConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
+        return viewCompilerPoolConfiguration;
     }
 
     @Override

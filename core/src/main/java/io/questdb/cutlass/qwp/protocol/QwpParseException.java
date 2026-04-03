@@ -38,9 +38,8 @@ import org.jetbrains.annotations.Nullable;
 public class QwpParseException extends Exception implements Sinkable, FlyweightMessageContainer {
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<QwpParseException> tlException = new ThreadLocal<>(QwpParseException::new);
-
-    private ErrorCode errorCode;
     private final StringSink messageSink = new StringSink();
+    private ErrorCode errorCode;
 
     private QwpParseException() {
     }
@@ -61,6 +60,15 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
         return instance(ErrorCode.INCOMPLETE_VARINT).put("incomplete varint: buffer underflow");
     }
 
+    public static QwpParseException instance(ErrorCode errorCode) {
+        QwpParseException exception = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (exception = new QwpParseException()) != null;
+        exception.errorCode = errorCode;
+        exception.messageSink.clear();
+        return exception;
+    }
+
     public static QwpParseException invalidMagic() {
         return instance(ErrorCode.INVALID_MAGIC).put("invalid magic bytes");
     }
@@ -75,15 +83,6 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
 
     public static QwpParseException varintOverflow() {
         return instance(ErrorCode.VARINT_OVERFLOW).put("varint overflow: too many continuation bytes");
-    }
-
-    public static QwpParseException instance(ErrorCode errorCode) {
-        QwpParseException exception = tlException.get();
-        // This is to have correct stack trace in local debugging with -ea option
-        assert (exception = new QwpParseException()) != null;
-        exception.errorCode = errorCode;
-        exception.messageSink.clear();
-        return exception;
     }
 
     public ErrorCode getErrorCode() {
@@ -116,11 +115,6 @@ public class QwpParseException extends Exception implements Sinkable, FlyweightM
     }
 
     public QwpParseException put(long value) {
-        messageSink.put(value);
-        return this;
-    }
-
-    public QwpParseException put(char value) {
         messageSink.put(value);
         return this;
     }

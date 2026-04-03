@@ -56,7 +56,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     private int currentValueIndex;  // Index into non-null values
     // Wire pointers
     private long nullBitmapAddress;
-    private int rowCount;
     // Configuration
     private byte typeCode;
     private int valueCount;
@@ -86,7 +85,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         typeCode = 0;
-        rowCount = 0;
         valueCount = 0;
         valueSize = 0;
         nullBitmapAddress = 0;
@@ -242,7 +240,6 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
             byte typeCode
     ) throws QwpParseException {
         this.typeCode = typeCode;
-        this.rowCount = rowCount;
         this.valueSize = QwpConstants.getFixedTypeSize(typeCode);
 
         int offset = 0;
