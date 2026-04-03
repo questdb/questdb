@@ -1242,12 +1242,16 @@ public class TableReader implements Closeable, SymbolTableSource {
                     continue;
                 }
                 final int primaryIndex = getPrimaryColumnIndex(columnBase, i);
-                final MemoryCMR mem = columns.getQuick(primaryIndex);
-                if (mem != null && mem != NullMemoryCMR.INSTANCE && mem.addressOf(0) != 0) {
+                // For var-size columns the primary (data) pageAddress can be 0 when
+                // all values are inlined in the aux vector, so check the aux column.
+                final int checkIndex = ColumnType.isVarSize(metadata.getColumnType(i)) ? primaryIndex + 1 : primaryIndex;
+                final MemoryCMR mem = columns.getQuick(checkIndex);
+                if (mem != null && mem != NullMemoryCMR.INSTANCE && mem.isOpen()) {
                     continue; // already mapped
                 }
                 if (!hasNewColumns) {
                     final long nameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+                    //noinspection resource
                     pathGenNativePartition(partitionIndex, nameTxn);
                     hasNewColumns = true;
                 }
