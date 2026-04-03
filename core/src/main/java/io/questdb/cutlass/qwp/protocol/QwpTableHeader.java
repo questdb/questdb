@@ -132,24 +132,6 @@ public class QwpTableHeader {
     }
 
     /**
-     * Computes the encoded size in bytes for this header.
-     *
-     * @return encoded size
-     */
-    public int encodedSize() {
-        int nameLen;
-        if (tableNameUtf8.size() > 0) {
-            nameLen = tableNameUtf8.size();
-        } else {
-            nameLen = getTableName().getBytes(StandardCharsets.UTF_8).length;
-        }
-        return QwpVarint.encodedLength(nameLen) +
-                nameLen +
-                QwpVarint.encodedLength(rowCount) +
-                QwpVarint.encodedLength(columnCount);
-    }
-
-    /**
      * Gets the number of bytes consumed during parsing.
      */
     public int getBytesConsumed() {

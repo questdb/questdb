@@ -165,7 +165,7 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     public void testWriteCloseFrameWithEmptyReason() {
         long buf = allocateBuffer(32);
         try {
-            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, 1000, "");
+            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1000, "");
 
             // Should have header (2) + code (2) = 4
             Assert.assertEquals(4, totalLen);
@@ -182,7 +182,7 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
     public void testWriteCloseFrameWithNullReason() {
         long buf = allocateBuffer(32);
         try {
-            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, 1000, null);
+            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1000, null);
 
             // Should have header (2) + code (2) = 4
             Assert.assertEquals(4, totalLen);
@@ -197,7 +197,7 @@ public class WebSocketFrameWriterTest extends AbstractWebSocketTest {
         try {
             String reason = "Normal";
             byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
-            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, 1000, reason);
+            int totalLen = WebSocketFrameWriter.writeCloseFrame(buf, Integer.MAX_VALUE, 1000, reason);
 
             // Verify header byte (FIN + CLOSE)
             Assert.assertEquals((byte) 0x88, Unsafe.getUnsafe().getByte(buf));

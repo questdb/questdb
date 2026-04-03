@@ -80,24 +80,6 @@ public final class WebSocketFrameWriter {
     }
 
     /**
-     * Writes a complete Close frame to the buffer.
-     *
-     * @param buf    the buffer to write to
-     * @param code   the close status code
-     * @param reason the close reason (may be null)
-     * @return the total number of bytes written (header + payload)
-     */
-    public static int writeCloseFrame(long buf, int code, String reason) {
-        byte[] reasonBytes = encodeReason(reason);
-        int payloadLen = 2 + reasonBytes.length;
-
-        int headerLen = writeHeader(buf, true, WebSocketOpcode.CLOSE, payloadLen, false);
-        int payloadOffset = writeClosePayload(buf + headerLen, code, reasonBytes);
-
-        return headerLen + payloadOffset;
-    }
-
-    /**
      * Writes a complete Close frame to the buffer if it fits.
      *
      * @param buf        the buffer to write to
