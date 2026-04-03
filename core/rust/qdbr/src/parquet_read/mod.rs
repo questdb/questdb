@@ -8,6 +8,7 @@ pub mod decoders;
 pub mod jni;
 pub mod meta;
 pub mod page;
+pub mod parquet_meta_decode;
 pub mod row_groups;
 pub mod slicer;
 

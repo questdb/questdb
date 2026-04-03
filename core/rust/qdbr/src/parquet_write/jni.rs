@@ -7,7 +7,7 @@ use crate::parquet_write::update::ParquetUpdater;
 use qdb_core::col_type::ColumnType;
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read as _, Seek, Write};
 use std::ops::Sub;
 use std::path::Path;
 use std::slice;
@@ -568,11 +568,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                     parquet_file_size
                 )
             })? as u32;
-        let schema_columns = chunked.schema().columns();
-
         let col_infos = build_column_infos_from_partition(
             &partition,
-            schema_columns,
+            chunked.schema().columns(),
             sorting_columns.as_deref(),
         );
         let sorting_col_indices: Vec<u32> = sorting_columns
@@ -589,15 +587,31 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .map(|i| i as i32)
             .unwrap_or(-1);
 
+        // Snapshot schema columns and row groups, then release the mutable
+        // borrow on `file` held by `chunked` so we can read bloom filter data.
+        let schema_columns = chunked.schema().columns().to_vec();
+        let row_groups = chunked.row_groups().to_vec();
+        drop(chunked);
+
+        // Read the parquet file back for bloom filter bitset extraction.
+        file.seek(std::io::SeekFrom::Start(0))
+            .map_err(crate::parquet::error::ParquetError::from)
+            .context("seek parquet file for bloom filter extraction")?;
+        let mut parquet_data = vec![0u8; parquet_file_size as usize];
+        file.read_exact(&mut parquet_data)
+            .map_err(crate::parquet::error::ParquetError::from)
+            .context("read parquet file for bloom filter extraction")?;
+
         let (parquet_meta_bytes, _pm_footer_offset) =
             crate::parquet_metadata::generate_parquet_metadata(
                 &col_infos,
-                schema_columns,
-                chunked.row_groups(),
+                &schema_columns,
+                &row_groups,
                 designated_ts,
                 &sorting_col_indices,
                 footer_offset,
                 footer_length,
+                &parquet_data,
             )
             .context("generate_parquet_metadata failed")?;
 

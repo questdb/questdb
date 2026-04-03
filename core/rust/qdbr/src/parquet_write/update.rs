@@ -790,18 +790,18 @@ impl ParquetUpdater {
                         file_size
                     )
                 })? as u32;
-            let thrift_row_groups = self.parquet_file.row_groups();
-            let schema_columns = self.file_metadata.schema_descr.columns();
+            let schema_columns = self.parquet_file.schema().columns().to_vec();
 
+            // Use the parquet file's sorting columns (set at construction with
+            // the target timestamp index), not the old file metadata which may
+            // have stale column indices after set_target_schema().
             let sorting_cols: Vec<parquet2::metadata::SortingColumn> = self
-                .file_metadata
-                .row_groups
-                .first()
-                .and_then(|rg| rg.sorting_columns().as_ref())
-                .cloned()
-                .unwrap_or_default();
+                .parquet_file
+                .sorting_columns()
+                .unwrap_or_default()
+                .to_vec();
             let col_infos =
-                build_column_infos_from_qdb_meta(&qdb_meta, schema_columns, &sorting_cols);
+                build_column_infos_from_qdb_meta(&qdb_meta, &schema_columns, &sorting_cols);
             let sorting_indices: Vec<u32> =
                 sorting_cols.iter().map(|sc| sc.column_idx as u32).collect();
             let designated_ts = qdb_meta
@@ -812,15 +812,36 @@ impl ParquetUpdater {
                 .unwrap_or(-1);
 
             if self.is_rewrite || self.existing_parquet_meta_file_size <= 0 {
+                // Read the parquet file for bloom filter bitset extraction.
+                // For rewrite, the writer fd has the new file; for update,
+                // the reader fd has the (now-updated) data.
+                let parquet_data = {
+                    let pq_fd = if self.is_rewrite {
+                        self.parquet_file.writer_mut()
+                    } else {
+                        &mut self.reader
+                    };
+                    pq_fd.seek(SeekFrom::Start(0)).map_err(ParquetError::from)?;
+                    let mut buf = vec![0u8; file_size as usize];
+                    pq_fd
+                        .read_exact(&mut buf)
+                        .map_err(ParquetError::from)
+                        .context("could not read parquet file for bloom filter extraction")?;
+                    buf
+                };
+                // Re-borrow after the mutable borrow of writer_mut is released.
+                let thrift_row_groups = self.parquet_file.row_groups();
+
                 // Full create: rewrite or first-time generation.
                 let (pm_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
                     &col_infos,
-                    schema_columns,
+                    &schema_columns,
                     thrift_row_groups,
                     designated_ts,
                     &sorting_indices,
                     footer_offset,
                     footer_length,
+                    &parquet_data,
                 )?;
                 self.result_parquet_meta_size = pm_bytes.len() as i64;
                 parquet_meta_file
@@ -828,6 +849,20 @@ impl ParquetUpdater {
                     .map_err(ParquetError::from)
                     .context("could not write _pm file")?;
             } else {
+                // Read the parquet file for bloom filter bitset extraction.
+                let parquet_data = {
+                    self.reader
+                        .seek(SeekFrom::Start(0))
+                        .map_err(ParquetError::from)?;
+                    let mut buf = vec![0u8; file_size as usize];
+                    self.reader
+                        .read_exact(&mut buf)
+                        .map_err(ParquetError::from)
+                        .context("could not read parquet file for bloom filter extraction")?;
+                    buf
+                };
+                let thrift_row_groups = self.parquet_file.row_groups();
+
                 // Incremental update: read existing _pm, append new/changed blocks.
                 let existing_size = self.parquet_meta_file_size;
                 let mut existing_pm = vec![0u8; existing_size as usize];
@@ -843,10 +878,11 @@ impl ParquetUpdater {
                     &existing_pm,
                     existing_size,
                     &col_infos,
-                    schema_columns,
+                    &schema_columns,
                     thrift_row_groups,
                     footer_offset,
                     footer_length,
+                    &parquet_data,
                 )?;
 
                 // Write: append after existing data, or full rewrite from offset 0.

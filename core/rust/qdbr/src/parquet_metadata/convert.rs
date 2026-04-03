@@ -30,8 +30,7 @@ use crate::parquet_metadata::column_chunk::ColumnChunkRaw;
 use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::{
-    encode_stat_sizes, BlockAlignedOffset, Codec, ColumnFlags, EncodingMask, FieldRepetition,
-    StatFlags,
+    encode_stat_sizes, Codec, ColumnFlags, EncodingMask, FieldRepetition, StatFlags,
 };
 use crate::parquet_metadata::writer::ParquetMetaWriter;
 use crate::parquet_read::decoders::int32::DayToMillisConverter;
@@ -220,6 +219,8 @@ struct BuiltChunk {
     raw: ColumnChunkRaw,
     ool_min: Option<Vec<u8>>,
     ool_max: Option<Vec<u8>>,
+    /// Bloom filter location in the parquet file (offset, length).
+    bloom_filter_parquet: Option<(u64, u32)>,
 }
 
 fn build_column_chunk(
@@ -236,17 +237,17 @@ fn build_column_chunk(
         .collect();
     let encodings = EncodingMask::from(p2_encodings.as_slice());
 
-    let bloom_filter_off = col_chunk
-        .metadata()
-        .bloom_filter_offset
-        .map(|off| BlockAlignedOffset::from_byte_offset(off.max(0) as u64))
-        .transpose()?
-        .unwrap_or(BlockAlignedOffset::ZERO);
+    let bloom_filter_parquet = {
+        let m = col_chunk.metadata();
+        match (m.bloom_filter_offset, m.bloom_filter_length) {
+            (Some(off), Some(len)) if off > 0 && len > 0 => Some((off.max(0) as u64, len as u32)),
+            _ => None,
+        }
+    };
 
     let mut raw = ColumnChunkRaw::zeroed();
     raw.codec = codec as u8;
     raw.encodings = encodings.0;
-    raw.bloom_filter_off = bloom_filter_off;
     raw.num_values = col_chunk.num_values().max(0) as u64;
     raw.byte_range_start = byte_range_start;
     raw.total_compressed = total_compressed;
@@ -335,7 +336,7 @@ fn build_column_chunk(
         }
     }
 
-    Ok(BuiltChunk { raw, ool_min, ool_max })
+    Ok(BuiltChunk { raw, ool_min, ool_max, bloom_filter_parquet })
 }
 
 type RawStatValues = (Option<Vec<u8>>, Option<Vec<u8>>, Option<i64>);
@@ -535,17 +536,16 @@ fn build_column_chunk_from_thrift(
         .collect();
     let encodings = EncodingMask::from(p2_encodings.as_slice());
 
-    // Bloom filter offset.
-    let bloom_filter_off = meta
-        .bloom_filter_offset
-        .map(|off| BlockAlignedOffset::from_byte_offset(off.max(0) as u64))
-        .transpose()?
-        .unwrap_or(BlockAlignedOffset::ZERO);
+    // Bloom filter: capture parquet-file location so the caller can read the
+    // bitset and store it in the _pm out-of-line region.
+    let bloom_filter_parquet = match (meta.bloom_filter_offset, meta.bloom_filter_length) {
+        (Some(off), Some(len)) if off > 0 && len > 0 => Some((off.max(0) as u64, len as u32)),
+        _ => None,
+    };
 
     let mut raw = ColumnChunkRaw::zeroed();
     raw.codec = codec as u8;
     raw.encodings = encodings.0;
-    raw.bloom_filter_off = bloom_filter_off;
     raw.num_values = meta.num_values.max(0) as u64;
     raw.byte_range_start = byte_range_start;
     raw.total_compressed = total_compressed;
@@ -628,7 +628,7 @@ fn build_column_chunk_from_thrift(
         }
     }
 
-    Ok(BuiltChunk { raw, ool_min, ool_max })
+    Ok(BuiltChunk { raw, ool_min, ool_max, bloom_filter_parquet })
 }
 
 /// Column metadata needed to build a `_pm` header.
@@ -672,6 +672,7 @@ pub fn generate_parquet_metadata(
     sorting_columns: &[u32],
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
+    parquet_data: &[u8],
 ) -> ParquetResult<(Vec<u8>, u64)> {
     let mut writer = ParquetMetaWriter::new();
     writer.designated_timestamp(designated_timestamp);
@@ -705,6 +706,7 @@ pub fn generate_parquet_metadata(
             thrift_rg,
             schema_columns,
             &col_type_tags,
+            parquet_data,
         )?;
         writer.add_row_group(block);
     }
@@ -720,6 +722,7 @@ pub fn generate_parquet_metadata(
 /// new footer are appended.
 ///
 /// Returns a `ParquetMetaUpdateResult` describing what to write and where.
+#[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_pm: &[u8],
     existing_pm_file_size: u64,
@@ -728,6 +731,7 @@ pub fn update_parquet_metadata(
     thrift_row_groups: &[parquet2::thrift_format::RowGroup],
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
+    parquet_data: &[u8],
 ) -> ParquetResult<ParquetMetaUpdateResult> {
     // Read the existing _pm to get row group fingerprints (byte_range_start of first column).
     let existing_reader = crate::parquet_metadata::reader::ParquetMetaReader::from_file_size(
@@ -771,6 +775,7 @@ pub fn update_parquet_metadata(
             &sorting_indices,
             parquet_footer_offset,
             parquet_footer_length,
+            parquet_data,
         )?;
         let new_file_size = bytes.len() as u64;
         return Ok(ParquetMetaUpdateResult { bytes, new_file_size, is_append: false });
@@ -804,6 +809,7 @@ pub fn update_parquet_metadata(
             thrift_rg,
             schema_columns,
             &col_type_tags,
+            parquet_data,
         )?;
 
         if i < existing_rg_count {
@@ -829,10 +835,14 @@ pub fn update_parquet_metadata(
 /// Builds a `RowGroupBlockBuilder` directly from a thrift `RowGroup` struct
 /// with pre-resolved column type tags. Used by `generate_parquet_metadata`
 /// and `update_parquet_metadata` where the caller already knows the types.
+///
+/// `parquet_data` is the mmapped/read parquet file bytes, used to extract
+/// bloom filter bitsets into the _pm out-of-line region.
 pub fn build_row_group_block_from_thrift_with_types(
     rg: &parquet2::thrift_format::RowGroup,
     schema_columns: &[parquet2::metadata::ColumnDescriptor],
     col_type_tags: &[Option<ColumnTypeTag>],
+    parquet_data: &[u8],
 ) -> ParquetResult<RowGroupBlockBuilder> {
     let col_count = rg.columns.len();
     let mut builder = RowGroupBlockBuilder::new(col_count as u32);
@@ -858,6 +868,17 @@ pub fn build_row_group_block_from_thrift_with_types(
         }
         if let Some(ref max_bytes) = chunk.ool_max {
             builder.add_out_of_line_stat(col_idx, false, max_bytes)?;
+        }
+
+        // Copy bloom filter bitset from the parquet file into the _pm OOL region.
+        if let Some((pq_offset, _pq_length)) = chunk.bloom_filter_parquet {
+            if let Ok(bitset) =
+                parquet2::bloom_filter::read_from_slice_at_offset(pq_offset, parquet_data)
+            {
+                if !bitset.is_empty() {
+                    builder.add_bloom_filter(col_idx, bitset)?;
+                }
+            }
         }
     }
 
@@ -1897,7 +1918,7 @@ mod tests {
                     })
             })
             .collect();
-        build_row_group_block_from_thrift_with_types(rg, schema_columns, &col_type_tags)
+        build_row_group_block_from_thrift_with_types(rg, schema_columns, &col_type_tags, &[])
     }
 
     #[test]
@@ -2253,6 +2274,7 @@ mod tests {
             &[0], // sorting on column 0
             footer_offset,
             footer_length,
+            &[], // no parquet data for bloom filter extraction in tests
         )
         .unwrap();
 
@@ -2324,6 +2346,7 @@ mod tests {
             &[0],
             100,
             50,
+            &[],
         )
         .unwrap();
 
@@ -2350,6 +2373,7 @@ mod tests {
             &extended_rgs,
             200,
             60,
+            &[],
         )
         .unwrap();
 
@@ -2403,6 +2427,128 @@ mod tests {
         assert!(
             err_msg.contains("no metadata"),
             "expected 'no metadata' error, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn bloom_filter_extracted_from_parquet_into_pm() {
+        // Write a parquet file with bloom filters enabled on column 0.
+        let row_count = 100;
+        let col_data: Vec<i64> = (0..row_count as i64).collect();
+        let data_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(col_data.as_ptr() as *const u8, col_data.len() * 8)
+        };
+        let data_static: &'static [u8] = Box::leak(data_bytes.to_vec().into_boxed_slice());
+
+        let col = Column {
+            name: "ts",
+            data_type: ColumnTypeTag::Timestamp.into_type(),
+            id: 0,
+            row_count,
+            primary_data: data_static,
+            secondary_data: &[],
+            symbol_offsets: &[],
+            column_top: 0,
+            designated_timestamp: true,
+            not_null_hint: true,
+            designated_timestamp_ascending: true,
+            parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+        };
+
+        let partition = Partition {
+            table: "test_bloom".to_string(),
+            columns: vec![col],
+        };
+        let mut buf = Vec::new();
+        let writer = ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_version(Version::V1)
+            .with_bloom_filter_columns([0].into_iter().collect())
+            .with_bloom_filter_fpp(0.01)
+            .with_row_group_size(Some(row_count));
+        writer.finish(partition).unwrap();
+        let parquet_data = buf;
+
+        // Parse the parquet metadata.
+        let file_size = parquet_data.len() as u64;
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, file_size).unwrap();
+
+        // Verify the parquet file has a bloom filter.
+        let pq_bf_offset = metadata.row_groups[0].columns()[0]
+            .metadata()
+            .bloom_filter_offset;
+        assert!(
+            pq_bf_offset.is_some(),
+            "parquet file should have a bloom filter"
+        );
+
+        let thrift_meta = metadata.into_thrift();
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+
+        let col_infos = vec![ParquetMetaColumnInfo {
+            name: "ts",
+            top: 0,
+            col_type_code: ColumnTypeTag::Timestamp.into_type().code(),
+            col_type_tag: Some(ColumnTypeTag::Timestamp),
+            id: 0,
+            flags: ColumnFlags::new().with_repetition(FieldRepetition::Required),
+            fixed_byte_len: 0,
+            physical_type: physical_type_to_u8(PhysicalType::Int64),
+            max_rep_level: 0,
+            max_def_level: 0,
+        }];
+
+        // Generate _pm with bloom filter extraction.
+        let (pm_bytes, pm_footer_offset) = generate_parquet_metadata(
+            &col_infos,
+            schema_columns,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &parquet_data,
+        )
+        .unwrap();
+
+        // Verify the _pm has a bloom filter.
+        let reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset).unwrap();
+        assert_eq!(reader.row_group_count(), 1);
+        let rg = reader.row_group(0).unwrap();
+        let chunk = rg.column_chunk(0).unwrap();
+
+        let bf_abs = chunk.bloom_filter_off.byte_offset() as usize;
+        assert_ne!(bf_abs, 0, "bloom_filter_off should be non-zero");
+        assert_eq!(
+            bf_abs % 8,
+            0,
+            "bloom filter offset should be 8-byte aligned"
+        );
+        assert!(
+            bf_abs + 4 <= pm_bytes.len(),
+            "bloom filter offset should be within _pm bounds"
+        );
+
+        // Read the [i32 len][bitset] at the absolute offset.
+        let bf_data = &pm_bytes[bf_abs..];
+        let bf_len = i32::from_le_bytes(bf_data[..4].try_into().unwrap()) as usize;
+        assert!(
+            bf_len >= 32,
+            "bloom filter bitset should be at least 32 bytes"
+        );
+        assert!(
+            bf_abs + 4 + bf_len <= pm_bytes.len(),
+            "bloom filter bitset should fit within _pm"
+        );
+
+        // The bitset should not be all zeros (we inserted 100 values).
+        let bitset = &bf_data[4..4 + bf_len];
+        assert!(
+            bitset.iter().any(|&b| b != 0),
+            "bloom filter bitset should contain set bits"
         );
     }
 }

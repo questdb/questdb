@@ -612,6 +612,10 @@ impl<W: Write> ParquetFile<W> {
         self.schema = schema;
     }
 
+    pub fn sorting_columns(&self) -> Option<&[SortingColumn]> {
+        self.sorting_columns.as_deref()
+    }
+
     pub fn metadata(&self) -> Option<&ThriftFileMetaData> {
         self.metadata.as_ref()
     }
