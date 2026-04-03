@@ -1029,7 +1029,7 @@ public class NanosFormatCompilerTest {
     private static void assertException(String pattern, String input) {
         DateFormat format = get(pattern);
         try {
-            format.parse(pattern, DateLocaleFactory.EN_LOCALE);
+            format.parse(input, DateLocaleFactory.EN_LOCALE);
             Assert.fail();
         } catch (NumericException ignored) {
         }
