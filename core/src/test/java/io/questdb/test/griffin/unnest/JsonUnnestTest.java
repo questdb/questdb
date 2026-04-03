@@ -24,9 +24,12 @@
 
 package io.questdb.test.griffin.unnest;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.join.JsonUnnestSource;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 // Most tests use assertQueryNoLeakCheck() which re-executes the query to
@@ -1444,6 +1447,29 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainPlanWithOrdinality() throws Exception {
+        // Exercises UnnestRecordCursorFactory.toPlan() with ordinality=true (L111).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[1.5]')");
+            assertPlanNoLeakCheck(
+                    "SELECT u.val, u.pos FROM t, UNNEST("
+                            + "t.payload COLUMNS(val DOUBLE)"
+                            + ") WITH ORDINALITY u(val, pos)",
+                    """
+                            SelectedRecord
+                                Unnest
+                                  columns: [val,pos]
+                                  ordinality: true
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testExtraFieldsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
@@ -1460,6 +1486,29 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             + ") u",
                     (String) null
             );
+        });
+    }
+
+    @Test
+    public void testGetSymbolTableReturnsNullForUnnestColumn() throws Exception {
+        // Exercises UnnestRecordCursor.getSymbolTable() and newSymbolTable()
+        // returning null for unnest columns (col >= split) (L164, L197).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('x', '[1, 2]')");
+            try (RecordCursorFactory factory = select(
+                    "SELECT t.s, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    // col 0 = t.s (SYMBOL, base table) — should return non-null
+                    Assert.assertNotNull(cursor.getSymbolTable(0));
+                    Assert.assertNotNull(cursor.newSymbolTable(0));
+                    // col 1 = u.val (INT, unnest) — should return null
+                    Assert.assertNull(cursor.getSymbolTable(1));
+                    Assert.assertNull(cursor.newSymbolTable(1));
+                }
+            }
         });
     }
 
