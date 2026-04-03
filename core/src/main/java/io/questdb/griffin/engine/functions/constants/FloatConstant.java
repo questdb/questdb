@@ -39,7 +39,7 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     }
 
     public static FloatConstant newInstance(float value) {
-        return Numbers.isFinite(value) ? new FloatConstant(value) : NULL;
+        return new FloatConstant(value);
     }
 
     @Override
@@ -60,8 +60,7 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
 
     @Override
     public boolean isNullConstant() {
-        // NaN is used as a marker for NULL
-        return Numbers.isNull(value);
+        return !Numbers.isFinite(value);
     }
 
     @Override

@@ -41,7 +41,7 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     }
 
     public static DoubleConstant newInstance(double value) {
-        return Numbers.isFinite(value) ? new DoubleConstant(value) : DoubleConstant.NULL;
+        return new DoubleConstant(value);
     }
 
     @Override
@@ -62,8 +62,7 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
 
     @Override
     public boolean isNullConstant() {
-        // NaN is used as a marker for NULL
-        return Numbers.isNull(value);
+        return !Numbers.isFinite(value);
     }
 
     @Override

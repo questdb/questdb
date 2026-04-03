@@ -271,15 +271,17 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testEnforceNotNullSentinelValuesAccepted() throws Exception {
         assertMemoryLeak(() -> {
-            // Sentinel values (INT_NULL, NaN, null) are valid data for NOT NULL columns.
+            // Sentinel values (INT_NULL, NaN) are valid data for NOT NULL columns.
             // NOT NULL only means "column must be written to", not "no sentinel values".
+            // For NOT NULL columns, sentinel values print as their real representation:
+            // INT_NULL → "-2147483648", NaN → "NaN"
             execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-01')");
 
             assertSql(
                     """
                             x\ty\tts
-                            null\tnull\t2024-01-01T00:00:00.000000Z
+                            -2147483648\tNaN\t2024-01-01T00:00:00.000000Z
                             """,
                     "SELECT * FROM t"
             );
@@ -495,6 +497,148 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE t"
+            );
+        });
+    }
+
+    @Test
+    public void testNotNullDoubleSpecialValues() throws Exception {
+        assertMemoryLeak(() -> {
+            // Non-finite values are preserved on write. For NOT NULL columns they print
+            // as their IEEE 754 representation instead of "null".
+            execute("CREATE TABLE t (x DOUBLE NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (NULL, '2024-01-01'),
+                        (1.5, '2024-01-02'),
+                        (CAST('Infinity' AS DOUBLE), '2024-01-03'),
+                        (CAST('-Infinity' AS DOUBLE), '2024-01-04'),
+                        (CAST('NaN' AS DOUBLE), '2024-01-05')
+                    """);
+
+            assertSql(
+                    """
+                            x\tts
+                            NaN\t2024-01-01T00:00:00.000000Z
+                            1.5\t2024-01-02T00:00:00.000000Z
+                            Infinity\t2024-01-03T00:00:00.000000Z
+                            -Infinity\t2024-01-04T00:00:00.000000Z
+                            NaN\t2024-01-05T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testNotNullFloatSpecialValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x FLOAT NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (NULL, '2024-01-01'),
+                        (1.5, '2024-01-02'),
+                        (CAST('NaN' AS FLOAT), '2024-01-03')
+                    """);
+
+            assertSql(
+                    """
+                            x\tts
+                            NaN\t2024-01-01T00:00:00.000000Z
+                            1.5\t2024-01-02T00:00:00.000000Z
+                            NaN\t2024-01-03T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testNotNullLongSentinelPrintsValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES (42, '2024-01-02')");
+
+            assertSql(
+                    """
+                            x\tts
+                            -9223372036854775808\t2024-01-01T00:00:00.000000Z
+                            42\t2024-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testNotNullIpv4SentinelPrintsValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x IPv4 NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES ('192.168.1.1', '2024-01-02')");
+
+            assertSql(
+                    """
+                            x\tts
+                            0.0.0.0\t2024-01-01T00:00:00.000000Z
+                            192.168.1.1\t2024-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testNotNullUuidSentinelPrintsValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x UUID NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-02')");
+
+            assertSql(
+                    """
+                            x\tts
+                            80000000-0000-0000-8000-000000000000\t2024-01-01T00:00:00.000000Z
+                            a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t2024-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testNotNullCharSentinelPrintsValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x CHAR NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            execute("INSERT INTO t VALUES ('A', '2024-01-02')");
+
+            // CHAR NOT NULL with sentinel (char 0) prints empty — the NUL character has no visible representation
+            assertSql(
+                    """
+                            x\tts
+                            \0\t2024-01-01T00:00:00.000000Z
+                            A\t2024-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testNullableColumnsStillPrintNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // Verify nullable columns still print "null" for sentinel values (no regression)
+            execute("CREATE TABLE t (x INT, y DOUBLE, z LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
+
+            assertSql(
+                    """
+                            x\ty\tz\tts
+                            null\tnull\tnull\t2024-01-01T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM t"
             );
         });
     }

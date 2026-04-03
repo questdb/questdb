@@ -1416,7 +1416,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnSizeShifts.add(Numbers.msb(typeSize));
                     }
 
-                    queryMeta.add(new TableColumnMetadata(
+                    TableColumnMetadata colMeta = new TableColumnMetadata(
                             metadata.getColumnName(columnIndex),
                             type,
                             metadata.isColumnIndexed(columnIndex),
@@ -1428,7 +1428,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-                    ));
+                    );
+                    colMeta.setNotNullFlag(metadata.isNotNull(columnIndex));
+                    queryMeta.add(colMeta);
 
                     if (columnIndex == readerTimestampIndex) {
                         queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
@@ -1438,11 +1440,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // select timestamp when it is required but not already selected
                 if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
                     int timestampType = metadata.getColumnType(readerTimestampIndex);
-                    queryMeta.add(new TableColumnMetadata(
+                    TableColumnMetadata tsMeta = new TableColumnMetadata(
                             metadata.getColumnName(readerTimestampIndex),
                             timestampType,
                             metadata.getMetadata(readerTimestampIndex)
-                    ));
+                    );
+                    tsMeta.setNotNullFlag(metadata.isNotNull(readerTimestampIndex));
+                    queryMeta.add(tsMeta);
                     queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
 
                     if (columnIndexes != null) {
@@ -7279,16 +7283,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (queryColumn.getAlias() == null) {
                 queryMetadata.add(metadata.getColumnMetadata(index));
             } else {
-                queryMetadata.add(
-                        new TableColumnMetadata(
-                                Chars.toString(queryColumn.getAlias()),
-                                metadata.getColumnType(index),
-                                metadata.isColumnIndexed(index),
-                                metadata.getIndexValueBlockCapacity(index),
-                                metadata.isSymbolTableStatic(index),
-                                metadata.getMetadata(index)
-                        )
+                TableColumnMetadata aliasedMeta = new TableColumnMetadata(
+                        Chars.toString(queryColumn.getAlias()),
+                        metadata.getColumnType(index),
+                        metadata.isColumnIndexed(index),
+                        metadata.getIndexValueBlockCapacity(index),
+                        metadata.isSymbolTableStatic(index),
+                        metadata.getMetadata(index)
                 );
+                aliasedMeta.setNotNullFlag(metadata.isNotNull(index));
+                queryMetadata.add(aliasedMeta);
             }
 
             if (index == timestampIndex) {
@@ -7308,16 +7312,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            queryMetadata.add(
-                    new TableColumnMetadata(
-                            "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
-                            colMetadata.getColumnType(),
-                            colMetadata.isSymbolIndexFlag(),
-                            colMetadata.getIndexValueBlockCapacity(),
-                            colMetadata.isSymbolTableStatic(),
-                            metadata
-                    )
+            TableColumnMetadata implicitTsMeta = new TableColumnMetadata(
+                    "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
+                    colMetadata.getColumnType(),
+                    colMetadata.isSymbolIndexFlag(),
+                    colMetadata.getIndexValueBlockCapacity(),
+                    colMetadata.isSymbolTableStatic(),
+                    metadata
             );
+            implicitTsMeta.setNotNullFlag(colMetadata.isNotNull());
+            queryMetadata.add(implicitTsMeta);
             queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }
@@ -8216,15 +8220,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        Chars.toString(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.isSymbolIndexFlag(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata windowMeta = new TableColumnMetadata(
+                                Chars.toString(qc.getAlias()),
+                                m.getColumnType(),
+                                m.isSymbolIndexFlag(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        windowMeta.setNotNullFlag(m.isNotNull());
+                        factoryMetadata.add(i, windowMeta);
                     }
                 }
             }
@@ -8268,15 +8273,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        Chars.toString(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.isSymbolIndexFlag(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata windowMeta2 = new TableColumnMetadata(
+                                Chars.toString(qc.getAlias()),
+                                m.getColumnType(),
+                                m.isSymbolIndexFlag(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        windowMeta2.setNotNullFlag(m.isNotNull());
+                        factoryMetadata.add(i, windowMeta2);
                     }
                     chainTypes.add(i, m.getColumnType());
                     listColumnFilterA.extendAndSet(i, i + 1);
