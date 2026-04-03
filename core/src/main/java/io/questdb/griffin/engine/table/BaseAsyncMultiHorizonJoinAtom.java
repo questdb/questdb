@@ -34,7 +34,6 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -52,9 +51,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -555,48 +552,25 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     }
 
     /**
-     * Initialize time frame cursors for a single slave with shared frame data.
-     * Must be called after the slave page frame cursor has been fully iterated.
+     * Initialize time frame cursors for a single slave with shared state.
+     * Must be called after {@link ConcurrentTimeFrameState#of} has been called.
      */
     public void initSlaveTimeFrameCursors(
             int slaveIndex,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
-            PageFrameAddressCache slaveFrameAddressCache,
-            DirectIntList slaveFramePartitionIndexes,
-            LongList slaveFrameRowCounts,
-            LongList slavePartitionTimestamps,
-            LongList slavePartitionCeilings,
-            int frameCount
+            ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         // Initialize owner cursor for this slave
         int tsIndex = ownerSlaveTimeFrameCursors.getQuick(slaveIndex).getTimestampIndex();
-        ownerSlaveTimeFrameCursors.getQuick(slaveIndex).of(
-                slavePageFrameCursor,
-                slaveFrameAddressCache,
-                slaveFramePartitionIndexes,
-                slaveFrameRowCounts,
-                slavePartitionTimestamps,
-                slavePartitionCeilings,
-                frameCount,
-                tsIndex
-        );
+        ownerSlaveTimeFrameCursors.getQuick(slaveIndex).of(sharedState, slavePageFrameCursor, tsIndex);
         ownerSlaveTimeFrameHelpers.getQuick(slaveIndex).of(ownerSlaveTimeFrameCursors.getQuick(slaveIndex));
 
         // Initialize per-worker cursors for this slave
         for (int w = 0; w < workerCount; w++) {
             int idx = w * slaveCount + slaveIndex;
             ConcurrentTimeFrameCursor c = perWorkerSlaveTimeFrameCursors.getQuick(idx);
-            c.of(
-                    slavePageFrameCursor,
-                    slaveFrameAddressCache,
-                    slaveFramePartitionIndexes,
-                    slaveFrameRowCounts,
-                    slavePartitionTimestamps,
-                    slavePartitionCeilings,
-                    frameCount,
-                    tsIndex
-            );
+            c.of(sharedState, slavePageFrameCursor, tsIndex);
             perWorkerSlaveTimeFrameHelpers.getQuick(idx).of(c);
         }
 
@@ -604,8 +578,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         if (ownerSymbolTranslatingRecords.getQuick(slaveIndex) != null) {
             ownerSymbolTranslatingRecords.getQuick(slaveIndex).initSources(masterSymbolTableSource, slavePageFrameCursor);
             for (int w = 0; w < workerCount; w++) {
-                int idx = w * slaveCount + slaveIndex;
-                SymbolTranslatingRecord r = perWorkerSymbolTranslatingRecords.getQuick(idx);
+                SymbolTranslatingRecord r = perWorkerSymbolTranslatingRecords.getQuick(w * slaveCount + slaveIndex);
                 if (r != null) {
                     r.initSources(masterSymbolTableSource, slavePageFrameCursor);
                 }
@@ -617,8 +590,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             ownerAsOfJoinMaps.getQuick(slaveIndex).reopen();
         }
         for (int w = 0; w < workerCount; w++) {
-            int idx = w * slaveCount + slaveIndex;
-            Map m = perWorkerAsOfJoinMaps.getQuick(idx);
+            Map m = perWorkerAsOfJoinMaps.getQuick(w * slaveCount + slaveIndex);
             if (m != null) {
                 m.reopen();
             }

@@ -68,6 +68,11 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     }
 
     @Override
+    public void toPartition(int targetPartitionIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void toTop() {
         partitionIndex = partitionHi - 1;
     }

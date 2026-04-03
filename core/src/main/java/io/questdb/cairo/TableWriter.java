@@ -4410,14 +4410,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                if (colTop == -1) {
-                    continue; // column does not exist in this partition
+                if (colTop == -1 || colTop >= partitionRowCount) {
+                    continue; // column does not exist or has no data in this partition
                 }
 
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
-                if (colTop > 0 && colTop < partitionRowCount) {
+                if (colTop > 0) {
                     if (indexWriter == null) {
                         indexWriter = new BitmapIndexWriter(configuration);
                     }
