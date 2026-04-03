@@ -53,11 +53,6 @@ public class DefaultQwpUdpReceiverConfiguration implements QwpUdpReceiverConfigu
     }
 
     @Override
-    public int getMaxFileNameLength() {
-        return 127;
-    }
-
-    @Override
     public int getMaxRowsPerTable() {
         return QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
     }

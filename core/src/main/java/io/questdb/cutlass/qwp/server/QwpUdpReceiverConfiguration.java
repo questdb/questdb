@@ -36,8 +36,6 @@ public interface QwpUdpReceiverConfiguration {
 
     int getGroupIPv4Address();
 
-    int getMaxFileNameLength();
-
     int getMaxRowsPerTable();
 
     int getMaxTablesPerConnection();

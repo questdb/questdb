@@ -6471,11 +6471,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getMaxFileNameLength() {
-            return maxFileNameLength;
-        }
-
-        @Override
         public int getMaxRowsPerTable() {
             return qwpMaxRowsPerTable;
         }
