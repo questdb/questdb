@@ -362,6 +362,23 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetBloomFilterMixedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, a INT PARQUET(BLOOM_FILTER), b VARCHAR PARQUET(DELTA_LENGTH_BYTE_ARRAY, BLOOM_FILTER), c DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql("""
+                            ddl
+                            CREATE TABLE 'foo' (\s
+                            \tts TIMESTAMP,
+                            \ta INT PARQUET(bloom_filter),
+                            \tb VARCHAR PARQUET(delta_length_byte_array, bloom_filter),
+                            \tc DOUBLE
+                            ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                            """,
+                    "SHOW CREATE TABLE foo");
+        });
+    }
+
+    @Test
     public void testPartitioning() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year wal;");
