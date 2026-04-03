@@ -481,6 +481,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getJsonUnnestMaxValueSize() {
+        return 4096;
+    }
+
+    @Override
     public int getLatestByQueueCapacity() {
         return 32;
     }

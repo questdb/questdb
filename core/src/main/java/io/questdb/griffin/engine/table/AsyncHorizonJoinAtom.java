@@ -31,7 +31,6 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -42,7 +41,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -212,23 +210,13 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
-            PageFrameAddressCache slaveFrameAddressCache,
-            DirectIntList slaveFramePartitionIndexes,
-            LongList slaveFrameRowCounts,
-            LongList slavePartitionTimestamps,
-            LongList slavePartitionCeilings,
-            int frameCount
+            ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         super.initTimeFrameCursors(
                 executionContext,
                 masterSymbolTableSource,
                 slavePageFrameCursor,
-                slaveFrameAddressCache,
-                slaveFramePartitionIndexes,
-                slaveFrameRowCounts,
-                slavePartitionTimestamps,
-                slavePartitionCeilings,
-                frameCount
+                sharedState
         );
 
         // Initialize key functions (for expression keys) with combined symbol table source
