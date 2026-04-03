@@ -65,6 +65,7 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WindowJoinContext;
 import io.questdb.log.Log;
@@ -235,6 +236,7 @@ public class SqlOptimiser implements Mutable {
             ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
+            ObjectPool<QueryModelWrapper> queryModelWrapperPool,
             PostOrderTreeTraversalAlgo traversalAlgo,
             FunctionParser functionParser,
             Path path
@@ -254,6 +256,7 @@ public class SqlOptimiser implements Mutable {
                 expressionNodePool,
                 queryColumnPool,
                 queryModelPool,
+                queryModelWrapperPool,
                 windowExpressionPool,
                 sqlNodeStack,
                 sqlNodeStack2,

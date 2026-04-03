@@ -106,6 +106,7 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
@@ -197,6 +198,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final QueryBuilder queryBuilder;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final ObjectPool<QueryModelWrapper> queryModelWrapperPool;
     private final Path renamePath;
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
@@ -226,6 +228,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
             this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
+            this.queryModelWrapperPool = new ObjectPool<>(QueryModelWrapper.FACTORY, 2);
             this.windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
             this.compiledQuery = new CompiledQueryImpl(engine);
             this.characterStore = new CharacterStore(
@@ -254,6 +257,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     windowExpressionPool,
                     queryColumnPool,
                     queryModelPool,
+                    queryModelWrapperPool,
                     postOrderTreeTraversalAlgo,
                     functionParser,
                     path
@@ -1835,6 +1839,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         characterStore.clear();
         queryColumnPool.clear();
         queryModelPool.clear();
+        queryModelWrapperPool.clear();
         optimiser.clear();
         parser.clear();
         alterOperationBuilder.clear();
@@ -5150,6 +5155,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
+            ObjectPool<QueryModelWrapper> queryModelWrapperPoolPool,
             PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
             FunctionParser functionParser,
             Path path
@@ -5161,6 +5167,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 windowExpressionPool,
                 queryColumnPool,
                 queryModelPool,
+                queryModelWrapperPoolPool,
                 postOrderTreeTraversalAlgo,
                 functionParser,
                 path

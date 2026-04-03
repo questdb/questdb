@@ -33,6 +33,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -44,8 +45,13 @@ import org.jetbrains.annotations.NotNull;
  * The optimizer skips wrapped models during optimization.
  */
 public class QueryModelWrapper implements IQueryModel {
+    public static final WrapperFactory FACTORY = new WrapperFactory();
+
     private QueryModel delegate;
     private int shareId;
+
+    public QueryModelWrapper() {
+    }
 
     @Override
     public void addBottomUpColumn(QueryColumn column) throws SqlException {
@@ -164,7 +170,8 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void clear() {
-        delegate.clear();
+        delegate = null;
+        shareId = 0;
     }
 
     @Override
@@ -173,13 +180,13 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void clearOrderBy() {
-        delegate.clearOrderBy();
+    public void clearDependents() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public void clearDependents() {
-        throw new UnsupportedOperationException();
+    public void clearOrderBy() {
+        delegate.clearOrderBy();
     }
 
     @Override
@@ -213,6 +220,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void copyDependents(IQueryModel model) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints) {
         delegate.copyHints(hints);
     }
@@ -228,18 +240,8 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void copyDependents(IQueryModel model) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void copyUpdateTableMetadata(IQueryModel updateTableModel) {
         delegate.copyUpdateTableMetadata(updateTableModel);
-    }
-
-    @Override
-    public IQueryModel deepClone(ObjectPool<QueryModel> queryModelPool, ObjectPool<QueryColumn> queryColumnPool, ObjectPool<ExpressionNode> expressionNodePool, ObjectPool<WindowExpression> windowExpressionPool) {
-        return delegate.deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool);
     }
 
     @Override
@@ -324,6 +326,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public IntHashSet getDependencies() {
         return delegate.getDependencies();
+    }
+
+    @Override
+    public ObjList<QueryModelWrapper> getDependents() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -567,11 +574,6 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public ObjList<QueryModelWrapper> getDependents() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public ExpressionNode getSampleBy() {
         return delegate.getSampleBy();
     }
@@ -736,13 +738,13 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public boolean hasExplicitTimestamp() {
-        return delegate.hasExplicitTimestamp();
+    public boolean hasDependents() {
+        return delegate.hasDependents();
     }
 
     @Override
-    public boolean hasDependents() {
-        return delegate.hasDependents();
+    public boolean hasExplicitTimestamp() {
+        return delegate.hasExplicitTimestamp();
     }
 
     @Override
@@ -878,6 +880,12 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public IntList nextOrderedJoinModels() {
         return delegate.nextOrderedJoinModels();
+    }
+
+    public QueryModelWrapper of(QueryModel delegate, int shareId) {
+        this.delegate = delegate;
+        this.shareId = shareId;
+        return this;
     }
 
     @Override
@@ -1266,5 +1274,12 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean windowStopPropagate() {
         return delegate.windowStopPropagate();
+    }
+
+    public static class WrapperFactory implements ObjectFactory<QueryModelWrapper> {
+        @Override
+        public QueryModelWrapper newInstance() {
+            return new QueryModelWrapper();
+        }
     }
 }

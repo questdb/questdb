@@ -247,6 +247,7 @@ import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NoopSymbolShortCircuit;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
+import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.StringToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
@@ -329,6 +330,8 @@ import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.WindowExpression;
@@ -476,6 +479,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
     private final PageFrameReduceTaskFactory reduceTaskFactory;
+    // Cache of factories generated for shared models (models with dependents).
+    // Key: the delegate QueryModel; Value: the primary factory.
+    // When a QueryModelWrapper is encountered, we look up its delegate here.
+    private final ObjObjHashMap<QueryModel, RecordCursorFactory> sharedFactoryCache = new ObjObjHashMap<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack2 = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
@@ -662,6 +669,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         intListPool.clear();
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
+        sharedFactoryCache.clear();
     }
 
     @Override
@@ -6634,6 +6642,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
+        if (model instanceof QueryModelWrapper wrapper) {
+            QueryModel delegate = wrapper.getDelegate();
+            int sid = wrapper.getShareId();
+            RecordCursorFactory primaryFactory = sharedFactoryCache.get(delegate);
+            boolean cached = true;
+            if (primaryFactory == null) {
+                primaryFactory = generateQuery0Inner(delegate, executionContext, processJoins);
+                sharedFactoryCache.put(delegate, primaryFactory);
+                cached = false;
+            }
+            if (primaryFactory.supportsSharedCursors()) {
+                return new SharedRecordCursorFactory(primaryFactory, primaryFactory.getMetadata(), sid);
+            }
+            return cached ? generateQuery0Inner(delegate, executionContext, processJoins) : primaryFactory;
+        }
+
+        if (model instanceof QueryModel qm && qm.hasDependents()) {
+            RecordCursorFactory cached = sharedFactoryCache.get(qm);
+            if (cached != null) {
+                return cached;
+            }
+            RecordCursorFactory factory = generateQuery0Inner(model, executionContext, processJoins);
+            sharedFactoryCache.put(qm, factory);
+            return factory;
+        }
+
+        return generateQuery0Inner(model, executionContext, processJoins);
+    }
+
+    private RecordCursorFactory generateQuery0Inner(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
         // Remember the last model with non-empty ORDER BY as we descend through nested models.
         // We need the ORDER BY clause in the Markout Horizon Join optimization, but it's stored
         // several levels up from the model that holds the join clause.

@@ -221,9 +221,9 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void clearColumnMapStructs();
 
-    void clearOrderBy();
-
     void clearDependents();
+
+    void clearOrderBy();
 
     void clearSampleBy();
 
@@ -237,22 +237,15 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException;
 
+    void copyDependents(IQueryModel model);
+
     void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints);
 
     void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice);
 
     void copyOrderByDirectionAdvice(IntList orderByDirection);
 
-    void copyDependents(IQueryModel model);
-
     void copyUpdateTableMetadata(IQueryModel updateTableModel);
-
-    IQueryModel deepClone(
-            ObjectPool<QueryModel> queryModelPool,
-            ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<ExpressionNode> expressionNodePool,
-            ObjectPool<WindowExpression> windowExpressionPool
-    );
 
     QueryColumn findBottomUpColumnByAst(ExpressionNode node);
 
@@ -285,6 +278,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls();
 
     IntHashSet getDependencies();
+
+    ObjList<QueryModelWrapper> getDependents();
 
     ObjList<ExpressionNode> getExpressionModels();
 
@@ -376,11 +371,9 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     int getRefCount(CharSequence alias);
 
-    ObjList<ViewDefinition> getReferencedViews();
-
     // getQueryModel() is inherited from ExecutionModel with return type QueryModel
 
-    ObjList<QueryModelWrapper> getDependents();
+    ObjList<ViewDefinition> getReferencedViews();
 
     ExpressionNode getSampleBy();
 
@@ -446,9 +439,9 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses();
 
-    boolean hasExplicitTimestamp();
-
     boolean hasDependents();
+
+    boolean hasExplicitTimestamp();
 
     boolean hasTimestampOffset();
 

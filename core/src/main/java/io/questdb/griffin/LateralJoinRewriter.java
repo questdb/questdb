@@ -28,12 +28,14 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
@@ -81,6 +83,8 @@ class LateralJoinRewriter implements Mutable {
     private final LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final ObjectPool<QueryModelWrapper> queryModelWrapperPool;
+    private final ObjHashSet<QueryModel> sharedModels = new ObjHashSet<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack;
     private final ArrayDeque<ExpressionNode> sqlNodeStack2;
     private final ObjList<CharSequence> subCountColAliases;
@@ -93,6 +97,7 @@ class LateralJoinRewriter implements Mutable {
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
+            ObjectPool<QueryModelWrapper> queryModelWrapperPool,
             ObjectPool<WindowExpression> windowExpressionPool,
             ArrayDeque<ExpressionNode> sqlNodeStack,
             ArrayDeque<ExpressionNode> sqlNodeStack2,
@@ -110,6 +115,7 @@ class LateralJoinRewriter implements Mutable {
         this.expressionNodePool = expressionNodePool;
         this.queryColumnPool = queryColumnPool;
         this.queryModelPool = queryModelPool;
+        this.queryModelWrapperPool = queryModelWrapperPool;
         this.windowExpressionPool = windowExpressionPool;
         this.sqlNodeStack = sqlNodeStack;
         this.sqlNodeStack2 = sqlNodeStack2;
@@ -132,6 +138,7 @@ class LateralJoinRewriter implements Mutable {
         nonCorrelatedPreds.clear();
         hasCorrelation = false;
         outerRefId = 0;
+        sharedModels.clear();
     }
 
     public void rewrite(IQueryModel model) throws SqlException {
@@ -514,28 +521,28 @@ class LateralJoinRewriter implements Mutable {
         characterStore.put(OUTER_REF_PREFIX).put(outerRefId++);
         CharSequence cloneAlias = characterStore.toImmutable();
 
-        IQueryModel cloneSubquery = queryModelPool.next();
-        cloneSubquery.setDistinct(true);
         IQueryModel origSubquery = outerRefJoinModel.getNestedModel();
-        cloneSubquery.setNestedModel(origSubquery.getNestedModel()
-                .deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
+        IQueryModel sharedDistinct = createSharedRef((QueryModel) origSubquery);
+        IQueryModel renamingLayer = queryModelPool.next();
+        IQueryModel EmptyLayer = queryModelPool.next();
+        EmptyLayer.setNestedModel(sharedDistinct);
+        renamingLayer.setNestedModel(EmptyLayer);
 
         ObjList<QueryColumn> origCols = origSubquery.getBottomUpColumns();
         for (int oc = 0, ocn = origCols.size(); oc < ocn; oc++) {
             QueryColumn origCol = origCols.getQuick(oc);
-            ExpressionNode origAst = origCol.getAst();
-            CharSequence colName = unqualify(origAst.token);
+            CharSequence colName = unqualify(origCol.getAst().token);
             CharacterStoreEntry cse = characterStore.newEntry();
             cse.put(cloneAlias).put("_").put(colName);
             CharSequence newColAlias = cse.toImmutable();
             ExpressionNode ref = expressionNodePool.next().of(
-                    ExpressionNode.LITERAL, origAst.token, 0, origAst.position
+                    ExpressionNode.LITERAL, origCol.getAlias(), 0, 0
             );
-            cloneSubquery.addBottomUpColumnIfNotExists(queryColumnPool.next().of(newColAlias, ref));
+            renamingLayer.addBottomUpColumnIfNotExists(queryColumnPool.next().of(newColAlias, ref));
         }
 
         IQueryModel clonedOuterRef = queryModelPool.next();
-        clonedOuterRef.setNestedModel(cloneSubquery);
+        clonedOuterRef.setNestedModel(renamingLayer);
         clonedOuterRef.setNestedModelIsSubQuery(true);
         ExpressionNode cloneAliasExpr = expressionNodePool.next().of(
                 ExpressionNode.LITERAL, cloneAlias, 0, 0
@@ -699,7 +706,6 @@ class LateralJoinRewriter implements Mutable {
             ensureColumnInSelect(inner, col, col.token);
         }
     }
-
 
     // Compensates LATEST BY inside a lateral subquery to ensure per-outer-row computation.
     //
@@ -953,18 +959,15 @@ class LateralJoinRewriter implements Mutable {
             int depth,
             IQueryModel outerRefJm
     ) throws SqlException {
-
         IQueryModel current = inner.getUnionModel();
         while (current != null) {
-            // Each UNION branch needs its own __qdb_outer_ref__ copy
-            IQueryModel branchOuterRef = queryModelPool.next();
-            branchOuterRef.setNestedModel(outerRefJm.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
-            branchOuterRef.setAlias(outerRefJm.getAlias());
-            branchOuterRef.setJoinType(IQueryModel.JOIN_CROSS);
+            IQueryModel branchOuterRef = cloneOuterRef(outerRefJm);
+            CharSequence cloneAlias = branchOuterRef.getAlias().token;
+            int aliasSaveBase = saveAndRemapOuterToInnerAlias(cloneAlias);
+            rebuildGroupingCols();
+
             current.addJoinModel(branchOuterRef);
-            if (branchOuterRef.getAlias() != null) {
-                current.addModelAliasIndex(branchOuterRef.getAlias(), current.getJoinModels().size() - 1);
-            }
+            current.addModelAliasIndex(branchOuterRef.getAlias(), current.getJoinModels().size() - 1);
 
             rewriteSelectExpressions(current, outerToInnerAlias, depth);
             rewriteExpressionList(current.getOrderBy(), outerToInnerAlias, depth);
@@ -974,21 +977,17 @@ class LateralJoinRewriter implements Mutable {
             }
 
             if (hasWindowColumns(current)) {
-                compensateWindow(current, branchOuterRef.getAlias().token);
+                compensateWindow(current, cloneAlias);
             }
 
             if (current.getTableNameExpr() == null && current.getNestedModel() != null) {
                 if (branchOuterRef.getJoinType() == IQueryModel.JOIN_CROSS) {
                     current.getJoinModels().remove(branchOuterRef);
                     if (branchOuterRef.getAlias() != null) {
-                        current.getModelAliasIndexes().removeEntry(branchOuterRef.getAlias().token);
+                        current.getModelAliasIndexes().removeEntry(cloneAlias);
                     }
                 }
-                // Clone for nested pushDownOuterRefs
-                IQueryModel deepOuterRef = queryModelPool.next();
-                deepOuterRef.setNestedModel(branchOuterRef.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
-                deepOuterRef.setAlias(branchOuterRef.getAlias());
-                deepOuterRef.setJoinType(IQueryModel.JOIN_CROSS);
+                IQueryModel deepOuterRef = cloneOuterRef(outerRefJm);
                 subCountColAliases.clear();
                 pushDownOuterRefs(
                         current, current.getNestedModel(), outerToInnerAlias,
@@ -996,6 +995,7 @@ class LateralJoinRewriter implements Mutable {
                 );
             }
 
+            restoreOuterToInnerAlias(aliasSaveBase);
             current = current.getUnionModel();
         }
     }
@@ -1145,11 +1145,11 @@ class LateralJoinRewriter implements Mutable {
                     ExpressionNode.deepClone(expressionNodePool, outerJm.getTableNameExpr())
             );
         } else if (outerJm.getNestedModel() != null) {
-            // Deep clone the nested model tree to avoid shared references.
-            // Without cloning, the same model objects are shared between the main tree
-            // and the outer ref subquery. rewriteSelectClause0 modifies models in place,
-            // so processing the shared model twice causes corruption.
-            outerRefBase.setNestedModel(outerJm.getNestedModel().deepClone(queryModelPool, queryColumnPool, expressionNodePool, windowExpressionPool));
+            QueryModel nestModel = (QueryModel) outerJm.getNestedModel();
+            QueryModelWrapper wrapper = queryModelWrapperPool.next();
+            wrapper.of(nestModel, outerRefId++);
+            nestModel.getDependents().add(wrapper);
+            outerRefBase.setNestedModel(wrapper);
             outerRefBase.setNestedModelIsSubQuery(outerJm.isNestedModelIsSubQuery());
         } else {
             throw SqlException.position(outerJm.getModelPosition())
@@ -1170,6 +1170,32 @@ class LateralJoinRewriter implements Mutable {
             outerRefBase.addField(outerJm.getAliasToColumnMap().get(srcKeys.getQuick(i)));
         }
         return outerRefBase;
+    }
+
+    private void rebuildGroupingCols() {
+        groupingCols.clear();
+        ObjList<CharSequence> keys = outerToInnerAlias.keys();
+        for (int ki = 0, kn = keys.size(); ki < kn; ki++) {
+            CharSequence key = keys.getQuick(ki);
+            if (key != null) {
+                CharSequence value = outerToInnerAlias.get(key);
+                if (value != null) {
+                    groupingCols.add(expressionNodePool.next().of(
+                            ExpressionNode.LITERAL, value, 0, 0
+                    ));
+                }
+            }
+        }
+    }
+
+    private IQueryModel createSharedRef(QueryModel delegate) {
+        if (sharedModels.add(delegate)) {
+            return delegate;
+        }
+        QueryModelWrapper wrapper = queryModelWrapperPool.next();
+        wrapper.of(delegate, outerRefId++);
+        delegate.getDependents().add(wrapper);
+        return wrapper;
     }
 
     // Pass 2: bottom-up traversal. Recurses into nested/union models first, then
@@ -1315,7 +1341,6 @@ class LateralJoinRewriter implements Mutable {
             }
         }
     }
-
 
     private CharSequence ensureColumnInSelect(
             IQueryModel model,
@@ -2430,19 +2455,7 @@ class LateralJoinRewriter implements Mutable {
         }
         outerAliasSaveStack.setPos(aliasSaveBase);
 
-        groupingCols.clear();
-        ObjList<CharSequence> restoreKeys = outerToInnerAlias.keys();
-        for (int ki = 0, kn = restoreKeys.size(); ki < kn; ki++) {
-            CharSequence key = restoreKeys.getQuick(ki);
-            if (key != null) {
-                CharSequence value = outerToInnerAlias.get(key);
-                if (value != null) {
-                    groupingCols.add(expressionNodePool.next().of(
-                            ExpressionNode.LITERAL, value, 0, 0
-                    ));
-                }
-            }
-        }
+        rebuildGroupingCols();
     }
 
     // Collects aliases of columns whose top-level expression is count().
