@@ -1236,14 +1236,14 @@ public class Utf8sTest {
             Assert.assertEquals("hello", readUtf8(mem, n));
 
             // 2-byte UTF-8 (Latin, Cyrillic, etc.)
-            n = Utf8s.strCpyUtf8("\u00e9\u00fc", mem, bufSize); // é ü
+            n = Utf8s.strCpyUtf8("éü", mem, bufSize); // é ü
             Assert.assertEquals(4, n);
-            Assert.assertEquals("\u00e9\u00fc", readUtf8(mem, n));
+            Assert.assertEquals("éü", readUtf8(mem, n));
 
             // 3-byte UTF-8 (CJK, etc.)
-            n = Utf8s.strCpyUtf8("\u4e16\u754c", mem, bufSize); // 世界
+            n = Utf8s.strCpyUtf8("世界", mem, bufSize); // 世界
             Assert.assertEquals(6, n);
-            Assert.assertEquals("\u4e16\u754c", readUtf8(mem, n));
+            Assert.assertEquals("世界", readUtf8(mem, n));
 
             // 4-byte UTF-8 (surrogate pair: emoji U+1F600)
             String emoji = "\uD83D\uDE00";
@@ -1262,7 +1262,7 @@ public class Utf8sTest {
             Assert.assertEquals("?b", readUtf8(mem, n));
 
             // mixed: ASCII + 2-byte + 3-byte + 4-byte
-            String mixed = "A\u00e9\u4e16\uD83D\uDE00";
+            String mixed = "Aé世\uD83D\uDE00";
             n = Utf8s.strCpyUtf8(mixed, mem, bufSize);
             Assert.assertEquals(1 + 2 + 3 + 4, n);
             Assert.assertEquals(mixed, readUtf8(mem, n));
@@ -1273,12 +1273,12 @@ public class Utf8sTest {
             Assert.assertEquals("abc", readUtf8(mem, n));
 
             // truncation: 2-byte char doesn't fit
-            n = Utf8s.strCpyUtf8("a\u00e9b", mem, 2);
+            n = Utf8s.strCpyUtf8("aéb", mem, 2);
             Assert.assertEquals(1, n);
             Assert.assertEquals("a", readUtf8(mem, n));
 
             // truncation: 3-byte char doesn't fit
-            n = Utf8s.strCpyUtf8("a\u4e16b", mem, 3);
+            n = Utf8s.strCpyUtf8("a世b", mem, 3);
             Assert.assertEquals(1, n);
             Assert.assertEquals("a", readUtf8(mem, n));
 
@@ -1288,14 +1288,14 @@ public class Utf8sTest {
             Assert.assertEquals("a", readUtf8(mem, n));
 
             // truncation: 2-byte char fits exactly
-            n = Utf8s.strCpyUtf8("a\u00e9", mem, 3);
+            n = Utf8s.strCpyUtf8("aé", mem, 3);
             Assert.assertEquals(3, n);
-            Assert.assertEquals("a\u00e9", readUtf8(mem, n));
+            Assert.assertEquals("aé", readUtf8(mem, n));
 
             // truncation: 3-byte char fits exactly
-            n = Utf8s.strCpyUtf8("a\u4e16", mem, 4);
+            n = Utf8s.strCpyUtf8("a世", mem, 4);
             Assert.assertEquals(4, n);
-            Assert.assertEquals("a\u4e16", readUtf8(mem, n));
+            Assert.assertEquals("a世", readUtf8(mem, n));
 
             // truncation: 4-byte char fits exactly
             n = Utf8s.strCpyUtf8("a\uD83D\uDE00", mem, 5);
