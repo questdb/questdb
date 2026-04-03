@@ -318,7 +318,7 @@ public class MicrosFormatUtils {
     }
 
     public static long parseOptionalMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
-        if (p < lim && sequence.charAt(p) == '.') {
+        if (isOptionalFractionStart(sequence, p, lim)) {
             final long parsed = Numbers.parseLong000000Greedy(sequence, p + 1, lim);
             return Numbers.encodeLowHighInts(Numbers.decodeLowInt(parsed), Numbers.decodeHighInt(parsed) + 1);
         }
@@ -326,11 +326,19 @@ public class MicrosFormatUtils {
     }
 
     public static long parseOptionalNanosAsMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
-        if (p < lim && sequence.charAt(p) == '.') {
+        if (isOptionalFractionStart(sequence, p, lim)) {
             final long parsed = Micros.parseNanosAsMicrosGreedy(sequence, p + 1, lim);
             return Numbers.encodeLowHighInts(Numbers.decodeLowInt(parsed), Numbers.decodeHighInt(parsed) + 1);
         }
         return Numbers.encodeLowHighInts(0, 0);
+    }
+
+    private static boolean isOptionalFractionStart(CharSequence sequence, int p, int lim) {
+        if (p + 1 >= lim || sequence.charAt(p) != '.') {
+            return false;
+        }
+        final char next = sequence.charAt(p + 1);
+        return next >= '0' && next <= '9';
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ

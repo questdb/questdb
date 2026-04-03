@@ -929,6 +929,16 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testParseOptionalMicros6LeavesDotForLiteral() throws NumericException {
+        assertMicros(".U+.", "1970-01-01T00:00:00.000000Z", ".");
+    }
+
+    @Test
+    public void testParseOptionalMicros6LeavesDotForLiteralWhenFollowedByNonDigit() throws NumericException {
+        assertMicros(".U+..", "1970-01-01T00:00:00.000000Z", "..");
+    }
+
+    @Test
     public void testParseNanos9Eight() {
         assertMicros("y-MM-dd HH:mm:ss.N+", "2022-02-02T02:02:02.123456Z", "2022-02-02 02:02:02.12345678");
     }
@@ -1001,6 +1011,16 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testParseOptionalNanos9RejectsBareDotAtEnd() {
         assertException("yyyy-MM-dd'T'HH:mm:ss.N+", "2026-03-31T09:02:28.");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteral() throws NumericException {
+        assertMicros(".N+.", "1970-01-01T00:00:00.000000Z", ".");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteralWhenFollowedByNonDigit() throws NumericException {
+        assertMicros(".N+..", "1970-01-01T00:00:00.000000Z", "..");
     }
 
     @Test
