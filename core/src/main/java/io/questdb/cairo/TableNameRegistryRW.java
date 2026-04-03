@@ -78,12 +78,20 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isWal) {
+        return lockTableName(tableName, dirName, tableId, isView, isMatView, false, isWal);
+    }
+
+    @Override
+    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isView, boolean isMatView, boolean isLiveView, boolean isWal) {
         final TableToken registeredRecord = tableNameToTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
             boolean isProtected = tableFlagResolver.isProtected(tableName);
             boolean isSystem = tableFlagResolver.isSystem(tableName);
             boolean isPublic = tableFlagResolver.isPublic(tableName);
             String dbLogName = engine.getConfiguration().getDbLogName();
+            if (isLiveView) {
+                return new TableToken(tableName, dirName, dbLogName, tableId, TableToken.Type.LIVE_VIEW, false, isSystem, isProtected, isPublic);
+            }
             return new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
@@ -102,8 +110,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
 
-        // This most unsafe, can throw, run it first.
-        if (!tableToken.isView()) {
+        // This is most unsafe, can throw, run it first.
+        if (!tableToken.isView() && !tableToken.isLiveView()) {
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(tableToken);
             }

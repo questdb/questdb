@@ -38,6 +38,7 @@ import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
@@ -118,6 +119,7 @@ public class SqlParser {
     private final CreateMatViewOperationBuilderImpl createMatViewOperationBuilder = new CreateMatViewOperationBuilderImpl();
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
+    private final CreateLiveViewOperationBuilder createLiveViewOperationBuilder = new CreateLiveViewOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -1247,6 +1249,9 @@ public class SqlParser {
         if (isViewKeyword(tok)) {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
         }
+        if (isLiveKeyword(tok)) {
+            return parseCreateLiveView(lexer, sqlParserCallback);
+        }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
                 throw SqlException.$(0, "materialized views are disabled");
@@ -1254,6 +1259,73 @@ public class SqlParser {
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
+    }
+
+    private ExecutionModel parseCreateLiveView(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final CreateLiveViewOperationBuilder builder = createLiveViewOperationBuilder;
+        builder.clear();
+
+        expectTok(lexer, "view");
+
+        // optional IF NOT EXISTS
+        CharSequence tok = tok(lexer, "live view name");
+        if (isIfKeyword(tok)) {
+            expectTok(lexer, "not");
+            expectTok(lexer, "exists");
+            builder.setIgnoreIfExists(true);
+            tok = tok(lexer, "live view name");
+        }
+
+        // view name
+        builder.setViewName(Chars.toString(GenericLexer.unquote(tok)));
+        builder.setViewNamePosition(lexer.lastTokenPosition());
+
+        // optional LAG duration
+        tok = tok(lexer, "'lag' or 'retention' or 'as'");
+        if (isLagKeyword(tok)) {
+            CharSequence lagTok = tok(lexer, "lag duration");
+            builder.setLagMicros(SqlUtil.expectMicros(lagTok, lexer.lastTokenPosition()));
+            tok = tok(lexer, "'retention' or 'as'");
+        }
+
+        // optional RETENTION duration
+        if (isRetentionKeyword(tok)) {
+            CharSequence retTok = tok(lexer, "retention duration");
+            builder.setRetentionMicros(SqlUtil.expectMicros(retTok, lexer.lastTokenPosition()));
+            tok = tok(lexer, "'as'");
+        }
+
+        // expect AS
+        if (!isAsKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        // parse SELECT
+        int selectStart = lexer.getPosition();
+        tok = tok(lexer, "'(' or 'select'");
+        boolean hasParens = Chars.equals(tok, '(');
+        if (!hasParens) {
+            lexer.unparseLast();
+        }
+        QueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        if (hasParens) {
+            expectTok(lexer, ")");
+        }
+        int selectEnd = lexer.getPosition() - (hasParens ? 1 : 0);
+        builder.setSelectSql(Chars.toString(lexer.getContent(), selectStart, selectEnd));
+        builder.setSelectModel(queryModel);
+
+        // extract base table name from query model
+        QueryModel from = queryModel.getNestedModel() != null ? queryModel.getNestedModel() : queryModel;
+        if (from.getTableName() == null) {
+            throw SqlException.$(selectStart, "live view requires a single base table in FROM clause");
+        }
+        builder.setBaseTableName(Chars.toString(from.getTableName()));
+
+        return builder;
     }
 
     private ExecutionModel parseCreateMatView(

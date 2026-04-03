@@ -92,6 +92,10 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         return cursor;
     }
 
+    public ObjList<WindowFunction> getWindowFunctions() {
+        return windowFunctions;
+    }
+
     @Override
     public int getScanDirection() {
         return base.getScanDirection();

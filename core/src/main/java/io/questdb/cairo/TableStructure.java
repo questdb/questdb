@@ -84,6 +84,10 @@ public interface TableStructure {
 
     boolean isIndexed(int columnIndex);
 
+    default boolean isLiveView() {
+        return false;
+    }
+
     default boolean isMatView() {
         return false;
     }

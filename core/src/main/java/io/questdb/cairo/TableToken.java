@@ -53,8 +53,32 @@ public class TableToken implements Sinkable {
         this(tableName, new GcUtf8String(dirName), dbLogName, tableId, false, false, isWal, isSystem, isProtected, false);
     }
 
+    public static TableToken liveViewToken(@NotNull String name, int tableId) {
+        return new TableToken(name, new GcUtf8String(name), null, tableId, Type.LIVE_VIEW, false, false, false, false);
+    }
+
+    public TableToken(@NotNull String tableName, @NotNull String dirName, @Nullable String dbLogName, int tableId, Type type, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
+        this(tableName, new GcUtf8String(dirName), dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
+    }
+
     public TableToken(@NotNull String tableName, @NotNull String dirName, @Nullable String dbLogName, int tableId, boolean isView, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
         this(tableName, new GcUtf8String(dirName), dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+    }
+
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, @Nullable String dbLogName, int tableId, Type type, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
+        this.tableName = tableName;
+        this.dirName = dirName;
+        this.tableId = tableId;
+        this.type = type;
+        this.isWal = isWal;
+        this.isSystem = isSystem;
+        this.isProtected = isProtected;
+        this.isPublic = isPublic;
+        this.dbLogName = dbLogName;
+        String dirNameString = dirName.toString();
+        this.dirNameSameAsTableName = Chars.startsWith(dirNameString, tableName) &&
+                (dirNameString.length() == tableName.length() ||
+                        (dirNameString.length() > tableName.length() && dirNameString.charAt(tableName.length()) == '~'));
     }
 
     private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, @Nullable String dbLogName, int tableId, boolean isView, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
@@ -142,6 +166,10 @@ public class TableToken implements Sinkable {
         return tableId;
     }
 
+    public boolean isLiveView() {
+        return type == Type.LIVE_VIEW;
+    }
+
     public boolean isMatView() {
         return type == Type.MAT_VIEW;
     }
@@ -200,6 +228,6 @@ public class TableToken implements Sinkable {
     }
 
     public enum Type {
-        TABLE, VIEW, MAT_VIEW
+        TABLE, VIEW, MAT_VIEW, LIVE_VIEW
     }
 }

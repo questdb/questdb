@@ -602,7 +602,7 @@ public final class TableUtils {
 
             // create symbol maps
             int symbolMapCount = 0;
-            if (!structure.isView()) {
+            if (!structure.isView() && !structure.isLiveView()) {
                 for (int i = 0, n = structure.getColumnCount(); i < n; i++) {
                     int columnType = structure.getColumnType(i);
                     if (ColumnType.isSymbol(columnType)) {

@@ -545,6 +545,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
                     engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
+                    engine.notifyLiveViewBaseTableCommit(writer.getTableToken(), writer.getSeqTxn());
                 }
             } catch (Throwable th) {
                 // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will

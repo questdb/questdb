@@ -82,6 +82,8 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
 import io.questdb.griffin.engine.ops.CopyImportFactory;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
+import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
@@ -513,6 +515,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case OperationCodes.DROP_TABLE -> executeDropTable((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_VIEW -> executeDropView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_MAT_VIEW -> executeDropMatView((GenericDropOperation) op, executionContext);
+            case OperationCodes.CREATE_LIVE_VIEW -> executeCreateLiveView((CreateLiveViewOperation) op, executionContext);
+            case OperationCodes.DROP_LIVE_VIEW -> executeDropLiveView((GenericDropOperation) op, executionContext);
             case OperationCodes.DROP_ALL -> executeDropAllTables((DropAllOperation) op, executionContext);
             default ->
                     throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
@@ -2780,6 +2784,44 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 dropOperationBuilder.setSqlText(sqlText);
                 compiledQuery.ofDrop(dropOperationBuilder.build());
+                // DROP LIVE VIEW [ IF EXISTS ] name [;]
+            } else if (isLiveKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || !isViewKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected VIEW");
+                }
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[IF EXISTS] live-view-name");
+                }
+                boolean hasIfExists = false;
+                int liveViewNamePosition = lexer.lastTokenPosition();
+                if (isIfKeyword(tok)) {
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok == null || !isExistsKeyword(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("EXISTS live-view-name");
+                    }
+                    hasIfExists = true;
+                    liveViewNamePosition = lexer.getPosition();
+                } else {
+                    lexer.unparseLast();
+                }
+
+                tok = expectToken(lexer, "live view name");
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+
+                final CharSequence liveViewName = GenericLexer.unquote(tok);
+                dropOperationBuilder.clear();
+                dropOperationBuilder.setOperationCode(OperationCodes.DROP_LIVE_VIEW);
+                dropOperationBuilder.setEntityName(liveViewName);
+                dropOperationBuilder.setEntityNamePosition(liveViewNamePosition);
+                dropOperationBuilder.setIfExists(hasIfExists);
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+                }
+                dropOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropOperationBuilder.build());
                 // DROP MATERIALIZED VIEW [ IF EXISTS ] name [;]
             } else if (isMaterializedKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
@@ -3659,6 +3701,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
                             .build(this, executionContext, sqlText));
                     break;
+                case ExecutionModel.CREATE_LIVE_VIEW:
+                    compiledQuery.ofCreateLiveView(((CreateLiveViewOperationBuilder) executionModel)
+                            .build(sqlText));
+                    break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (executionModel.getTableName() != null) {
@@ -4300,6 +4346,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 queryRegistry.unregister(sqlId, executionContext);
             }
         }
+    }
+
+    private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
+        // validate base table exists and is WAL
+        final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
+        if (baseTableToken == null) {
+            throw SqlException.$(op.getViewNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
+        }
+        if (!engine.isWalTable(baseTableToken)) {
+            throw SqlException.$(op.getViewNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
+        }
+
+        engine.createLiveView(op, baseTableToken, executionContext);
+        return true;
+    }
+
+    private boolean executeDropLiveView(GenericDropOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final String name = op.getEntityName();
+        if (!engine.getLiveViewRegistry().hasView(name)) {
+            if (op.ifExists()) {
+                return false;
+            }
+            throw SqlException.$(op.getEntityNamePosition(), "live view does not exist [name=").put(name).put(']');
+        }
+        engine.dropLiveView(name);
+        return true;
     }
 
     private boolean executeCreateView(CreateViewOperation createViewOp, SqlExecutionContext executionContext) throws SqlException {
