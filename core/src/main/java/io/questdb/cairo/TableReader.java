@@ -1220,30 +1220,37 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         final int columnBase = getColumnBase(partitionIndex);
         boolean hasNewColumns = false;
-        for (int i = 0; i < columnCount; i++) {
-            if (hasActiveColumns && !activeColumns.get(i)) {
-                continue;
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                if (hasActiveColumns && !activeColumns.get(i)) {
+                    continue;
+                }
+                final int primaryIndex = getPrimaryColumnIndex(columnBase, i);
+                final MemoryCMR mem = columns.getQuick(primaryIndex);
+                if (mem != null && mem != NullMemoryCMR.INSTANCE && mem.addressOf(0) != 0) {
+                    continue; // already mapped
+                }
+                if (!hasNewColumns) {
+                    final long nameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+                    pathGenNativePartition(partitionIndex, nameTxn);
+                    hasNewColumns = true;
+                }
+                reloadColumnAt(
+                        partitionIndex,
+                        path,
+                        columns,
+                        columnTops,
+                        bitmapIndexes,
+                        columnBase,
+                        i,
+                        partitionSize
+                );
             }
-            final int primaryIndex = getPrimaryColumnIndex(columnBase, i);
-            final MemoryCMR mem = columns.getQuick(primaryIndex);
-            if (mem != null && mem != NullMemoryCMR.INSTANCE && mem.addressOf(0) != 0) {
-                continue; // already mapped
-            }
-            if (!hasNewColumns) {
-                final long nameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-                pathGenNativePartition(partitionIndex, nameTxn);
-                hasNewColumns = true;
-            }
-            reloadColumnAt(
-                    partitionIndex,
-                    path,
-                    columns,
-                    columnTops,
-                    bitmapIndexes,
-                    columnBase,
-                    i,
-                    partitionSize
-            );
+        } catch (Throwable th) {
+            closePartitionColumns(columnBase);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
+            throw th;
         }
         if (hasNewColumns) {
             path.trimTo(rootLen);
