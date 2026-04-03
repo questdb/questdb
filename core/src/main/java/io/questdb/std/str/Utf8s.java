@@ -1673,11 +1673,9 @@ public final class Utf8s {
                     return pos;
                 }
             }
-        } else if (Character.isLowSurrogate(c)) {
+        } else { // assume orphaned low surrogate -- the caller already checked it's a surrogate
             sink.putAscii('?');
             return pos;
-        } else {
-            dword = c;
         }
         sink.put((byte) (240 | dword >> 18));
         sink.put((byte) (128 | dword >> 12 & 63));
@@ -1929,10 +1927,6 @@ public final class Utf8s {
             putNonAsciiAsHex(sink, Unsafe.getUnsafe().getByte(lo + 1));
             if (hi - lo > 2) {
                 putNonAsciiAsHex(sink, Unsafe.getUnsafe().getByte(lo + 2));
-                if (hi - lo > 3) {
-                    putNonAsciiAsHex(sink, Unsafe.getUnsafe().getByte(lo + 3));
-                    return 4;
-                }
                 return 3;
             }
             return 2;
@@ -1953,10 +1947,6 @@ public final class Utf8s {
             putNonAsciiAsHex(sink, source.byteAt(lo + 1));
             if (hi - lo > 2) {
                 putNonAsciiAsHex(sink, source.byteAt(lo + 2));
-                if (hi - lo > 3) {
-                    putNonAsciiAsHex(sink, source.byteAt(lo + 3));
-                    return 4;
-                }
                 return 3;
             }
             return 2;
