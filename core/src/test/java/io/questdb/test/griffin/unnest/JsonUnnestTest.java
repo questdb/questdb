@@ -299,69 +299,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBaseTableShortColumnWithUnnest() throws Exception {
-        // Exercises UnnestRecord.getShort() for base table columns (col < split).
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (s SHORT, payload VARCHAR)");
-            execute("INSERT INTO t VALUES (42, '[1.5, 2.5]')");
-            assertQueryNoLeakCheck(
-                    """
-                            s\tval
-                            42\t1.5
-                            42\t2.5
-                            """,
-                    "SELECT t.s, u.val FROM t, UNNEST("
-                            + "t.payload COLUMNS(val DOUBLE)"
-                            + ") u",
-                    null, false, false, true
-            );
-        });
-    }
-
-    @Test
-    public void testBaseTableStringColumnWithUnnest() throws Exception {
-        // Exercises UnnestRecord.getStrA() and getStrB() for base table columns (col < split).
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (s STRING, payload VARCHAR)");
-            execute("INSERT INTO t VALUES ('hello', '[1, 2]')");
-            assertQueryNoLeakCheck(
-                    """
-                            s\tval
-                            hello\t1
-                            hello\t2
-                            """,
-                    "SELECT t.s, u.val FROM t, UNNEST("
-                            + "t.payload COLUMNS(val INT)"
-                            + ") u",
-                    null, false, false, true
-            );
-        });
-    }
-
-    @Test
-    public void testBaseTableStringColumnFilterWithUnnest() throws Exception {
-        // Exercises UnnestRecord.getStrB() via equality comparison in WHERE,
-        // which uses getStrB() for the B-copy needed by the filter.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (s STRING, payload VARCHAR)");
-            execute("INSERT INTO t VALUES "
-                    + "('keep', '[1, 2]'), "
-                    + "('drop', '[3, 4]')");
-            assertQueryNoLeakCheck(
-                    """
-                            s\tval
-                            keep\t1
-                            keep\t2
-                            """,
-                    "SELECT t.s, u.val FROM t, UNNEST("
-                            + "t.payload COLUMNS(val INT)"
-                            + ") u WHERE t.s = 'keep'",
-                    null, false, false, true
-            );
-        });
-    }
-
-    @Test
     public void testBaseTableGeoByteColumnWithUnnest() throws Exception {
         // Exercises UnnestRecord.getGeoByte() (col is always a base table column).
         assertMemoryLeak(() -> {
@@ -504,6 +441,69 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseTableShortColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getShort() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SHORT, payload VARCHAR)");
+            execute("INSERT INTO t VALUES (42, '[1.5, 2.5]')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tval
+                            42\t1.5
+                            42\t2.5
+                            """,
+                    "SELECT t.s, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val DOUBLE)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableStringColumnFilterWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getStrB() via equality comparison in WHERE,
+        // which uses getStrB() for the B-copy needed by the filter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s STRING, payload VARCHAR)");
+            execute("INSERT INTO t VALUES "
+                    + "('keep', '[1, 2]'), "
+                    + "('drop', '[3, 4]')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tval
+                            keep\t1
+                            keep\t2
+                            """,
+                    "SELECT t.s, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u WHERE t.s = 'keep'",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testBaseTableStringColumnWithUnnest() throws Exception {
+        // Exercises UnnestRecord.getStrA() and getStrB() for base table columns (col < split).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s STRING, payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('hello', '[1, 2]')");
+            assertQueryNoLeakCheck(
+                    """
+                            s\tval
+                            hello\t1
+                            hello\t2
+                            """,
+                    "SELECT t.s, u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val INT)"
+                            + ") u",
+                    null, false, false, true
+            );
+        });
+    }
+
+    @Test
     public void testBaseTableSymbolColumnWithUnnest() throws Exception {
         // Exercises UnnestRecord.getSymA() (col is always a base table column).
         assertMemoryLeak(() -> {
@@ -541,29 +541,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     "SELECT t.s, u.val FROM t, UNNEST("
                             + "t.payload COLUMNS(val INT)"
                             + ") u ORDER BY t.s",
-                    null, true, false, true
-            );
-        });
-    }
-
-    @Test
-    public void testUnnestVarcharCastToSymbolOrderBy() throws Exception {
-        // Exercises UnnestRecord.getSymB() by casting an unnest VARCHAR column
-        // to SYMBOL and ordering by it. The sort comparator needs both A and B
-        // copies, which calls getSymB() on the UnnestRecord.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (payload VARCHAR)");
-            execute("INSERT INTO t VALUES ('[\"banana\", \"apple\", \"cherry\"]')");
-            assertQueryNoLeakCheck(
-                    """
-                            x
-                            apple
-                            banana
-                            cherry
-                            """,
-                    "SELECT distinct u.val::SYMBOL x FROM t, UNNEST("
-                            + "t.payload COLUMNS(val VARCHAR)"
-                            + ") u order by 1",
                     null, true, false, true
             );
         });
@@ -1376,12 +1353,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testErrorUnsupportedTypeInterval() throws Exception {
+    public void testErrorUnsupportedTypeIPv4() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             assertException(
                     "SELECT u.val FROM t, UNNEST("
-                            + "t.payload COLUMNS(val INTERVAL)"
+                            + "t.payload COLUMNS(val IPv4)"
                             + ") u",
                     50,
                     "unsupported type for JSON UNNEST"
@@ -1390,12 +1367,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testErrorUnsupportedTypeIPv4() throws Exception {
+    public void testErrorUnsupportedTypeInterval() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
             assertException(
                     "SELECT u.val FROM t, UNNEST("
-                            + "t.payload COLUMNS(val IPv4)"
+                            + "t.payload COLUMNS(val INTERVAL)"
                             + ") u",
                     50,
                     "unsupported type for JSON UNNEST"
@@ -2049,8 +2026,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Tests for COLUMNS keyword validation ----
-
     @Test
     public void testMultipleSourcesBoundsShort() throws Exception {
         assertMemoryLeak(() -> {
@@ -2071,6 +2046,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- Tests for COLUMNS keyword validation ----
 
     @Test
     public void testMultipleSourcesBoundsTimestamp() throws Exception {
@@ -2093,12 +2070,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ========================================================================
-    // Comprehensive per-type tests: scalar arrays, object arrays, nullability
-    // ========================================================================
-
-    // ---- INT: scalar array ----
-
     @Test
     public void testMultipleSourcesBoundsVarchar() throws Exception {
         assertMemoryLeak(() -> {
@@ -2119,6 +2090,12 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ========================================================================
+    // Comprehensive per-type tests: scalar arrays, object arrays, nullability
+    // ========================================================================
+
+    // ---- INT: scalar array ----
 
     @Test
     public void testNotAnArrayReturnsNoRows() throws Exception {
@@ -2190,8 +2167,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- INT: object array ----
-
     @Test
     public void testNullPayloadReturnsNoRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -2206,6 +2181,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- INT: object array ----
 
     @Test
     public void testObjectAllFieldsMissing() throws Exception {
@@ -2224,8 +2201,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ---- LONG: scalar array ----
 
     @Test
     public void testObjectArrayMultiColumn() throws Exception {
@@ -2248,6 +2223,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- LONG: scalar array ----
 
     @Test
     public void testObjectArrayWithNullFirstElement() throws Exception {
@@ -2315,8 +2292,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- LONG: object array ----
-
     @Test
     public void testObjectBooleanMissingField() throws Exception {
         assertMemoryLeak(() -> {
@@ -2335,7 +2310,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- SHORT: scalar array ----
+    // ---- LONG: object array ----
 
     @Test
     public void testObjectBooleanNullField() throws Exception {
@@ -2354,6 +2329,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- SHORT: scalar array ----
 
     @Test
     public void testObjectDoubleMissingField() throws Exception {
@@ -2391,8 +2368,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- SHORT: object array ----
-
     @Test
     public void testObjectIntMissingField() throws Exception {
         assertMemoryLeak(() -> {
@@ -2410,6 +2385,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- SHORT: object array ----
 
     @Test
     public void testObjectIntNullField() throws Exception {
@@ -2429,8 +2406,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- DOUBLE: scalar array ----
-
     @Test
     public void testObjectLongNullField() throws Exception {
         assertMemoryLeak(() -> {
@@ -2447,6 +2422,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- DOUBLE: scalar array ----
 
     @Test
     public void testObjectMultiTypeWithNulls() throws Exception {
@@ -2508,8 +2485,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- DOUBLE: object array ----
-
     @Test
     public void testObjectShortNullField() throws Exception {
         assertMemoryLeak(() -> {
@@ -2526,6 +2501,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- DOUBLE: object array ----
 
     @Test
     public void testObjectTimestampMissingField() throws Exception {
@@ -2544,8 +2521,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- BOOLEAN: scalar array ----
-
     @Test
     public void testObjectTimestampNullField() throws Exception {
         assertMemoryLeak(() -> {
@@ -2562,6 +2537,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- BOOLEAN: scalar array ----
 
     @Test
     public void testObjectVarcharMissingField() throws Exception {
@@ -2599,8 +2576,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- BOOLEAN: object array ----
-
     @Test
     public void testOrderByOnUnnested() throws Exception {
         assertMemoryLeak(() -> {
@@ -2621,6 +2596,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
+    // ---- BOOLEAN: object array ----
+
     @Test
     public void testOrdinalityCastToDouble() throws Exception {
         assertMemoryLeak(() -> {
@@ -2637,8 +2614,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ---- VARCHAR: scalar array ----
 
     @Test
     public void testOrdinalityCastToInt() throws Exception {
@@ -2657,6 +2632,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- VARCHAR: scalar array ----
 
     @Test
     public void testParserRoundtrip() throws Exception {
@@ -2758,8 +2735,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- VARCHAR: object array ----
-
     @Test
     public void testScalarBooleanTypeMismatch() throws Exception {
         // Non-boolean values return false
@@ -2778,6 +2753,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- VARCHAR: object array ----
 
     @Test
     public void testScalarDateArray() throws Exception {
@@ -2808,7 +2785,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     """
                             val
                             2024-01-15T00:00:00.000Z
-
+                            
                             """,
                     "SELECT u.val FROM t, UNNEST(t.payload COLUMNS(val DATE)) u",
                     (String) null
@@ -2833,8 +2810,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- TIMESTAMP: scalar array ----
-
     @Test
     public void testScalarDoubleArray() throws Exception {
         assertMemoryLeak(() -> {
@@ -2854,6 +2829,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- TIMESTAMP: scalar array ----
 
     @Test
     public void testScalarDoubleNullElement() throws Exception {
@@ -2946,8 +2923,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- TIMESTAMP: object array ----
-
     @Test
     public void testScalarIntFromDoubleValue() throws Exception {
         // JSON has no integer type distinction; 1.9 should truncate or return NULL
@@ -2966,6 +2941,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- TIMESTAMP: object array ----
 
     @Test
     public void testScalarIntNegativeValues() throws Exception {
@@ -2987,8 +2964,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Multi-column object array: all types together ----
-
     @Test
     public void testScalarIntNullElement() throws Exception {
         assertMemoryLeak(() -> {
@@ -3006,6 +2981,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- Multi-column object array: all types together ----
 
     @Test
     public void testScalarIntTypeMismatchString() throws Exception {
@@ -3041,8 +3018,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Edge cases: empty/null/invalid JSON payload ----
-
     @Test
     public void testScalarLongArray() throws Exception {
         assertMemoryLeak(() -> {
@@ -3062,6 +3037,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- Edge cases: empty/null/invalid JSON payload ----
 
     @Test
     public void testScalarLongLargeValues() throws Exception {
@@ -3117,8 +3094,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Multiple rows with mixed null/valid payloads ----
-
     @Test
     public void testScalarShortArray() throws Exception {
         assertMemoryLeak(() -> {
@@ -3139,7 +3114,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- getVarcharSize ----
+    // ---- Multiple rows with mixed null/valid payloads ----
 
     @Test
     public void testScalarShortNegativeValues() throws Exception {
@@ -3159,7 +3134,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- CAST TESTS: casting unnested JSON values ----
+    // ---- getVarcharSize ----
 
     @Test
     public void testScalarShortNullElement() throws Exception {
@@ -3180,6 +3155,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
+    // ---- CAST TESTS: casting unnested JSON values ----
+
     @Test
     public void testScalarShortTypeMismatch() throws Exception {
         // Type mismatch returns 0 (SHORT null sentinel)
@@ -3199,27 +3176,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testScalarStringNotObject() throws Exception {
-        // When single column name is "val" but elements are strings,
-        // not objects - should extract directly
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (payload VARCHAR)");
-            execute("INSERT INTO t VALUES ('[\"hello\", \"world\"]')");
-            assertQueryNoLeakCheck(
-                    """
-                            val
-                            hello
-                            world
-                            """,
-                    "SELECT u.val FROM t, UNNEST("
-                            + "t.payload COLUMNS(val VARCHAR)"
-                            + ") u",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
     public void testScalarStringArray() throws Exception {
         // Exercises JsonUnnestSource.getStrA() via STRING column type.
         assertMemoryLeak(() -> {
@@ -3230,27 +3186,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             val
                             hello
                             world
-                            """,
-                    "SELECT u.val FROM t, UNNEST("
-                            + "t.payload COLUMNS(val STRING)"
-                            + ") u",
-                    (String) null
-            );
-        });
-    }
-
-    @Test
-    public void testScalarStringNullElement() throws Exception {
-        // Exercises NULL handling in JsonUnnestSource.getStrA().
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (payload VARCHAR)");
-            execute("INSERT INTO t VALUES ('[\"a\", null, \"b\"]')");
-            assertQueryNoLeakCheck(
-                    """
-                            val
-                            a
-
-                            b
                             """,
                     "SELECT u.val FROM t, UNNEST("
                             + "t.payload COLUMNS(val STRING)"
@@ -3295,6 +3230,48 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             """,
                     "SELECT u.name FROM t, UNNEST("
                             + "t.payload COLUMNS(name STRING)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarStringNotObject() throws Exception {
+        // When single column name is "val" but elements are strings,
+        // not objects - should extract directly
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"hello\", \"world\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            hello
+                            world
+                            """,
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val VARCHAR)"
+                            + ") u",
+                    (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testScalarStringNullElement() throws Exception {
+        // Exercises NULL handling in JsonUnnestSource.getStrA().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"a\", null, \"b\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            val
+                            a
+                            
+                            b
+                            """,
+                    "SELECT u.val FROM t, UNNEST("
+                            + "t.payload COLUMNS(val STRING)"
                             + ") u",
                     (String) null
             );
@@ -3742,8 +3719,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- WITH ORDINALITY cast tests ----
-
     @Test
     public void testTimestampTruncationInObject() throws Exception {
         assertMemoryLeak(() -> {
@@ -3758,6 +3733,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---- WITH ORDINALITY cast tests ----
 
     @Test
     public void testTypeMismatchIntReturnsNull() throws Exception {
@@ -3777,8 +3754,6 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Varchar B copy (cursor stability) via cross-join ----
-
     @Test
     public void testTypeMismatchLongReturnsNull() throws Exception {
         assertMemoryLeak(() -> {
@@ -3797,7 +3772,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Overflow / truncation tests ----
+    // ---- Varchar B copy (cursor stability) via cross-join ----
 
     @Test
     public void testTypeMismatchReturnsNaN() throws Exception {
@@ -3819,6 +3794,8 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
+    // ---- Overflow / truncation tests ----
+
     @Test
     public void testUnicodeStringsInJson() throws Exception {
         assertMemoryLeak(() -> {
@@ -3839,6 +3816,29 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             + "t.payload COLUMNS(name VARCHAR)"
                             + ") u",
                     (String) null
+            );
+        });
+    }
+
+    @Test
+    public void testUnnestVarcharCastToSymbolOrderBy() throws Exception {
+        // Exercises UnnestRecord.getSymB() by casting an unnest VARCHAR column
+        // to SYMBOL and ordering by it. The sort comparator needs both A and B
+        // copies, which calls getSymB() on the UnnestRecord.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[\"banana\", \"apple\", \"cherry\"]')");
+            assertQueryNoLeakCheck(
+                    """
+                            x
+                            apple
+                            banana
+                            cherry
+                            """,
+                    "SELECT distinct u.val::SYMBOL x FROM t, UNNEST("
+                            + "t.payload COLUMNS(val VARCHAR)"
+                            + ") u order by 1",
+                    null, true, false, true
             );
         });
     }
