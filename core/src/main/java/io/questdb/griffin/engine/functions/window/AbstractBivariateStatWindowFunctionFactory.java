@@ -38,7 +38,6 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -388,8 +387,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
     // (rows between current row and current row) processes a 1-element set.
     // covar_pop returns 0.0 (both finite), covar_samp returns NaN, corr always returns NaN.
-    static class BivarStatOverCurrentRowFunction extends BaseWindowFunction implements WindowDoubleFunction {
-        private final Function argX;
+    static class BivarStatOverCurrentRowFunction extends BaseBivariateWindowFunction implements WindowDoubleFunction {
         private final Function argY;
         private final boolean isCorrelation;
         private final boolean isSample;
@@ -397,18 +395,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         private double value;
 
         BivarStatOverCurrentRowFunction(Function argY, Function argX, boolean isCorrelation, boolean isSample, String name) {
-            super(argY);
+            super(argY, argX);
             this.argY = argY;
-            this.argX = argX;
             this.isCorrelation = isCorrelation;
             this.isSample = isSample;
             this.name = name;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            Misc.free(argX);
         }
 
         @Override
@@ -427,12 +418,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
-        public void cursorClosed() {
-            super.cursorClosed();
-            argX.cursorClosed();
-        }
-
-        @Override
         public double getDouble(Record rec) {
             return value;
         }
@@ -445,12 +430,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return ZERO_PASS;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -469,13 +448,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
-            argX.toTop();
         }
     }
 
     // Handles bivariate stat over (partition by x), order by absent or whole-partition frame.
-    static class BivarStatOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
-        private final Function argX;
+    static class BivarStatOverPartitionFunction extends BasePartitionedBivariateWindowFunction implements WindowDoubleFunction {
         private final Function argY;
         private final boolean isCorrelation;
         private final boolean isSample;
@@ -491,24 +468,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 boolean isSample,
                 String name
         ) {
-            super(map, partitionByRecord, partitionBySink, argY);
+            super(map, partitionByRecord, partitionBySink, argY, argX);
             this.argY = argY;
-            this.argX = argX;
             this.isCorrelation = isCorrelation;
             this.isSample = isSample;
             this.name = name;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            Misc.free(argX);
-        }
-
-        @Override
-        public void cursorClosed() {
-            super.cursorClosed();
-            argX.cursorClosed();
         }
 
         @Override
@@ -519,12 +483,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -608,16 +566,14 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
-            argX.toTop();
         }
     }
 
     // Handles bivariate stat over (partition by x order by ts range between [unbounded | y] preceding and [z preceding | current row]).
     // Removable cumulative aggregation with timestamp, x and y stored in resizable ring buffers.
-    static class BivarStatOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    static class BivarStatOverPartitionRangeFrameFunction extends BasePartitionedBivariateWindowFunction implements WindowDoubleFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + 2 * Double.BYTES;
-        private final Function argX;
         private final Function argY;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
@@ -649,9 +605,8 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 boolean isSample,
                 String name
         ) {
-            super(map, partitionByRecord, partitionBySink, argY);
+            super(map, partitionByRecord, partitionBySink, argY, argX);
             this.argY = argY;
-            this.argX = argX;
             frameLoBounded = rangeLo != Long.MIN_VALUE;
             maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
             minDiff = Math.abs(rangeHi);
@@ -667,7 +622,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void close() {
             super.close();
-            Misc.free(argX);
             memory.close();
             freeList.clear();
         }
@@ -862,12 +816,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
-        public void cursorClosed() {
-            super.cursorClosed();
-            argX.cursorClosed();
-        }
-
-        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -880,12 +828,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -932,7 +874,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
-            argX.toTop();
             memory.truncate();
             freeList.clear();
         }
@@ -940,10 +881,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
     // Handles bivariate stat over (partition by x [order by o] rows between y and z).
     // Removable cumulative aggregation.
-    static class BivarStatOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    static class BivarStatOverPartitionRowsFrameFunction extends BasePartitionedBivariateWindowFunction implements WindowDoubleFunction {
 
         private static final int SLOT_SIZE = 2 * Double.BYTES;
-        private final Function argX;
         private final Function argY;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
@@ -968,9 +908,8 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 boolean isSample,
                 String name
         ) {
-            super(map, partitionByRecord, partitionBySink, argY);
+            super(map, partitionByRecord, partitionBySink, argY, argX);
             this.argY = argY;
-            this.argX = argX;
 
             if (rowsLo > Long.MIN_VALUE) {
                 frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
@@ -992,7 +931,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void close() {
             super.close();
-            Misc.free(argX);
             memory.close();
         }
 
@@ -1108,12 +1046,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
-        public void cursorClosed() {
-            super.cursorClosed();
-            argX.cursorClosed();
-        }
-
-        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1126,12 +1058,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1178,15 +1104,13 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
-            argX.toTop();
             memory.truncate();
         }
     }
 
     // Handles bivariate stat over ([order by ts] range between [unbounded | x] preceding and [x preceding | current row]); no partition key.
-    static class BivarStatOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
+    static class BivarStatOverRangeFrameFunction extends BaseBivariateWindowFunction implements Reopenable, WindowDoubleFunction {
         private static final int RECORD_SIZE = Long.BYTES + 2 * Double.BYTES;
-        private final Function argX;
         private final Function argY;
         private final boolean frameLoBounded;
         private final long initialCapacity;
@@ -1250,9 +1174,8 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 boolean isSample,
                 String name
         ) {
-            super(argY);
+            super(argY, argX);
             this.argY = argY;
-            this.argX = argX;
             this.initialCapacity = initialCapacity;
             this.memory = memory;
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1279,7 +1202,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void close() {
             super.close();
-            Misc.free(argX);
             memory.close();
         }
 
@@ -1389,12 +1311,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
-        public void cursorClosed() {
-            super.cursorClosed();
-            argX.cursorClosed();
-        }
-
-        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1407,12 +1323,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1465,7 +1375,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
-            argX.toTop();
             result = Double.NaN;
             capacity = initialCapacity;
             memory.truncate();
@@ -1483,9 +1392,8 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
     // Handles bivariate stat over ([order by o] rows between y and z); no partition key.
     // Removable cumulative aggregation.
-    static class BivarStatOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
+    static class BivarStatOverRowsFrameFunction extends BaseBivariateWindowFunction implements Reopenable, WindowDoubleFunction {
         private static final int SLOT_SIZE = 2 * Double.BYTES;
-        private final Function argX;
         private final Function argY;
         private final MemoryARW buffer;
         private final int bufferSize;
@@ -1514,9 +1422,8 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 boolean isSample,
                 String name
         ) {
-            super(argY);
+            super(argY, argX);
             this.argY = argY;
-            this.argX = argX;
             this.isCorrelation = isCorrelation;
             this.isSample = isSample;
             this.name = name;
@@ -1545,7 +1452,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void close() {
             super.close();
-            Misc.free(argX);
             buffer.close();
         }
 
@@ -1598,12 +1504,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
-        public void cursorClosed() {
-            super.cursorClosed();
-            argX.cursorClosed();
-        }
-
-        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1616,12 +1516,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1680,7 +1574,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
-            argX.toTop();
             result = Double.NaN;
             count = 0;
             loIdx = 0;
@@ -1704,8 +1597,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
     // - bivariate stat over (partition by x rows between unbounded preceding and current row)
     // - bivariate stat over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class BivarStatOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
-        private final Function argX;
+    static class BivarStatOverUnboundedPartitionRowsFrameFunction extends BasePartitionedBivariateWindowFunction implements WindowDoubleFunction {
         private final Function argY;
         private final boolean isCorrelation;
         private final boolean isSample;
@@ -1722,18 +1614,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 boolean isSample,
                 String name
         ) {
-            super(map, partitionByRecord, partitionBySink, argY);
+            super(map, partitionByRecord, partitionBySink, argY, argX);
             this.argY = argY;
-            this.argX = argX;
             this.isCorrelation = isCorrelation;
             this.isSample = isSample;
             this.name = name;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            Misc.free(argX);
         }
 
         @Override
@@ -1795,12 +1680,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
-        public void cursorClosed() {
-            super.cursorClosed();
-            argX.cursorClosed();
-        }
-
-        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1813,12 +1692,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1840,14 +1713,12 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
-            argX.toTop();
         }
     }
 
     // Handles bivariate stat over (rows between unbounded preceding and current row); no partition key.
     // Uses Welford's online algorithm for numerical stability.
-    static class BivarStatOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDoubleFunction {
-        private final Function argX;
+    static class BivarStatOverUnboundedRowsFrameFunction extends BaseBivariateWindowFunction implements WindowDoubleFunction {
         private final Function argY;
         private final boolean isCorrelation;
         private final boolean isSample;
@@ -1861,18 +1732,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         private double sumYY = 0.0;
 
         BivarStatOverUnboundedRowsFrameFunction(Function argY, Function argX, boolean isCorrelation, boolean isSample, String name) {
-            super(argY);
+            super(argY, argX);
             this.argY = argY;
-            this.argX = argX;
             this.isCorrelation = isCorrelation;
             this.isSample = isSample;
             this.name = name;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            Misc.free(argX);
         }
 
         @Override
@@ -1898,12 +1762,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
-        public void cursorClosed() {
-            super.cursorClosed();
-            argX.cursorClosed();
-        }
-
-        @Override
         public double getDouble(Record rec) {
             return result;
         }
@@ -1916,12 +1774,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1952,7 +1804,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
-            argX.toTop();
             result = Double.NaN;
             count = 0;
             meanX = 0.0;
@@ -1965,8 +1816,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
     // Bivariate stat over () - empty clause, no partition by, no order by, default frame.
     // Uses Welford's online algorithm for numerical stability.
-    static class BivarStatOverWholeResultSetFunction extends BaseWindowFunction implements WindowDoubleFunction {
-        private final Function argX;
+    static class BivarStatOverWholeResultSetFunction extends BaseBivariateWindowFunction implements WindowDoubleFunction {
         private final Function argY;
         private final boolean isCorrelation;
         private final boolean isSample;
@@ -1980,24 +1830,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         private double sumYY;
 
         BivarStatOverWholeResultSetFunction(Function argY, Function argX, boolean isCorrelation, boolean isSample, String name) {
-            super(argY);
+            super(argY, argX);
             this.argY = argY;
-            this.argX = argX;
             this.isCorrelation = isCorrelation;
             this.isSample = isSample;
             this.name = name;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            Misc.free(argX);
-        }
-
-        @Override
-        public void cursorClosed() {
-            super.cursorClosed();
-            argX.cursorClosed();
         }
 
         @Override
@@ -2008,12 +1845,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int getPassCount() {
             return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            argX.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -2068,7 +1899,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public void toTop() {
             super.toTop();
-            argX.toTop();
             count = 0;
             result = Double.NaN;
             meanX = 0.0;
