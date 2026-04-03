@@ -336,13 +336,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.resumeHandlerId = currentHandlerId;
     }
 
-    /**
-     * Returns true if the connection has been switched to a different protocol.
-     */
-    public boolean isProtocolSwitched() {
-        return isProtocolSwitched;
-    }
-
     public AssociativeCache<RecordCursorFactory> getSelectCache() {
         return selectCache;
     }

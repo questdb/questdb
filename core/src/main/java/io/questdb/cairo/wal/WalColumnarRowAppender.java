@@ -278,7 +278,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             if (cursor.isNull()) {
                 StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
             } else {
-                StringTypeDriver.appendValue(auxMem, dataMem, cursor.getValue() ? "true" : "false");
+                StringTypeDriver.appendValue(auxMem, dataMem, Boolean.toString(cursor.getValue()));
             }
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
@@ -297,7 +297,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 VarcharTypeDriver.appendValue(auxMem, dataMem, null);
             } else {
                 utf8Sink.clear();
-                utf8Sink.put(cursor.getValue() ? "true" : "false");
+                utf8Sink.put(Boolean.toString(cursor.getValue()));
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
             }
         }
@@ -1239,13 +1239,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             case ColumnType.DECIMAL8 ->
                     putStringToDecimal8Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             case ColumnType.DECIMAL16 ->
-                    putStringToDecimal16Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                    putStringToDecimal16Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             case ColumnType.DECIMAL32 ->
                     putStringToDecimal32Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             case ColumnType.DECIMAL64 ->
                     putStringToDecimal64Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             case ColumnType.DECIMAL128 ->
-                    putStringToDecimal128Loop(dataMem, cursor, rowCount, columnType, columnPrecision, columnScale, columnIndex);
+                    putStringToDecimal128Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             default -> putStringToDecimal256Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
@@ -2256,8 +2256,12 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putStringToDecimal128Loop(
-            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpStringColumnCursor cursor,
+            int rowCount,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
@@ -2277,8 +2281,12 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     private void putStringToDecimal16Loop(
-            MemoryMA dataMem, QwpStringColumnCursor cursor, int rowCount,
-            int columnType, int columnPrecision, int columnScale, int columnIndex
+            MemoryMA dataMem,
+            QwpStringColumnCursor cursor,
+            int rowCount,
+            int columnPrecision,
+            int columnScale,
+            int columnIndex
     ) throws QwpParseException {
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();

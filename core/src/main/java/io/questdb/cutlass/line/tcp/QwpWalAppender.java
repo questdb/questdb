@@ -193,13 +193,6 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Returns the current symbol cache, or null if not set.
-     */
-    public ConnectionSymbolCache getSymbolCache() {
-        return symbolCache;
-    }
-
-    /**
      * Sets the symbol cache to use for optimizing symbol lookups.
      * <p>
      * When set, the appender will cache clientSymbolId → tableSymbolId mappings

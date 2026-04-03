@@ -611,7 +611,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * already have data, this function will create ".top" file in addition to column files. ".top" file contains
      * the size of partition at the moment of column creation. It must be used to accurately position inside new
      * column when either appending or reading.
-     *
+     * <p>
      * <b>Failures</b>
      * Adding new column can fail in many situations. None of the failures affect the integrity of data that is already in
      * the table but can leave instance of TableWriter in inconsistent state. When this happens, function will throw CairoError.
@@ -620,7 +620,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * Whenever function throws CairoException application code can continue using TableWriter instance and may attempt to
      * add columns again.
-     *
+     * <p>
      * <b>Transactions</b>
      * <p>
      * Pending transaction will be committed before the function attempts to add column. Even when function is unsuccessful, it may
@@ -5490,9 +5490,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     openPartition(prevTimestamp, newTransientRowCount);
                     setAppendPosition(newTransientRowCount, false);
                 } else {
-                    partitionTimestampHi = index != 0
-                            ? txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp)
-                            : Long.MIN_VALUE;
+                    partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp);
                 }
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;

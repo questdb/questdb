@@ -1287,13 +1287,6 @@ public final class Numbers {
         return (ipv4 << 8) | num;
     }
 
-    public static int parseNonNegativeIntQuiet(CharSequence sequence) {
-        if (sequence == null) {
-            return -1;
-        }
-        return parseNonNegativeInt0(sequence, 0, sequence.length());
-    }
-
     public static int parseNonNegativeIntQuiet(Utf8Sequence sequence) {
         if (sequence == null) {
             return -1;

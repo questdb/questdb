@@ -1277,7 +1277,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (explain) {
                 response.putAscii(',').putAsciiQuoted("explain").putAscii(':')
                         .putAscii('{')
-                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(queryJitCompiled ? "true" : "false")
+                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(Boolean.toString(queryJitCompiled))
                         .putAscii('}');
             }
             response.putAscii('}');
