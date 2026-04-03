@@ -66,6 +66,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = PARTITIONS_SLOT_OFFSET_SIZE + 1;
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
@@ -657,6 +658,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     public long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1) {
+            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN) == 0) {
+                openMissingColumnsInPartition(partitionIndex, offset, size);
+            }
             return size;
         }
         return openPartition0(partitionIndex);
@@ -690,24 +695,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     public void setActiveColumns(@Nullable IntList columnIndexes) {
         if (columnIndexes == null) {
             hasActiveColumns = false;
-            return;
-        }
-        boolean needsOpen = !hasActiveColumns;
-        if (hasActiveColumns) {
+        } else {
+            activeColumns.clear();
             for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                if (!activeColumns.get(columnIndexes.getQuick(i))) {
-                    needsOpen = true;
-                    break;
-                }
+                activeColumns.set(columnIndexes.getQuick(i));
             }
-        }
-        activeColumns.clear();
-        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-            activeColumns.set(columnIndexes.getQuick(i));
-        }
-        hasActiveColumns = true;
-        if (needsOpen) {
-            openActiveColumnsInOpenPartitions();
+            hasActiveColumns = true;
         }
     }
 
@@ -920,6 +913,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 break;
         }
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
     }
 
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase) {
@@ -1216,47 +1210,46 @@ public class TableReader implements Closeable, SymbolTableSource {
         );
     }
 
-    private void openActiveColumnsInOpenPartitions() {
-        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-            final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize < 0) {
-                continue; // partition not open
+    private void openMissingColumnsInPartition(int partitionIndex, int offset, long partitionSize) {
+        final byte format = (byte) openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT);
+        if (format != PartitionFormat.NATIVE) {
+            // Parquet partitions don't have per-column memory mappings;
+            // column data is decoded on the fly, so there is nothing to open.
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
+            return;
+        }
+        final int columnBase = getColumnBase(partitionIndex);
+        boolean hasNewColumns = false;
+        for (int i = 0; i < columnCount; i++) {
+            if (hasActiveColumns && !activeColumns.get(i)) {
+                continue;
             }
-            final byte format = (byte) openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT);
-            if (format != PartitionFormat.NATIVE) {
-                continue; // only native partitions have per-column mappings
+            final int primaryIndex = getPrimaryColumnIndex(columnBase, i);
+            final MemoryCMR mem = columns.getQuick(primaryIndex);
+            if (mem != null && mem != NullMemoryCMR.INSTANCE && mem.addressOf(0) != 0) {
+                continue; // already mapped
             }
-            final int columnBase = getColumnBase(partitionIndex);
-            boolean hasNewColumns = false;
-            for (int i = 0; i < columnCount; i++) {
-                if (!activeColumns.get(i)) {
-                    continue;
-                }
-                final int primaryIndex = getPrimaryColumnIndex(columnBase, i);
-                final MemoryCMR mem = columns.getQuick(primaryIndex);
-                if (mem != null && mem != NullMemoryCMR.INSTANCE && mem.addressOf(0) != 0) {
-                    continue; // already mapped
-                }
-                if (!hasNewColumns) {
-                    final long nameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-                    pathGenNativePartition(partitionIndex, nameTxn);
-                    hasNewColumns = true;
-                }
-                reloadColumnAt(
-                        partitionIndex,
-                        path,
-                        columns,
-                        columnTops,
-                        bitmapIndexes,
-                        columnBase,
-                        i,
-                        partitionSize
-                );
+            if (!hasNewColumns) {
+                final long nameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+                pathGenNativePartition(partitionIndex, nameTxn);
+                hasNewColumns = true;
             }
-            if (hasNewColumns) {
-                path.trimTo(rootLen);
-            }
+            reloadColumnAt(
+                    partitionIndex,
+                    path,
+                    columns,
+                    columnTops,
+                    bitmapIndexes,
+                    columnBase,
+                    i,
+                    partitionSize
+            );
+        }
+        if (hasNewColumns) {
+            path.trimTo(rootLen);
+        }
+        if (!hasActiveColumns) {
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
         }
     }
 
@@ -1321,6 +1314,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
+                        // Parquet partitions don't have per-column memory mappings;
+                        // column data is decoded on the fly, so they are always complete.
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
 
                         final long parquetSize = txFile.getPartitionParquetFileSize(partitionIndex);
                         assert parquetSize > 0;
@@ -1370,6 +1366,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, hasActiveColumns ? 0 : 1);
                         openPartitionCount++;
                     }
 
