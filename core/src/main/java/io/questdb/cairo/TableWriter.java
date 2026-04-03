@@ -1814,16 +1814,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // path is now pointing to the parquet file
         // other is pointing to the new partition folder
         LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
-        final long parquetMetaFileSize = txWriter.getPartitionParquetMetaFileSize(partitionIndex);
-        final long parquetMetaAddr = mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-        parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize);
+        final long parquetMetaSize = txWriter.getPartitionParquetMetaFileSize(partitionIndex);
+
+        setPathForParquetPartitionMetadata(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        if (!ff.exists(path.$())) {
+            throw CairoException.nonCritical().put("partition path does not exist [path=").put(path).put(']');
+        }
+
+        final long parquetMetaAddr = mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
 
         final long parquetSize = parquetMetaReader.getParquetFileSize();
+        setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         final long parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
 
         long parquetRowCount = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)) {
-            parquetDecoder.of(parquetMetaAddr, parquetMetaFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+            parquetDecoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
             final ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
 
             // Build the list of columns to decode, mapping parquet indices to
@@ -1937,6 +1944,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             columnFdAndDataSize.resetCapacity();
             parquetDecoder.close();
+            ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         }
 
