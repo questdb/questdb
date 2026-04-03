@@ -135,102 +135,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             );
 
             DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(
-                    new LineHttpProcessorConfiguration() {
-                        @Override
-                        public boolean autoCreateNewColumns() {
-                            return configuration.isAutoCreateNewColumns();
-                        }
-
-                        @Override
-                        public boolean autoCreateNewTables() {
-                            return configuration.isAutoCreateNewTables();
-                        }
-
-                        @Override
-                        public io.questdb.cairo.CairoConfiguration getCairoConfiguration() {
-                            return engine.getConfiguration();
-                        }
-
-                        @Override
-                        public short getDefaultColumnTypeForFloat() {
-                            return ColumnType.DOUBLE;
-                        }
-
-                        @Override
-                        public short getDefaultColumnTypeForInteger() {
-                            return ColumnType.LONG;
-                        }
-
-                        @Override
-                        public int getDefaultPartitionBy() {
-                            return configuration.getDefaultPartitionBy();
-                        }
-
-                        @Override
-                        public int getDefaultTimestampColumnType() {
-                            return ColumnType.UNDEFINED;
-                        }
-
-                        @Override
-                        public int getQwpMaxSchemasPerConnection() {
-                            return QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION;
-                        }
-
-                        @Override
-                        public int getQwpMaxRowsPerTable() {
-                            return configuration.getMaxRowsPerTable();
-                        }
-
-                        @Override
-                        public int getQwpMaxTablesPerConnection() {
-                            return configuration.getMaxTablesPerConnection();
-                        }
-
-                        @Override
-                        public CharSequence getInfluxPingVersion() {
-                            return "";
-                        }
-
-                        @Override
-                        public long getMaxRecvBufferSize() {
-                            return bufLen;
-                        }
-
-                        @Override
-                        public io.questdb.std.datetime.MicrosecondClock getMicrosecondClock() {
-                            return engine.getConfiguration().getMicrosecondClock();
-                        }
-
-                        @Override
-                        public long getSymbolCacheWaitUsBeforeReload() {
-                            return 0;
-                        }
-
-                        @Override
-                        public byte getTimestampUnit() {
-                            return 0;
-                        }
-
-                        @Override
-                        public boolean isEnabled() {
-                            return true;
-                        }
-
-                        @Override
-                        public boolean isStringToCharCastAllowed() {
-                            return false;
-                        }
-
-                        @Override
-                        public boolean isUseLegacyStringDefault() {
-                            return false;
-                        }
-
-                        @Override
-                        public boolean logMessageOnError() {
-                            return false;
-                        }
-                    }
+                    new CustomHttpProcessorConfiguration(configuration, engine, bufLen)
             );
 
             tudCache = new QwpTudCache(
@@ -392,6 +297,17 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
     }
 
+    private void logStarted() {
+        LOG.info()
+                .$("receiving on ")
+                .$ip(configuration.getBindIPv4Address())
+                .$(':')
+                .$(configuration.getPort())
+                .$(" [fd=").$(fd)
+                .$(", commitRate=").$(commitRate)
+                .I$();
+    }
+
     protected boolean checkClosed() {
         if (closed) {
             closedAcknowledged = true;
@@ -446,14 +362,110 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
     }
 
-    private void logStarted() {
-        LOG.info()
-                .$("receiving on ")
-                .$ip(configuration.getBindIPv4Address())
-                .$(':')
-                .$(configuration.getPort())
-                .$(" [fd=").$(fd)
-                .$(", commitRate=").$(commitRate)
-                .I$();
+    private static class CustomHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
+        private final int bufLen;
+        private final QwpUdpReceiverConfiguration configuration;
+        private final CairoEngine engine;
+
+        public CustomHttpProcessorConfiguration(QwpUdpReceiverConfiguration configuration, CairoEngine engine, int bufLen) {
+            this.configuration = configuration;
+            this.engine = engine;
+            this.bufLen = bufLen;
+        }
+
+        @Override
+        public boolean autoCreateNewColumns() {
+            return configuration.isAutoCreateNewColumns();
+        }
+
+        @Override
+        public boolean autoCreateNewTables() {
+            return configuration.isAutoCreateNewTables();
+        }
+
+        @Override
+        public io.questdb.cairo.CairoConfiguration getCairoConfiguration() {
+            return engine.getConfiguration();
+        }
+
+        @Override
+        public short getDefaultColumnTypeForFloat() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public short getDefaultColumnTypeForInteger() {
+            return ColumnType.LONG;
+        }
+
+        @Override
+        public int getDefaultPartitionBy() {
+            return configuration.getDefaultPartitionBy();
+        }
+
+        @Override
+        public int getDefaultTimestampColumnType() {
+            return ColumnType.UNDEFINED;
+        }
+
+        @Override
+        public CharSequence getInfluxPingVersion() {
+            return "";
+        }
+
+        @Override
+        public long getMaxRecvBufferSize() {
+            return bufLen;
+        }
+
+        @Override
+        public io.questdb.std.datetime.MicrosecondClock getMicrosecondClock() {
+            return engine.getConfiguration().getMicrosecondClock();
+        }
+
+        @Override
+        public int getQwpMaxRowsPerTable() {
+            return configuration.getMaxRowsPerTable();
+        }
+
+        @Override
+        public int getQwpMaxSchemasPerConnection() {
+            return QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION;
+        }
+
+        @Override
+        public int getQwpMaxTablesPerConnection() {
+            return configuration.getMaxTablesPerConnection();
+        }
+
+        @Override
+        public long getSymbolCacheWaitUsBeforeReload() {
+            return 0;
+        }
+
+        @Override
+        public byte getTimestampUnit() {
+            return 0;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return true;
+        }
+
+        @Override
+        public boolean isStringToCharCastAllowed() {
+            return false;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return false;
+        }
+
+        @Override
+        public boolean logMessageOnError() {
+            return false;
+        }
     }
 }
