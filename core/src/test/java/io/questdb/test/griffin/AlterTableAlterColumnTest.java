@@ -727,6 +727,15 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetParquetCompressionLevelTruncated() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(PLAIN, ZSTD(",
+                53,
+                "compression level expected"
+        );
+    }
+
+    @Test
     public void testSetParquetCompressionUncompressed() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -835,6 +844,15 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 Assert.assertEquals(ParquetEncoding.ENCODING_PLAIN, TableUtils.getParquetConfigEncoding(config));
             }
         });
+    }
+
+    @Test
+    public void testSetParquetEmptyParens() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET()",
+                41,
+                "invalid parquet encoding ')'"
+        );
     }
 
     @Test
@@ -1057,6 +1075,24 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetParquetEncodingCommaTruncated() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(PLAIN,",
+                47,
+                "compression codec name or BLOOM_FILTER expected"
+        );
+    }
+
+    @Test
+    public void testSetParquetEncodingTruncated() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(PLAIN",
+                46,
+                "',' or ')' expected"
+        );
+    }
+
+    @Test
     public void testSetParquetEncodingThenConvert() throws Exception {
         assertMemoryLeak(() -> {
             inputRoot = root;
@@ -1110,11 +1146,29 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetParquetNotOpenParen() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET PLAIN",
+                41,
+                "'(' expected"
+        );
+    }
+
+    @Test
     public void testSetParquetPlainRejectedForSymbol() throws Exception {
         assertFailure(
                 "ALTER TABLE x ALTER COLUMN sym SET PARQUET(PLAIN)",
                 43,
                 "encoding 'PLAIN' is not valid for column type"
+        );
+    }
+
+    @Test
+    public void testSetParquetTrailingJunk() throws Exception {
+        assertFailure(
+                "ALTER TABLE x ALTER COLUMN d SET PARQUET(PLAIN junk)",
+                47,
+                "')' expected"
         );
     }
 
