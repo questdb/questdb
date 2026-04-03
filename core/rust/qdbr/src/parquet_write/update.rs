@@ -812,25 +812,8 @@ impl ParquetUpdater {
                 .unwrap_or(-1);
 
             if self.is_rewrite || self.existing_parquet_meta_file_size <= 0 {
-                // Read the parquet file for bloom filter bitset extraction.
-                // For rewrite, the writer fd has the new file; for update,
-                // the reader fd has the (now-updated) data.
-                let parquet_data = {
-                    let pq_fd = if self.is_rewrite {
-                        self.parquet_file.writer_mut()
-                    } else {
-                        &mut self.reader
-                    };
-                    pq_fd.seek(SeekFrom::Start(0)).map_err(ParquetError::from)?;
-                    let mut buf = vec![0u8; file_size as usize];
-                    pq_fd
-                        .read_exact(&mut buf)
-                        .map_err(ParquetError::from)
-                        .context("could not read parquet file for bloom filter extraction")?;
-                    buf
-                };
-                // Re-borrow after the mutable borrow of writer_mut is released.
                 let thrift_row_groups = self.parquet_file.row_groups();
+                let bloom_bitsets = self.parquet_file.bloom_bitsets();
 
                 // Full create: rewrite or first-time generation.
                 let (pm_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
@@ -841,7 +824,7 @@ impl ParquetUpdater {
                     &sorting_indices,
                     footer_offset,
                     footer_length,
-                    &parquet_data,
+                    bloom_bitsets,
                     self.result_unused_bytes,
                 )?;
                 self.result_parquet_meta_size = pm_bytes.len() as i64;
@@ -850,19 +833,8 @@ impl ParquetUpdater {
                     .map_err(ParquetError::from)
                     .context("could not write _pm file")?;
             } else {
-                // Read the parquet file for bloom filter bitset extraction.
-                let parquet_data = {
-                    self.reader
-                        .seek(SeekFrom::Start(0))
-                        .map_err(ParquetError::from)?;
-                    let mut buf = vec![0u8; file_size as usize];
-                    self.reader
-                        .read_exact(&mut buf)
-                        .map_err(ParquetError::from)
-                        .context("could not read parquet file for bloom filter extraction")?;
-                    buf
-                };
                 let thrift_row_groups = self.parquet_file.row_groups();
+                let bloom_bitsets = self.parquet_file.bloom_bitsets();
 
                 // Incremental update: read existing _pm, append new/changed blocks.
                 let existing_size = self.parquet_meta_file_size;
@@ -883,7 +855,7 @@ impl ParquetUpdater {
                     thrift_row_groups,
                     footer_offset,
                     footer_length,
-                    &parquet_data,
+                    bloom_bitsets,
                     self.result_unused_bytes,
                 )?;
 

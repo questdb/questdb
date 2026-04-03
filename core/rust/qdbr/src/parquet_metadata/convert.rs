@@ -672,7 +672,7 @@ pub fn generate_parquet_metadata(
     sorting_columns: &[u32],
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
-    parquet_data: &[u8],
+    bloom_bitsets: &[Vec<Option<Vec<u8>>>],
     unused_bytes: u64,
 ) -> ParquetResult<(Vec<u8>, u64)> {
     let mut writer = ParquetMetaWriter::new();
@@ -703,13 +703,23 @@ pub fn generate_parquet_metadata(
     let col_type_tags: Vec<Option<ColumnTypeTag>> =
         columns.iter().map(|c| c.col_type_tag).collect();
 
-    for thrift_rg in thrift_row_groups {
-        let block = build_row_group_block_from_thrift_with_types(
+    for (rg_idx, thrift_rg) in thrift_row_groups.iter().enumerate() {
+        let mut block = build_row_group_block_from_thrift_with_types(
             thrift_rg,
             schema_columns,
             &col_type_tags,
-            parquet_data,
+            &[],
         )?;
+        // Add bloom filter bitsets captured during the parquet write.
+        if let Some(rg_bitsets) = bloom_bitsets.get(rg_idx) {
+            for (col_idx, bf) in rg_bitsets.iter().enumerate() {
+                if let Some(bitset) = bf {
+                    if !bitset.is_empty() {
+                        block.add_bloom_filter(col_idx, bitset)?;
+                    }
+                }
+            }
+        }
         writer.add_row_group(block);
     }
 
@@ -733,7 +743,7 @@ pub fn update_parquet_metadata(
     thrift_row_groups: &[parquet2::thrift_format::RowGroup],
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
-    parquet_data: &[u8],
+    bloom_bitsets: &[Vec<Option<Vec<u8>>>],
     unused_bytes: u64,
 ) -> ParquetResult<ParquetMetaUpdateResult> {
     // Read the existing _pm to get row group fingerprints (byte_range_start of first column).
@@ -778,7 +788,7 @@ pub fn update_parquet_metadata(
             &sorting_indices,
             parquet_footer_offset,
             parquet_footer_length,
-            parquet_data,
+            bloom_bitsets,
             unused_bytes,
         )?;
         let new_file_size = bytes.len() as u64;
@@ -809,12 +819,21 @@ pub fn update_parquet_metadata(
             continue;
         }
 
-        let block = build_row_group_block_from_thrift_with_types(
+        let mut block = build_row_group_block_from_thrift_with_types(
             thrift_rg,
             schema_columns,
             &col_type_tags,
-            parquet_data,
+            &[],
         )?;
+        if let Some(rg_bitsets) = bloom_bitsets.get(i) {
+            for (col_idx, bf) in rg_bitsets.iter().enumerate() {
+                if let Some(bitset) = bf {
+                    if !bitset.is_empty() {
+                        block.add_bloom_filter(col_idx, bitset)?;
+                    }
+                }
+            }
+        }
 
         if i < existing_rg_count {
             // Changed row group — replace.
@@ -2463,10 +2482,7 @@ mod tests {
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
         };
 
-        let partition = Partition {
-            table: "test_bloom".to_string(),
-            columns: vec![col],
-        };
+        let partition = Partition { table: "test_bloom".to_string(), columns: vec![col] };
         let mut buf = Vec::new();
         let writer = ParquetWriter::new(&mut buf)
             .with_statistics(true)
@@ -2474,27 +2490,21 @@ mod tests {
             .with_bloom_filter_columns([0].into_iter().collect())
             .with_bloom_filter_fpp(0.01)
             .with_row_group_size(Some(row_count));
-        writer.finish(partition).unwrap();
-        let parquet_data = buf;
 
-        // Parse the parquet metadata.
-        let file_size = parquet_data.len() as u64;
-        let mut cursor = Cursor::new(&parquet_data);
-        let metadata = read_metadata_with_size(&mut cursor, file_size).unwrap();
+        // Use chunked API to capture bloom filter bitsets.
+        let (schema, additional_meta) =
+            crate::parquet_write::schema::to_parquet_schema(&partition, false).unwrap();
+        let encodings = crate::parquet_write::schema::to_encodings(&partition);
+        let compressions = crate::parquet_write::schema::to_compressions(&partition);
+        let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions).unwrap();
+        chunked.write_chunk(&partition).unwrap();
+        chunked.finish(additional_meta).unwrap();
 
-        // Verify the parquet file has a bloom filter.
-        let pq_bf_offset = metadata.row_groups[0].columns()[0]
-            .metadata()
-            .bloom_filter_offset;
+        let bloom_bitsets = chunked.bloom_bitsets();
         assert!(
-            pq_bf_offset.is_some(),
-            "parquet file should have a bloom filter"
+            bloom_bitsets.len() == 1 && bloom_bitsets[0][0].is_some(),
+            "should have captured bloom filter bitset"
         );
-
-        let thrift_meta = metadata.into_thrift();
-        let mut cursor2 = Cursor::new(&parquet_data);
-        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
-        let schema_columns = metadata2.schema_descr.columns();
 
         let col_infos = vec![ParquetMetaColumnInfo {
             name: "ts",
@@ -2509,16 +2519,16 @@ mod tests {
             max_def_level: 0,
         }];
 
-        // Generate _pm with bloom filter extraction.
+        // Generate _pm with captured bloom filter bitsets.
         let (pm_bytes, pm_footer_offset) = generate_parquet_metadata(
             &col_infos,
-            schema_columns,
-            &thrift_meta.row_groups,
+            chunked.schema().columns(),
+            chunked.row_groups(),
             0,
             &[0],
             100,
             50,
-            &parquet_data,
+            bloom_bitsets,
             0,
         )
         .unwrap();

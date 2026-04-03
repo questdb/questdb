@@ -58,10 +58,13 @@ impl ColumnOffsetsMetadata {
     }
 }
 
-fn compute_num_rows(columns: &[(ColumnChunk, Vec<PageWriteSpec>)]) -> Result<i64> {
-    columns
-        .first()
-        .map(|(_, specs)| {
+fn compute_num_rows(columns: &[(ColumnChunk, Vec<PageWriteSpec>, Option<Vec<u8>>)]) -> Result<i64> {
+    num_rows_from_specs(columns.first().map(|(_, specs, _)| specs.as_slice()))
+}
+
+fn num_rows_from_specs(specs: Option<&[PageWriteSpec]>) -> Result<i64> {
+    specs
+        .map(|specs| {
             let mut num_rows = 0;
             specs
                 .iter()
@@ -91,7 +94,7 @@ pub fn write_row_group<
     ordinal: usize,
     bloom_filter_fpp: f64,
     bloom_hashes: &[Option<Arc<Mutex<HashSet<u64>>>>],
-) -> std::result::Result<(RowGroup, Vec<Vec<PageWriteSpec>>, u64), E>
+) -> std::result::Result<(RowGroup, Vec<Vec<PageWriteSpec>>, u64, Vec<Option<Vec<u8>>>), E>
 where
     W: Write,
     E: std::error::Error + From<Error>,
@@ -102,7 +105,7 @@ where
     let columns = column_iter
         .map(|((descriptor, page_iter), bloom)| {
             let bloom_ref = bloom.as_ref().map(|arc| arc.as_ref());
-            let (column, page_specs, size) = write_column_chunk(
+            let (column, page_specs, size, bf_bitset) = write_column_chunk(
                 writer,
                 offset,
                 descriptor,
@@ -111,7 +114,7 @@ where
                 bloom_ref,
             )?;
             offset += size;
-            Ok((column, page_specs))
+            Ok((column, page_specs, bf_bitset))
         })
         .collect::<std::result::Result<Vec<_>, E>>()?;
     let bytes_written = offset - initial;
@@ -121,25 +124,32 @@ where
     // compute row group stats
     let file_offset = columns
         .first()
-        .map(|(column_chunk, _)| {
+        .map(|(column_chunk, _, _)| {
             ColumnOffsetsMetadata::from_column_chunk(column_chunk).calc_row_group_file_offset()
         })
         .unwrap_or(None);
 
     let total_byte_size = columns
         .iter()
-        .map(|(c, _)| c.meta_data.as_ref().unwrap().total_uncompressed_size)
+        .map(|(c, _, _)| c.meta_data.as_ref().unwrap().total_uncompressed_size)
         .sum();
     let total_compressed_size = columns
         .iter()
-        .map(|(c, _)| c.meta_data.as_ref().unwrap().total_compressed_size)
+        .map(|(c, _, _)| c.meta_data.as_ref().unwrap().total_compressed_size)
         .sum();
 
-    let (columns, specs) = columns.into_iter().unzip();
+    let mut bloom_bitsets = Vec::with_capacity(columns.len());
+    let mut col_chunks = Vec::with_capacity(columns.len());
+    let mut specs = Vec::with_capacity(columns.len());
+    for (chunk, page_specs, bf) in columns {
+        col_chunks.push(chunk);
+        specs.push(page_specs);
+        bloom_bitsets.push(bf);
+    }
 
     Ok((
         RowGroup {
-            columns,
+            columns: col_chunks,
             total_byte_size,
             num_rows,
             sorting_columns: sorting_columns.clone(),
@@ -155,6 +165,7 @@ where
         },
         specs,
         bytes_written,
+        bloom_bitsets,
     ))
 }
 

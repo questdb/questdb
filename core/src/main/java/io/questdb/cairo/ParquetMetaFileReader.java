@@ -50,7 +50,8 @@ import io.questdb.std.Unsafe;
  *   [8]  PARQUET_FOOTER_LENGTH   u32
  *   [12] ROW_GROUP_COUNT         u32
  *   [16] FOOTER_FEATURE_FLAGS    u64
- *   [24..] row group entries (4B each, u32 block offset >> 3)
+ *   [24] UNUSED_BYTES            u64
+ *   [32..] row group entries (4B each, u32 block offset >> 3)
  *   [..]  footer feature sections (if any footer feature flags set)
  *   [..]  CRC32                  u32
  *   [..]  FOOTER_LENGTH          u32  (total bytes from footer start through CRC)
@@ -76,7 +77,7 @@ public class ParquetMetaFileReader {
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
     private static final int FOOTER_ROW_GROUP_COUNT_OFF = 12;
     private static final int FOOTER_FEATURE_FLAGS_OFF = 16;
-    private static final int FOOTER_FIXED_SIZE = 24;
+    private static final int FOOTER_FIXED_SIZE = 32;
 
     // Footer trailer size (appended after CRC)
     private static final int FOOTER_TRAILER_SIZE = 4;
@@ -297,14 +298,13 @@ public class ParquetMetaFileReader {
     /**
      * Returns the column name for the given column index.
      * Reads the name_offset and name_length from the descriptor, then reads
-     * the UTF-8 bytes from the name strings area (skipping the 4-byte length prefix).
+     * the UTF-8 bytes directly at name_offset.
      */
     public CharSequence getColumnName(int columnIndex) {
         long descAddr = columnDescriptorAddr(columnIndex);
         long nameOffset = Unsafe.getUnsafe().getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
         int nameLength = Unsafe.getUnsafe().getInt(descAddr + COL_DESC_NAME_LENGTH_OFF);
-        // Name is stored as [u32 length][utf8 bytes] at nameOffset. Skip the 4-byte prefix.
-        long nameAddr = addr + nameOffset + 4;
+        long nameAddr = addr + nameOffset;
         byte[] bytes = new byte[nameLength];
         for (int i = 0; i < nameLength; i++) {
             bytes[i] = Unsafe.getUnsafe().getByte(nameAddr + i);
@@ -339,28 +339,6 @@ public class ParquetMetaFileReader {
         return getDesignatedTimestampColumnIndex();
     }
 
-    // ── Column chunk accessors (per row group, per column) ────────────
-
-    public long getChunkByteRangeStart(int rowGroupIndex, int columnIndex) {
-        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_BYTE_RANGE_START_OFF);
-    }
-
-    public long getChunkTotalCompressed(int rowGroupIndex, int columnIndex) {
-        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_TOTAL_COMPRESSED_OFF);
-    }
-
-    public int getChunkCodec(int rowGroupIndex, int columnIndex) {
-        return Unsafe.getUnsafe().getByte(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_CODEC_OFF) & 0xFF;
-    }
-
-    public long getChunkNumValues(int rowGroupIndex, int columnIndex) {
-        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_NUM_VALUES_OFF);
-    }
-
-    public long getChunkNullCount(int rowGroupIndex, int columnIndex) {
-        return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_NULL_COUNT_OFF);
-    }
-
     public int getChunkStatFlags(int rowGroupIndex, int columnIndex) {
         return Unsafe.getUnsafe().getByte(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_STAT_FLAGS_OFF) & 0xFF;
     }
@@ -374,7 +352,14 @@ public class ParquetMetaFileReader {
     }
 
     /**
-     * Returns the bloom filter byte offset in the parquet file for the given chunk.
+     * Returns the accumulated dead bytes in the parquet file tracked by the _pm footer.
+     */
+    public long getUnusedBytes() {
+        return Unsafe.getUnsafe().getLong(footerAddr + 24);
+    }
+
+    /**
+     * Returns the bloom filter byte offset in the _pm file for the given chunk.
      * The stored value is right-shifted by 3 (block-aligned). Returns 0 if no bloom filter.
      */
     public long getChunkBloomFilterOffset(int rowGroupIndex, int columnIndex) {
@@ -415,7 +400,7 @@ public class ParquetMetaFileReader {
 
     /**
      * Computes the byte offset past the last name string entry.
-     * Name entries are stored as [u32 length][utf8 bytes][padding to 4B].
+     * Name entries are stored as raw UTF-8 bytes (length from descriptor's NAME_LENGTH).
      * The end of the names area is where header feature sections begin.
      */
     private static long computeNamesAreaEnd(long baseAddr, int columnCount) {
@@ -424,8 +409,7 @@ public class ParquetMetaFileReader {
             long descAddr = baseAddr + HEADER_FIXED_SIZE + (long) i * COLUMN_DESCRIPTOR_SIZE;
             long nameOffset = Unsafe.getUnsafe().getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
             int nameLength = Unsafe.getUnsafe().getInt(descAddr + COL_DESC_NAME_LENGTH_OFF);
-            int entrySize = ((4 + nameLength + 3) & ~3); // round up to 4-byte alignment
-            long entryEnd = baseAddr + nameOffset + entrySize;
+            long entryEnd = baseAddr + nameOffset + nameLength;
             if (entryEnd > end) {
                 end = entryEnd;
             }

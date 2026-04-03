@@ -253,6 +253,8 @@ pub struct FileWriter<W: Write> {
     offset: u64,
     row_groups: Vec<RowGroup>,
     page_specs: Vec<Vec<Vec<PageWriteSpec>>>,
+    /// Bloom filter bitsets captured during write, per row group per column.
+    bloom_bitsets: Vec<Vec<Option<Vec<u8>>>>,
     /// Used to store the current state for writing the file
     state: State,
     // when the file is written, metadata becomes available
@@ -314,6 +316,7 @@ impl<W: Write> FileWriter<W> {
             offset: 0,
             row_groups: vec![],
             page_specs: vec![],
+            bloom_bitsets: vec![],
             state: State::Initialised,
             metadata: None,
             parquet_footer_offset: 0,
@@ -336,6 +339,7 @@ impl<W: Write> FileWriter<W> {
             offset: 0,
             row_groups: vec![],
             page_specs: vec![],
+            bloom_bitsets: vec![],
             state: State::Initialised,
             metadata: None,
             parquet_footer_offset: 0,
@@ -389,7 +393,7 @@ impl<W: Write> FileWriter<W> {
         } else {
             bloom_hashes
         };
-        let (group, specs, size) = write_row_group(
+        let (group, specs, size, bf_bitsets) = write_row_group(
             &mut self.writer,
             self.offset,
             self.schema.columns(),
@@ -402,6 +406,7 @@ impl<W: Write> FileWriter<W> {
         self.offset += size;
         self.row_groups.push(group);
         self.page_specs.push(specs);
+        self.bloom_bitsets.push(bf_bitsets);
         Ok(())
     }
 
@@ -489,6 +494,11 @@ impl<W: Write> FileWriter<W> {
         &self.row_groups
     }
 
+    /// Returns bloom filter bitsets captured during write, per row group per column.
+    pub fn bloom_bitsets(&self) -> &[Vec<Option<Vec<u8>>>] {
+        &self.bloom_bitsets
+    }
+
     /// Returns the underlying writer.
     pub fn into_inner(self) -> W {
         self.writer
@@ -512,6 +522,7 @@ pub struct ParquetFile<W: Write> {
     offset: u64,
     row_groups: Vec<RowGroup>,
     page_specs: Vec<Vec<Vec<PageWriteSpec>>>,
+    bloom_bitsets: Vec<Vec<Option<Vec<u8>>>>,
     state: State,
     metadata: Option<ThriftFileMetaData>,
     mode: Mode,
@@ -544,6 +555,7 @@ impl<W: Write> ParquetFile<W> {
             state: State::Initialised,
             metadata: None,
             mode: Mode::Write,
+            bloom_bitsets: vec![],
             is_insert: vec![],
             parquet_footer_offset: 0,
         }
@@ -568,6 +580,7 @@ impl<W: Write> ParquetFile<W> {
             state: State::Initialised,
             metadata: None,
             mode: Mode::Write,
+            bloom_bitsets: vec![],
             is_insert: vec![],
             parquet_footer_offset: 0,
         }
@@ -595,6 +608,7 @@ impl<W: Write> ParquetFile<W> {
             state: State::Initialised,
             metadata: None, // Set by end() after merging row groups.
             mode: Mode::Update(metadata, footer_cache),
+            bloom_bitsets: vec![],
             is_insert: vec![],
             parquet_footer_offset: 0,
         }
@@ -676,7 +690,7 @@ impl<W: Write> ParquetFile<W> {
         } else {
             bloom_hashes
         };
-        let (group, specs, size) = write_row_group(
+        let (group, specs, size, bf_bitsets) = write_row_group(
             &mut self.writer,
             self.offset,
             self.schema.columns(),
@@ -690,6 +704,7 @@ impl<W: Write> ParquetFile<W> {
         self.offset += size;
         self.row_groups.push(group);
         self.page_specs.push(specs);
+        self.bloom_bitsets.push(bf_bitsets);
         Ok(())
     }
 
@@ -801,6 +816,10 @@ impl<W: Write> ParquetFile<W> {
         &self.row_groups
     }
 
+    pub fn bloom_bitsets(&self) -> &[Vec<Option<Vec<u8>>>] {
+        &self.bloom_bitsets
+    }
+
     /// Write raw (pre-encoded) row group bytes and register the row group metadata.
     /// The `row_group` must have all offsets already adjusted for the new file.
     /// Callers must call `ensure_started()` before computing those offsets,
@@ -813,6 +832,7 @@ impl<W: Write> ParquetFile<W> {
         self.offset += raw_bytes.len() as u64;
         self.row_groups.push(row_group);
         self.page_specs.push(vec![]);
+        self.bloom_bitsets.push(vec![]);
         self.is_insert.push(false);
         Ok(())
     }

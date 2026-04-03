@@ -345,6 +345,11 @@ impl<W: Write> ChunkedWriter<W> {
     pub fn schema(&self) -> &SchemaDescriptor {
         self.writer.schema()
     }
+
+    /// Returns bloom filter bitsets captured during write, per row group per column.
+    pub fn bloom_bitsets(&self) -> &[Vec<Option<Vec<u8>>>] {
+        self.writer.bloom_bitsets()
+    }
 }
 
 pub type BloomHashes = Vec<Option<Arc<Mutex<HashSet<u64>>>>>;

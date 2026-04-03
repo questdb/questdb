@@ -32,6 +32,8 @@ use super::page::{write_page, PageWriteSpec};
 use super::statistics::reduce;
 use super::DynStreamingIterator;
 
+/// Returns `(column_chunk, page_specs, bytes_written, bloom_filter_bitset)`.
+/// The bloom filter bitset is `Some` when a bloom filter was written for this column.
 pub fn write_column_chunk<W, E>(
     writer: &mut W,
     mut offset: u64,
@@ -39,7 +41,7 @@ pub fn write_column_chunk<W, E>(
     mut compressed_pages: DynStreamingIterator<'_, CompressedPage, E>,
     bloom_filter_fpp: f64,
     bloom_hashes: Option<&Mutex<HashSet<u64>>>,
-) -> std::result::Result<(ColumnChunk, Vec<PageWriteSpec>, u64), E>
+) -> std::result::Result<(ColumnChunk, Vec<PageWriteSpec>, u64, Option<Vec<u8>>), E>
 where
     W: Write,
     E: std::error::Error + From<Error>,
@@ -56,14 +58,14 @@ where
     }
     let mut bytes_written = offset - initial;
 
-    let (bloom_filter_offset, bloom_filter_length) = {
+    let (bloom_filter_offset, bloom_filter_length, bloom_filter_bitset) = {
         let bloom_ref = bloom_hashes;
         if let Some(bloom_arc) = bloom_ref {
             let hashes = bloom_arc
                 .lock()
                 .map_err(|_| Error::oos("bloom filter mutex poisoned"))?;
             if hashes.is_empty() {
-                (None, None)
+                (None, None, None)
             } else {
                 let bitset_size = bloom_filter_bitset_size(hashes.len(), bloom_filter_fpp);
                 let mut bitset = vec![0u8; bitset_size];
@@ -73,10 +75,10 @@ where
                 let bf_offset = initial + bytes_written;
                 let bf_bytes = write_bloom_filter(writer, &bitset)?;
                 bytes_written += bf_bytes as u64;
-                (Some(bf_offset as i64), Some(bf_bytes as i32))
+                (Some(bf_offset as i64), Some(bf_bytes as i32), Some(bitset))
             }
         } else {
-            (None, None)
+            (None, None, None)
         }
     };
 
@@ -92,7 +94,7 @@ where
         .map_err(|e| e.into());
     bytes_written += column_chunk_bytes? as u64;
 
-    Ok((column_chunk, specs, bytes_written))
+    Ok((column_chunk, specs, bytes_written, bloom_filter_bitset))
 }
 
 const MINIMUM_BLOOM_FILTER_BYTES: usize = 32;
