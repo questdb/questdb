@@ -263,12 +263,6 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
                         "dictionary size exceeds data length: " + decodeResult.value
                 );
             }
-            if (decodeResult.value > Integer.MAX_VALUE) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
-                        "dictionary size exceeds int range: " + decodeResult.value
-                );
-            }
             this.dictionarySize = (int) decodeResult.value;
             offset += decodeResult.bytesRead;
 
