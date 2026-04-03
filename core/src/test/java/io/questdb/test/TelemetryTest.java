@@ -304,7 +304,7 @@ public class TelemetryTest extends AbstractCairoTest {
             String showCreateTable = "SHOW CREATE TABLE " + TelemetryTask.TABLE_NAME;
             String start = "ddl\n" +
                     "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
-                    "\tcreated TIMESTAMP,\n" +
+                    "\tcreated TIMESTAMP NOT NULL,\n" +
                     "\tevent SHORT,\n" +
                     "\torigin SHORT\n" +
                     ") timestamp(created)";
@@ -330,7 +330,7 @@ public class TelemetryTest extends AbstractCairoTest {
             String showCreateTable = "SHOW CREATE TABLE " + TelemetryTask.TABLE_NAME;
             String start = "ddl\n" +
                     "CREATE TABLE '" + TelemetryTask.TABLE_NAME + "' ( \n" +
-                    "\tcreated TIMESTAMP,\n" +
+                    "\tcreated TIMESTAMP NOT NULL,\n" +
                     "\tevent SHORT,\n" +
                     "\torigin SHORT\n" +
                     ") timestamp(created)";
@@ -401,7 +401,7 @@ public class TelemetryTest extends AbstractCairoTest {
             String showCreateTable = "SHOW CREATE TABLE '" + tableName + "'";
             String header = "ddl\n" +
                     "CREATE TABLE '" + tableName + "' ( \n" +
-                    "\tcreated TIMESTAMP,\n" +
+                    "\tcreated TIMESTAMP NOT NULL,\n" +
                     "\tevent SHORT,\n" +
                     "\ttableId INT,\n" +
                     "\twalId INT,\n" +

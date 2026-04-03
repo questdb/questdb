@@ -299,7 +299,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                             CREATE TABLE 'y' (\s
                             \ta INT PARQUET(delta_binary_packed, zstd(3)),
                             \tb DOUBLE,
-                            \tt TIMESTAMP
+                            \tt TIMESTAMP NOT NULL
                             ) timestamp(t) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE y");
@@ -311,7 +311,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                             CREATE TABLE 'y' (\s
                             \ta INT,
                             \tb DOUBLE,
-                            \tt TIMESTAMP
+                            \tt TIMESTAMP NOT NULL
                             ) timestamp(t) PARTITION BY DAY BYPASS WAL;
                             """,
                     "SHOW CREATE TABLE y");

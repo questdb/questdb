@@ -196,7 +196,7 @@ public class TtlTest extends AbstractCairoTest {
         assertSql("""
                         ddl
                         CREATE TABLE 'samba' (\s
-                        \tts TIMESTAMP
+                        \tts TIMESTAMP NOT NULL
                         ) timestamp(ts) PARTITION BY HOUR TTL 2 HOURS%s
                         """.formatted(walMode == WalMode.WITH_WAL ? ";" : wal),
                 "SHOW CREATE TABLE samba");

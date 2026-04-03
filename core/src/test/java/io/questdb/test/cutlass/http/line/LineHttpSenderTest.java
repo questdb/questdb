@@ -753,7 +753,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                                     ddl
                                     CREATE TABLE 'arr_auto_creation_test' (\s
                                     \tarr DOUBLE[],
-                                    \ttimestamp TIMESTAMP
+                                    \ttimestamp TIMESTAMP NOT NULL
                                     ) timestamp(timestamp) PARTITION BY DAY;
                                     """);
                 }
