@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Bit-level reader for QWP v1 protocol.
@@ -63,15 +64,6 @@ public class QwpBitReader {
     }
 
     /**
-     * Returns the number of bits remaining to be read.
-     *
-     * @return available bits
-     */
-    public long getAvailableBits() {
-        return totalBitsAvailable - totalBitsRead;
-    }
-
-    /**
      * Returns the current position in bits from the start.
      *
      * @return bits read since reset
@@ -85,6 +77,7 @@ public class QwpBitReader {
      *
      * @return 0 or 1, or -1 if no more bits
      */
+    @TestOnly
     public int peekBit() {
         if (totalBitsRead >= totalBitsAvailable) {
             return -1;
@@ -220,6 +213,7 @@ public class QwpBitReader {
      * @param numBits bits to skip
      * @throws QwpParseException if not enough bits available
      */
+    @TestOnly
     public void skipBits(int numBits) throws QwpParseException {
         if (totalBitsRead + numBits > totalBitsAvailable) {
             throw QwpParseException.bitReadOverflow();

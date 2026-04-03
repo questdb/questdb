@@ -182,7 +182,6 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
                     "array column data truncated: expected null bitmap flag"
             );
         }
-        int nullCount;
         if (Unsafe.getUnsafe().getByte(dataAddress + offset) != 0) {
             offset++;
             int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
@@ -193,12 +192,10 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
                 );
             }
             this.nullBitmapAddress = dataAddress + offset;
-            nullCount = QwpNullBitmap.countNulls(nullBitmapAddress, rowCount);
             offset += bitmapSize;
         } else {
             offset++;
             this.nullBitmapAddress = 0;
-            nullCount = 0;
         }
 
         this.dataAddress = dataAddress + offset;
