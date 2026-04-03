@@ -61,40 +61,6 @@ public final class QwpVarint {
     }
 
     /**
-     * Decodes a varint from the given byte array with bounds checking.
-     *
-     * @param buf   the buffer to read from
-     * @param pos   the position to start reading
-     * @param limit the maximum position to read (exclusive)
-     * @return the decoded value
-     * @throws QwpParseException if the varint is malformed or buffer underflows
-     */
-    public static long decode(byte[] buf, int pos, int limit) throws QwpParseException {
-        long result = 0;
-        int shift = 0;
-        int bytesRead = 0;
-        byte b;
-
-        do {
-            if (pos >= limit) {
-                throw QwpParseException.incompleteVarint();
-            }
-            if (bytesRead >= MAX_VARINT_BYTES) {
-                throw QwpParseException.varintOverflow();
-            }
-            b = buf[pos++];
-            if (shift == 63 && (b & 0x7E) != 0) {
-                throw QwpParseException.varintOverflow();
-            }
-            result |= (long) (b & DATA_MASK) << shift;
-            shift += 7;
-            bytesRead++;
-        } while ((b & CONTINUATION_BIT) != 0);
-
-        return result;
-    }
-
-    /**
      * Decodes a varint from direct memory.
      *
      * @param address the memory address to read from

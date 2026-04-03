@@ -35,6 +35,8 @@ import java.util.Random;
 
 public class QwpVarintTest {
 
+    private final QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
+
     @Test
     public void testDecodeFromDirectMemory() throws QwpParseException {
         long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
@@ -59,7 +61,7 @@ public class QwpVarintTest {
         // Byte with continuation bit set but no following byte
         byte[] buf = new byte[]{(byte) 0x80};
         try {
-            QwpVarint.decode(buf, 0, 1);
+            QwpVarint.decode(buf, 0, 1, result);
             Assert.fail("Should have thrown exception");
         } catch (QwpParseException e) {
             Assert.assertEquals(QwpParseException.ErrorCode.INCOMPLETE_VARINT, e.getErrorCode());
@@ -76,7 +78,7 @@ public class QwpVarintTest {
         buf[11] = 0x01;
 
         try {
-            QwpVarint.decode(buf, 0, 12);
+            QwpVarint.decode(buf, 0, 12, result);
             Assert.fail("Should have thrown exception");
         } catch (QwpParseException e) {
             Assert.assertEquals(QwpParseException.ErrorCode.VARINT_OVERFLOW, e.getErrorCode());
@@ -99,7 +101,7 @@ public class QwpVarintTest {
                 (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x02
         };
         try {
-            QwpVarint.decode(buf, 0, 10);
+            QwpVarint.decode(buf, 0, 10, result);
             Assert.fail("10th byte with data nibble 0x02 should overflow");
         } catch (QwpParseException e) {
             Assert.assertEquals(QwpParseException.ErrorCode.VARINT_OVERFLOW, e.getErrorCode());
@@ -114,7 +116,7 @@ public class QwpVarintTest {
                 (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x03
         };
         try {
-            QwpVarint.decode(buf2, 0, 10);
+            QwpVarint.decode(buf2, 0, 10, result);
             Assert.fail("10th byte with data nibble 0x03 should overflow");
         } catch (QwpParseException e) {
             Assert.assertEquals(QwpParseException.ErrorCode.VARINT_OVERFLOW, e.getErrorCode());
@@ -126,7 +128,7 @@ public class QwpVarintTest {
                 (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x7F
         };
         try {
-            QwpVarint.decode(buf3, 0, 10);
+            QwpVarint.decode(buf3, 0, 10, result);
             Assert.fail("10th byte with data nibble 0x7F should overflow");
         } catch (QwpParseException e) {
             Assert.assertEquals(QwpParseException.ErrorCode.VARINT_OVERFLOW, e.getErrorCode());
@@ -138,7 +140,6 @@ public class QwpVarintTest {
         byte[] buf = new byte[10];
         int len = QwpVarint.encode(buf, 0, 300);
 
-        QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
         QwpVarint.decode(buf, 0, len, result);
 
         Assert.assertEquals(300, result.value);
@@ -187,14 +188,16 @@ public class QwpVarintTest {
                 (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
                 (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x01
         };
-        Assert.assertEquals(Long.MIN_VALUE, QwpVarint.decode(buf, 0, 10));
+        QwpVarint.decode(buf, 0, 10, result);
+        Assert.assertEquals(Long.MIN_VALUE, result.value);
 
         // 10th byte with data nibble 0x00 is valid (redundant encoding of 0).
         byte[] buf2 = new byte[]{
                 (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80,
                 (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x00
         };
-        Assert.assertEquals(0, QwpVarint.decode(buf2, 0, 10));
+        QwpVarint.decode(buf2, 0, 10, result);
+        Assert.assertEquals(0, result.value);
     }
 
     @Test
@@ -204,7 +207,8 @@ public class QwpVarintTest {
         int len = QwpVarint.encode(buf, 0, 127);
         Assert.assertEquals(1, len);
         Assert.assertEquals(0x7F, buf[0] & 0xFF);
-        Assert.assertEquals(127, QwpVarint.decode(buf, 0, len));
+        QwpVarint.decode(buf, 0, len, result);
+        Assert.assertEquals(127, result.value);
     }
 
     @Test
@@ -215,7 +219,8 @@ public class QwpVarintTest {
         Assert.assertEquals(2, len);
         Assert.assertEquals(0x80, buf[0] & 0xFF); // 0 + continuation bit
         Assert.assertEquals(0x01, buf[1] & 0xFF); // 1
-        Assert.assertEquals(128, QwpVarint.decode(buf, 0, len));
+        QwpVarint.decode(buf, 0, len, result);
+        Assert.assertEquals(128, result.value);
     }
 
     @Test
@@ -226,7 +231,8 @@ public class QwpVarintTest {
         Assert.assertEquals(2, len);
         Assert.assertEquals(0xFF, buf[0] & 0xFF); // 127 + continuation bit
         Assert.assertEquals(0x7F, buf[1] & 0xFF); // 127
-        Assert.assertEquals(16_383, QwpVarint.decode(buf, 0, len));
+        QwpVarint.decode(buf, 0, len, result);
+        Assert.assertEquals(16_383, result.value);
     }
 
     @Test
@@ -235,7 +241,8 @@ public class QwpVarintTest {
         byte[] buf = new byte[10];
         int len = QwpVarint.encode(buf, 0, 16_384);
         Assert.assertEquals(3, len);
-        Assert.assertEquals(16_384, QwpVarint.decode(buf, 0, len));
+        QwpVarint.decode(buf, 0, len, result);
+        Assert.assertEquals(16_384, result.value);
     }
 
     @Test
@@ -244,7 +251,8 @@ public class QwpVarintTest {
         int len = QwpVarint.encode(buf, 0, 0);
         Assert.assertEquals(1, len);
         Assert.assertEquals(0x00, buf[0] & 0xFF);
-        Assert.assertEquals(0, QwpVarint.decode(buf, 0, len));
+        QwpVarint.decode(buf, 0, len, result);
+        Assert.assertEquals(0, result.value);
     }
 
     @Test
@@ -264,7 +272,8 @@ public class QwpVarintTest {
         for (long value : values) {
             int len = QwpVarint.encode(buf, 0, value);
             Assert.assertTrue(len > 0 && len <= 10);
-            Assert.assertEquals(value, QwpVarint.decode(buf, 0, len));
+            QwpVarint.decode(buf, 0, len, result);
+            Assert.assertEquals(value, result.value);
         }
     }
 
@@ -281,7 +290,8 @@ public class QwpVarintTest {
         Assert.assertEquals(0x02, buf[1] & 0xFF);
 
         // Verify decode
-        Assert.assertEquals(300, QwpVarint.decode(buf, 0, len));
+        QwpVarint.decode(buf, 0, len, result);
+        Assert.assertEquals(300, result.value);
     }
 
     @Test
@@ -368,8 +378,8 @@ public class QwpVarintTest {
         for (int i = 0; i < 1000; i++) {
             long value = random.nextLong() & Long.MAX_VALUE; // Only positive values
             int len = QwpVarint.encode(buf, 0, value);
-            long decoded = QwpVarint.decode(buf, 0, len);
-            Assert.assertEquals("Failed for value: " + value, value, decoded);
+            QwpVarint.decode(buf, 0, len, result);
+            Assert.assertEquals("Failed for value: " + value, value, result.value);
         }
     }
 }
