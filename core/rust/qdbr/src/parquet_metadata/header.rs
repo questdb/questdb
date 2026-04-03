@@ -35,7 +35,7 @@ use crate::parquet_metadata::types::{
 /// On-disk layout of a column descriptor (32 bytes).
 ///
 /// The column name is stored externally as a length-prefixed string at
-/// `name_offset`: `[u32 length][utf8 bytes][padding to 4-byte alignment]`.
+/// `name_offset` points to `[utf8 bytes][padding to 4-byte alignment]`.
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]
 pub struct ColumnDescriptorRaw {
@@ -188,7 +188,7 @@ impl<'a> FileHeader<'a> {
             let ptr = data[offset..].as_ptr();
             debug_assert_eq!(ptr.align_offset(align_of::<ColumnDescriptorRaw>()), 0);
             let desc = unsafe { &*(ptr as *const ColumnDescriptorRaw) };
-            let entry_size = (4 + desc.name_length as usize).next_multiple_of(4);
+            let entry_size = desc.name_length as usize;
             let entry_end = (desc.name_offset as usize)
                 .checked_add(entry_size)
                 .ok_or_else(|| {
@@ -248,47 +248,32 @@ impl<'a> FileHeader<'a> {
     }
 
     /// Returns the UTF-8 column name for the given descriptor.
-    /// Reads the column name from the length-prefixed string at `desc.name_offset`.
-    ///
-    /// On-disk format: `[u32 length][utf8 bytes][padding to 4-byte alignment]`.
+    /// Reads `name_length` bytes at `name_offset`.
     pub fn column_name(&self, desc: &ColumnDescriptorRaw) -> ParquetResult<&'a str> {
-        let prefix_start = desc.name_offset as usize;
-        if prefix_start + 4 > self.data.len() {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::Truncated,
-                "column name length prefix at offset {} exceeds file size {}",
-                prefix_start,
-                self.data.len()
-            ));
-        }
-        let len = u32::from_le_bytes(
-            self.data[prefix_start..prefix_start + 4]
-                .try_into()
-                .expect("slice is 4 bytes"),
-        ) as usize;
-        let str_start = prefix_start + 4;
-        let str_end = str_start.checked_add(len).ok_or_else(|| {
+        let start = desc.name_offset as usize;
+        let len = desc.name_length as usize;
+        let end = start.checked_add(len).ok_or_else(|| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
                 "column name offset {}+{} overflows",
-                str_start,
+                start,
                 len
             )
         })?;
-        if str_end > self.data.len() {
+        if end > self.data.len() {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
                 "column name at offset {} length {} exceeds file size {}",
-                prefix_start,
+                start,
                 len,
                 self.data.len()
             ));
         }
-        std::str::from_utf8(&self.data[str_start..str_end]).map_err(|e| {
+        std::str::from_utf8(&self.data[start..end]).map_err(|e| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
                 "invalid UTF-8 in column name at offset {}: {}",
-                prefix_start,
+                start,
                 e
             )
         })
@@ -461,18 +446,13 @@ impl FileHeaderBuilder {
             buf.extend_from_slice(&idx.to_le_bytes());
         }
 
-        // Name strings area: each name is [u32 length][utf8 bytes][pad to 4B].
+        // Name strings area: each name is [utf8 bytes].
+        // The length is stored in the column descriptor's name_length field.
         let mut name_offsets: Vec<u64> = Vec::with_capacity(self.columns.len());
         for col in &self.columns {
             let offset = buf.len() as u64;
             let name_bytes = col.name.as_bytes();
-            let len = name_bytes.len() as u32;
-            buf.extend_from_slice(&len.to_le_bytes());
             buf.extend_from_slice(name_bytes);
-            // Pad to 4-byte alignment.
-            let total = 4 + name_bytes.len();
-            let padding = (4 - (total % 4)) % 4;
-            buf.extend(std::iter::repeat_n(0u8, padding));
             name_offsets.push(offset);
         }
 
@@ -695,9 +675,9 @@ mod tests {
         let hdr = FileHeader::new(&buf).unwrap();
         let desc = hdr.column_descriptor(0).unwrap();
         let name_start = desc.name_offset as usize;
-        // Overwrite actual string bytes (after the 4-byte length prefix) with invalid UTF-8.
-        buf[name_start + 4] = 0xFF;
-        buf[name_start + 5] = 0xFE;
+        // Overwrite string bytes with invalid UTF-8.
+        buf[name_start] = 0xFF;
+        buf[name_start + 1] = 0xFE;
 
         // Re-parse (the header struct references the same buffer).
         let hdr = FileHeader::new(&buf).unwrap();

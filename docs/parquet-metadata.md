@@ -142,17 +142,17 @@ None defined yet. The `footer_feature_flags` field is reserved for future use (a
 
 ### File header
 
-| offset | size | field                | type | description                                              |
-| ------ | ---- | -------------------- | ---- | -------------------------------------------------------- |
-| 0      | 4    | FILE_FORMAT_VERSION  | u32  |                                                          |
-| 4      | 8    | FEATURE_FLAGS        | u64  | header feature flags                                     |
-| 12     | 4    | DESIGNATED_TIMESTAMP | i32  | index of the designated timestamp in descriptors (or -1) |
-| 16     | 4    | SORTING_COLUMN_COUNT | u32  |                                                          |
-| 20     | 4    | COLUMN_COUNT         | u32  |                                                          |
-| 24     | ..   | COLUMN_DESCRIPTORS   |      | COLUMN_COUNT * Column descriptor (32B each)              |
-| ..     | ..   | SORTING_COLUMNS      |      | SORTING_COLUMN_COUNT * Sorting column (4B each)          |
-| ..     | ..   | NAME_STRINGS         |      | Column names, each `[u32 length][utf8 bytes][pad to 4B]` |
-| ..     | ..   | HEADER_FEAT_SECTIONS |      | Feature sections in ascending bit order                  |
+| offset | size | field                | type | description                                                             |
+| ------ | ---- | -------------------- | ---- | ----------------------------------------------------------------------- |
+| 0      | 4    | FILE_FORMAT_VERSION  | u32  |                                                                         |
+| 4      | 8    | FEATURE_FLAGS        | u64  | header feature flags                                                    |
+| 12     | 4    | DESIGNATED_TIMESTAMP | i32  | index of the designated timestamp in descriptors (or -1)                |
+| 16     | 4    | SORTING_COLUMN_COUNT | u32  |                                                                         |
+| 20     | 4    | COLUMN_COUNT         | u32  |                                                                         |
+| 24     | ..   | COLUMN_DESCRIPTORS   |      | COLUMN_COUNT * Column descriptor (32B each)                             |
+| ..     | ..   | SORTING_COLUMNS      |      | SORTING_COLUMN_COUNT * Sorting column (4B each)                         |
+| ..     | ..   | NAME_STRINGS         |      | Column names, each `[utf8 bytes]`; length from descriptor's NAME_LENGTH |
+| ..     | ..   | HEADER_FEAT_SECTIONS |      | Feature sections in ascending bit order                                 |
 
 For a column to be the designated timestamp it must comply to these rules:
 - It must be the first column in sorting columns, sorted in `ascending` order
@@ -219,7 +219,7 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 | 1      | 1    | ENCODINGS        | u8   | bitmask: bit 0=PLAIN, 1=RLE_DICTIONARY, 2=DELTA_BINARY_PACKED, 3=DELTA_LENGTH_BYTE_ARRAY, 4=DELTA_BYTE_ARRAY, 5=BYTE_STREAM_SPLIT |
 | 2      | 1    | STAT_FLAGS       | u8   |                                                                                                                                   |
 | 3      | 1    | STAT_SIZES       | u8   | low nibble = MIN_STAT byte size (inline only), high nibble = MAX_STAT byte size (inline only)                                     |
-| 4      | 4    | BLOOM_FILTER_OFF | u32  | byte offset from _pm file start >> 3 (actual = value << 3); points to bloom filter bitset in the OOL region; 0 = absent            |
+| 4      | 4    | BLOOM_FILTER_OFF | u32  | byte offset from _pm file start >> 3 (actual = value << 3); points to bloom filter bitset in the OOL region; 0 = absent           |
 | 8      | 8    | NUM_VALUES       | u64  | total values (may differ from row count for arrays)                                                                               |
 | 16     | 8    | BYTE_RANGE_START | u64  | byte offset in parquet file to chunk start (dictionary page offset if present, else data page offset)                             |
 | 24     | 8    | TOTAL_COMPRESSED | u64  | total compressed bytes of all pages                                                                                               |
