@@ -40,9 +40,9 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -117,13 +117,12 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
     }
 
     private static class DistinctCursor implements RecordCursor {
+        private final BitSet foundKeys = new BitSet();
         private final int queryColumnPosition;
         private final int readerColumnIndex;
         private final DistinctRecord record = new DistinctRecord();
         private int foundCount;
-        private boolean[] foundKeys;
         private PartitionFrameCursor frameCursor;
-        private boolean hasFoundNull;
         private boolean isNullReturned;
         private boolean isScanned;
         private int nextKeyToReturn;
@@ -166,13 +165,15 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             }
             while (nextKeyToReturn < symbolCount) {
                 int key = nextKeyToReturn++;
-                if (foundKeys[key]) {
+                // foundKeys uses index key space: 0 = NULL, 1..N = symbol keys.
+                // Symbol key k maps to index key k+1 (toIndexKey adds 1).
+                if (foundKeys.get(key + 1)) {
                     record.symbolKey = key;
                     return true;
                 }
             }
-            // After all non-null keys, emit NULL if found
-            if (hasFoundNull && !isNullReturned) {
+            // After all non-null keys, emit NULL if found (index key 0)
+            if (foundKeys.get(0) && !isNullReturned) {
                 isNullReturned = true;
                 record.symbolKey = SymbolTable.VALUE_IS_NULL;
                 return true;
@@ -181,10 +182,9 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
         }
 
         private void scanPartitions() {
-            // Outer = partitions (each opened once), inner = keys.
-            // Each partition's index reader is obtained once and checked for all unfound keys.
-            // Also check index key 0 (the NULL key) which is not in the symbol table's range.
-            while (foundCount < symbolCount || !hasFoundNull) {
+            // totalExpected = symbolCount non-null keys + 1 potential NULL key
+            int totalExpected = symbolCount + 1;
+            while (foundCount < totalExpected) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
                     return;
@@ -194,56 +194,28 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                         readerColumnIndex,
                         BitmapIndexReader.DIR_FORWARD
                 );
-
-                // Fast path: for fully-covered partitions with a precomputed .pd file,
-                // merge the delta-encoded distinct key list instead of scanning per key.
-                long partitionRowCount = tableReader.getPartitionRowCount(frame.getPartitionIndex());
-                long distinctKeysAddr = indexReader.getDistinctKeysAddr();
-                int distinctKeyCount = indexReader.getDistinctKeyCount();
-                if (frame.getRowLo() == 0 && frame.getRowHi() == partitionRowCount
-                        && distinctKeysAddr != 0 && distinctKeyCount > 0) {
-                    // Reconstruct absolute key IDs from deltas and mark in foundKeys
-                    int absKey = 0;
-                    for (int i = 0; i < distinctKeyCount; i++) {
-                        absKey += Unsafe.getUnsafe().getInt(distinctKeysAddr + (long) i * Integer.BYTES);
-                        if (absKey == 0) {
-                            hasFoundNull = true;
-                        } else {
-                            int symbolKey = absKey - 1;
-                            if (symbolKey < symbolCount && !foundKeys[symbolKey]) {
-                                foundKeys[symbolKey] = true;
+                // Bulk stride-scan: walks all dense/sparse gens in one sequential pass
+                // and marks present keys in the BitSet. Returns newly found count,
+                // or -1 if not supported (bitmap index fallback).
+                int newlyFound = indexReader.collectDistinctKeys(foundKeys);
+                if (newlyFound >= 0) {
+                    foundCount += newlyFound;
+                } else {
+                    // Bitmap index fallback: per-key cursor check
+                    for (int key = 0; key < symbolCount; key++) {
+                        int indexKey = TableUtils.toIndexKey(key);
+                        if (!foundKeys.get(indexKey)) {
+                            RowCursor c = indexReader.getCursor(true, indexKey, frame.getRowLo(), frame.getRowHi() - 1);
+                            if (c.hasNext() && !foundKeys.getAndSet(indexKey)) {
                                 foundCount++;
                             }
                         }
                     }
-                    continue;
-                }
-
-                // Slow path: per-key cursor scan for partial partitions or missing .pd
-                for (int key = 0; key < symbolCount; key++) {
-                    if (!foundKeys[key]) {
-                        RowCursor rowCursor = indexReader.getCursor(
-                                true,
-                                TableUtils.toIndexKey(key),
-                                frame.getRowLo(),
-                                frame.getRowHi() - 1
-                        );
-                        if (rowCursor.hasNext()) {
-                            foundKeys[key] = true;
+                    if (!foundKeys.get(0)) {
+                        RowCursor c = indexReader.getCursor(true, 0, frame.getRowLo(), frame.getRowHi() - 1);
+                        if (c.hasNext() && !foundKeys.getAndSet(0)) {
                             foundCount++;
                         }
-                    }
-                }
-                // Check index key 0 (NULL symbol values)
-                if (!hasFoundNull) {
-                    RowCursor nullCursor = indexReader.getCursor(
-                            true,
-                            0, // NULL index key
-                            frame.getRowLo(),
-                            frame.getRowHi() - 1
-                    );
-                    if (nullCursor.hasNext()) {
-                        hasFoundNull = true;
                     }
                 }
             }
@@ -274,11 +246,8 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             nextKeyToReturn = 0;
             isScanned = false;
             foundCount = 0;
-            hasFoundNull = false;
             isNullReturned = false;
-            if (foundKeys != null) {
-                java.util.Arrays.fill(foundKeys, false);
-            }
+            foundKeys.clear();
             if (frameCursor != null) {
                 frameCursor.toTop();
             }
@@ -293,13 +262,8 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             this.nextKeyToReturn = 0;
             this.isScanned = false;
             this.foundCount = 0;
-            this.hasFoundNull = false;
             this.isNullReturned = false;
-            if (foundKeys == null || foundKeys.length < symbolCount) {
-                foundKeys = new boolean[symbolCount];
-            } else {
-                java.util.Arrays.fill(foundKeys, 0, symbolCount, false);
-            }
+            foundKeys.clear();
         }
     }
 

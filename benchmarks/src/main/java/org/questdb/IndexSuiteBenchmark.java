@@ -32,9 +32,6 @@ import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
-import io.questdb.cairo.idx.FSSTBitmapIndexFwdReader;
-import io.questdb.cairo.idx.FSSTBitmapIndexUtils;
-import io.questdb.cairo.idx.FSSTBitmapIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -59,8 +56,8 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  *   <li>Row offset: 0 (25-bit), 1B (30-bit), 1T (40-bit)</li>
  * </ul>
  *
- * 20M total rows, 3 formats (Legacy, FSST, Posting).
- * 36 scenarios x 3 formats = 108 measurements.
+ * 20M total rows, 2 formats (Legacy, Posting).
+ * 36 scenarios x 2 formats = 72 measurements.
  *
  * <pre>
  * mvn install -pl questdb/core -DskipTests -q
@@ -82,7 +79,7 @@ public class IndexSuiteBenchmark {
     private static final String[] OFFSET_LABELS = {"0", "1B", "1T"};
     private static final String[] OFFSET_BITS = {"25-bit", "30-bit", "40-bit"};
 
-    enum Format {LEGACY, FSST, POSTING}
+    enum Format {LEGACY, POSTING}
 
     enum Distribution {RANDOM, ROUND_ROBIN}
 
@@ -112,7 +109,7 @@ public class IndexSuiteBenchmark {
 
         System.out.printf("=== Index Suite Benchmark ===%n");
         System.out.printf("    Total rows: %,d%n", TOTAL_ROWS);
-        System.out.printf("    Formats: Legacy, FSST, Posting%n");
+        System.out.printf("    Formats: Legacy, Posting%n");
         System.out.printf("    Distributions: RANDOM, ROUND_ROBIN%n");
         System.out.printf("    Values/key: 4, 8, 16, 32, 64, 128%n");
         System.out.printf("    Row offsets: 0 (25-bit), 1B (30-bit), 1T (40-bit)%n%n");
@@ -222,36 +219,11 @@ public class IndexSuiteBenchmark {
         }
     }
 
-    private static void createFSSTIndex(CairoConfiguration config, String dir, int[] keyAssignment, int valsPerKey, long rowOffset) {
-        try (Path path = new Path().of(dir)) {
-            int plen = path.size();
-            FilesFacade ff = config.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallCMARWInstance(
-                    ff,
-                    FSSTBitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN),
-                    MemoryTag.MMAP_DEFAULT,
-                    config.getWriterFileOpenOpts()
-            )) {
-                FSSTBitmapIndexWriter.initKeyMemory(mem, valsPerKey);
-            }
-            ff.touch(FSSTBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
-        }
-        try (Path path = new Path().of(dir)) {
-            try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(config)) {
-                writer.of(path, "test", COLUMN_NAME_TXN, false);
-                for (int i = 0; i < keyAssignment.length; i++) {
-                    writer.add(keyAssignment[i], (long) i + rowOffset);
-                }
-            }
-        }
-    }
-
     private static double measureReadLatency(Format format, CairoConfiguration config, String dir, int[] readKeys) {
         ReadTest test = () -> {
             try (Path path = new Path().of(dir)) {
                 BitmapIndexReader reader = switch (format) {
                     case LEGACY -> new BitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
-                    case FSST -> new FSSTBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                     case POSTING -> new PostingIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0);
                 };
                 try {
@@ -304,9 +276,6 @@ public class IndexSuiteBenchmark {
         switch (format) {
             case LEGACY:
                 createLegacyIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
-                break;
-            case FSST:
-                createFSSTIndex(config, dir, keyAssignment, valsPerKey, rowOffset);
                 break;
             case POSTING:
                 createPostingIndex(config, dir, keyAssignment, rowOffset);
@@ -367,7 +336,6 @@ public class IndexSuiteBenchmark {
     private static String formatLabel(Format format) {
         return switch (format) {
             case LEGACY -> "Legacy";
-            case FSST -> "FSST";
             case POSTING -> "Posting";
         };
     }

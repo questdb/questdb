@@ -15,7 +15,7 @@ import java.util.*;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 /**
- * Comprehensive index comparison: Legacy vs FSST vs Posting across all scenarios.
+ * Comprehensive index comparison: Legacy vs Posting across all scenarios.
  * Measures storage (unsealed/sealed), read latency (point/scan/range, unsealed/sealed),
  * and write throughput. Prints per-scenario results and geomean summary.
  *
@@ -32,7 +32,7 @@ public class IndexComparisonBenchmark {
     private static final int POINT_QUERY_KEYS = 10_000;
     private static final int RANGE_QUERY_KEYS = 1_000;
 
-    enum Format {LEGACY, FSST, POSTING}
+    enum Format {LEGACY, POSTING}
 
     static class Metrics {
         double writeTotalMs;
@@ -184,50 +184,6 @@ public class IndexComparisonBenchmark {
                 m.readRangeUnsealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
                 m.readRangeSealedMs = m.readRangeUnsealedMs;
             }
-            case FSST -> {
-                int blockValues = Math.max(4, totalRows / Math.max(keyCount, 1));
-                initFSST(config, dir, blockValues);
-
-                int commitCount = 0;
-                long wt0 = System.nanoTime();
-                FSSTBitmapIndexWriter writer;
-                try (Path path = new Path().of(dir)) {
-                    writer = new FSSTBitmapIndexWriter(config);
-                    writer.of(path, "test", COL_TXN, false);
-                    for (int i = 0; i < totalRows; i++) {
-                        writer.add(keys[i], i);
-                        if ((i + 1) % commitInterval == 0) {
-                            writer.commit();
-                            commitCount++;
-                        }
-                    }
-                    if (totalRows % commitInterval != 0) {
-                        writer.commit();
-                        commitCount++;
-                    }
-                }
-                m.writeTotalMs = (System.nanoTime() - wt0) / 1e6;
-                m.writePerCommitMs = commitCount > 0 ? m.writeTotalMs / commitCount : m.writeTotalMs;
-
-                // Unsealed
-                long unsealedSize = getDirectorySize(dir);
-                m.sizeUnsealedMB = unsealedSize / (1024.0 * 1024.0);
-                m.readPointUnsealedMs = measureRead(config, dir, fmt, pointKeys);
-                m.readScanUnsealedMs = measureScan(config, dir, fmt, keyCount);
-                m.readRangeUnsealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
-
-                // Seal
-                writer.seal();
-                writer.close();
-                long sealedSize = getDirectorySize(dir);
-                m.sizeSealedMB = sealedSize / (1024.0 * 1024.0);
-                m.bPerValSealed = (double) sealedSize / totalRows;
-
-                // Sealed reads
-                m.readPointSealedMs = measureRead(config, dir, fmt, pointKeys);
-                m.readScanSealedMs = measureScan(config, dir, fmt, keyCount);
-                m.readRangeSealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
-            }
             case POSTING -> {
                 CairoConfiguration fmtConfig = configForFormat(config, fmt);
                 initPosting(fmtConfig, dir);
@@ -356,36 +312,6 @@ public class IndexComparisonBenchmark {
                 m.readScanUnsealedMs = m.readScanSealedMs = measureScan(config, dir, fmt, keyCount);
                 m.readRangeUnsealedMs = m.readRangeSealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
             }
-            case FSST -> {
-                initFSST(config, dir, valsPerActive);
-                long wt0 = System.nanoTime();
-                FSSTBitmapIndexWriter writer;
-                try (Path path = new Path().of(dir)) {
-                    writer = new FSSTBitmapIndexWriter(config);
-                    writer.of(path, "test", COL_TXN, false);
-                    int rowId = 0;
-                    for (int c = 0; c < commits; c++) {
-                        for (int key : activeKeys[c]) {
-                            for (int v = 0; v < valsPerActive; v++) writer.add(key, rowId++);
-                        }
-                        writer.commit();
-                    }
-                }
-                m.writeTotalMs = (System.nanoTime() - wt0) / 1e6;
-                m.writePerCommitMs = m.writeTotalMs / commits;
-                m.sizeUnsealedMB = getDirectorySize(dir) / (1024.0 * 1024.0);
-                m.readPointUnsealedMs = measureRead(config, dir, fmt, pointKeys);
-                m.readScanUnsealedMs = measureScan(config, dir, fmt, keyCount);
-                m.readRangeUnsealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
-                writer.seal();
-                writer.close();
-                long sealedSize = getDirectorySize(dir);
-                m.sizeSealedMB = sealedSize / (1024.0 * 1024.0);
-                m.bPerValSealed = (double) sealedSize / totalRows;
-                m.readPointSealedMs = measureRead(config, dir, fmt, pointKeys);
-                m.readScanSealedMs = measureScan(config, dir, fmt, keyCount);
-                m.readRangeSealedMs = measureRange(config, dir, fmt, rangeKeys, maxRow / 4, maxRow * 3 / 4);
-            }
             case POSTING -> {
                 CairoConfiguration fmtConfig = configForFormat(config, fmt);
                 initPosting(fmtConfig, dir);
@@ -505,23 +431,8 @@ public class IndexComparisonBenchmark {
     private static BitmapIndexReader openReader(CairoConfiguration config, Path path, Format fmt) {
         return switch (fmt) {
             case LEGACY -> new BitmapIndexFwdReader(config, path, "test", COL_TXN, -1, 0);
-            case FSST -> new FSSTBitmapIndexFwdReader(config, path, "test", COL_TXN, -1, 0);
             case POSTING -> new PostingIndexFwdReader(config, path, "test", COL_TXN, -1, 0);
         };
-    }
-
-    // ========================= Index init =========================
-
-    private static void initFSST(CairoConfiguration config, String dir, int blockValues) {
-        try (Path path = new Path().of(dir)) {
-            int plen = path.size();
-            FilesFacade ff = config.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallCMARWInstance(ff, FSSTBitmapIndexUtils.keyFileName(path, "test", COL_TXN),
-                    MemoryTag.MMAP_DEFAULT, config.getWriterFileOpenOpts())) {
-                FSSTBitmapIndexWriter.initKeyMemory(mem, blockValues);
-            }
-            ff.touch(FSSTBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COL_TXN));
-        }
     }
 
     private static void initPosting(CairoConfiguration config, String dir) {

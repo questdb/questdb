@@ -49,7 +49,7 @@ public final class IndexFactory {
     /**
      * Returns the key file name for the given index type.
      *
-     * @param indexType     the type of index (BITMAP, POSTING, FSST)
+     * @param indexType     the type of index (BITMAP, POSTING)
      * @param path          the path to append the file name to
      * @param columnName    the column name
      * @param columnNameTxn the column name transaction number
@@ -59,7 +59,6 @@ public final class IndexFactory {
         return switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             case IndexType.POSTING -> PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
-            case IndexType.FSST -> FSSTBitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             default -> throw CairoException.critical(0)
                     .put("unsupported index type for key file: ").put(IndexType.nameOf(indexType));
         };
@@ -68,7 +67,7 @@ public final class IndexFactory {
     /**
      * Returns the value file name for the given index type.
      *
-     * @param indexType     the type of index (BITMAP, POSTING, FSST)
+     * @param indexType     the type of index (BITMAP, POSTING)
      * @param path          the path to append the file name to
      * @param columnName    the column name
      * @param columnNameTxn the column name transaction number
@@ -78,7 +77,6 @@ public final class IndexFactory {
         return switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
             case IndexType.POSTING -> PostingIndexUtils.valueFileName(path, columnName, columnNameTxn);
-            case IndexType.FSST -> FSSTBitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
             default -> throw CairoException.critical(0)
                     .put("unsupported index type for value file: ").put(IndexType.nameOf(indexType));
         };
@@ -87,7 +85,7 @@ public final class IndexFactory {
     /**
      * Initializes the key memory for a new index of the given type.
      *
-     * @param indexType     the type of index (BITMAP, POSTING, FSST)
+     * @param indexType     the type of index (BITMAP, POSTING)
      * @param keyMem        the memory to initialize
      * @param blockCapacity the value block capacity (used by BITMAP type)
      * @throws CairoException if the index type is not supported
@@ -96,7 +94,6 @@ public final class IndexFactory {
         switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
             case IndexType.POSTING -> PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
-            case IndexType.FSST -> FSSTBitmapIndexWriter.initKeyMemory(keyMem, FSSTBitmapIndexUtils.DEFAULT_BLOCK_VALUES);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot initialize key memory for index type NONE");
             default -> throw CairoException.critical(0)
@@ -107,7 +104,7 @@ public final class IndexFactory {
     /**
      * Creates a new index reader for the given index type and direction.
      *
-     * @param indexType     the type of index (BITMAP, POSTING, FSST)
+     * @param indexType     the type of index (BITMAP, POSTING)
      * @param direction     the read direction (BitmapIndexReader.DIR_FORWARD or DIR_BACKWARD)
      * @param configuration Cairo configuration
      * @param path          base path to the index files
@@ -135,9 +132,6 @@ public final class IndexFactory {
             case IndexType.POSTING -> direction == BitmapIndexReader.DIR_FORWARD
                     ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
-            case IndexType.FSST -> direction == BitmapIndexReader.DIR_FORWARD
-                    ? new FSSTBitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
-                    : new FSSTBitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create reader for index type NONE");
             default -> throw CairoException.critical(0)
@@ -149,7 +143,7 @@ public final class IndexFactory {
      * Creates a new, uninitialized index writer for the given index type.
      * The writer must be initialized using one of the {@code of()} methods before use.
      *
-     * @param indexType     the type of index (BITMAP, POSTING, FSST)
+     * @param indexType     the type of index (BITMAP, POSTING)
      * @param configuration Cairo configuration
      * @return a new IndexWriter instance
      * @throws CairoException if the index type is not supported
@@ -158,7 +152,6 @@ public final class IndexFactory {
         return switch (indexType) {
             case IndexType.BITMAP -> new BitmapIndexWriter(configuration);
             case IndexType.POSTING -> new PostingIndexWriter(configuration);
-            case IndexType.FSST -> new FSSTBitmapIndexWriter(configuration);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create writer for index type NONE");
             default -> throw CairoException.critical(0)

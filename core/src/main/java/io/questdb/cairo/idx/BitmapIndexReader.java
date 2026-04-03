@@ -97,19 +97,15 @@ public interface BitmapIndexReader extends Closeable {
     void reloadConditionally();
 
     /**
-     * Returns the native address of the delta-encoded distinct key IDs for this partition,
-     * or 0 if unavailable. Each entry is a 4-byte int delta from the previous key.
-     * Reconstruct absolute key IDs via prefix-sum.
-     * The buffer contains {@link #getDistinctKeyCount()} entries.
+     * Bulk-marks all keys present in this partition into the bit set.
+     * Walks dense generation strides sequentially (one pass, optimal page access).
+     * Returns the number of newly found keys.
+     * For bitmap indexes this is a no-op returning -1 (caller uses getCursor fallback).
+     *
+     * @param foundKeys   bit set indexed by index key (0 = NULL, 1..N = symbol keys)
+     * @return number of keys newly marked as found, or -1 if not supported
      */
-    default long getDistinctKeysAddr() {
-        return 0;
-    }
-
-    /**
-     * Returns the number of distinct keys, or -1 if unavailable.
-     */
-    default int getDistinctKeyCount() {
+    default int collectDistinctKeys(io.questdb.std.BitSet foundKeys) {
         return -1;
     }
 }

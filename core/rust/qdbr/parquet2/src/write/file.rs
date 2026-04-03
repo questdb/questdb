@@ -92,7 +92,9 @@ fn end_file_incremental<W: Write>(
     };
 
     use parquet_format_safe::thrift::protocol::{TCompactOutputProtocol, TOutputProtocol, TType};
-    use parquet_format_safe::thrift::protocol::{TFieldIdentifier, TListIdentifier, TStructIdentifier};
+    use parquet_format_safe::thrift::protocol::{
+        TFieldIdentifier, TListIdentifier, TStructIdentifier,
+    };
 
     // Use SharedWriter so a single protocol instance stays alive for the
     // entire serialization while we can also inject cached row group bytes.
@@ -108,7 +110,10 @@ fn end_file_incremental<W: Write>(
 
     // Field 2: schema
     prot.write_field_begin(&TFieldIdentifier::new("schema", TType::List, 2))?;
-    prot.write_list_begin(&TListIdentifier::new(TType::Struct, metadata.schema.len() as u32))?;
+    prot.write_list_begin(&TListIdentifier::new(
+        TType::Struct,
+        metadata.schema.len() as u32,
+    ))?;
     for elem in &metadata.schema {
         elem.write_to_out_protocol(&mut prot)?;
     }
@@ -122,7 +127,10 @@ fn end_file_incremental<W: Write>(
 
     // Field 4: row_groups
     prot.write_field_begin(&TFieldIdentifier::new("row_groups", TType::List, 4))?;
-    prot.write_list_begin(&TListIdentifier::new(TType::Struct, metadata.row_groups.len() as u32))?;
+    prot.write_list_begin(&TListIdentifier::new(
+        TType::Struct,
+        metadata.row_groups.len() as u32,
+    ))?;
 
     // Write row groups: cached raw bytes or freshly serialized.
     // Cached row group bytes are self-contained Thrift structs whose
@@ -175,14 +183,22 @@ fn end_file_incremental<W: Write>(
 
     // Field 8: encryption_algorithm (optional)
     if let Some(ref algo) = metadata.encryption_algorithm {
-        prot.write_field_begin(&TFieldIdentifier::new("encryption_algorithm", TType::Struct, 8))?;
+        prot.write_field_begin(&TFieldIdentifier::new(
+            "encryption_algorithm",
+            TType::Struct,
+            8,
+        ))?;
         algo.write_to_out_protocol(&mut prot)?;
         prot.write_field_end()?;
     }
 
     // Field 9: footer_signing_key_metadata (optional)
     if let Some(ref key_meta) = metadata.footer_signing_key_metadata {
-        prot.write_field_begin(&TFieldIdentifier::new("footer_signing_key_metadata", TType::String, 9))?;
+        prot.write_field_begin(&TFieldIdentifier::new(
+            "footer_signing_key_metadata",
+            TType::String,
+            9,
+        ))?;
         prot.write_bytes(key_meta)?;
         prot.write_field_end()?;
     }
@@ -573,6 +589,10 @@ impl<W: Write> ParquetFile<W> {
         &self.schema
     }
 
+    pub fn set_schema(&mut self, schema: SchemaDescriptor) {
+        self.schema = schema;
+    }
+
     pub fn metadata(&self) -> Option<&ThriftFileMetaData> {
         self.metadata.as_ref()
     }
@@ -662,6 +682,13 @@ impl<W: Write> ParquetFile<W> {
         match &self.mode {
             Mode::Update(metadata, _) => {
                 let ordinal = if let Some(ordinal) = ordinal {
+                    if ordinal < 0 {
+                        return Err(Error::InvalidParameter(format!(
+                            "Row group ordinal must be non-negative, got {}",
+                            ordinal
+                        ))
+                            .into());
+                    }
                     let num_row_groups = metadata.row_groups.len();
                     let ordinal = ordinal as usize;
                     if ordinal >= num_row_groups {
@@ -695,6 +722,13 @@ impl<W: Write> ParquetFile<W> {
     where
         E: std::error::Error + From<Error>,
     {
+        if position < 0 {
+            return Err(Error::InvalidParameter(format!(
+                "Insert position must be non-negative, got {}",
+                position
+            ))
+                .into());
+        }
         match &self.mode {
             Mode::Update(_, _) => {
                 self.add_row_group(row_group, position as usize, bloom_hashes)?;
@@ -704,7 +738,7 @@ impl<W: Write> ParquetFile<W> {
             _ => Err(Error::InvalidParameter(
                 "Insert can only be called in update mode".to_string(),
             )
-                .into()),
+            .into()),
         }
     }
 
@@ -861,12 +895,7 @@ impl<W: Write> ParquetFile<W> {
                     }
                 }
 
-                let len = end_file_incremental(
-                    &mut self.writer,
-                    metadata,
-                    footer_cache,
-                    &sources,
-                )?;
+                let len = end_file_incremental(&mut self.writer, metadata, footer_cache, &sources)?;
                 self.state = State::Finished;
                 Ok(self.offset + len)
             }

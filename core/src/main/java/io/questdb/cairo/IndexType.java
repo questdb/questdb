@@ -33,10 +33,6 @@ import io.questdb.std.Chars;
  */
 public final class IndexType {
     /**
-     * FSST-compressed bitmap index. Uses Fast Succinct Symbol Table compression for postings.
-     */
-    public static final byte FSST = 3;
-    /**
      * Mask for extracting the 2-bit index type value.
      */
     public static final int INDEX_TYPE_MASK = 0x03;
@@ -78,7 +74,6 @@ public final class IndexType {
             case NONE -> "NONE";
             case BITMAP -> "BITMAP";
             case POSTING -> "POSTING";
-            case FSST -> "FSST";
             default -> "UNKNOWN(" + indexType + ")";
         };
     }
@@ -98,9 +93,6 @@ public final class IndexType {
         }
         if (Chars.equalsIgnoreCase(name, "POSTING")) {
             return POSTING;
-        }
-        if (Chars.equalsIgnoreCase(name, "FSST")) {
-            return FSST;
         }
         if (Chars.equalsIgnoreCase(name, "NONE")) {
             return NONE;

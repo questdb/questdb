@@ -1779,6 +1779,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Converts SYMBOL-SYMBOL join key pairs from string-based comparison to integer-based
+     * comparison using SymbolTranslatingRecord. For each SYMBOL-SYMBOL pair where
+     * writeSymbolAsString is currently set (i.e., non-self-join pairs), this method:
+     * <ul>
+     *   <li>Unsets writeSymbolAsString for both master and slave column indices</li>
+     *   <li>Changes the keyTypes entry from STRING to INT</li>
+     *   <li>Collects master/slave column indices into arrays</li>
+     * </ul>
+     * Must be called after createSymbolShortCircuit() and before createRecordCopierMaster/Slave().
+     *
+     * @return null if no SYMBOL-SYMBOL pairs found, otherwise [masterIndices, slaveIndices]
+     */
+    private int @Nullable [][] convertSymbolJoinKeysToInt(
+            RecordMetadata masterMetadata,
+            RecordMetadata slaveMetadata
+    ) {
+        IntList masterSymbolKeyCols = null;
+        IntList slaveSymbolKeyCols = null;
+        for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
+            final int slaveColIndex = listColumnFilterA.getColumnIndexFactored(k);
+            final int masterColIndex = listColumnFilterB.getColumnIndexFactored(k);
+            if (masterMetadata.getColumnType(masterColIndex) == ColumnType.SYMBOL
+                    && slaveMetadata.getColumnType(slaveColIndex) == ColumnType.SYMBOL
+                    && masterMetadata.isSymbolTableStatic(masterColIndex)
+                    && slaveMetadata.isSymbolTableStatic(slaveColIndex)
+                    && writeSymbolAsString.get(masterColIndex)
+                    && writeSymbolAsString.get(slaveColIndex)) {
+                // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
+                writeSymbolAsString.unset(masterColIndex);
+                writeSymbolAsString.unset(slaveColIndex);
+                keyTypes.set(k, ColumnType.INT);
+                if (masterSymbolKeyCols == null) {
+                    masterSymbolKeyCols = new IntList();
+                    slaveSymbolKeyCols = new IntList();
+                }
+                masterSymbolKeyCols.add(masterColIndex);
+                slaveSymbolKeyCols.add(slaveColIndex);
+            }
+        }
+        if (masterSymbolKeyCols != null) {
+            return new int[][]{masterSymbolKeyCols.toArray(), slaveSymbolKeyCols.toArray()};
+        }
+        return null;
+    }
+
     @NotNull
     private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
@@ -4160,6 +4206,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         toleranceInterval
                                 );
                             }
+                            int[][] denseSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                             return new AsOfJoinDenseRecordCursorFactory(
                                     configuration,
                                     joinMetadata,
@@ -4170,10 +4217,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     joinColumnSplit,
                                     keyTypes,
                                     slaveContext,
-                                    toleranceInterval
+                                    toleranceInterval,
+                                    denseSymbolKeyIndices != null ? denseSymbolKeyIndices[0] : null,
+                                    denseSymbolKeyIndices != null ? denseSymbolKeyIndices[1] : null
                             );
                         }
-                        RecordSink recordCopierMaster;
                         if (isSingleSymbolJoin) {
                             SymbolJoinKeyMapping symbolJoinKeyMapping = (SymbolJoinKeyMapping) symbolShortCircuit;
                             int slaveSymbolColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
@@ -4212,22 +4260,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // join key equality check. Instead of comparing symbols as strings, compare symbol keys.
                             // For that to work, we need code that maps master symbol key to slave symbol key.
                             writeSymbolAsString.unset(slaveSymbolColumnIndex);
-                            recordCopierMaster = new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit);
+                            return new AsOfJoinFastRecordCursorFactory(
+                                    configuration,
+                                    joinMetadata,
+                                    master,
+                                    new SymbolKeyMappingRecordCopier((SymbolJoinKeyMapping) symbolShortCircuit),
+                                    slave,
+                                    createRecordCopierSlave(slaveMetadata),
+                                    joinColumnSplit,
+                                    symbolShortCircuit,
+                                    slaveContext,
+                                    toleranceInterval,
+                                    null,
+                                    null
+                            );
                         } else {
-                            recordCopierMaster = createRecordCopierMaster(masterMetadata);
+                            int[][] fastSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                            return new AsOfJoinFastRecordCursorFactory(
+                                    configuration,
+                                    joinMetadata,
+                                    master,
+                                    createRecordCopierMaster(masterMetadata),
+                                    slave,
+                                    createRecordCopierSlave(slaveMetadata),
+                                    joinColumnSplit,
+                                    fastSymbolKeyIndices != null ? NoopSymbolShortCircuit.INSTANCE : symbolShortCircuit,
+                                    slaveContext,
+                                    toleranceInterval,
+                                    fastSymbolKeyIndices != null ? fastSymbolKeyIndices[0] : null,
+                                    fastSymbolKeyIndices != null ? fastSymbolKeyIndices[1] : null
+                            );
                         }
-                        return new AsOfJoinFastRecordCursorFactory(
-                                configuration,
-                                joinMetadata,
-                                master,
-                                recordCopierMaster,
-                                slave,
-                                createRecordCopierSlave(slaveMetadata),
-                                joinColumnSplit,
-                                symbolShortCircuit,
-                                slaveContext,
-                                toleranceInterval
-                        );
                     } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                         RecordCursorFactory slaveBase = slave.getBaseFactory();
                         int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
@@ -4240,6 +4303,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         Misc.freeObjList(slave.getBindVarFunctions());
                         slave.halfClose();
 
+                        int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                         return new FilteredAsOfJoinFastRecordCursorFactory(
                                 configuration,
                                 joinMetadata,
@@ -4252,7 +4316,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 NullRecordFactory.getInstance(slaveMetadata),
                                 null,
                                 slaveTimestampIndex,
-                                toleranceInterval
+                                toleranceInterval,
+                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
+                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null
                         );
                     } else if (slave.isProjection()) {
                         RecordCursorFactory projectionBase = slave.getBaseFactory();
@@ -4279,6 +4345,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 Misc.freeObjList(projectionBase.getBindVarFunctions());
                                 projectionBase.halfClose();
 
+                                int[][] projFilteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                                 return new FilteredAsOfJoinFastRecordCursorFactory(
                                         configuration,
                                         joinMetadata,
@@ -4291,7 +4358,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         NullRecordFactory.getInstance(slaveMetadata),
                                         stolenCrossIndex,
                                         slaveTimestampIndex,
-                                        toleranceInterval
+                                        toleranceInterval,
+                                        projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[0] : null,
+                                        projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[1] : null
                                 );
                             }
                         }
@@ -4319,9 +4388,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             joinKeyMapping,
                             joinColumnSplit,
                             slaveContext,
-                            toleranceInterval
+                            toleranceInterval,
+                            null,
+                            null
                     );
                 } else {
+                    int[][] lightSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                     return new AsOfJoinLightRecordCursorFactory(
                             configuration,
                             joinMetadata,
@@ -4333,7 +4405,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             null,
                             joinColumnSplit,
                             slaveContext,
-                            toleranceInterval
+                            toleranceInterval,
+                            lightSymbolKeyIndices != null ? lightSymbolKeyIndices[0] : null,
+                            lightSymbolKeyIndices != null ? lightSymbolKeyIndices[1] : null
                     );
                 }
             }
@@ -4463,6 +4537,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
         try {
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
+                int[][] ltSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
                 RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
                 RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
                 int columnSplit = masterMetadata.getColumnCount();
@@ -4480,7 +4555,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         slaveKeyCopier,
                         columnSplit,
                         joinContext,
-                        toleranceInterval
+                        toleranceInterval,
+                        ltSymbolKeyIndices != null ? ltSymbolKeyIndices[0] : null,
+                        ltSymbolKeyIndices != null ? ltSymbolKeyIndices[1] : null
                 );
             }
 
@@ -4533,9 +4610,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else { // i == 0
                     // This is first model in the sequence of joins
                     // TS requirement is symmetrical on both right and left sides
-                    // check if next join requires a timestamp
-                    int nextJointType = joinModels.getQuick(ordered.getQuick(1)).getJoinType();
-                    executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[nextJointType]);
+                    // check if any right-side join requires a timestamp
+                    boolean isTimestampRequired = false;
+                    for (int k = 1; k < n; k++) {
+                        if (joinsRequiringTimestamp[joinModels.getQuick(ordered.getQuick(k)).getJoinType()]) {
+                            isTimestampRequired = true;
+                            break;
+                        }
+                    }
+                    executionContext.pushTimestampRequiredFlag(isTimestampRequired);
                     // For successive JOIN operations, if the left table requires timestamp,
                     // it must be the timestamp from the first table in the JOIN chain
                     executionContext.pushHasInterval(0);
@@ -4771,7 +4854,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (windowJoinColCheckVisitor.shouldInclude) {
                                                 QueryColumn column = columns.get(j);
                                                 aggregateCols.add(columns.get(j));
-                                                aggModel.replaceColumn(j, SqlUtil.nextColumn(queryColumnPool, expressionNodePool, column.getAlias(), column.getAlias(), ast.position));
+                                                aggModel.replaceColumn(j, SqlUtil.nextColumn(queryColumnPool, expressionNodePool, column.getAlias(), column.getAlias(), column.isIncludeIntoWildcard(), ast.position));
                                             } else if (windowJoinColCheckVisitor.hasIncludeCol) {
                                                 throw SqlException.position(ast.position).put("WINDOW join aggregate function cannot reference columns from multiple models");
                                             }

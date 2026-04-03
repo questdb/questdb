@@ -450,7 +450,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private int initializeSlaveTimeFrameCache() {
-        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnIndexes(), slaveFrameCursor.isExternal());
+        slaveTimeFrameAddressCache.of(slaveMetadata, slaveFrameCursor.getColumnMapping(), slaveFrameCursor.isExternal());
         slaveTimeFramePartitionIndexes.reopen();
         slaveTimeFramePartitionIndexes.clear();
         slaveTimeFrameRowCounts.clear();

@@ -34,9 +34,9 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BitSet;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.DirectBinarySequence;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -72,10 +72,6 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     private long activePageOffset;
     private MillisecondClock clock;
     private long columnTxn;
-    private long distinctKeysAddr; // mmap'd .pd file address (0 = not loaded)
-    private long distinctKeysSize; // mmap'd size
-    private long distinctKeysFd = -1; // fd for the mmap'd .pd file
-    private int distinctKeyCount = -1;
     private FilesFacade ff;
     private String readerColumnName;
     private String readerPartitionPath;
@@ -97,27 +93,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 try {
                     Misc.free(valueMem);
                 } finally {
-                    try {
-                        closeSidecarMems();
-                    } finally {
-                        closeDistinctKeys();
-                    }
+                    closeSidecarMems();
                 }
             }
         }
-    }
-
-    private void closeDistinctKeys() {
-        if (distinctKeysAddr != 0) {
-            ff.munmap(distinctKeysAddr, distinctKeysSize, MemoryTag.MMAP_INDEX_READER);
-            distinctKeysAddr = 0;
-            distinctKeysSize = 0;
-        }
-        if (distinctKeysFd >= 0) {
-            ff.close(distinctKeysFd);
-            distinctKeysFd = -1;
-        }
-        distinctKeyCount = -1;
     }
 
     private void closeSidecarMems() {
@@ -162,6 +141,29 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     @Override
     public long getKeyBaseAddress() {
         return keyMem.addressOf(0);
+    }
+
+    @Override
+    public int collectDistinctKeys(BitSet foundKeys) {
+        if (genCount == 0 || keyCount == 0) {
+            return 0;
+        }
+        int newlyFound = 0;
+        for (int g = 0; g < genCount; g++) {
+            int genKeyCount = genLookup.getGenKeyCount(g);
+            if (genKeyCount >= 0) {
+                newlyFound += collectDenseGenKeys(
+                        genLookup.getGenFileOffset(g), genLookup.getGenDataSize(g),
+                        genKeyCount, foundKeys
+                );
+            } else {
+                newlyFound += collectSparseGenKeys(
+                        genLookup.getGenFileOffset(g), genLookup.getGenDataSize(g),
+                        -genKeyCount, foundKeys
+                );
+            }
+        }
+        return newlyFound;
     }
 
     @Override
@@ -259,71 +261,12 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
             // Try to open sidecar files for covering index
             openSidecarFilesIfPresent(configuration, path.trimTo(plen), columnName, columnNameTxn);
-            loadDistinctKeysIfPresent(configuration.getFilesFacade(), path.trimTo(plen), columnName, columnNameTxn);
         } catch (Throwable e) {
             close();
             throw e;
         } finally {
             path.trimTo(plen);
         }
-    }
-
-    @Override
-    public long getDistinctKeysAddr() {
-        if (distinctKeysAddr == 0 || distinctKeyCount <= 0) {
-            return 0;
-        }
-        // .pd stores raw (uncompressed) delta-encoded key IDs after the header.
-        // Return the mmap'd address directly — no decompression buffer needed.
-        return distinctKeysAddr + PostingIndexUtils.PD_HEADER_SIZE;
-    }
-
-    @Override
-    public int getDistinctKeyCount() {
-        return distinctKeyCount;
-    }
-
-    private void loadDistinctKeysIfPresent(FilesFacade ff, Path path, CharSequence columnName, long columnNameTxn) {
-        int plen = path.size();
-        LPSZ pdFile = PostingIndexUtils.distinctKeysFileName(path, columnName, columnNameTxn);
-        if (!ff.exists(pdFile)) {
-            path.trimTo(plen);
-            return;
-        }
-        long fd = ff.openRO(pdFile);
-        if (fd < 0) {
-            path.trimTo(plen);
-            return;
-        }
-        long fileSize = ff.length(fd);
-        if (fileSize < PostingIndexUtils.PD_HEADER_SIZE) {
-            ff.close(fd);
-            path.trimTo(plen);
-            return;
-        }
-        long addr = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_READER);
-        if (addr == -1) {
-            ff.close(fd);
-            path.trimTo(plen);
-            return;
-        }
-        int magic = Unsafe.getUnsafe().getInt(addr);
-        int version = Unsafe.getUnsafe().getInt(addr + 4);
-        int count = Unsafe.getUnsafe().getInt(addr + 8);
-        int compressedSize = Unsafe.getUnsafe().getInt(addr + 12);
-        if (magic != PostingIndexUtils.PD_MAGIC || version != PostingIndexUtils.PD_VERSION
-                || count <= 0 || PostingIndexUtils.PD_HEADER_SIZE + compressedSize > fileSize) {
-            ff.munmap(addr, fileSize, MemoryTag.MMAP_INDEX_READER);
-            ff.close(fd);
-            path.trimTo(plen);
-            return;
-        }
-        // Keep mmap'd — decompress on demand in getDistinctKeyDeltas()
-        distinctKeysAddr = addr;
-        distinctKeysSize = fileSize;
-        distinctKeysFd = fd;
-        distinctKeyCount = count;
-        path.trimTo(plen);
     }
 
     private void openSidecarFilesIfPresent(Path path, CharSequence columnName, long columnNameTxn) {
@@ -425,12 +368,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                             ff.getMapPageSize(), valueMemSize,
                             MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
                 }
-                // Also reopen sidecar files and distinct keys for covering index
+                // Also reopen sidecar files for covering index
                 closeSidecarMems();
-                closeDistinctKeys();
                 try (Path p = new Path().of(readerPartitionPath)) {
                     openSidecarFilesIfPresent(p, readerColumnName, columnTxn);
-                    loadDistinctKeysIfPresent(ff, p, readerColumnName, columnTxn);
                 }
             } else if (valueMemSize > 0) {
                 ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
@@ -1552,6 +1493,65 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
      * mid-write, falls back to the other page. Snapshots gen dir into genLookup
      * so no further reads from the key file pages are needed during cursor iteration.
      */
+    /**
+     * Walks all strides in a dense generation sequentially and marks present keys.
+     * Each stride is visited once, in order — optimal for sequential page access.
+     */
+    private int collectDenseGenKeys(long genFileOffset, long genDataSize, int genKeyCount, BitSet foundKeys) {
+        valueMem.extend(genFileOffset + genDataSize);
+        long genAddr = valueMem.addressOf(genFileOffset);
+        int sc = PostingIndexUtils.strideCount(genKeyCount);
+        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+        int newlyFound = 0;
+
+        for (int s = 0; s < sc; s++) {
+            int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
+            long strideAddr = genAddr + siSize + strideOff;
+            int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
+            int keyBase = s * PostingIndexUtils.DENSE_STRIDE;
+            byte mode = Unsafe.getUnsafe().getByte(strideAddr);
+
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                for (int j = 0; j < ks; j++) {
+                    int startCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
+                    int endCount = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES);
+                    if (endCount > startCount && !foundKeys.getAndSet(keyBase + j)) {
+                        newlyFound++;
+                    }
+                }
+            } else {
+                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                for (int j = 0; j < ks; j++) {
+                    if (Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES) > 0
+                            && !foundKeys.getAndSet(keyBase + j)) {
+                        newlyFound++;
+                    }
+                }
+            }
+        }
+        return newlyFound;
+    }
+
+    /**
+     * Scans sparse generation key IDs and marks present keys.
+     */
+    private int collectSparseGenKeys(long genFileOffset, long genDataSize, int activeKeyCount, BitSet foundKeys) {
+        long needed = genFileOffset + genDataSize;
+        if (needed > valueMem.size()) {
+            valueMem.extend(needed);
+        }
+        long genAddr = valueMem.addressOf(genFileOffset);
+        int newlyFound = 0;
+        for (int i = 0; i < activeKeyCount; i++) {
+            int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
+            if (!foundKeys.getAndSet(key)) {
+                newlyFound++;
+            }
+        }
+        return newlyFound;
+    }
+
     private void readIndexMetadataFromBestPage() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {

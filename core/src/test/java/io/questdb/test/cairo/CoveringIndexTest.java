@@ -1571,24 +1571,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIncludeWithFsstFails() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                execute("""
-                        CREATE TABLE bad (
-                            ts TIMESTAMP,
-                            sym SYMBOL INDEX TYPE FSST INCLUDE (price),
-                            price DOUBLE
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """);
-                fail("Should have thrown SqlException");
-            } catch (SqlException e) {
-                assertTrue(e.getMessage().contains("INCLUDE is only supported for POSTING index type"));
-            }
-        });
-    }
-
-    @Test
     public void testIncludeWithNonExistentColumnFails() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -3512,6 +3494,39 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     B
                     C
                     """, "SELECT DISTINCT sym FROM t_distinct");
+        });
+    }
+
+    @Test
+    public void testDistinctSymFromPostingIndexWithCovering() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Use INSERT...SELECT with enough rows to trigger multi-stride sealing.
+            // The bug was that close() seals without covered column data
+            // (column memories already closed by TableWriter), leaving stale
+            // per-gen sidecar files that the reader misinterprets as stride format.
+            execute("""
+                    INSERT INTO t_dist_cov
+                    SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP,
+                        rnd_symbol(100, 4, 6, 0),
+                        rnd_double() * 100
+                    FROM long_sequence(10000)
+                    """);
+            engine.releaseAllWriters();
+
+            // Must not SIGSEGV — the covering sidecar files should be absent
+            // (cleaned up by close) so the distinct cursor falls back to
+            // per-key index scans without sidecar decoding.
+            assertSql("""
+                    count
+                    100
+                    """, "SELECT count() FROM (SELECT DISTINCT sym FROM t_dist_cov)");
         });
     }
 

@@ -242,11 +242,23 @@ public class PostingIndexWriter implements IndexWriter {
             // single dense gen for optimal read performance. This is safe
             // because rollback writes in-place (no txn bump).
             if (keyMem.isOpen() && partitionPath != null) {
+                boolean hadCovering = coverCount > 0;
                 if (coveredColumnMems != null && coveredColumnMems.length > 0
                         && !coveredColumnMems[0].isOpen()) {
                     coveredColumnMems = null;
                 }
                 seal();
+                // If covering was configured but the seal ran without covered
+                // column data (memories were already closed by the TableWriter),
+                // stale per-gen sidecar files from flushAllPending remain on disk.
+                // Remove them so readers don't misinterpret per-gen raw data as
+                // stride format. Skip this for non-covering indexes (coverCount == 0)
+                // where .pd is the only auxiliary file and was just written by seal.
+                if (hadCovering && coveredColumnMems == null && coveredColumnAddrs == null && sidecarMems == null) {
+                    try (Path p = new Path().of(partitionPath)) {
+                        PostingIndexUtils.removeSidecarFiles(ff, p, p.size(), indexName, sidecarTxn);
+                    }
+                }
             } else if (keyMem.isOpen()) {
                 flushAllPending();
             }
@@ -1119,69 +1131,6 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.getUnsafe().copyMemory(localHeaderBuf, headerAddr, deltaHeaderSize);
     }
 
-    private void writeDistinctKeysFile(long totalCountsAddr, int keyCount) {
-        if (partitionPath == null) {
-            return;
-        }
-        // Collect sorted list of keys with count > 0
-        int distinctCount = 0;
-        for (int key = 0; key < keyCount; key++) {
-            if (Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES) > 0) {
-                distinctCount++;
-            }
-        }
-        if (distinctCount == 0) {
-            return;
-        }
-        // Delta-encode sorted key IDs and write raw (uncompressed) to .pd file.
-        // The file is mmap'd on read and the deltas are accessed directly — no
-        // decompression buffer needed, which avoids native memory management.
-        int dataSize = distinctCount * Integer.BYTES;
-        try (Path p = new Path().of(partitionPath)) {
-            LPSZ pdFile = PostingIndexUtils.distinctKeysFileName(p, indexName, columnNameTxn);
-            long fd = ff.openRW(pdFile, configuration.getWriterFileOpenOpts());
-            if (fd < 0) {
-                LOG.error().$("could not create .pd file [path=").$(pdFile)
-                        .$(", errno=").$(ff.errno()).I$();
-                return;
-            }
-            try {
-                int totalSize = PostingIndexUtils.PD_HEADER_SIZE + dataSize;
-                if (!ff.truncate(fd, totalSize)) {
-                    LOG.error().$("could not truncate .pd file [path=").$(pdFile)
-                            .$(", errno=").$(ff.errno()).I$();
-                    return;
-                }
-                long addr = ff.mmap(fd, totalSize, 0, Files.MAP_RW, MemoryTag.MMAP_INDEX_WRITER);
-                if (addr == -1) {
-                    LOG.error().$("could not mmap .pd file [path=").$(pdFile).I$();
-                    return;
-                }
-                try {
-                    Unsafe.getUnsafe().putInt(addr, PostingIndexUtils.PD_MAGIC);
-                    Unsafe.getUnsafe().putInt(addr + 4, PostingIndexUtils.PD_VERSION);
-                    Unsafe.getUnsafe().putInt(addr + 8, distinctCount);
-                    Unsafe.getUnsafe().putInt(addr + 12, dataSize);
-                    long dataAddr = addr + PostingIndexUtils.PD_HEADER_SIZE;
-                    int idx = 0;
-                    int prev = 0;
-                    for (int key = 0; key < keyCount; key++) {
-                        if (Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES) > 0) {
-                            Unsafe.getUnsafe().putInt(dataAddr + (long) idx * Integer.BYTES, key - prev);
-                            prev = key;
-                            idx++;
-                        }
-                    }
-                    ff.msync(addr, totalSize, false);
-                } finally {
-                    ff.munmap(addr, totalSize, MemoryTag.MMAP_INDEX_WRITER);
-                }
-            } finally {
-                ff.close(fd);
-            }
-        }
-    }
-
     private void switchToSealedValueFile(long newTxn) {
         // Close old .pv (leave on disk for concurrent readers)
         // Reopen valueMem on the new sealed .pv file
@@ -2034,7 +1983,6 @@ public class PostingIndexWriter implements IndexWriter {
                             sealValueMem.sync(false);
                             switchToSealedValueFile(newTxn);
                         }
-                        writeDistinctKeysFile(totalCountsAddr, keyCount);
                         Unsafe.getUnsafe().storeFence();
                         writeMetadataPage(genCount, maxValue,
                                 0, sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);

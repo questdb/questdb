@@ -256,8 +256,6 @@ public class VacuumColumnVersions implements Closeable {
                                 && !Utf8s.containsAscii(fileNameSink, ".pci.")
                                 && !Utf8s.containsAscii(fileNameSink, ".pc") // covers .pc0, .pc1, ..., .pci
                                 && !Utf8s.containsAscii(fileNameSink, ".pd")
-                                && !Utf8s.containsAscii(fileNameSink, ".lk.")
-                                && !Utf8s.containsAscii(fileNameSink, ".lv.")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".d")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".i")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".k")
@@ -267,8 +265,6 @@ public class VacuumColumnVersions implements Closeable {
                                 && !Utf8s.endsWithAscii(fileNameSink, ".pv")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".pci")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".pd")
-                                && !Utf8s.endsWithAscii(fileNameSink, ".lk")
-                                && !Utf8s.endsWithAscii(fileNameSink, ".lv")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".lock")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".o")) {
                             LOG.critical().$("file does not belong to the table, will be left on disk [name=").$(fileNameSink).$(", path=").$(path2).I$();

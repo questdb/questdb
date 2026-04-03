@@ -41,6 +41,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
@@ -1801,6 +1802,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // simultaneously (vectorized GROUP BY collects all frames before processing).
         private final LongList allocatedBuffers = new LongList();
         private final IntList columnIndexes;
+        private final ColumnMapping columnMapping = new ColumnMapping();
         private final int[] columnSizeBytes;
         private final int[] columnTypeTags;
         private final CoveringPageFrame frame;
@@ -1865,8 +1867,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public IntList getColumnIndexes() {
-            return columnIndexes;
+        public ColumnMapping getColumnMapping() {
+            return columnMapping;
         }
 
         @Override
@@ -1934,6 +1936,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             this.currentKeyIdx = 0;
             this.isExhausted = false;
             this.cachedPartFrame = null;
+            columnMapping.clear();
+            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+                columnMapping.addColumn(columnIndexes.getQuick(i), columnIndexes.getQuick(i));
+            }
             freeBuffers();
         }
 

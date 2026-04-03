@@ -7,9 +7,6 @@ import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
-import io.questdb.cairo.idx.FSSTBitmapIndexFwdReader;
-import io.questdb.cairo.idx.FSSTBitmapIndexUtils;
-import io.questdb.cairo.idx.FSSTBitmapIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -27,7 +24,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  *
  * <pre>
  * mvn package -pl questdb/core,questdb/benchmarks -DskipTests
- * java -Xmx4g -cp questdb/benchmarks/target/benchmarks.jar org.questdb.FSSTScaleBenchmark
+ * java -Xmx4g -cp questdb/benchmarks/target/benchmarks.jar org.questdb.IndexScenarioBenchmark
  * </pre>
  */
 public class IndexScenarioBenchmark {
@@ -121,11 +118,9 @@ public class IndexScenarioBenchmark {
         }
 
         String legacyDir = tmpDir + File.separator + "sc_legacy_" + System.nanoTime();
-        String fsstDir = tmpDir + File.separator + "sc_fsst_" + System.nanoTime();
         String postingDir = tmpDir + File.separator + "sc_posting_" + System.nanoTime();
 
         new File(legacyDir).mkdirs();
-        new File(fsstDir).mkdirs();
         new File(postingDir).mkdirs();
 
         try {
@@ -143,20 +138,6 @@ public class IndexScenarioBenchmark {
             }
             long legacySize = getDirectorySize(legacyDir);
             System.out.printf("%7.1f MB in %5.2f s%n", legacySize / (1024.0 * 1024.0), (System.nanoTime() - t0) / 1e9);
-
-            // FSST
-            System.out.printf("  %-30s ... ", "FSST");
-            System.out.flush();
-            t0 = System.nanoTime();
-            createFSSTIndex(config, fsstDir, HC_BLOCK_VALUES);
-            try (Path path = new Path().of(fsstDir)) {
-                try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(config)) {
-                    writer.of(path, "test", COLUMN_NAME_TXN, false);
-                    for (int rowId = 0; rowId < HC_TOTAL_ROWS; rowId++) writer.add(keyAssignment[rowId], rowId);
-                }
-            }
-            long fsstSize = getDirectorySize(fsstDir);
-            System.out.printf("%7.1f MB in %5.2f s%n", fsstSize / (1024.0 * 1024.0), (System.nanoTime() - t0) / 1e9);
 
             // Posting
             System.out.printf("  %-30s ... ", "Posting");
@@ -177,7 +158,6 @@ public class IndexScenarioBenchmark {
             System.out.printf("  %-20s %10s %10s%n", "Format", "Size (MB)", "vs Legacy");
             System.out.println("  " + "-".repeat(42));
             printRow("Legacy", legacySize, legacySize);
-            printRow("FSST", fsstSize, legacySize);
             printRow("Posting", postingSize, legacySize);
 
             // Read latency
@@ -191,13 +171,6 @@ public class IndexScenarioBenchmark {
                     }
                 }
             });
-            measureReadLatency("FSST", () -> {
-                try (Path path = new Path().of(fsstDir)) {
-                    try (FSSTBitmapIndexFwdReader reader = new FSSTBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
-                        return readBatch(reader, readKeys);
-                    }
-                }
-            });
             measureReadLatency("Posting", () -> {
                 try (Path path = new Path().of(postingDir)) {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
@@ -207,7 +180,6 @@ public class IndexScenarioBenchmark {
             });
         } finally {
             deleteDir(legacyDir);
-            deleteDir(fsstDir);
             deleteDir(postingDir);
         }
     }
@@ -225,49 +197,6 @@ public class IndexScenarioBenchmark {
 
         int[] readKeys = new int[MD_KEY_COUNT];
         for (int i = 0; i < MD_KEY_COUNT; i++) readKeys[i] = i;
-
-        // FSST incremental — measure per-commit breakdown + seal
-        String fsstDir = tmpDir + File.separator + "md_fsst_" + System.nanoTime();
-        new File(fsstDir).mkdirs();
-
-        System.out.printf("  %-35s", "FSST (" + MD_COMMITS + " commits)");
-        System.out.flush();
-        long fsstAddTotal = 0, fsstCommitTotal = 0;
-        createFSSTIndex(config, fsstDir, MD_BLOCK_VALUES);
-        FSSTBitmapIndexWriter fsstWriter;
-        try (Path path = new Path().of(fsstDir)) {
-            fsstWriter = new FSSTBitmapIndexWriter(config);
-            fsstWriter.of(path, "test", COLUMN_NAME_TXN, false);
-            for (int commit = 0; commit < MD_COMMITS; commit++) {
-                long addT0 = System.nanoTime();
-                int startRow = commit * MD_ROWS_PER_COMMIT;
-                int endRow = startRow + MD_ROWS_PER_COMMIT;
-                for (int rowId = startRow; rowId < endRow; rowId++) {
-                    fsstWriter.add(keyAssignment[rowId], rowId);
-                }
-                long addT1 = System.nanoTime();
-                fsstAddTotal += addT1 - addT0;
-
-                fsstWriter.commit();
-                fsstCommitTotal += System.nanoTime() - addT1;
-            }
-        }
-        long fsstSize = getDirectorySize(fsstDir);
-        System.out.printf("  %7.1f MB in %6.1f ms%n", fsstSize / (1024.0 * 1024.0), (fsstAddTotal + fsstCommitTotal) / 1e6);
-        System.out.printf("    add():    %6.1f ms  (%.0f%%)%n", fsstAddTotal / 1e6, 100.0 * fsstAddTotal / (fsstAddTotal + fsstCommitTotal));
-        System.out.printf("    commit(): %6.1f ms  (%.0f%%)  <- includes training (1st only) + encoding + I/O%n",
-                fsstCommitTotal / 1e6, 100.0 * fsstCommitTotal / (fsstAddTotal + fsstCommitTotal));
-        System.out.printf("    per commit: %.2f ms%n", fsstCommitTotal / (MD_COMMITS * 1e6));
-
-        // Seal: retrain + merge all gens -> 1 gen
-        long sealT0 = System.nanoTime();
-        fsstWriter.seal();
-        long sealTime = System.nanoTime() - sealT0;
-        fsstWriter.close();
-
-        long sealedSize = getDirectorySize(fsstDir);
-        System.out.printf("    seal():   %6.1f ms  -> %5.1f MB (was %.1f MB)%n",
-                sealTime / 1e6, sealedSize / (1024.0 * 1024.0), fsstSize / (1024.0 * 1024.0));
 
         // Posting incremental — measure per-commit breakdown + unsealed vs sealed
         String postingDir = tmpDir + File.separator + "md_posting_" + System.nanoTime();
@@ -332,8 +261,6 @@ public class IndexScenarioBenchmark {
         System.out.printf("  %-25s %10s %10s%n", "Format", "Size (MB)", "vs Legacy");
         System.out.println("  " + "-".repeat(47));
         printRow("Legacy", legacySize, legacySize);
-        printRow("FSST unsealed (56 gens)", fsstSize, legacySize);
-        printRow("FSST sealed (1 gen)", sealedSize, legacySize);
         printRow("Posting unsealed (56 gens)", postingUnsealedSize, legacySize);
         printRow("Posting sealed (1 gen)", postingSealedSize, legacySize);
 
@@ -348,13 +275,6 @@ public class IndexScenarioBenchmark {
                 }
             }
         });
-        measureReadLatency("FSST sealed (1 gen)", () -> {
-            try (Path path = new Path().of(fsstDir)) {
-                try (FSSTBitmapIndexFwdReader reader = new FSSTBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
-                    return readBatch(reader, readKeys);
-                }
-            }
-        });
         measureReadLatency("Posting sealed (1 gen)", () -> {
             try (Path path = new Path().of(postingDir)) {
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
@@ -363,7 +283,6 @@ public class IndexScenarioBenchmark {
             }
         });
 
-        deleteDir(fsstDir);
         deleteDir(postingDir);
         deleteDir(legacyDir);
     }
@@ -397,10 +316,8 @@ public class IndexScenarioBenchmark {
         }
 
         String legacyDir = tmpDir + File.separator + "st_legacy_" + System.nanoTime();
-        String fsstDir = tmpDir + File.separator + "st_fsst_" + System.nanoTime();
         String postingDir = tmpDir + File.separator + "st_posting_" + System.nanoTime();
         new File(legacyDir).mkdirs();
-        new File(fsstDir).mkdirs();
         new File(postingDir).mkdirs();
 
         try {
@@ -422,40 +339,6 @@ public class IndexScenarioBenchmark {
                     }
                 }
             });
-
-            // FSST: incremental streaming commits, then seal
-            long fsstUnsealedSize;
-            long fsstSealedSize;
-            {
-                createFSSTIndex(config, fsstDir, ST_VALUES_PER_ACTIVE_KEY);
-                try (Path path = new Path().of(fsstDir)) {
-                    FSSTBitmapIndexWriter fsstWriter = new FSSTBitmapIndexWriter(config);
-                    fsstWriter.of(path, "test", COLUMN_NAME_TXN, false);
-
-                    long t0 = System.nanoTime();
-                    int rowId = 0;
-                    for (int c = 0; c < ST_COMMITS; c++) {
-                        for (int key : activeKeys[c]) {
-                            for (int v = 0; v < ST_VALUES_PER_ACTIVE_KEY; v++) {
-                                fsstWriter.add(key, rowId++);
-                            }
-                        }
-                        fsstWriter.commit();
-                    }
-                    long elapsed = System.nanoTime() - t0;
-                    fsstUnsealedSize = getDirectorySize(fsstDir);
-                    System.out.printf("  %-40s %8.1f MB in %5.2f s%n",
-                            "FSST (" + ST_COMMITS + " gens, before seal)", fsstUnsealedSize / (1024.0 * 1024.0), elapsed / 1e9);
-
-                    long sealT0 = System.nanoTime();
-                    fsstWriter.seal();
-                    long sealTime = System.nanoTime() - sealT0;
-                    fsstWriter.close();
-                    fsstSealedSize = getDirectorySize(fsstDir);
-                    System.out.printf("  %-40s %8.1f MB (seal took %.1f ms)%n",
-                            "FSST (sealed)", fsstSealedSize / (1024.0 * 1024.0), sealTime / 1e6);
-                }
-            }
 
             // Posting: incremental streaming commits, measure before and after seal
             long postingUnsealedSize;
@@ -495,8 +378,6 @@ public class IndexScenarioBenchmark {
             System.out.printf("  %-30s %10s %7s %10s%n", "Format", "Size (MB)", "B/val", "vs Legacy");
             System.out.println("  " + "-".repeat(60));
             printRowFull("Legacy", legacySize, finalTotalRows, legacySize);
-            printRowFull("FSST (500 gens)", fsstUnsealedSize, finalTotalRows, legacySize);
-            printRowFull("FSST (sealed)", fsstSealedSize, finalTotalRows, legacySize);
             printRowFull("Posting (500 gens)", postingUnsealedSize, finalTotalRows, legacySize);
             printRowFull("Posting (sealed)", postingSealedSize, finalTotalRows, legacySize);
 
@@ -507,13 +388,6 @@ public class IndexScenarioBenchmark {
             measureReadLatency("Legacy", () -> {
                 try (Path p = new Path().of(legacyDir)) {
                     try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
-                        return readBatch(reader, readKeys);
-                    }
-                }
-            });
-            measureReadLatency("FSST (sealed)", () -> {
-                try (Path p = new Path().of(fsstDir)) {
-                    try (FSSTBitmapIndexFwdReader reader = new FSSTBitmapIndexFwdReader(config, p, "test", COLUMN_NAME_TXN, -1, 0)) {
                         return readBatch(reader, readKeys);
                     }
                 }
@@ -546,7 +420,6 @@ public class IndexScenarioBenchmark {
             });
         } finally {
             deleteDir(legacyDir);
-            deleteDir(fsstDir);
             deleteDir(postingDir);
         }
     }
@@ -625,11 +498,9 @@ public class IndexScenarioBenchmark {
                                      int[] keyAssignment, int keyCount, int totalRows,
                                      int[] readKeys, int avgValsPerKey) {
         String legacyDir = tmpDir + File.separator + label + "_legacy_" + System.nanoTime();
-        String fsstDir = tmpDir + File.separator + label + "_fsst_" + System.nanoTime();
         String postingDir = tmpDir + File.separator + label + "_posting_" + System.nanoTime();
 
         new File(legacyDir).mkdirs();
-        new File(fsstDir).mkdirs();
         new File(postingDir).mkdirs();
 
         try {
@@ -647,21 +518,6 @@ public class IndexScenarioBenchmark {
             }
             long legacySize = getDirectorySize(legacyDir);
             System.out.printf("%7.1f MB in %5.2f s%n", legacySize / (1024.0 * 1024.0), (System.nanoTime() - t0) / 1e9);
-
-            // FSST
-            System.out.printf("  %-30s ... ", "FSST");
-            System.out.flush();
-            t0 = System.nanoTime();
-            int fsstBlock = Math.max(4, avgValsPerKey);
-            createFSSTIndex(config, fsstDir, fsstBlock);
-            try (Path path = new Path().of(fsstDir)) {
-                try (FSSTBitmapIndexWriter writer = new FSSTBitmapIndexWriter(config)) {
-                    writer.of(path, "test", COLUMN_NAME_TXN, false);
-                    for (int i = 0; i < totalRows; i++) writer.add(keyAssignment[i], i);
-                }
-            }
-            long fsstSize = getDirectorySize(fsstDir);
-            System.out.printf("%7.1f MB in %5.2f s%n", fsstSize / (1024.0 * 1024.0), (System.nanoTime() - t0) / 1e9);
 
             // Posting — commit every 500K rows to bound memory for high-key-count scenarios
             int postingCommitInterval = 500_000;
@@ -688,7 +544,6 @@ public class IndexScenarioBenchmark {
             System.out.printf("  %-25s %10s %7s %10s%n", "Format", "Size (MB)", "B/val", "vs Legacy");
             System.out.println("  " + "-".repeat(55));
             printRowFull("Legacy", legacySize, totalRows, legacySize);
-            printRowFull("FSST", fsstSize, totalRows, legacySize);
             printRowFull("Posting", postingSize, totalRows, legacySize);
 
             // Read latency
@@ -702,13 +557,6 @@ public class IndexScenarioBenchmark {
                     }
                 }
             });
-            measureReadLatency("FSST", () -> {
-                try (Path path = new Path().of(fsstDir)) {
-                    try (FSSTBitmapIndexFwdReader reader = new FSSTBitmapIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
-                        return readBatch(reader, readKeys);
-                    }
-                }
-            });
             measureReadLatency("Posting", () -> {
                 try (Path path = new Path().of(postingDir)) {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COLUMN_NAME_TXN, -1, 0)) {
@@ -718,7 +566,6 @@ public class IndexScenarioBenchmark {
             });
         } finally {
             deleteDir(legacyDir);
-            deleteDir(fsstDir);
             deleteDir(postingDir);
         }
     }
@@ -809,17 +656,6 @@ public class IndexScenarioBenchmark {
             total += System.nanoTime() - t0;
         }
         System.out.printf("    %-40s %8.3f ms%n", label, total / (runs * 1e6));
-    }
-
-    private static void createFSSTIndex(CairoConfiguration config, String root, int blockValues) {
-        try (Path path = new Path().of(root)) {
-            int plen = path.size();
-            FilesFacade ff = config.getFilesFacade();
-            try (MemoryMA mem = Vm.getSmallCMARWInstance(ff, FSSTBitmapIndexUtils.keyFileName(path, "test", COLUMN_NAME_TXN), MemoryTag.MMAP_DEFAULT, config.getWriterFileOpenOpts())) {
-                FSSTBitmapIndexWriter.initKeyMemory(mem, blockValues);
-            }
-            ff.touch(FSSTBitmapIndexUtils.valueFileName(path.trimTo(plen), "test", COLUMN_NAME_TXN));
-        }
     }
 
     private static void createPostingIndex(CairoConfiguration config, String root, int blockCapacity) {

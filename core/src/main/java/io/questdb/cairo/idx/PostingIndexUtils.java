@@ -1138,8 +1138,4 @@ public final class PostingIndexUtils {
         return path.$();
     }
 
-    // .pd file header
-    public static final int PD_MAGIC = 0x5044_5f50; // "PD_P"
-    public static final int PD_VERSION = 1;
-    public static final int PD_HEADER_SIZE = 16; // magic(4) + version(4) + keyCount(4) + bitmapBytes(4)
 }

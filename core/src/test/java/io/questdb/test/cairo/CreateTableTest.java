@@ -952,37 +952,6 @@ public class CreateTableTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDropIndexFsst() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE FSST) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("""
-                    INSERT INTO t VALUES
-                    ('2024-01-01T00:00:00', 'X'),
-                    ('2024-01-01T01:00:00', 'Y'),
-                    ('2024-01-01T02:00:00', 'X')
-                    """);
-
-            try (TableReader r = engine.getReader("t")) {
-                assertTrue(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
-                assertEquals(IndexType.FSST, r.getMetadata().getColumnIndexType(r.getMetadata().getColumnIndex("s")));
-            }
-
-            execute("ALTER TABLE t ALTER COLUMN s DROP INDEX");
-
-            try (TableReader r = engine.getReader("t")) {
-                assertFalse(r.getMetadata().isColumnIndexed(r.getMetadata().getColumnIndex("s")));
-            }
-
-            assertSql("""
-                    ts\ts
-                    2024-01-01T00:00:00.000000Z\tX
-                    2024-01-01T01:00:00.000000Z\tY
-                    2024-01-01T02:00:00.000000Z\tX
-                    """, "SELECT * FROM t");
-        });
-    }
-
-    @Test
     public void testDropIndexPosting() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
