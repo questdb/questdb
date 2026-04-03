@@ -353,7 +353,13 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
 
-                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(securityContext, tableBlock.getTableNameUtf8(), tableBlock.getSchema(), tableBlock, configuration.getQwpMaxTablesPerConnection());
+                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
+                        securityContext,
+                        tableBlock.getTableNameUtf8(),
+                        tableBlock.getSchema(),
+                        tableBlock,
+                        configuration.getQwpMaxTablesPerConnection()
+                );
                 if (tud == null) {
                     rejectMsg.clear();
                     rejectMsg.put("failed to create table update details for: ").put(tableBlock.getTableName());
