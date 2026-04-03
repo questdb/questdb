@@ -61,7 +61,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     private long valuesAddress;  // For uncompressed mode
 
     @Override
-    public boolean advanceRow() throws QwpParseException {
+    public boolean advanceRow() {
         currentRow++;
 
         if (nullBitmapAddress != 0) {

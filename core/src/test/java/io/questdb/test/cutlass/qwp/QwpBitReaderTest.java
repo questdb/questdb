@@ -277,25 +277,6 @@ public class QwpBitReaderTest {
     }
 
     @Test
-    public void testWriteIntValue() throws QwpParseException {
-        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpBitWriter writer = new QwpBitWriter();
-            writer.reset(addr, 16);
-
-            int value = 0x12345678;
-            writer.writeInt(value);
-
-            QwpBitReader reader = new QwpBitReader();
-            reader.reset(addr, writer.getPosition() - addr);
-
-            Assert.assertEquals(value, reader.readInt());
-        } finally {
-            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
     public void testWriteLongThrowsOnOverflow() {
         long ptr = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -310,25 +291,6 @@ public class QwpBitReaderTest {
             }
         } finally {
             Unsafe.free(ptr, 8, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testWriteLongValue() throws QwpParseException {
-        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpBitWriter writer = new QwpBitWriter();
-            writer.reset(addr, 16);
-
-            long value = 0xDEADBEEFCAFEBABEL;
-            writer.writeLong(value);
-
-            QwpBitReader reader = new QwpBitReader();
-            reader.reset(addr, writer.getPosition() - addr);
-
-            Assert.assertEquals(value, reader.readLong());
-        } finally {
-            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

@@ -156,26 +156,6 @@ public class QwpBitReader {
     }
 
     /**
-     * Reads a complete 32-bit integer in little-endian order.
-     *
-     * @return the integer value
-     * @throws QwpParseException if not enough data
-     */
-    public int readInt() throws QwpParseException {
-        return (int) readBits(32);
-    }
-
-    /**
-     * Reads a complete 64-bit long in little-endian order.
-     *
-     * @return the long value
-     * @throws QwpParseException if not enough data
-     */
-    public long readLong() throws QwpParseException {
-        return readBits(64);
-    }
-
-    /**
      * Reads multiple bits and interprets them as a signed value using two's complement.
      *
      * @param numBits number of bits to read (1-64)
