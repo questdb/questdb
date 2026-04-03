@@ -40,6 +40,7 @@ import io.questdb.std.ObjectPool;
 import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlOptimiser.checkForChildWindowFunctions;
+import static io.questdb.griffin.SqlOptimiser.replaceAndTransferDependents;
 import static io.questdb.griffin.model.IQueryModel.isLateralJoin;
 
 /**
@@ -134,6 +135,10 @@ class LateralJoinRewriter implements Mutable {
     }
 
     public void rewrite(IQueryModel model) throws SqlException {
+        if (!model.supportOptimise()) {
+            return;
+        }
+
         // Pass 1 (top-down): tag correlated refs with lateralDepth
         // and collect correlated columns per lateral join model
         if (analyzeCorrelation(model, 0)) {
@@ -349,6 +354,9 @@ class LateralJoinRewriter implements Mutable {
 
     // Returns true if any lateral join was found in the model tree.
     private boolean analyzeCorrelation(IQueryModel model, int lateralDepth) {
+        if (!model.supportOptimise()) {
+            return false;
+        }
         boolean hasLateral = false;
         if (model.getNestedModel() != null) {
             hasLateral = analyzeCorrelation(model.getNestedModel(), lateralDepth);
@@ -789,6 +797,7 @@ class LateralJoinRewriter implements Mutable {
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
     ) throws SqlException {
+        final IQueryModel originalCurrent = current;
         ExpressionNode limitHi = current.getLimitHi();
         ExpressionNode limitLo = current.getLimitLo();
         if (limitHi == null && limitLo == null) {
@@ -910,7 +919,7 @@ class LateralJoinRewriter implements Mutable {
         outerSelect.setNestedModelIsSubQuery(true);
         copyColumnsExcept(current, outerSelect, rnAlias);
 
-        return outerSelect;
+        return replaceAndTransferDependents(originalCurrent, outerSelect);
     }
 
     // Adds groupingCols to SELECT so SAMPLE BY results are partitioned per outer row.
@@ -1023,7 +1032,7 @@ class LateralJoinRewriter implements Mutable {
     }
 
     private IQueryModel convertLatestByToWindowFunction(
-            IQueryModel inner,
+            final IQueryModel inner,
             IQueryModel parent,
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
             int depth
@@ -1087,7 +1096,7 @@ class LateralJoinRewriter implements Mutable {
         filterModel.setNestedModel(windowLayer);
         filterModel.setNestedModelIsSubQuery(true);
         filterModel.setWhereClause(createBinaryOp("=", rnRef, one));
-        return filterModel;
+        return replaceAndTransferDependents(inner, filterModel);
     }
 
     private void copyColumnsExcept(
@@ -1173,6 +1182,9 @@ class LateralJoinRewriter implements Mutable {
     //  5. Degrades the lateral join type to a regular join
     // Bottom-up order ensures nested laterals are decorrelated before their parents.
     private void decorrelate(IQueryModel model, int lateralDepth, IQueryModel parent) throws SqlException {
+        if (!model.supportOptimise()) {
+            return;
+        }
         if (model.getNestedModel() != null) {
             decorrelate(model.getNestedModel(), lateralDepth, model);
         }
@@ -3180,7 +3192,7 @@ class LateralJoinRewriter implements Mutable {
     // the __qdb_outer_ref__ join model from the tree. This converts the decorrelated
     // plan back to a simple join without the synthetic outer-ref data source.
     private void tryEliminateOuterRefs(IQueryModel model, IQueryModel parent) throws SqlException {
-        if (model == null) {
+        if (model == null || !model.supportOptimise()) {
             return;
         }
         tryEliminateOuterRefs(model.getUnionModel(), null);

@@ -154,12 +154,12 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public boolean allowsColumnsChange() {
-        return delegate.allowsColumnsChange();
+        return false;
     }
 
     @Override
     public boolean allowsNestedColumnsChange() {
-        return delegate.allowsNestedColumnsChange();
+        return false;
     }
 
     @Override

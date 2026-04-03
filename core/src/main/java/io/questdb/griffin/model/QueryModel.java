@@ -340,6 +340,9 @@ public class QueryModel implements IQueryModel {
      */
     @Override
     public boolean allowsColumnsChange() {
+        if (hasDependents()) {
+            return false;
+        }
         IQueryModel union = this;
         while (union != null) {
             if (union.getSetOperationType() != IQueryModel.SET_OPERATION_UNION_ALL
@@ -357,7 +360,7 @@ public class QueryModel implements IQueryModel {
      */
     @Override
     public boolean allowsNestedColumnsChange() {
-        return this.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT;
+        return !hasDependents() && this.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT;
     }
 
     @Override
@@ -594,6 +597,10 @@ public class QueryModel implements IQueryModel {
     @Override
     public void copyDependents(IQueryModel model) {
         dependents.clear();
+        for (int i = 0, n = model.getDependents().size(); i < n; i++) {
+            QueryModelWrapper wrapper = model.getDependents().getQuick(i);
+            wrapper.setDelegate(this);
+        }
         dependents.addAll(model.getDependents());
         model.clearDependents();
     }
