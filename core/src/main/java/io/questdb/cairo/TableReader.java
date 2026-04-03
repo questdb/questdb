@@ -1234,6 +1234,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
             return;
         }
+
         final int columnBase = getColumnBase(partitionIndex);
         boolean hasNewColumns = false;
         try {
@@ -1271,10 +1272,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
             throw th;
-        }
-        if (hasNewColumns) {
+        } finally {
             path.trimTo(rootLen);
         }
+
         if (!hasActiveColumns) {
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
         }

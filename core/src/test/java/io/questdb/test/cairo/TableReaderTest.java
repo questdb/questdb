@@ -3152,6 +3152,43 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetActiveColumnsEmptyListMapsAllColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                // empty list means all columns, same as null
+                reader.setActiveColumns(new IntList());
+                reader.openPartition(0);
+
+                int columnBase = reader.getColumnBase(0);
+                for (int i = 0; i < reader.getColumnCount(); i++) {
+                    Assert.assertNotSame(
+                            "column " + i + " should be mapped",
+                            NullMemoryCMR.INSTANCE,
+                            reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i))
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSetActiveColumnsFreedColumnDetectedOnBroadening() throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
@@ -3548,6 +3585,132 @@ public class TableReaderTest extends AbstractCairoTest {
                 // columns "b" (index 1) and "c" (index 2) should NOT be mapped
                 Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
                 Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 2)));
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsOpenMissingColumnsAllColumnsOpenParquet() throws Exception {
+        // Verifies that Parquet partitions set ALL_COLUMNS_OPEN = 1 immediately
+        // in both openPartition0 and openMissingColumnsInPartition, since Parquet
+        // decodes column data on the fly (no per-column memory mappings).
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, b LONG, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, b, ts) VALUES
+                            (1, 100, '2020-01-01T01:00:00.000Z'),
+                            (2, 200, '2020-01-01T02:00:00.000Z'),
+                            (3, 300, '2020-01-02T01:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Convert first partition to Parquet
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                // Set a narrow active column set
+                IntList narrowSet = new IntList();
+                narrowSet.add(0); // a
+                reader.setActiveColumns(narrowSet);
+
+                // Open Parquet partition — should work without issues
+                reader.openPartition(0);
+
+                // Open native partition
+                reader.openPartition(1);
+
+                // Calling openPartition again on the Parquet partition should
+                // not attempt to open missing columns (flag is already 1)
+                reader.openPartition(0);
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsOpenMissingColumnsErrorPath() throws Exception {
+        // Verifies that openMissingColumnsInPartition() properly cleans up
+        // (restores path, closes columns, resets partition state) when
+        // reloadColumnAt() fails midway through opening missing columns.
+        AtomicInteger counter = new AtomicInteger();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                // Fail the first attempt to open b.d. Column b is skipped during
+                // the narrow openPartition0, so this triggers during broadening.
+                if (Utf8s.endsWithAscii(name, "b.d") && counter.incrementAndGet() == 1) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                // Open partition with only column "a". Column b is not in the
+                // active set, so openPartitionColumns() skips it entirely.
+                IntList narrowSet = new IntList();
+                narrowSet.add(0);
+                reader.setActiveColumns(narrowSet);
+                reader.openPartition(0);
+
+                int columnBase = reader.getColumnBase(0);
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
+
+                // Broaden to include "b". openMissingColumnsInPartition() tries to
+                // open b.d (counter becomes 1), which fails.
+                IntList broadSet = new IntList();
+                broadSet.add(0);
+                broadSet.add(1);
+                broadSet.add(2);
+                broadSet.add(3);
+                reader.setActiveColumns(broadSet);
+
+                try {
+                    reader.openPartition(0);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+
+                // After the error the partition must be marked as closed
+                // (size == -1) so re-opening goes through openPartition0.
+                // The next attempt should succeed because counter > 1.
+                reader.openPartition(0);
+                columnBase = reader.getColumnBase(0);
+                for (int i = 0; i < reader.getColumnCount(); i++) {
+                    Assert.assertNotSame(
+                            "column " + i + " should be mapped after recovery",
+                            NullMemoryCMR.INSTANCE,
+                            reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i))
+                    );
+                }
             }
         });
     }
