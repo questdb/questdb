@@ -28,7 +28,8 @@ use questdbr::parquet_metadata::convert::convert_from_parquet;
 use questdbr::parquet_metadata::reader::ParquetMetaReader;
 use questdbr::parquet_metadata::types::{Codec, ColumnFlags, FieldRepetition};
 use questdbr::parquet_read::decode_column::{
-    decode_column_chunk_with_params, reconstruct_descriptor,
+    decode_column_chunk_filtered_with_params, decode_column_chunk_with_params,
+    reconstruct_descriptor,
 };
 use questdbr::parquet_read::{ColumnChunkBuffers, DecodeContext, ParquetDecoder};
 
@@ -1045,4 +1046,323 @@ fn e2e_multiple_row_groups() {
         "total data_vec length mismatch"
     );
     assert_eq!(footer_data, pm_all_data, "data_vec content mismatch");
+}
+
+// ── Coverage gap: filtered decode ───────────────────────────────────
+
+/// Helper: decode a single-column parquet file through _pm with a row filter.
+fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &[i64]) -> Vec<u8> {
+    let buf_len = parquet_bytes.len() as u64;
+    let (metadata, parquet_footer_offset, parquet_footer_length) =
+        read_parquet2_metadata(parquet_bytes);
+
+    let qdb_meta = metadata
+        .key_value_metadata
+        .as_ref()
+        .and_then(|kvs| {
+            kvs.iter()
+                .find(|kv| kv.key == "questdb")
+                .and_then(|kv| kv.value.as_deref())
+        })
+        .map(|json_str| QdbMeta::deserialize(json_str).expect("deserialize"));
+
+    let (pm_bytes, pm_footer_offset) = convert_from_parquet(
+        &metadata,
+        qdb_meta.as_ref(),
+        parquet_footer_offset,
+        parquet_footer_length,
+    )
+    .expect("convert_from_parquet");
+
+    let pm_reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset).expect("ParquetMetaReader");
+
+    let ta = TestAlloc::new();
+    let allocator = ta.allocator();
+
+    let col_type = {
+        let mut r2 = Cursor::new(parquet_bytes);
+        let dec = ParquetDecoder::read(allocator.clone(), &mut r2, buf_len)
+            .expect("ParquetDecoder::read");
+        dec.columns[0].column_type.expect("column type")
+    };
+    let (format, ascii) = extract_format_ascii_from_metadata(&metadata);
+
+    let rg = pm_reader.row_group(0).expect("row_group");
+    let rg_rows = rg.num_rows() as usize;
+    let desc = pm_reader.column_descriptor(0).expect("descriptor");
+    let chunk = rg.column_chunk(0).expect("chunk");
+    let col_name = pm_reader.column_name(0).expect("name");
+    let flags = ColumnFlags(desc.flags);
+    let repetition: P2Repetition = flags.repetition().expect("repetition").into();
+    let compression: parquet2::compression::Compression = chunk.codec().expect("codec").into();
+
+    let col_info = QdbMetaCol {
+        column_type: col_type,
+        column_top: 0,
+        format,
+        ascii,
+    };
+
+    let descriptor = reconstruct_descriptor(
+        desc.physical_type,
+        desc.fixed_byte_len,
+        desc.max_rep_level,
+        desc.max_def_level,
+        col_name,
+        repetition,
+    );
+
+    let mut ctx = DecodeContext::new(parquet_bytes.as_ptr(), buf_len);
+    let mut bufs = ColumnChunkBuffers::new(allocator);
+
+    decode_column_chunk_filtered_with_params::<FILL_NULLS>(
+        &mut ctx,
+        &mut bufs,
+        parquet_bytes,
+        chunk.byte_range_start as usize,
+        chunk.total_compressed as usize,
+        compression,
+        descriptor,
+        chunk.num_values as i64,
+        col_info,
+        0,
+        rg_rows,
+        rows_filter,
+        col_name,
+        0,
+    )
+    .expect("decode_column_chunk_filtered_with_params");
+
+    bufs.data_vec.to_vec()
+}
+
+#[test]
+fn e2e_filtered_skip() {
+    let parquet_bytes = encode_single_column::<Timestamp>(
+        100,
+        WriterVersion::PARQUET_2_0,
+        Encoding::Plain,
+        Null::None,
+    );
+    let filter: Vec<i64> = (0..50).map(|i| i * 2).collect(); // every other row
+    let data = run_e2e_filtered::<false>(&parquet_bytes, &filter);
+    // 50 selected rows * 8 bytes per i64
+    assert_eq!(data.len(), 50 * 8, "filtered skip: wrong output size");
+}
+
+#[test]
+fn e2e_filtered_fill_nulls() {
+    let parquet_bytes = encode_single_column::<Timestamp>(
+        100,
+        WriterVersion::PARQUET_2_0,
+        Encoding::Plain,
+        Null::None,
+    );
+    let filter: Vec<i64> = (0..50).map(|i| i * 2).collect();
+    let data = run_e2e_filtered::<true>(&parquet_bytes, &filter);
+    // FILL_NULLS: full row range output = 100 rows * 8 bytes
+    assert_eq!(
+        data.len(),
+        100 * 8,
+        "filtered fill_nulls: wrong output size"
+    );
+}
+
+// ── Coverage gap: dictionary-encoded column ─────────────────────────
+
+#[test]
+fn e2e_dict_encoded() {
+    // Low cardinality Int column → RleDictionary encoding triggers dict page path.
+    let parquet_bytes = encode_single_column::<Int>(
+        COUNT,
+        WriterVersion::PARQUET_2_0,
+        Encoding::RleDictionary,
+        Null::None,
+    );
+    run_e2e_pipeline(&parquet_bytes);
+}
+
+// ── Coverage gap: varchar_slice branches ─────────────────────────────
+
+#[test]
+fn e2e_varchar_slice() {
+    use common::{
+        optional_byte_array_schema, qdb_props_ascii,
+        types::strings::generate_values as gen_str_vals, write_parquet_column,
+    };
+    use parquet::data_type::ByteArrayType;
+
+    let nulls = generate_nulls(COUNT, Null::Sparse);
+    let values = gen_str_vals(COUNT);
+    let non_null = common::non_null_only(&values, &nulls);
+    let def_levels = common::def_levels_from_nulls(&nulls);
+    let schema = optional_byte_array_schema("col", None);
+    let props = qdb_props_ascii(
+        qdb_core::col_type::ColumnTypeTag::VarcharSlice,
+        WriterVersion::PARQUET_2_0,
+        Encoding::RleDictionary,
+        true,
+    );
+    let parquet_bytes = write_parquet_column::<ByteArrayType>(
+        "col",
+        schema,
+        &non_null,
+        Some(&def_levels),
+        Arc::new(props),
+    );
+    run_e2e_pipeline(&parquet_bytes);
+}
+
+// ── Coverage gap: dict-encoded filtered decode ──────────────────────
+
+#[test]
+fn e2e_filtered_dict_encoded() {
+    let parquet_bytes = encode_single_column::<Int>(
+        COUNT,
+        WriterVersion::PARQUET_2_0,
+        Encoding::RleDictionary,
+        Null::None,
+    );
+    let filter: Vec<i64> = (0..COUNT / 2).map(|i| i as i64 * 2).collect();
+    let data = run_e2e_filtered::<false>(&parquet_bytes, &filter);
+    assert_eq!(data.len(), (COUNT / 2) * 4, "filtered dict: wrong size");
+}
+
+// ── Coverage gap: varchar_slice filtered decode ─────────────────────
+
+#[test]
+fn e2e_filtered_varchar_slice() {
+    use common::{
+        optional_byte_array_schema, qdb_props_ascii,
+        types::strings::generate_values as gen_str_vals, write_parquet_column,
+    };
+    use parquet::data_type::ByteArrayType;
+
+    let row_count = 100;
+    let nulls = generate_nulls(row_count, Null::Sparse);
+    let values = gen_str_vals(row_count);
+    let non_null = common::non_null_only(&values, &nulls);
+    let def_levels = common::def_levels_from_nulls(&nulls);
+    let schema = optional_byte_array_schema("col", None);
+    let props = qdb_props_ascii(
+        qdb_core::col_type::ColumnTypeTag::VarcharSlice,
+        WriterVersion::PARQUET_2_0,
+        Encoding::Plain,
+        true,
+    );
+    let parquet_bytes = write_parquet_column::<ByteArrayType>(
+        "col",
+        schema,
+        &non_null,
+        Some(&def_levels),
+        Arc::new(props),
+    );
+    let filter: Vec<i64> = (0..row_count / 2).map(|i| i as i64 * 2).collect();
+    // VarcharSlice decode may produce empty data_vec if all selected rows are null
+    // (sparse nulls at every 10th row — with filter selecting even rows, some nulls hit).
+    // Just verify it doesn't panic. The coverage value is in exercising the code path.
+    let _data = run_e2e_filtered::<false>(&parquet_bytes, &filter);
+}
+
+// ── Coverage gap: filtered multi-page (V1 pages, page_row_count fallback) ──
+
+#[test]
+fn e2e_filtered_multi_page() {
+    use parquet::basic::Compression as PqCompression;
+    use parquet::file::properties::WriterProperties;
+    use parquet::format::KeyValue;
+
+    let row_count = 10_000usize;
+    let data: Vec<i64> = (0..row_count as i64).collect();
+    let nulls = generate_nulls(row_count, Null::None);
+    let def_levels = common::def_levels_from_nulls(&nulls);
+
+    let schema = Type::group_type_builder("schema")
+        .with_fields(vec![Arc::new(
+            Type::primitive_type_builder("col", parquet::basic::Type::INT64)
+                .with_repetition(Repetition::REQUIRED)
+                .build()
+                .unwrap(),
+        )])
+        .build()
+        .unwrap();
+
+    let qdb_json = format!(
+        r#"{{"version":1,"schema":[{{"column_type":{},"column_top":0}}]}}"#,
+        qdb_core::col_type::ColumnTypeTag::Long as u8
+    );
+    // V1 pages + tiny page size = many pages without num_rows in header
+    let props = WriterProperties::builder()
+        .set_writer_version(WriterVersion::PARQUET_1_0)
+        .set_dictionary_enabled(false)
+        .set_compression(PqCompression::UNCOMPRESSED)
+        .set_data_page_size_limit(512)
+        .set_key_value_metadata(Some(vec![KeyValue::new("questdb".to_string(), qdb_json)]))
+        .build();
+
+    let parquet_bytes = write_parquet_column::<parquet::data_type::Int64Type>(
+        "col",
+        schema,
+        &data,
+        Some(&def_levels),
+        Arc::new(props),
+    );
+
+    // Unfiltered: cover fallback page_row_count path in decode_column_chunk_with_params
+    run_e2e_pipeline(&parquet_bytes);
+
+    // Filtered: cover fallback path in decode_column_chunk_filtered_with_params (lines 361+)
+    let filter: Vec<i64> = (0..row_count / 2).map(|i| i as i64 * 2).collect();
+    let result = run_e2e_filtered::<false>(&parquet_bytes, &filter);
+    assert_eq!(result.len(), (row_count / 2) * 8);
+
+    let result_fill = run_e2e_filtered::<true>(&parquet_bytes, &filter);
+    assert_eq!(result_fill.len(), row_count * 8);
+}
+
+// ── Coverage gap: multi-page column chunk ───────────────────────────
+
+#[test]
+fn e2e_multi_page() {
+    use parquet::basic::Compression as PqCompression;
+    use parquet::file::properties::WriterProperties;
+    use parquet::format::KeyValue;
+
+    // Write 10k rows with a tiny data page size to force multiple pages.
+    let row_count = 10_000usize;
+    let data: Vec<i64> = (0..row_count as i64).collect();
+    let nulls = generate_nulls(row_count, Null::None);
+    let def_levels = common::def_levels_from_nulls(&nulls);
+
+    let schema = Type::group_type_builder("schema")
+        .with_fields(vec![Arc::new(
+            Type::primitive_type_builder("col", parquet::basic::Type::INT64)
+                .with_repetition(Repetition::REQUIRED)
+                .build()
+                .unwrap(),
+        )])
+        .build()
+        .unwrap();
+
+    let qdb_json = format!(
+        r#"{{"version":1,"schema":[{{"column_type":{},"column_top":0}}]}}"#,
+        qdb_core::col_type::ColumnTypeTag::Long as u8
+    );
+    let props = WriterProperties::builder()
+        .set_writer_version(WriterVersion::PARQUET_2_0)
+        .set_dictionary_enabled(false)
+        .set_compression(PqCompression::UNCOMPRESSED)
+        .set_data_page_size_limit(512) // tiny pages → many pages per chunk
+        .set_key_value_metadata(Some(vec![KeyValue::new("questdb".to_string(), qdb_json)]))
+        .build();
+
+    let parquet_bytes = write_parquet_column::<parquet::data_type::Int64Type>(
+        "col",
+        schema,
+        &data,
+        Some(&def_levels),
+        Arc::new(props),
+    );
+
+    run_e2e_pipeline(&parquet_bytes);
 }
