@@ -56,7 +56,6 @@ public class O3ParquetMergeContext implements Closeable {
     private LongList rgO3Ranges;
     private LongList rowGroupBounds;
     private RowGroupBuffers rowGroupBuffers;
-    private RowGroupStatBuffers rowGroupStatBuffers;
     private LongList srcPtrs;
     private IntList tableToParquetIdx;
 
@@ -76,7 +75,6 @@ public class O3ParquetMergeContext implements Closeable {
         rgO3Ranges = new LongList();
         rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         rowGroupBounds = new LongList();
-        rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         srcPtrs = new LongList();
         tableToParquetIdx = new IntList();
     }
@@ -114,7 +112,6 @@ public class O3ParquetMergeContext implements Closeable {
         rgO3Ranges = null;
         rowGroupBuffers = Misc.free(rowGroupBuffers);
         rowGroupBounds = null;
-        rowGroupStatBuffers = Misc.free(rowGroupStatBuffers);
         srcPtrs = null;
         tableToParquetIdx = null;
     }
@@ -186,10 +183,6 @@ public class O3ParquetMergeContext implements Closeable {
 
     public RowGroupBuffers getRowGroupBuffers() {
         return rowGroupBuffers;
-    }
-
-    public RowGroupStatBuffers getRowGroupStatBuffers() {
-        return rowGroupStatBuffers;
     }
 
     public LongList getSrcPtrs(int colCount) {

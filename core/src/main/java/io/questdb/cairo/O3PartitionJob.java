@@ -118,7 +118,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final ParquetMetaPartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
         final RowGroupBuffers rowGroupBuffers = ctx.getRowGroupBuffers();
         final DirectIntList parquetColumns = ctx.getParquetColumns();
-        final RowGroupStatBuffers rowGroupStatBuffers = ctx.getRowGroupStatBuffers();
         final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
         final PartitionDescriptor partitionDescriptor = ctx.getPartitionDescriptor();
         long parquetSize = 0;
@@ -205,9 +204,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // mode, untouched row groups would retain the old column layout while
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
-                // The _pm metadata file does not track unused bytes; default to 0
-                // so the rewrite decision falls to other criteria.
-                final long unusedBytes = 0;
+                final long unusedBytes = partitionDecoder.metadata().getUnusedBytes();
                 isRewrite = hasSchemaChange
                         || rowGroupCount == 1
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
