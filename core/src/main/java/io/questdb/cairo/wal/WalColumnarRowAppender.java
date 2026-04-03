@@ -1833,21 +1833,17 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         boolean wireIsNanos = (ilpType == TYPE_TIMESTAMP_NANOS);
 
         cursor.resetRowPosition();
-        try {
-            for (int row = 0; row < rowCount; row++) {
-                cursor.advanceRow();
-                if (cursor.isNull()) {
-                    StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
-                } else {
-                    long ts = cursor.getTimestamp();
-                    long micros = wireIsNanos ? ts / 1000 : ts;
-                    strSink.clear();
-                    MicrosFormatUtils.appendDateTime(strSink, micros);
-                    StringTypeDriver.appendValue(auxMem, dataMem, strSink);
-                }
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+            } else {
+                long ts = cursor.getTimestamp();
+                long micros = wireIsNanos ? ts / 1000 : ts;
+                strSink.clear();
+                MicrosFormatUtils.appendDateTime(strSink, micros);
+                StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
-        } catch (QwpParseException e) {
-            throw CairoException.nonCritical().put("failed to convert TIMESTAMP to STRING");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -1860,21 +1856,17 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         boolean wireIsNanos = (ilpType == TYPE_TIMESTAMP_NANOS);
 
         cursor.resetRowPosition();
-        try {
-            for (int row = 0; row < rowCount; row++) {
-                cursor.advanceRow();
-                if (cursor.isNull()) {
-                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
-                } else {
-                    long ts = cursor.getTimestamp();
-                    long micros = wireIsNanos ? ts / 1000 : ts;
-                    utf8Sink.clear();
-                    MicrosFormatUtils.appendDateTime(utf8Sink, micros);
-                    VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
-                }
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+            } else {
+                long ts = cursor.getTimestamp();
+                long micros = wireIsNanos ? ts / 1000 : ts;
+                utf8Sink.clear();
+                MicrosFormatUtils.appendDateTime(utf8Sink, micros);
+                VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
             }
-        } catch (QwpParseException e) {
-            throw CairoException.nonCritical().put("failed to convert TIMESTAMP to VARCHAR");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
