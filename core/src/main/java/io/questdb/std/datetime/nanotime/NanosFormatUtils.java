@@ -337,11 +337,19 @@ public class NanosFormatUtils {
     }
 
     public static long parseOptionalNanosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
-        if (p < lim && sequence.charAt(p) == '.') {
+        if (isOptionalFractionStart(sequence, p, lim)) {
             final long parsed = Nanos.parseNanosAsMicrosGreedy(sequence, p + 1, lim);
             return Numbers.encodeLowHighInts(Numbers.decodeLowInt(parsed), Numbers.decodeHighInt(parsed) + 1);
         }
         return Numbers.encodeLowHighInts(0, 0);
+    }
+
+    private static boolean isOptionalFractionStart(CharSequence sequence, int p, int lim) {
+        if (p + 1 >= lim || sequence.charAt(p) != '.') {
+            return false;
+        }
+        final char next = sequence.charAt(p + 1);
+        return next >= '0' && next <= '9';
     }
 
     public static long parseYearGreedy(@NotNull CharSequence in, int pos, int hi) throws NumericException {

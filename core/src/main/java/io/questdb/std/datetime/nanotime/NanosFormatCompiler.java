@@ -1893,6 +1893,30 @@ public class NanosFormatCompiler {
         asm.iconst('.');
         int notDotBranch = asm.if_icmpne();
 
+        asm.iload(LOCAL_POS);
+        asm.iconst(1);
+        asm.iadd();
+        asm.iload(P_HI);
+        int noDigitBranch = asm.if_icmpge();
+
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.iconst(1);
+        asm.iadd();
+        asm.invokeInterface(charAtIndex, 1);
+        asm.iconst('0');
+        asm.isub();
+        int beforeDigitBranch = asm.iflt();
+
+        asm.iconst('9');
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.iconst(1);
+        asm.iadd();
+        asm.invokeInterface(charAtIndex, 1);
+        asm.isub();
+        int afterDigitBranch = asm.iflt();
+
         asm.iinc(LOCAL_POS, 1);
         asm.aload(P_INPUT_STR);
         asm.iload(LOCAL_POS);
@@ -1908,6 +1932,9 @@ public class NanosFormatCompiler {
         frameOffsets.add(Numbers.encodeLowHighInts(preStackState, p));
         asm.setJmp(noFractionBranch, p);
         asm.setJmp(notDotBranch, p);
+        asm.setJmp(noDigitBranch, p);
+        asm.setJmp(beforeDigitBranch, p);
+        asm.setJmp(afterDigitBranch, p);
         asm.iconst(0);
         asm.istore(target);
         asm.lconst_0();

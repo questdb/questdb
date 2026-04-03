@@ -919,6 +919,16 @@ public class NanosFormatCompilerTest {
     }
 
     @Test
+    public void testParseOptionalNanos9LeavesDotForLiteral() throws NumericException {
+        assertNanos(".N+.", "1970-01-01T00:00:00.000000000Z", ".");
+    }
+
+    @Test
+    public void testParseOptionalNanos9LeavesDotForLiteralWhenFollowedByNonDigit() throws NumericException {
+        assertNanos(".N+..", "1970-01-01T00:00:00.000000000Z", "..");
+    }
+
+    @Test
     public void testParseUtc() {
         assertThat(CommonUtils.UTC_PATTERN, "2011-10-03T00:00:00.000000000Z", "2011-10-03T00:00:00.000Z");
     }
