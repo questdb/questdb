@@ -30,6 +30,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.BatchKeySink;
@@ -59,7 +60,6 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
@@ -135,7 +135,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             final UnorderedPageFrameReducer reducer;
             if (filter != null) {
                 reducer = FILTER_AND_AGGREGATE;
-            } else if (isBatchEligible(keyFunctions, base.getMetadata())) {
+            } else if (ColumnTypes.sizeInBytes(keyTypes) > 0) {
                 reducer = AGGREGATE_BATCHED;
             } else {
                 reducer = AGGREGATE;
@@ -461,24 +461,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     /**
      * Checks if all GROUP BY key functions are direct column references with fixed-size types.
      */
-    private static boolean isBatchEligible(ObjList<Function> keyFunctions, RecordMetadata baseMetadata) {
-        if (keyFunctions == null || keyFunctions.size() == 0) {
-            return false;
-        }
-        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            Function keyFunc = keyFunctions.getQuick(i);
-            if (!(keyFunc instanceof ColumnFunction)) {
-                return false;
-            }
-            int columnIndex = ((ColumnFunction) keyFunc).getColumnIndex();
-            int columnType = baseMetadata.getColumnType(columnIndex);
-            if (ColumnType.sizeOf(columnType) <= 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private static void aggregateBatched(
             int workerId,
             @NotNull PageFrameMemoryRecord record,
