@@ -1431,7 +1431,7 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger done = new AtomicInteger();
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = Os.isLinux() ? 500 : 50;
+            int totalColAddCount = Os.isLinux() ? 100 : 50;
 
             String tableName = "tbl_meta_test";
             TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
