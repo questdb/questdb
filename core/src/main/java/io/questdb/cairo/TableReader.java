@@ -693,7 +693,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public void setActiveColumns(@Nullable IntList columnIndexes) {
-        if (columnIndexes == null) {
+        if (columnIndexes == null || columnIndexes.size() == 0) {
             hasActiveColumns = false;
         } else {
             activeColumns.clear();
