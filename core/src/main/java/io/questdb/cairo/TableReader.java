@@ -695,13 +695,18 @@ public class TableReader implements Closeable, SymbolTableSource {
     public void setActiveColumns(@Nullable IntList columnIndexes) {
         if (columnIndexes == null || columnIndexes.size() == 0) {
             hasActiveColumns = false;
-        } else {
-            activeColumns.clear();
-            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                activeColumns.set(columnIndexes.getQuick(i));
-            }
-            hasActiveColumns = true;
+            return;
         }
+        activeColumns.clear();
+        int distinctCount = 0;
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            if (!activeColumns.getAndSet(columnIndexes.getQuick(i))) {
+                distinctCount++;
+            }
+        }
+        // When all columns are referenced, skip per-column BitSet checks
+        // in openPartitionColumns() and reloadColumnFiles().
+        hasActiveColumns = distinctCount < columnCount;
     }
 
     /**
