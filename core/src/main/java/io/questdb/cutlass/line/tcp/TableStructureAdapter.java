@@ -165,6 +165,11 @@ public class TableStructureAdapter implements TableStructure {
     }
 
     @Override
+    public boolean isNotNull(int columnIndex) {
+        return columnIndex == getTimestampIndex();
+    }
+
+    @Override
     public boolean isWalEnabled() {
         return walEnabledDefault && PartitionBy.isPartitioned(getPartitionBy());
     }

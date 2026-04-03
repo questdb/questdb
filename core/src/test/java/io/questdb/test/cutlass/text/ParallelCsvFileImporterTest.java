@@ -3145,7 +3145,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         "in_\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
                         "lo\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
                         "dat\tDATE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
-                        "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\ttrue\tfalse\tfalse\n" +
+                        "tstmp\tTIMESTAMP\tfalse\t256\tfalse\t0\t0\ttrue\ttrue\tfalse\n" +
                         "ft\tDOUBLE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
                         "db\tDOUBLE\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
                         "str\t" + stringTypeName + "\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
