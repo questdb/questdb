@@ -182,6 +182,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                         }
 
                         @Override
+                        public int getQwpMaxTablesPerConnection() {
+                            return configuration.getMaxTablesPerConnection();
+                        }
+
+                        @Override
                         public CharSequence getInfluxPingVersion() {
                             return "";
                         }
@@ -426,7 +431,8 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                         AllowAllSecurityContext.INSTANCE,
                         tableBlock.getTableNameUtf8(),
                         tableBlock.getSchema(),
-                        tableBlock
+                        tableBlock,
+                        configuration.getMaxTablesPerConnection()
                 );
                 if (tud == null) {
                     LOG.error().$("failed to get table update details for: ").$(tableBlock.getTableName()).$();

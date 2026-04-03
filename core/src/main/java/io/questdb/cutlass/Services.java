@@ -287,6 +287,9 @@ public class Services {
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
     ) {
+        if (!config.isEnabled()) {
+            return null;
+        }
         WorkerPool workerPool = workerPoolManager.getSharedPoolNetwork();
         QwpUdpReceiver receiver;
         if (Os.isLinux()) {

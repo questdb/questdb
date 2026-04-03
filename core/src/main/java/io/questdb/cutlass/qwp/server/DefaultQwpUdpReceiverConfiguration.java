@@ -63,6 +63,11 @@ public class DefaultQwpUdpReceiverConfiguration implements QwpUdpReceiverConfigu
     }
 
     @Override
+    public int getMaxTablesPerConnection() {
+        return QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION;
+    }
+
+    @Override
     public int getMsgBufferSize() {
         return 65_536;
     }

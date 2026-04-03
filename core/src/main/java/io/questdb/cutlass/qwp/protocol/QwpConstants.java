@@ -55,6 +55,10 @@ public final class QwpConstants {
      */
     public static final int DEFAULT_MAX_SCHEMAS_PER_CONNECTION = 65_535;
     /**
+     * Default maximum number of distinct tables per connection or UDP receiver.
+     */
+    public static final int DEFAULT_MAX_TABLES_PER_CONNECTION = 10_000;
+    /**
      * Flag bit: Delta symbol dictionary encoding enabled.
      * When set, symbol columns use global IDs and send only new dictionary entries.
      */
@@ -126,6 +130,10 @@ public final class QwpConstants {
      * Maximum column name length in bytes.
      */
     public static final int MAX_COLUMN_NAME_LENGTH = 127;
+    /**
+     * Maximum symbol dictionary entries per column or per connection.
+     */
+    public static final int MAX_SYMBOL_DICTIONARY_SIZE = 1_000_000;
     /**
      * Maximum table name length in bytes.
      */

@@ -40,6 +40,8 @@ public interface QwpUdpReceiverConfiguration {
 
     int getMaxRowsPerTable();
 
+    int getMaxTablesPerConnection();
+
     int getMsgBufferSize();
 
     int getMsgCount();

@@ -970,6 +970,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
                                     "qwp.max.rows.per.table\tQDB_QWP_MAX_ROWS_PER_TABLE\t1000000\tdefault\tfalse\tfalse\n" +
                                     "qwp.max.schemas.per.connection\tQDB_QWP_MAX_SCHEMAS_PER_CONNECTION\t65535\tdefault\tfalse\tfalse\n" +
+                                    "qwp.max.tables.per.connection\tQDB_QWP_MAX_TABLES_PER_CONNECTION\t10000\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.bind.to\tQDB_QWP_UDP_BIND_TO\t0.0.0.0:9007\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.commit.rate\tQDB_QWP_UDP_COMMIT_RATE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.enabled\tQDB_QWP_UDP_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +

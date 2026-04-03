@@ -590,6 +590,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * Each row gets a fresh timestamp from getTicks() to match row-by-row behavior.
      */
     public void putServerAssignedTimestampColumnar(int rowCount) {
+        checkDistressed();
+        assert isInColumnarWrite() : "putServerAssignedTimestampColumnar called outside columnar write";
+        if (rowCount <= 0) {
+            return;
+        }
         MemoryMA dataMem = getDataColumn(timestampIndex);
         long startRowId = getSegmentRowCount();
         for (int row = 0; row < rowCount; row++) {

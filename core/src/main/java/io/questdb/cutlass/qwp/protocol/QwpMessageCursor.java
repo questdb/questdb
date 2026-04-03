@@ -30,6 +30,7 @@ import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY_SIZE;
 
 /**
  * Streaming cursor over a QWP v1 message.
@@ -51,7 +52,6 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
  */
 public class QwpMessageCursor implements Mutable {
 
-    private static final int MAX_SYMBOL_DICTIONARY_SIZE = 1_000_000;
     private final QwpMessageHeader messageHeader = new QwpMessageHeader();
     private final QwpTableBlockCursor tableBlockCursor;
     private final QwpVarint.DecodeResult varintResult = new QwpVarint.DecodeResult();

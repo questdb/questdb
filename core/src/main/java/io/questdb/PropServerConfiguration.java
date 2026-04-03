@@ -403,6 +403,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxSchemasPerConnection;
+    private final int qwpMaxTablesPerConnection;
     private final int qwpUdpCommitRate;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
@@ -1773,6 +1774,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                         PropertyKey.QWP_MAX_ROWS_PER_TABLE.getPropertyPath()
                                 + " must be between 1 and "
                                 + QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE
+                );
+            }
+            this.qwpMaxTablesPerConnection = getInt(properties, env, PropertyKey.QWP_MAX_TABLES_PER_CONNECTION, QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION);
+            if (qwpMaxTablesPerConnection < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath()
+                                + " must be at least 1"
                 );
             }
             this.qwpUdpCommitRate = getInt(properties, env, PropertyKey.QWP_UDP_COMMIT_RATE, 1_048_576);
@@ -5528,6 +5536,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getQwpMaxTablesPerConnection() {
+            return qwpMaxTablesPerConnection;
+        }
+
+        @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return symbolCacheWaitBeforeReload;
         }
@@ -6451,6 +6464,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxRowsPerTable() {
             return qwpMaxRowsPerTable;
+        }
+
+        @Override
+        public int getMaxTablesPerConnection() {
+            return qwpMaxTablesPerConnection;
         }
 
         @Override

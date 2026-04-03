@@ -31,6 +31,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.MAX_SYMBOL_DICTIONARY_SIZE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SYMBOL;
 
 /**
@@ -270,6 +271,14 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             }
             this.dictionarySize = (int) decodeResult.value;
             offset += decodeResult.bytesRead;
+
+            if (dictionarySize > MAX_SYMBOL_DICTIONARY_SIZE) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "symbol dictionary size exceeds limit: " + dictionarySize
+                                + " (max " + MAX_SYMBOL_DICTIONARY_SIZE + ')'
+                );
+            }
 
             // Parse dictionary entries into flyweights
             ensureDictionaryCapacity(dictionarySize);

@@ -57,6 +57,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
     static final int SEND_STATE_RESUME_ERROR = 2;
     private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
+    private final LineHttpProcessorConfiguration configuration;
     // Per-connection accumulated symbol dictionary for delta encoding
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
     private final StringSink deferredErrorMessage = new StringSink();
@@ -97,6 +98,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             LineHttpProcessorConfiguration configuration
     ) {
         assert initBufferSize > 0;
+        this.configuration = configuration;
         this.maxBufferSize = Math.min(configuration.getMaxRecvBufferSize(), Integer.MAX_VALUE);
         this.maxResponseErrorMessageLength = Math.max(0, (int) ((maxResponseContentLength - 100) / 1.5));
         try {
@@ -351,7 +353,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
 
-                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(securityContext, tableBlock.getTableNameUtf8(), tableBlock.getSchema(), tableBlock);
+                WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(securityContext, tableBlock.getTableNameUtf8(), tableBlock.getSchema(), tableBlock, configuration.getQwpMaxTablesPerConnection());
                 if (tud == null) {
                     rejectMsg.clear();
                     rejectMsg.put("failed to create table update details for: ").put(tableBlock.getTableName());

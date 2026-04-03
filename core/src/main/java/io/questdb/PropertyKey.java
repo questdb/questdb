@@ -586,6 +586,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     POSTHOG_ENABLED("posthog.enabled"),
     QWP_MAX_SCHEMAS_PER_CONNECTION("qwp.max.schemas.per.connection"),
     QWP_MAX_ROWS_PER_TABLE("qwp.max.rows.per.table"),
+    QWP_MAX_TABLES_PER_CONNECTION("qwp.max.tables.per.connection"),
     QWP_UDP_BIND_TO("qwp.udp.bind.to"),
     QWP_UDP_COMMIT_RATE("qwp.udp.commit.rate"),
     QWP_UDP_ENABLED("qwp.udp.enabled"),

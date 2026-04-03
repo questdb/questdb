@@ -260,6 +260,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
+        public int getQwpMaxTablesPerConnection() {
+            return QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION;
+        }
+
+        @Override
         public CharSequence getInfluxPingVersion() {
             return "v2.7.4";
         }

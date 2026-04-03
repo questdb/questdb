@@ -171,11 +171,17 @@ public class QwpTudCache implements QuietCloseable {
             SecurityContext securityContext,
             Utf8Sequence tableNameUtf8,
             QwpColumnDef[] schema,
-            QwpTableBlockCursor cursor
+            QwpTableBlockCursor cursor,
+            int maxTables
     ) {
         int key = tableUpdateDetails.keyIndex(tableNameUtf8);
         if (key < 0) {
             return tableUpdateDetails.valueAt(key);
+        }
+
+        if (tableUpdateDetails.size() >= maxTables) {
+            throw CairoException.nonCritical()
+                    .put("too many distinct tables, limit: ").put(maxTables);
         }
 
         tableNameUtf16.clear();

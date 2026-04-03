@@ -1288,10 +1288,16 @@ public final class Numbers {
     }
 
     public static int parseNonNegativeIntQuiet(CharSequence sequence) {
+        if (sequence == null) {
+            return -1;
+        }
         return parseNonNegativeInt0(sequence, 0, sequence.length());
     }
 
     public static int parseNonNegativeIntQuiet(Utf8Sequence sequence) {
+        if (sequence == null) {
+            return -1;
+        }
         return parseNonNegativeInt0(sequence.asAsciiCharSequence(), 0, sequence.size());
     }
 

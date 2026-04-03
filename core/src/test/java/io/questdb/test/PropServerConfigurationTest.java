@@ -1246,6 +1246,29 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testQwpMaxTablesPerConnection() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION, configuration.getQwpUdpReceiverConfiguration().getMaxTablesPerConnection());
+        Assert.assertEquals(
+                QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxTablesPerConnection()
+        );
+
+        properties.setProperty(PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath(), "500");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(500, configuration.getQwpUdpReceiverConfiguration().getMaxTablesPerConnection());
+        Assert.assertEquals(500, configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMaxTablesPerConnection());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testQwpMaxTablesPerConnectionRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath(), "0");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
     public void testMinimum2SharedWorkers() throws Exception {
         final Properties properties = new Properties();
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
