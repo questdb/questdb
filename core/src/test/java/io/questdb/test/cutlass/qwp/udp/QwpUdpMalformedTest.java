@@ -32,6 +32,7 @@ import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -77,6 +78,28 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
         return params;
     }
 
+    private static final QwpUdpReceiverConfiguration NO_AUTO_CREATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
+        @Override
+        public int getCommitRate() {
+            return 10;
+        }
+
+        @Override
+        public int getPort() {
+            return PORT;
+        }
+
+        @Override
+        public boolean isAutoCreateNewTables() {
+            return false;
+        }
+
+        @Override
+        public boolean isOwnThread() {
+            return false;
+        }
+    };
+
     private static final QwpUdpReceiverConfiguration RCVR_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
         public int getCommitRate() {
@@ -93,6 +116,182 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
             return false;
         }
     };
+
+    @Test
+    public void testAutoCreateDisabledSkipsUnknownTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(NO_AUTO_CREATE_CONF, engine)) {
+                sendValidRow("nonexistent_table", 1L, 1_000_000L);
+                drainReceiver(receiver);
+
+                // Datagram was received and processed, but no table was created
+                Assert.assertEquals(1, receiver.getProcessedCount());
+                Assert.assertEquals(0, receiver.getTotalDroppedCount());
+            }
+        });
+    }
+
+    @Test
+    public void testBindFailureThrowsNetworkError() throws Exception {
+        QwpUdpReceiverConfiguration nonLocalBind = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public int getBindIPv4Address() {
+                return Net.parseIPv4("8.8.8.8");
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try {
+                receiverFactory.create(nonLocalBind, engine).close();
+                Assert.fail("expected NetworkError for non-local bind address");
+            } catch (NetworkError expected) {
+                // Constructor cleaned up socket and re-threw
+            }
+        });
+    }
+
+    @Test
+    public void testContinuesWhenReceiveBufferSizeFails() throws Exception {
+        QwpUdpReceiverConfiguration rcvBufFail = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public io.questdb.network.NetworkFacade getNetworkFacade() {
+                return new io.questdb.network.NetworkFacadeImpl() {
+                    @Override
+                    public int setRcvBuf(long fd, int size) {
+                        return -1;
+                    }
+                };
+            }
+
+            @Override
+            public int getCommitRate() {
+                return 10;
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public int getReceiveBufferSize() {
+                return 4_194_304;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(rcvBufFail, engine)) {
+                sendValidRow("rcvbuf_test", 1L, 1_000_000L);
+                drainReceiver(receiver);
+
+                Assert.assertEquals(1, receiver.getProcessedCount());
+                Assert.assertEquals(0, receiver.getTotalDroppedCount());
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\n1\n",
+                    "SELECT count() FROM rcvbuf_test"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateFailsWhenJoinGroupFails() throws Exception {
+        QwpUdpReceiverConfiguration multicastJoinFail = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public io.questdb.network.NetworkFacade getNetworkFacade() {
+                return new io.questdb.network.NetworkFacadeImpl() {
+                    @Override
+                    public boolean join(long fd, int bindIPv4, int groupIPv4) {
+                        return false;
+                    }
+                };
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+
+            @Override
+            public boolean isUnicast() {
+                return false;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try {
+                receiverFactory.create(multicastJoinFail, engine).close();
+                Assert.fail("expected NetworkError for multicast join failure");
+            } catch (NetworkError expected) {
+                Assert.assertTrue(expected.getMessage().contains("cannot join group"));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateFailsWhenSocketCannotOpen() throws Exception {
+        QwpUdpReceiverConfiguration brokenSocket = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public io.questdb.network.NetworkFacade getNetworkFacade() {
+                return new io.questdb.network.NetworkFacadeImpl() {
+                    @Override
+                    public long socketUdp() {
+                        return -1;
+                    }
+                };
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try {
+                receiverFactory.create(brokenSocket, engine).close();
+                Assert.fail("expected NetworkError for failed socket creation");
+            } catch (NetworkError expected) {
+                // socketUdp() returned -1
+            }
+        });
+    }
+
+    @Test
+    public void testDoubleCloseIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine);
+            receiver.close();
+            receiver.close(); // no-op since fd is already -1
+        });
+    }
 
     @Test
     public void testDuplicateDatagramBothIngested() throws Exception {
