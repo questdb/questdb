@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp.udp;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.client.cutlass.qwp.client.QwpUdpSender;
 import io.questdb.client.network.NetworkFacadeImpl;
+import io.questdb.cutlass.qwp.server.DefaultQwpUdpReceiverConfiguration;
 import io.questdb.cutlass.qwp.server.LinuxMMQwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
