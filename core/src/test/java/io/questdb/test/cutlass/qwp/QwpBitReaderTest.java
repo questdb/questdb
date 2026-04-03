@@ -26,7 +26,6 @@ package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.qwp.protocol.QwpBitReader;
-import io.questdb.cutlass.qwp.protocol.QwpBitWriter;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -35,75 +34,7 @@ import org.junit.Test;
 
 import java.util.Random;
 
-public class QwpBitWriterReaderTest {
-
-    @Test
-    public void testBitAlignment() {
-        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpBitWriter writer = new QwpBitWriter();
-            writer.reset(addr, 16);
-
-            // Write 5 bits, then align to byte
-            writer.writeBits(0b10101, 5);
-            writer.alignToByte();
-
-            // Now write a full byte
-            writer.writeByte(0x42);
-            writer.flush();
-
-            // Verify the alignment worked
-            Assert.assertEquals(2, writer.getPosition() - addr);
-        } finally {
-            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testFlushPartialByte() {
-        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpBitWriter writer = new QwpBitWriter();
-            writer.reset(addr, 16);
-
-            // Write only 3 bits
-            writer.writeBits(0b101, 3);
-            Assert.assertEquals(3, writer.getBitsInBuffer());
-
-            writer.flush();
-            Assert.assertEquals(0, writer.getBitsInBuffer());
-
-            // Verify we wrote 1 byte
-            Assert.assertEquals(1, writer.getPosition() - addr);
-
-            // Verify the byte value (3 LSB bits should be 101, upper bits 0)
-            Assert.assertEquals(0b00000101, Unsafe.getUnsafe().getByte(addr) & 0xFF);
-        } finally {
-            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testFlushThrowsOnOverflow() {
-        long ptr = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpBitWriter writer = new QwpBitWriter();
-            writer.reset(ptr, 1);
-            // Write 8 bits to fill the single byte
-            writer.writeBits(0xFF, 8);
-            // Write a few more bits that sit in the bit buffer
-            writer.writeBits(0x3, 4);
-            // Flush should throw because there's no room for the partial byte
-            try {
-                writer.flush();
-                Assert.fail("expected CairoException on buffer overflow during flush");
-            } catch (CairoException e) {
-                Assert.assertTrue(e.getMessage().contains("buffer overflow"));
-            }
-        } finally {
-            Unsafe.free(ptr, 1, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
+public class QwpBitReaderTest {
 
     @Test
     public void testPeekBit() throws QwpParseException {
@@ -501,6 +432,122 @@ public class QwpBitWriterReaderTest {
             Assert.assertEquals(1, reader.readBit());
         } finally {
             Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static class QwpBitWriter {
+
+        private long bitBuffer;
+        private int bitsInBuffer;
+        private long currentAddress;
+        private long endAddress;
+        private long startAddress;
+
+        void alignToByte() {
+            if (bitsInBuffer > 0) {
+                flush();
+            }
+        }
+
+        void flush() {
+            if (bitsInBuffer > 0) {
+                if (currentAddress >= endAddress) {
+                    throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
+                }
+                Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
+                bitBuffer = 0;
+                bitsInBuffer = 0;
+            }
+        }
+
+        int getBitsInBuffer() {
+            return bitsInBuffer;
+        }
+
+        long getPosition() {
+            return currentAddress;
+        }
+
+        long getTotalBitsWritten() {
+            return (currentAddress - startAddress) * 8L + bitsInBuffer;
+        }
+
+        void reset(long address, long capacity) {
+            this.startAddress = address;
+            this.currentAddress = address;
+            this.endAddress = address + capacity;
+            this.bitBuffer = 0;
+            this.bitsInBuffer = 0;
+        }
+
+        void writeBit(int bit) {
+            writeBits(bit & 1, 1);
+        }
+
+        void writeBits(long value, int numBits) {
+            if (numBits <= 0 || numBits > 64) {
+                return;
+            }
+
+            // Mask the value to only include the requested bits
+            if (numBits < 64) {
+                value &= (1L << numBits) - 1;
+            }
+
+            int bitsToWrite = numBits;
+
+            while (bitsToWrite > 0) {
+                // How many bits can we fit in current buffer (max 64 total)
+                int availableInBuffer = 64 - bitsInBuffer;
+                int bitsThisRound = Math.min(bitsToWrite, availableInBuffer);
+
+                // Add bits to the buffer
+                long mask = bitsThisRound == 64 ? -1L : (1L << bitsThisRound) - 1;
+                bitBuffer |= (value & mask) << bitsInBuffer;
+                bitsInBuffer += bitsThisRound;
+                value >>>= bitsThisRound;
+                bitsToWrite -= bitsThisRound;
+
+                // Flush complete bytes from the buffer
+                while (bitsInBuffer >= 8) {
+                    if (currentAddress >= endAddress) {
+                        throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
+                    }
+                    Unsafe.getUnsafe().putByte(currentAddress++, (byte) bitBuffer);
+                    bitBuffer >>>= 8;
+                    bitsInBuffer -= 8;
+                }
+            }
+        }
+
+        void writeByte(int value) {
+            alignToByte();
+            if (currentAddress >= endAddress) {
+                throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
+            }
+            Unsafe.getUnsafe().putByte(currentAddress++, (byte) value);
+        }
+
+        void writeInt(int value) {
+            alignToByte();
+            if (currentAddress + 4 > endAddress) {
+                throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
+            }
+            Unsafe.getUnsafe().putInt(currentAddress, value);
+            currentAddress += 4;
+        }
+
+        void writeLong(long value) {
+            alignToByte();
+            if (currentAddress + 8 > endAddress) {
+                throw CairoException.critical(0).put("QwpBitWriter buffer overflow");
+            }
+            Unsafe.getUnsafe().putLong(currentAddress, value);
+            currentAddress += 8;
+        }
+
+        void writeSigned(long value, int numBits) {
+            writeBits(value, numBits);
         }
     }
 }
