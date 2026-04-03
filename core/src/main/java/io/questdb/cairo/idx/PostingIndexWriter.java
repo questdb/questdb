@@ -274,7 +274,17 @@ public class PostingIndexWriter implements IndexWriter {
             } finally {
                 try {
                     Misc.free(sealValueMem);
-                    Misc.free(valueMem);
+                    // Close valueMem WITHOUT truncation. The .pv file contains
+                    // committed generation data that must not be destroyed.
+                    // The normal truncate-on-close uses appendOffset which can
+                    // be 0 when a writer opens a partition at the wrong path
+                    // (O3 new-partition directory mismatch). Skipping truncation
+                    // is safe: sealed .pv files are sized exactly by the seal,
+                    // and unsealed .pv files retain their mmap'd size (bounded
+                    // by dataIndexValueAppendPageSize, typically 1MB).
+                    if (valueMem.isOpen()) {
+                        valueMem.close(false, (byte) 0);
+                    }
                 } finally {
                     closeSidecarMems();
                     freeNativeBuffers();
@@ -297,6 +307,12 @@ public class PostingIndexWriter implements IndexWriter {
         if (configuration.getCommitMode() != CommitMode.NOSYNC) {
             sync(configuration.getCommitMode() == CommitMode.ASYNC);
         }
+    }
+
+    public void clearCovering() {
+        this.coveredColumnAddrs = null;
+        this.coveredColumnMems = null;
+        this.coverCount = 0;
     }
 
     public void configureCovering(

@@ -3498,6 +3498,37 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctSymMultiPartitionHighCardinality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist_mp2 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Insert 1000 keys across 10 partitions, one partition at a time
+            for (int p = 0; p < 10; p++) {
+                execute("INSERT INTO t_dist_mp2"
+                        + " SELECT dateadd('s', x::INT, dateadd('d', " + p + ", '2024-01-01'))::TIMESTAMP,"
+                        + "     rnd_symbol(1000, 4, 8, 0),"
+                        + "     rnd_double() * 100"
+                        + " FROM long_sequence(100_000)");
+                engine.releaseAllWriters();
+            }
+            engine.releaseAllReaders();
+
+            // Each INSERT generates ~1000 unique random symbols independently.
+            // Across 10 INSERTs the symbol table grows to ~10000 distinct keys.
+            // Just verify it doesn't crash and returns a reasonable count.
+            assertSql("""
+                    hasKeys
+                    true
+                    """, "SELECT count() > 5000 AS hasKeys FROM (SELECT DISTINCT sym FROM t_dist_mp2)");
+        });
+    }
+
+    @Test
     public void testDistinctSymFromPostingIndexWithCovering() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

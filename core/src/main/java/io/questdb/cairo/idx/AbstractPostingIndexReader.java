@@ -151,16 +151,12 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         int newlyFound = 0;
         for (int g = 0; g < genCount; g++) {
             int genKeyCount = genLookup.getGenKeyCount(g);
+            long genFileOffset = genLookup.getGenFileOffset(g);
+            long genDataSize = genLookup.getGenDataSize(g);
             if (genKeyCount >= 0) {
-                newlyFound += collectDenseGenKeys(
-                        genLookup.getGenFileOffset(g), genLookup.getGenDataSize(g),
-                        genKeyCount, foundKeys
-                );
+                newlyFound += collectDenseGenKeys(genFileOffset, genDataSize, genKeyCount, foundKeys);
             } else {
-                newlyFound += collectSparseGenKeys(
-                        genLookup.getGenFileOffset(g), genLookup.getGenDataSize(g),
-                        -genKeyCount, foundKeys
-                );
+                newlyFound += collectSparseGenKeys(genFileOffset, genDataSize, -genKeyCount, foundKeys);
             }
         }
         return newlyFound;
