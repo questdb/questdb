@@ -71,17 +71,11 @@ public interface UnnestSource {
         throw new UnsupportedOperationException();
     }
 
-    default float getFloat(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
-
     default int getInt(int sourceCol, int elementIndex) {
         throw new UnsupportedOperationException();
     }
 
-    default long getLong(int sourceCol, int elementIndex) {
-        throw new UnsupportedOperationException();
-    }
+    long getLong(int sourceCol, int elementIndex);
 
     default short getShort(int sourceCol, int elementIndex) {
         throw new UnsupportedOperationException();

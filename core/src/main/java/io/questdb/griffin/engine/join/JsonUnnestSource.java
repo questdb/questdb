@@ -214,6 +214,10 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
     @Override
     public long getDate(int sourceCol, int elementIndex) {
         // DATE is extracted as LONG (epoch millis).
+        return getLong0(sourceCol, elementIndex);
+    }
+
+    private long getLong0(int sourceCol, int elementIndex) {
         if (elementIndex >= currentElementCount) {
             return Numbers.LONG_NULL;
         }
@@ -255,15 +259,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
 
     @Override
     public long getLong(int sourceCol, int elementIndex) {
-        if (elementIndex >= currentElementCount) {
-            return Numbers.LONG_NULL;
-        }
-        long resultBase = bulkResultBase(sourceCol, elementIndex);
-        int error = Unsafe.getUnsafe().getInt(resultBase + COLUMN_RESULT_ERROR_OFFSET);
-        if (error != SimdJsonError.SUCCESS) {
-            return Numbers.LONG_NULL;
-        }
-        return Unsafe.getUnsafe().getLong(resultBase + COLUMN_RESULT_VALUE_OFFSET);
+        return getLong0(sourceCol, elementIndex);
     }
 
     @Override
