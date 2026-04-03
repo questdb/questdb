@@ -35,10 +35,6 @@ public interface MapKey extends RecordSinkSPI {
 
     void copyFrom(MapKey srcKey);
 
-    default void copyFromRawKey(long srcPtr, long srcSize) {
-        throw new UnsupportedOperationException();
-    }
-
     default boolean create() {
         return createValue().isNew();
     }

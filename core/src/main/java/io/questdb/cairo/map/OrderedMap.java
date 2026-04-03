@@ -409,7 +409,7 @@ public class OrderedMap implements Map, Reopenable {
      * @param hashCode   precomputed hash code (from Hash.hashMem64)
      * @return the map value
      */
-    public MapValue probeExternal(long extKeyAddr, long hashCode) {
+    MapValue probeExternal(long extKeyAddr, long hashCode) {
         assert keySize > 0 : "probeExternal only supports fixed-size keys";
         int hashCodeLo = Numbers.decodeLowInt(hashCode);
         int index = hashCodeLo & mask;
@@ -452,17 +452,15 @@ public class OrderedMap implements Map, Reopenable {
         return valueOf(newStartAddr, newAppendAddr, true, value);
     }
 
-    public long getOffsetsAddr() {
-        return offsetsAddr;
+    @Override
+    public MapBatchProber createBatchProber(int batchSize) {
+        if (keySize > 0) {
+            return new FixedSizeBatchProber(batchSize, (int) keySize);
+        }
+        return null;
     }
 
-    public int getMask() {
-        return mask;
-    }
-
-    public long getKeySize() {
-        return keySize;
-    }
+    private static native void hashAndPrefetch(long keysAddr, int keySize, int keyCount, long offsetsAddr, int mask, long hashesOut);
 
     private static int compressOffset(long offset) {
         return (int) ((offset >> 3) + 1);
@@ -976,7 +974,7 @@ public class OrderedMap implements Map, Reopenable {
             }
         }
 
-        public abstract void copyFromRawKey(long srcPtr, long srcSize);
+        abstract void copyFromRawKey(long srcPtr, long srcSize);
 
         protected abstract boolean eq(long offset);
     }
@@ -1244,6 +1242,25 @@ public class OrderedMap implements Map, Reopenable {
                 return false;
             }
             return Vect.memeq(a + keyOffset, b + keyOffset, len);
+        }
+    }
+
+    class FixedSizeBatchProber extends BaseFixedSizeMapBatchProber {
+
+        FixedSizeBatchProber(int batchSize, int keySize) {
+            super(batchSize, keySize);
+        }
+
+        @Override
+        public void hashAndPrefetch(int keyCount) {
+            OrderedMap.hashAndPrefetch(keysAddr, keySize, keyCount, offsetsAddr, mask, hashesAddr);
+        }
+
+        @Override
+        public MapValue probeWithHash(int index) {
+            long hash = Unsafe.getUnsafe().getLong(hashesAddr + (long) index * Long.BYTES);
+            long extKeyAddr = keysAddr + (long) index * keySize;
+            return probeExternal(extKeyAddr, hash);
         }
     }
 }

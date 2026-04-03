@@ -344,9 +344,16 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     @Override
+    public MapBatchProber createBatchProber(int batchSize) {
+        return new BatchProber(batchSize);
+    }
+
+    @Override
     public MapKey withKey() {
         return key;
     }
+
+    private static native void hashAndPrefetch(long keysAddr, int keyCount, long memStart, int entrySize, int mask, long hashesOut);
 
     private Unordered4MapValue asNew(long startAddress, int key, long hashCode, Unordered4MapValue value) {
         Unsafe.getUnsafe().putInt(startAddress, key);
@@ -661,6 +668,41 @@ public class Unordered4Map implements Map, Reopenable {
 
         void copyFromRawKey(int key) {
             this.key = key;
+        }
+    }
+
+    class BatchProber extends BaseFixedSizeMapBatchProber {
+
+        BatchProber(int batchSize) {
+            super(batchSize, (int) KEY_SIZE);
+        }
+
+        @Override
+        public void hashAndPrefetch(int keyCount) {
+            Unordered4Map.hashAndPrefetch(keysAddr, keyCount, memStart, (int) entrySize, (int) mask, hashesAddr);
+        }
+
+        @Override
+        public MapValue probeWithHash(int index) {
+            int k = Unsafe.getUnsafe().getInt(keysAddr + (long) index * KEY_SIZE);
+            long hash = Unsafe.getUnsafe().getLong(hashesAddr + (long) index * Long.BYTES);
+            if (k == 0) {
+                if (hasZero) {
+                    return valueOf(zeroMemStart, false, value);
+                }
+                hasZero = true;
+                return valueOf(zeroMemStart, true, value);
+            }
+            long startAddress = getStartAddress(hash & mask);
+            for (; ; ) {
+                int existing = Unsafe.getUnsafe().getInt(startAddress);
+                if (existing == 0) {
+                    return asNew(startAddress, k, hash, value);
+                } else if (existing == k) {
+                    return valueOf(startAddress, false, value);
+                }
+                startAddress = getNextAddress(startAddress);
+            }
         }
     }
 }

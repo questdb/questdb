@@ -35,6 +35,10 @@ public interface Map extends Mutable, Closeable, Reopenable {
     @Override
     void close();
 
+    default MapBatchProber createBatchProber(int batchSize) {
+        return null;
+    }
+
     MapRecordCursor getCursor();
 
     @TestOnly

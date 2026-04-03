@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.BatchKeySink;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
@@ -33,6 +32,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapBatchProber;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
@@ -66,12 +66,12 @@ import java.io.Closeable;
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
-    private final BatchKeySink ownerBatchKeySink;
+    private final MapBatchProber ownerBatchProber;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
-    private final ObjList<BatchKeySink> perWorkerBatchKeySinks;
+    private final ObjList<MapBatchProber> perWorkerBatchProbers;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
@@ -208,17 +208,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             perWorkerLongTopKLists = new ObjList<>(workerCount);
             perWorkerLongTopKLists.setAll(workerCount, null);
 
-            int fixedKeySize = ColumnTypes.sizeInBytes(keyTypes);
-            if (fixedKeySize > 0) {
-                int batchSize = AsyncGroupByRecordCursorFactory.BATCH_SIZE;
-                ownerBatchKeySink = new BatchKeySink(batchSize, fixedKeySize);
-                perWorkerBatchKeySinks = new ObjList<>(workerCount);
-                for (int i = 0; i < workerCount; i++) {
-                    perWorkerBatchKeySinks.extendAndSet(i, new BatchKeySink(batchSize, fixedKeySize));
-                }
-            } else {
-                ownerBatchKeySink = null;
-                perWorkerBatchKeySinks = null;
+            int batchSize = AsyncGroupByRecordCursorFactory.BATCH_SIZE;
+            ownerBatchProber = shardingCtx.getFragment(-1).getMap().createBatchProber(batchSize);
+            perWorkerBatchProbers = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
+                perWorkerBatchProbers.extendAndSet(i, shardingCtx.getFragment(i).getMap().createBatchProber(batchSize));
             }
         } catch (Throwable th) {
             close();
@@ -260,16 +254,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-        Misc.free(ownerBatchKeySink);
-        Misc.freeObjListAndKeepObjects(perWorkerBatchKeySinks);
+        Misc.free(ownerBatchProber);
+        Misc.freeObjListAndKeepObjects(perWorkerBatchProbers);
         Misc.free(filterCtx);
     }
 
-    public BatchKeySink getBatchKeySink(int slotId) {
+    public MapBatchProber getBatchProber(int slotId) {
         if (slotId == -1) {
-            return ownerBatchKeySink;
+            return ownerBatchProber;
         }
-        return perWorkerBatchKeySinks.getQuick(slotId);
+        return perWorkerBatchProbers.getQuick(slotId);
     }
 
     public ObjList<Map> getDestShards() {
@@ -381,12 +375,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 perWorkerAllocators.getQuick(i).reopen();
             }
         }
-        if (ownerBatchKeySink != null) {
-            ownerBatchKeySink.reopen();
+        if (ownerBatchProber != null) {
+            ownerBatchProber.reopen();
         }
-        if (perWorkerBatchKeySinks != null) {
-            for (int i = 0, n = perWorkerBatchKeySinks.size(); i < n; i++) {
-                perWorkerBatchKeySinks.getQuick(i).reopen();
+        for (int i = 0, n = perWorkerBatchProbers.size(); i < n; i++) {
+            MapBatchProber prober = perWorkerBatchProbers.getQuick(i);
+            if (prober != null) {
+                prober.reopen();
             }
         }
     }

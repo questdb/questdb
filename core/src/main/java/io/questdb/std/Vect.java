@@ -203,18 +203,6 @@ public final class Vect {
     // note: memset only uses single byte of the given int
     public static native void memset(long dst, long len, int value);
 
-    /**
-     * Computes hashes for a batch of fixed-size keys stored contiguously in memory
-     * and prefetches the corresponding OrderedMap offset list slots.
-     *
-     * @param keysAddr    address of contiguous key buffer [key0|key1|...|keyN]
-     * @param keySize     size of each key in bytes
-     * @param keyCount    number of keys in the batch
-     * @param offsetsAddr OrderedMap's offset list base address
-     * @param mask        OrderedMap's capacity mask (capacity - 1)
-     * @param hashesOut   output: long[keyCount] for computed hash codes
-     */
-    public static native void hashAndPrefetch(long keysAddr, int keySize, int keyCount, long offsetsAddr, int mask, long hashesOut);
 
     public static native long mergeDedupTimestampWithLongIndexAsc(
             long pSrc,

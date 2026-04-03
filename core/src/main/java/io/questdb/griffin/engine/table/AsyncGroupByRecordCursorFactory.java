@@ -30,14 +30,12 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.BatchKeySink;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapBatchProber;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
@@ -66,8 +64,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -76,7 +72,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
-    private static final UnorderedPageFrameReducer AGGREGATE_BATCHED = AsyncGroupByRecordCursorFactory::aggregateBatched;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
     static final int BATCH_SIZE = 256;
 
@@ -135,8 +130,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             final UnorderedPageFrameReducer reducer;
             if (filter != null) {
                 reducer = FILTER_AND_AGGREGATE;
-            } else if (ColumnTypes.sizeInBytes(keyTypes) > 0) {
-                reducer = AGGREGATE_BATCHED;
             } else {
                 reducer = AGGREGATE;
             }
@@ -241,7 +234,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
-            if (fragment.isNotSharded()) {
+            MapBatchProber prober = atom.getBatchProber(slotId);
+            if (fragment.isNotSharded() && prober != null && !frameMemory.hasColumnTops()) {
+                fragment.reopenMap();
+                aggregateBatchedNonSharded(record, frameRowCount, baseRowId, functionUpdater, mapSink, prober);
+            } else if (fragment.isNotSharded()) {
                 aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
             } else {
                 aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
@@ -251,6 +248,37 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         } finally {
             frameMemoryPool.releaseParquetBuffers();
             atom.release(slotId);
+        }
+    }
+
+    private static void aggregateBatchedNonSharded(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            GroupByFunctionsUpdater functionUpdater,
+            RecordSink mapSink,
+            MapBatchProber prober
+    ) {
+        for (long rowOffset = 0; rowOffset < frameRowCount; rowOffset += BATCH_SIZE) {
+            final int currentBatchSize = (int) Math.min(BATCH_SIZE, frameRowCount - rowOffset);
+
+            prober.resetBatch();
+            for (int i = 0; i < currentBatchSize; i++) {
+                record.setRowIndex(rowOffset + i);
+                mapSink.copy(record, prober);
+            }
+
+            prober.hashAndPrefetch(currentBatchSize);
+
+            for (int i = 0; i < currentBatchSize; i++) {
+                MapValue value = prober.probeWithHash(i);
+                record.setRowIndex(rowOffset + i);
+                if (value.isNew()) {
+                    functionUpdater.updateNew(value, record, baseRowId + rowOffset + i);
+                } else {
+                    functionUpdater.updateExisting(value, record, baseRowId + rowOffset + i);
+                }
+            }
         }
     }
 
@@ -455,106 +483,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         } finally {
             frameMemoryPool.releaseParquetBuffers();
             atom.release(slotId);
-        }
-    }
-
-    /**
-     * Checks if all GROUP BY key functions are direct column references with fixed-size types.
-     */
-    private static void aggregateBatched(
-            int workerId,
-            @NotNull PageFrameMemoryRecord record,
-            int frameIndex,
-            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
-            @NotNull UnorderedPageFrameSequence<?> frameSequence,
-            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
-    ) {
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
-        assert frameRowCount > 0;
-        @SuppressWarnings("unchecked") final AsyncGroupByAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByAtom>) frameSequence).getAtom();
-
-        final boolean owner = stealingFrameSequence == frameSequence;
-        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-        final AsyncFilterContext filterCtx = atom.getFilterContext();
-        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
-
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final GroupByMapFragment fragment = atom.getFragment(slotId);
-        final RecordSink mapSink = atom.getMapSink(slotId);
-        try {
-            atom.resetLocalStats(slotId);
-
-            if (atom.isSharded()) {
-                fragment.shard();
-            }
-
-            record.setRowIndex(0);
-            long baseRowId = record.getRowId();
-
-            Map map = fragment.reopenMap();
-            if (fragment.isNotSharded() && map instanceof OrderedMap orderedMap
-                    && orderedMap.getKeySize() > 0 && !frameMemory.hasColumnTops()) {
-                BatchKeySink batchKeySink = atom.getBatchKeySink(slotId);
-                aggregateBatchedNonSharded(
-                        record, frameRowCount, baseRowId,
-                        functionUpdater, orderedMap, mapSink, batchKeySink
-                );
-            } else {
-                if (fragment.isNotSharded()) {
-                    aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
-                } else {
-                    aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
-                }
-            }
-
-            atom.maybeEnableSharding(fragment);
-        } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
-        }
-    }
-
-    private static void aggregateBatchedNonSharded(
-            PageFrameMemoryRecord record,
-            long frameRowCount,
-            long baseRowId,
-            GroupByFunctionsUpdater functionUpdater,
-            OrderedMap map,
-            RecordSink mapSink,
-            BatchKeySink batchKeySink
-    ) {
-        final int keySize = (int) map.getKeySize();
-
-        for (long rowOffset = 0; rowOffset < frameRowCount; rowOffset += BATCH_SIZE) {
-            final int currentBatchSize = (int) Math.min(BATCH_SIZE, frameRowCount - rowOffset);
-
-            // Pack keys into contiguous buffer using the RecordSink.
-            batchKeySink.resetAppendAddr();
-            for (int i = 0; i < currentBatchSize; i++) {
-                record.setRowIndex(rowOffset + i);
-                mapSink.copy(record, batchKeySink);
-            }
-
-            // Compute hashes and prefetch map slots.
-            long keysAddr = batchKeySink.getKeysAddr();
-            long hashesAddr = batchKeySink.getHashesAddr();
-            Vect.hashAndPrefetch(keysAddr, keySize, currentBatchSize, map.getOffsetsAddr(), map.getMask(), hashesAddr);
-
-            // Probe with precomputed hashes — slots should be in cache.
-            for (int i = 0; i < currentBatchSize; i++) {
-                long hash = Unsafe.getUnsafe().getLong(hashesAddr + (long) i * Long.BYTES);
-                long extKeyAddr = keysAddr + (long) i * keySize;
-                MapValue value = map.probeExternal(extKeyAddr, hash);
-
-                record.setRowIndex(rowOffset + i);
-                if (value.isNew()) {
-                    functionUpdater.updateNew(value, record, baseRowId + rowOffset + i);
-                } else {
-                    functionUpdater.updateExisting(value, record, baseRowId + rowOffset + i);
-                }
-            }
         }
     }
 

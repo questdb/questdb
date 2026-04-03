@@ -25,6 +25,7 @@
 #include <jni.h>
 #include <cstdint>
 #include <cstring>
+#include "util.h"
 
 // Constants matching io.questdb.std.Hash
 static constexpr uint64_t M2 = 0x517cc1b727220a95ULL;
@@ -37,21 +38,28 @@ static inline uint64_t fmix64(uint64_t h) {
     return h ^ (h >> 33);
 }
 
-// Fast path: 4-byte key (e.g., single INT column).
+// Hash.hashMem64 for 4-byte key (sign-extend, used by OrderedMap).
 static inline uint64_t hashMem64_4(const uint8_t *p) {
     int32_t v;
     memcpy(&v, p, 4);
     return fmix64(static_cast<uint64_t>(static_cast<int64_t>(v)));
 }
 
-// Fast path: 8-byte key (e.g., single LONG column).
+// Hash.hashInt64 for 4-byte key (zero-extend, used by Unordered4Map).
+static inline uint64_t hashInt64_4(const uint8_t *p) {
+    uint32_t v;
+    memcpy(&v, p, 4);
+    return fmix64(static_cast<uint64_t>(v));
+}
+
+// Hash.hashMem64 / Hash.hashLong64 for 8-byte key.
 static inline uint64_t hashMem64_8(const uint8_t *p) {
     uint64_t v;
     memcpy(&v, p, 8);
     return fmix64(v);
 }
 
-// Fast path: 12-byte key (e.g., INT + LONG).
+// Hash.hashMem64 for 12-byte key (e.g., INT + LONG).
 static inline uint64_t hashMem64_12(const uint8_t *p) {
     uint64_t v0;
     int32_t v1;
@@ -62,7 +70,7 @@ static inline uint64_t hashMem64_12(const uint8_t *p) {
     return fmix64(h);
 }
 
-// Fast path: 16-byte key (e.g., LONG + LONG or INT + INT + LONG).
+// Hash.hashMem64 for 16-byte key (e.g., LONG + LONG).
 static inline uint64_t hashMem64_16(const uint8_t *p) {
     uint64_t v0, v1;
     memcpy(&v0, p, 8);
@@ -93,8 +101,9 @@ static inline uint64_t hashMem64(const uint8_t *p, int64_t len) {
     return fmix64(h);
 }
 
+// Hash + prefetch with offset list stride of 8 (OrderedMap layout).
 template<uint64_t (*HashFn)(const uint8_t *)>
-static inline void hashAndPrefetchTyped(
+static inline void hashAndPrefetchOffsetList(
         const uint8_t *keys,
         int32_t keySize,
         int32_t keyCount,
@@ -106,14 +115,34 @@ static inline void hashAndPrefetchTyped(
         const uint64_t h = HashFn(keys + (int64_t) i * keySize);
         hashes[i] = static_cast<int64_t>(h);
         const auto index = static_cast<int32_t>(h) & mask;
-        __builtin_prefetch(offsets + ((int64_t) index << 3), 0, 1);
+        MM_PREFETCH_T2(offsets + ((int64_t) index << 3));
+    }
+}
+
+// Hash + prefetch with configurable entry stride (Unordered map layout).
+template<uint64_t (*HashFn)(const uint8_t *)>
+static inline void hashAndPrefetchEntries(
+        const uint8_t *keys,
+        int32_t keySize,
+        int32_t keyCount,
+        const uint8_t *memStart,
+        int32_t entrySize,
+        int32_t mask,
+        int64_t *hashes
+) {
+    for (int32_t i = 0; i < keyCount; i++) {
+        const uint64_t h = HashFn(keys + (int64_t) i * keySize);
+        hashes[i] = static_cast<int64_t>(h);
+        const auto index = static_cast<int32_t>(h) & mask;
+        MM_PREFETCH_T2(memStart + (int64_t) index * entrySize);
     }
 }
 
 extern "C" {
 
+// OrderedMap: offset list with stride 8, hashMem64 semantics.
 JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_hashAndPrefetch(
+Java_io_questdb_cairo_map_OrderedMap_hashAndPrefetch(
         JNIEnv *env,
         jclass cl,
         jlong keysAddr,
@@ -129,26 +158,64 @@ Java_io_questdb_std_Vect_hashAndPrefetch(
 
     switch (keySize) {
         case 4:
-            hashAndPrefetchTyped<hashMem64_4>(keys, keySize, keyCount, offsets, mask, hashes);
+            hashAndPrefetchOffsetList<hashMem64_4>(keys, keySize, keyCount, offsets, mask, hashes);
             break;
         case 8:
-            hashAndPrefetchTyped<hashMem64_8>(keys, keySize, keyCount, offsets, mask, hashes);
+            hashAndPrefetchOffsetList<hashMem64_8>(keys, keySize, keyCount, offsets, mask, hashes);
             break;
         case 12:
-            hashAndPrefetchTyped<hashMem64_12>(keys, keySize, keyCount, offsets, mask, hashes);
+            hashAndPrefetchOffsetList<hashMem64_12>(keys, keySize, keyCount, offsets, mask, hashes);
             break;
         case 16:
-            hashAndPrefetchTyped<hashMem64_16>(keys, keySize, keyCount, offsets, mask, hashes);
+            hashAndPrefetchOffsetList<hashMem64_16>(keys, keySize, keyCount, offsets, mask, hashes);
             break;
         default:
             for (int32_t i = 0; i < keyCount; i++) {
                 const uint64_t h = hashMem64(keys + (int64_t) i * keySize, keySize);
                 hashes[i] = static_cast<int64_t>(h);
                 const auto index = static_cast<int32_t>(h) & mask;
-                __builtin_prefetch(offsets + ((int64_t) index << 3), 0, 1);
+                MM_PREFETCH_T2(offsets + ((int64_t) index << 3));
             }
             break;
     }
+}
+
+// Unordered4Map: entry stride, hashInt64 semantics (zero-extend 4B key).
+JNIEXPORT void JNICALL
+Java_io_questdb_cairo_map_Unordered4Map_hashAndPrefetch(
+        JNIEnv *env,
+        jclass cl,
+        jlong keysAddr,
+        jint keyCount,
+        jlong memStart,
+        jint entrySize,
+        jint mask,
+        jlong hashesOut
+) {
+    const auto *keys = reinterpret_cast<const uint8_t *>(keysAddr);
+    const auto *mem = reinterpret_cast<const uint8_t *>(memStart);
+    auto *hashes = reinterpret_cast<int64_t *>(hashesOut);
+
+    hashAndPrefetchEntries<hashInt64_4>(keys, 4, keyCount, mem, entrySize, mask, hashes);
+}
+
+// Unordered8Map: entry stride, hashLong64 semantics (= hashMem64 for 8B).
+JNIEXPORT void JNICALL
+Java_io_questdb_cairo_map_Unordered8Map_hashAndPrefetch(
+        JNIEnv *env,
+        jclass cl,
+        jlong keysAddr,
+        jint keyCount,
+        jlong memStart,
+        jint entrySize,
+        jint mask,
+        jlong hashesOut
+) {
+    const auto *keys = reinterpret_cast<const uint8_t *>(keysAddr);
+    const auto *mem = reinterpret_cast<const uint8_t *>(memStart);
+    auto *hashes = reinterpret_cast<int64_t *>(hashesOut);
+
+    hashAndPrefetchEntries<hashMem64_8>(keys, 8, keyCount, mem, entrySize, mask, hashes);
 }
 
 } // extern "C"

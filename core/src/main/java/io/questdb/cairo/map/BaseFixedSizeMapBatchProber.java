@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.map;
 
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
@@ -35,27 +35,28 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 
-
 /**
- * A lightweight {@link RecordSinkSPI} that writes fixed-size key columns sequentially
- * to a pre-allocated off-heap buffer. Used for batched GROUP BY key packing where
- * multiple keys are written contiguously into the buffer.
- * <p>
- * Also owns a pre-allocated hashes buffer for the native hashAndPrefetch call.
- * <p>
- * Only fixed-size put methods are supported. Var-size methods throw
+ * Base implementation for fixed-size key batch probers. Manages two off-heap
+ * buffers (keys and hashes) and implements all fixed-size
+ * {@link io.questdb.cairo.RecordSinkSPI} methods. Variable-size methods throw
  * {@link UnsupportedOperationException}.
+ * <p>
+ * Subclasses implement {@link #hashAndPrefetch(int)} and
+ * {@link #probeWithHash(int)} with map-specific logic.
  */
-public class BatchKeySink implements RecordSinkSPI, Reopenable {
-    private final int batchSize;
-    private final int keySize;
-    private long appendAddr;
-    private long hashesAddr;
-    private long keysAddr;
+public abstract class BaseFixedSizeMapBatchProber implements MapBatchProber {
+    protected final int batchSize;
+    protected final int keySize;
+    protected long appendAddr;
+    protected long hashesAddr;
+    protected long keysAddr;
 
-    public BatchKeySink(int batchSize, int keySize) {
+    protected BaseFixedSizeMapBatchProber(int batchSize, int keySize) {
         this.batchSize = batchSize;
         this.keySize = keySize;
+        keysAddr = Unsafe.malloc((long) batchSize * keySize, MemoryTag.NATIVE_DEFAULT);
+        hashesAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        appendAddr = keysAddr;
     }
 
     @Override
@@ -71,28 +72,14 @@ public class BatchKeySink implements RecordSinkSPI, Reopenable {
         appendAddr = 0;
     }
 
-    public long getHashesAddr() {
-        return hashesAddr;
-    }
-
-    public long getKeysAddr() {
-        return keysAddr;
+    @Override
+    public void putArray(ArrayView view) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public void reopen() {
-        if (keysAddr == 0) {
-            keysAddr = Unsafe.malloc((long) batchSize * keySize, MemoryTag.NATIVE_DEFAULT);
-            hashesAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        }
-        appendAddr = keysAddr;
-    }
-
-    /**
-     * Resets the append position to the start of the keys buffer.
-     */
-    public void resetAppendAddr() {
-        appendAddr = keysAddr;
+    public void putBin(BinarySequence value) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -194,35 +181,14 @@ public class BatchKeySink implements RecordSinkSPI, Reopenable {
     }
 
     @Override
+    public void putRecord(Record value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putShort(short value) {
         Unsafe.getUnsafe().putShort(appendAddr, value);
         appendAddr += 2;
-    }
-
-    @Override
-    public void putTimestamp(long value) {
-        Unsafe.getUnsafe().putLong(appendAddr, value);
-        appendAddr += 8;
-    }
-
-    @Override
-    public void skip(int bytes) {
-        appendAddr += bytes;
-    }
-
-    @Override
-    public void putArray(ArrayView view) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putBin(BinarySequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putRecord(Record value) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -236,7 +202,36 @@ public class BatchKeySink implements RecordSinkSPI, Reopenable {
     }
 
     @Override
+    public void putTimestamp(long value) {
+        Unsafe.getUnsafe().putLong(appendAddr, value);
+        appendAddr += 8;
+    }
+
+    @Override
     public void putVarchar(Utf8Sequence value) {
         throw new UnsupportedOperationException();
+    }
+
+    public long getHash(int index) {
+        return Unsafe.getUnsafe().getLong(hashesAddr + (long) index * Long.BYTES);
+    }
+
+    @Override
+    public void reopen() {
+        if (keysAddr == 0) {
+            keysAddr = Unsafe.malloc((long) batchSize * keySize, MemoryTag.NATIVE_DEFAULT);
+            hashesAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+        appendAddr = keysAddr;
+    }
+
+    @Override
+    public void resetBatch() {
+        appendAddr = keysAddr;
+    }
+
+    @Override
+    public void skip(int bytes) {
+        appendAddr += bytes;
     }
 }
