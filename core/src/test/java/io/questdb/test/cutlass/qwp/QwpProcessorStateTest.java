@@ -88,22 +88,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseAfterDisconnectFreesNativeMemory() throws Exception {
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            state.of(1, AllowAllSecurityContext.INSTANCE);
-            // Simulate the fixed onConnectionClosed lifecycle:
-            // onDisconnected() resets per-connection state (WAL writers, symbol caches),
-            // close() frees native memory (bufferAddress, ddlMem, path, symbolCachePool).
-            // Before the fix, only onDisconnected() was called, leaking native memory.
-            state.onDisconnected();
-            state.close();
-        });
-    }
-
-    @Test
     public void testClearFreesResourcesWhenRollbackThrows() throws Exception {
         // When tud.rollback() throws during clear(), the cache enters the
         // distressed path: it frees all TUDs without rolling back and clears
@@ -121,7 +105,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                         AllowAllSecurityContext.INSTANCE,
                         new Utf8String("clear_distress"),
                         null,
-                        null
+                        null,
+                        1
                 );
                 Assert.assertNotNull(tud);
 
@@ -135,6 +120,22 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             } finally {
                 cache.close();
             }
+        });
+    }
+
+    @Test
+    public void testCloseAfterDisconnectFreesNativeMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            state.of(1, AllowAllSecurityContext.INSTANCE);
+            // Simulate the fixed onConnectionClosed lifecycle:
+            // onDisconnected() resets per-connection state (WAL writers, symbol caches),
+            // close() frees native memory (bufferAddress, ddlMem, path, symbolCachePool).
+            // Before the fix, only onDisconnected() was called, leaking native memory.
+            state.onDisconnected();
+            state.close();
         });
     }
 
@@ -186,7 +187,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                         AllowAllSecurityContext.INSTANCE,
                         new Utf8String("commit_drop"),
                         null,
-                        null
+                        null,
+                        1
                 );
                 Assert.assertNotNull(tud);
 
@@ -226,7 +228,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                         AllowAllSecurityContext.INSTANCE,
                         new Utf8String("commit_fail"),
                         null,
-                        null
+                        null,
+                        1
                 );
                 Assert.assertNotNull(tud);
 
