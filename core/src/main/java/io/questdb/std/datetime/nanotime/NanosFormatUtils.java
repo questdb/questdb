@@ -210,6 +210,14 @@ public class NanosFormatUtils {
         return DateFormatUtils.assertString(delimiter, len, in, pos, hi);
     }
 
+    public static long parseOptionalNanosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (p < lim && sequence.charAt(p) == '.') {
+            final long parsed = Nanos.parseNanosAsMicrosGreedy(sequence, p + 1, lim);
+            return Numbers.encodeLowHighInts(Numbers.decodeLowInt(parsed), Numbers.decodeHighInt(parsed) + 1);
+        }
+        return Numbers.encodeLowHighInts(0, 0);
+    }
+
     public static long compute(
             @NotNull DateLocale locale,
             int era,

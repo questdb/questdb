@@ -203,6 +203,22 @@ public class MicrosFormatUtils {
         return DateFormatUtils.assertString(delimiter, len, in, pos, hi);
     }
 
+    public static long parseOptionalMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (p < lim && sequence.charAt(p) == '.') {
+            final long parsed = Numbers.parseLong000000Greedy(sequence, p + 1, lim);
+            return Numbers.encodeLowHighInts(Numbers.decodeLowInt(parsed), Numbers.decodeHighInt(parsed) + 1);
+        }
+        return Numbers.encodeLowHighInts(0, 0);
+    }
+
+    public static long parseOptionalNanosAsMicrosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (p < lim && sequence.charAt(p) == '.') {
+            final long parsed = Micros.parseNanosAsMicrosGreedy(sequence, p + 1, lim);
+            return Numbers.encodeLowHighInts(Numbers.decodeLowInt(parsed), Numbers.decodeHighInt(parsed) + 1);
+        }
+        return Numbers.encodeLowHighInts(0, 0);
+    }
+
     public static long compute(
             @NotNull DateLocale locale,
             int era,

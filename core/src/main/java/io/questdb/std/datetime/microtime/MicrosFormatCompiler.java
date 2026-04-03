@@ -84,6 +84,8 @@ public class MicrosFormatCompiler {
     static final int OP_NANOS_GREEDY9 = 52;
     static final int OP_NANOS_ONE_DIGIT = 40;
     static final int OP_NANOS_THREE_DIGITS = 50;
+    static final int OP_OPTIONAL_MICROS_GREEDY6 = 150;
+    static final int OP_OPTIONAL_NANOS_GREEDY9 = 151;
     static final int OP_SECOND_GREEDY = 145;
     static final int OP_SECOND_ONE_DIGIT = 20;
     static final int OP_SECOND_TWO_DIGITS = 30;
@@ -213,14 +215,41 @@ public class MicrosFormatCompiler {
             }
         }
 
-        // make last operation "greedy"
+        // Normalize ".fraction" into synthetic ops so the parser can treat the
+        // fractional part as optional without carrying a standalone '.' token.
         makeLastOpGreedy(ops);
+        collapseOptionalFractions(ops, delimiters);
         return generic ? new GenericMicrosFormat(ops, delimiters) : compile(ops, delimiters);
     }
 
     private static void addOp(String op, int opDayTwoDigits) {
         opMap.put(op, opDayTwoDigits);
         opList.add(op);
+    }
+
+    private static void collapseOptionalFractions(IntList ops, ObjList<String> delimiters) {
+        for (int i = 0, n = ops.size() - 1; i < n; i++) {
+            final int op = ops.getQuick(i);
+            if (op >= 0) {
+                continue;
+            }
+
+            final String delimiter = delimiters.getQuick(-op - 1);
+            if (!".".equals(delimiter)) {
+                continue;
+            }
+
+            final int fractionOp = ops.getQuick(i + 1);
+            if (fractionOp == OP_MICROS_GREEDY6) {
+                ops.setQuick(i, OP_OPTIONAL_MICROS_GREEDY6);
+                ops.removeIndex(i + 1);
+                n--;
+            } else if (fractionOp == OP_NANOS_GREEDY9) {
+                ops.setQuick(i, OP_OPTIONAL_NANOS_GREEDY9);
+                ops.removeIndex(i + 1);
+                n--;
+            }
+        }
     }
 
     private static String toString(CharSequence cs) {
@@ -323,6 +352,16 @@ public class MicrosFormatCompiler {
                 // MICROS6 & NANOS9 are formatted the same
                 case MicrosFormatCompiler.OP_MICROS_GREEDY6:
                 case MicrosFormatCompiler.OP_NANOS_GREEDY9:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);
+                    asm.invokeStatic(append00000Index);
+                    break;
+                case MicrosFormatCompiler.OP_OPTIONAL_MICROS_GREEDY6:
+                case MicrosFormatCompiler.OP_OPTIONAL_NANOS_GREEDY9:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iconst('.');
+                    asm.invokeInterface(sinkPutChrIndex, 1);
+                    asm.pop();
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_SECOND_MICROS]);
                     asm.invokeStatic(append00000Index);
@@ -859,6 +898,36 @@ public class MicrosFormatCompiler {
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseNanosAsMicrosGreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MICROS);
                     break;
+                case OP_OPTIONAL_MICROS_GREEDY6: {
+                    final int preStackState = stackState;
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    parseOptionalGreedyAndStore(
+                            charAtIndex,
+                            parseLong000000GreedyIndex,
+                            decodeLenIndex,
+                            decodeIntIndex,
+                            LOCAL_MICROS,
+                            preStackState,
+                            stackState
+                    );
+                    break;
+                }
+                case OP_OPTIONAL_NANOS_GREEDY9: {
+                    final int preStackState = stackState;
+                    stackState &= ~(1 << LOCAL_MICROS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    parseOptionalGreedyAndStore(
+                            charAtIndex,
+                            parseNanosAsMicrosGreedyIndex,
+                            decodeLenIndex,
+                            decodeIntIndex,
+                            LOCAL_MICROS,
+                            preStackState,
+                            stackState
+                    );
+                    break;
+                }
                 case OP_NANOS_ONE_DIGIT:
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, -1);
                     break;
@@ -1573,6 +1642,8 @@ public class MicrosFormatCompiler {
                 // formatting method for MICROS6 and NANOS9 is the same
                 case MicrosFormatCompiler.OP_MICROS_GREEDY6:
                 case MicrosFormatCompiler.OP_NANOS_GREEDY9:
+                case MicrosFormatCompiler.OP_OPTIONAL_MICROS_GREEDY6:
+                case MicrosFormatCompiler.OP_OPTIONAL_NANOS_GREEDY9:
                     attributes |= (1 << FA_SECOND_MICROS);
                     break;
 
@@ -1681,12 +1752,18 @@ public class MicrosFormatCompiler {
                     result |= (1 << LOCAL_TEMP_LONG);
                     break;
                 case OP_MICROS_GREEDY3:
+                case OP_MICROS_GREEDY6:
+                case OP_OPTIONAL_MICROS_GREEDY6:
+                case OP_NANOS_GREEDY9:
+                case OP_OPTIONAL_NANOS_GREEDY9:
                     result |= (1 << LOCAL_TEMP_LONG);
                     // fall through
                 case OP_MICROS_ONE_DIGIT:
                 case OP_MICROS_THREE_DIGITS:
-                case OP_MICROS_GREEDY6:
                     result |= (1 << LOCAL_MICROS);
+                    break;
+                case OP_NANOS_GREEDY:
+                    result |= (1 << LOCAL_TEMP_LONG);
                     break;
                 case OP_MILLIS_GREEDY:
                     result |= (1 << LOCAL_TEMP_LONG);
@@ -1809,6 +1886,50 @@ public class MicrosFormatCompiler {
             asm.pop();
         }
         addTempToPos(decodeLenIndex);
+    }
+
+    private void parseOptionalGreedyAndStore(
+            int charAtIndex,
+            int parseGreedyIndex,
+            int decodeLenIndex,
+            int decodeIntIndex,
+            int target,
+            int preStackState,
+            int postStackState
+    ) {
+        asm.iload(LOCAL_POS);
+        asm.iload(P_HI);
+        int noFractionBranch = asm.if_icmpge();
+
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.invokeInterface(charAtIndex, 1);
+        asm.iconst('.');
+        int notDotBranch = asm.if_icmpne();
+
+        asm.iinc(LOCAL_POS, 1);
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.iload(P_HI);
+        asm.invokeStatic(parseGreedyIndex);
+        asm.lstore(LOCAL_TEMP_LONG);
+        decodeInt(decodeIntIndex);
+        asm.istore(target);
+        addTempToPos(decodeLenIndex);
+        int doneBranch = asm.goto_();
+
+        int p = asm.position();
+        frameOffsets.add(Numbers.encodeLowHighInts(preStackState, p));
+        asm.setJmp(noFractionBranch, p);
+        asm.setJmp(notDotBranch, p);
+        asm.iconst(0);
+        asm.istore(target);
+        asm.lconst_0();
+        asm.lstore(LOCAL_TEMP_LONG);
+
+        p = asm.position();
+        frameOffsets.add(Numbers.encodeLowHighInts(postStackState, p));
+        asm.setJmp(doneBranch, p);
     }
 
     private int makeGreedy(int oldOp) {

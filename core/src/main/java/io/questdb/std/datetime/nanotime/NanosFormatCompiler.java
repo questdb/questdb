@@ -83,6 +83,7 @@ public class NanosFormatCompiler {
     static final int OP_NANOS_GREEDY9 = 52;
     static final int OP_NANOS_ONE_DIGIT = 40;
     static final int OP_NANOS_THREE_DIGITS = 50;
+    static final int OP_OPTIONAL_NANOS_GREEDY9 = 150;
     static final int OP_SECOND_GREEDY = 145;
     static final int OP_SECOND_ONE_DIGIT = 20;
     static final int OP_SECOND_TWO_DIGITS = 30;
@@ -207,14 +208,32 @@ public class NanosFormatCompiler {
             }
         }
 
-        // make last operation "greedy"
+        // Normalize ".fraction" into a synthetic op so the parser can handle
+        // optional fractions without carrying a standalone '.' token.
         makeLastOpGreedy(ops);
+        collapseOptionalFractions(ops, delimiters);
         return generic ? new GenericNanosFormat(ops, delimiters) : compile(ops, delimiters);
     }
 
     private static void addOp(String op, int opDayTwoDigits) {
         opMap.put(op, opDayTwoDigits);
         opList.add(op);
+    }
+
+    private static void collapseOptionalFractions(IntList ops, ObjList<String> delimiters) {
+        for (int i = 0, n = ops.size() - 1; i < n; i++) {
+            final int op = ops.getQuick(i);
+            if (op >= 0) {
+                continue;
+            }
+
+            final String delimiter = delimiters.getQuick(-op - 1);
+            if (".".equals(delimiter) && ops.getQuick(i + 1) == OP_NANOS_GREEDY9) {
+                ops.setQuick(i, OP_OPTIONAL_NANOS_GREEDY9);
+                ops.removeIndex(i + 1);
+                n--;
+            }
+        }
     }
 
     private static String toString(CharSequence cs) {
@@ -317,6 +336,15 @@ public class NanosFormatCompiler {
                     asm.pop();
                     break;
                 case OP_NANOS_GREEDY9:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_NANOS9]);
+                    asm.invokeStatic(append00000000Index);
+                    break;
+                case OP_OPTIONAL_NANOS_GREEDY9:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iconst('.');
+                    asm.invokeInterface(sinkPutChrIndex, 1);
+                    asm.pop();
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_NANOS9]);
                     asm.invokeStatic(append00000000Index);
@@ -859,6 +887,21 @@ public class NanosFormatCompiler {
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseNanosAsMicrosGreedyIndex, decodeLenIndex, decodeIntIndex, LOCAL_NANOS);
                     break;
+                case OP_OPTIONAL_NANOS_GREEDY9: {
+                    final int preStackState = stackState;
+                    stackState &= ~(1 << LOCAL_NANOS);
+                    stackState &= ~(1 << LOCAL_TEMP_LONG);
+                    parseOptionalGreedyAndStore(
+                            charAtIndex,
+                            parseNanosAsMicrosGreedyIndex,
+                            decodeLenIndex,
+                            decodeIntIndex,
+                            LOCAL_NANOS,
+                            preStackState,
+                            stackState
+                    );
+                    break;
+                }
                 case OP_NANOS_ONE_DIGIT:
                     stackState &= ~(1 << LOCAL_NANOS);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_NANOS);
@@ -1339,14 +1382,13 @@ public class NanosFormatCompiler {
                         asm.putITEM_Top();
                     }
 
-                    // this was going to support nanos
-                    if ((ss & (1 << LOCAL_NANOS)) == 0) {
+                    if ((ss & (1 << LOCAL_WEEK)) == 0) {
                         asm.putITEM_Integer();
                     } else {
                         asm.putITEM_Top();
                     }
 
-                    if ((ss & (1 << LOCAL_WEEK)) == 0) {
+                    if ((ss & (1 << LOCAL_NANOS)) == 0) {
                         asm.putITEM_Integer();
                     } else {
                         asm.putITEM_Top();
@@ -1589,6 +1631,7 @@ public class NanosFormatCompiler {
                     break;
                 // NANOS9
                 case OP_NANOS_GREEDY9:
+                case OP_OPTIONAL_NANOS_GREEDY9:
                     attributes |= (1 << FA_NANOS9);
                     break;
                 // MILLIS
@@ -1698,6 +1741,15 @@ public class NanosFormatCompiler {
                 case OP_MICROS_ONE_DIGIT:
                 case OP_MICROS_THREE_DIGITS:
                     result |= (1 << LOCAL_MICROS);
+                    break;
+                case OP_NANOS_GREEDY9:
+                case OP_OPTIONAL_NANOS_GREEDY9:
+                case OP_NANOS_GREEDY:
+                    result |= (1 << LOCAL_TEMP_LONG);
+                    // fall through
+                case OP_NANOS_ONE_DIGIT:
+                case OP_NANOS_THREE_DIGITS:
+                    result |= (1 << LOCAL_NANOS);
                     break;
                 case OP_MILLIS_GREEDY:
                     result |= (1 << LOCAL_TEMP_LONG);
@@ -1820,6 +1872,50 @@ public class NanosFormatCompiler {
             asm.pop();
         }
         addTempToPos(decodeLenIndex);
+    }
+
+    private void parseOptionalGreedyAndStore(
+            int charAtIndex,
+            int parseGreedyIndex,
+            int decodeLenIndex,
+            int decodeIntIndex,
+            int target,
+            int preStackState,
+            int postStackState
+    ) {
+        asm.iload(LOCAL_POS);
+        asm.iload(P_HI);
+        int noFractionBranch = asm.if_icmpge();
+
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.invokeInterface(charAtIndex, 1);
+        asm.iconst('.');
+        int notDotBranch = asm.if_icmpne();
+
+        asm.iinc(LOCAL_POS, 1);
+        asm.aload(P_INPUT_STR);
+        asm.iload(LOCAL_POS);
+        asm.iload(P_HI);
+        asm.invokeStatic(parseGreedyIndex);
+        asm.lstore(LOCAL_TEMP_LONG);
+        decodeInt(decodeIntIndex);
+        asm.istore(target);
+        addTempToPos(decodeLenIndex);
+        int doneBranch = asm.goto_();
+
+        int p = asm.position();
+        frameOffsets.add(Numbers.encodeLowHighInts(preStackState, p));
+        asm.setJmp(noFractionBranch, p);
+        asm.setJmp(notDotBranch, p);
+        asm.iconst(0);
+        asm.istore(target);
+        asm.lconst_0();
+        asm.lstore(LOCAL_TEMP_LONG);
+
+        p = asm.position();
+        frameOffsets.add(Numbers.encodeLowHighInts(postStackState, p));
+        asm.setJmp(doneBranch, p);
     }
 
     private int makeGreedy(int oldOp) {
