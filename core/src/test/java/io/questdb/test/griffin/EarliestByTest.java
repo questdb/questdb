@@ -816,5 +816,320 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
+
+    // =====================================================================
+    // Additional table-based tests for code coverage
+    // =====================================================================
+
+    // =====================================================================
+    // Parser edge cases
+    // =====================================================================
+
+    @Test
+    public void testEarliestParserInvalidSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+
+            assertException(
+                    "SELECT s, ts FROM t EARLIEST something",
+                    29,
+                    "'on' or 'by' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestParserMixOldAndNewSyntax() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+
+            assertException(
+                    "SELECT s, ts FROM t WHERE s = 'a' EARLIEST BY s EARLIEST ON ts PARTITION BY s",
+                    43,
+                    "'on' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestAndLatestMixed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+
+            assertException(
+                    "SELECT s, ts FROM t LATEST ON ts PARTITION BY s EARLIEST ON ts PARTITION BY s",
+                    48,
+                    "cannot use both LATEST and EARLIEST in the same query"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a','b') s, rnd_int(0,100,0) v, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertException(
+                    "SELECT s, v FROM (SELECT s, v FROM t) EARLIEST ON ts PARTITION BY s",
+                    50,
+                    "Invalid column: ts"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestWhereAfterEarliestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+
+            assertException(
+                    "SELECT s, ts FROM t EARLIEST ON ts PARTITION BY s WHERE s = 'a'",
+                    50,
+                    "unexpected where clause after 'earliest on'"
+            );
+        });
+    }
+
+    // =====================================================================
+    // Additional code path coverage
+    // =====================================================================
+
+    @Test
+    public void testEarliestByMultiplePartitionColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b') s1, rnd_symbol('x', 'y') s2, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Multi-column partition by goes through the AllSymbolsFiltered path
+            printSql("SELECT ts, s1, s2 FROM t EARLIEST ON ts PARTITION BY s1, s2");
+        });
+    }
+
+    @Test
+    public void testEarliestByWithWhereClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b', 'c') s, rnd_int(0,100,0) v, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(30)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // WHERE + EARLIEST ON triggers the table query with filter path
+            printSql("SELECT ts, s FROM t WHERE v > 50 EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestByWithIntervalFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b') s, " +
+                    "timestamp_sequence('2024-01-01', 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(48)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Interval filter with earliest on
+            printSql("SELECT ts, s FROM t WHERE ts >= '2024-01-01T12:00:00' AND ts < '2024-01-02' EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestByExcludedValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b', 'c') s, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(30)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // WHERE s NOT IN triggers excludedKeyValues path
+            printSql("SELECT ts, s FROM t WHERE s != 'c' EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestByMultipleValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b', 'c', 'd') s, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(30)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Multiple values in IN list triggers multi-value path
+            printSql("SELECT ts, s FROM t WHERE s IN ('a', 'b', 'c') EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestByReentrantCursor() throws Exception {
+        // Tests cursor reuse (close + reopen path) on direct table scan
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b') s, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            String expected = "ts\ts\n" +
+                    "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                    "1970-01-01T02:00:00.000000" + suffix + "\tb\n";
+
+            // Execute twice to test cursor reuse
+            assertSql(expected, "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s");
+            assertSql(expected, "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestByConstantFilter() throws Exception {
+        // Tests the constant filter optimization (filter always false)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b') s, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertSql(
+                    "s\tts\n",
+                    "SELECT s, ts FROM t WHERE 1 = 0 EARLIEST ON ts PARTITION BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByNonIndexedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T01:00:00'), ('b', '1970-01-01T00:00:00'), " +
+                    "('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T02:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\tb\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n",
+                    "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, '1970-01-01T01:00:00'), ('b', 2, '1970-01-01T00:00:00'), " +
+                    "('a', 3, '1970-01-01T00:00:00'), ('b', 4, '1970-01-01T02:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // Indexed symbol with single value filter
+            assertQuery(
+                    "ts\ts\tv\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\t3\n",
+                    "SELECT ts, s, v FROM t WHERE s = 'a' EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedSymbolSingleValue() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T02:00:00'), ('b', '1970-01-01T00:00:00'), " +
+                    "('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n",
+                    "SELECT ts, s FROM t WHERE s = 'a' EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByNonSymbolColumn() throws Exception {
+        // Non-symbol partition column goes through AllFiltered path
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '1970-01-01T02:00:00'), (2, '1970-01-01T00:00:00'), " +
+                    "(1, '1970-01-01T00:00:00'), (2, '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertSql(
+                    "ts\tv\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\t2\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\t1\n",
+                    "SELECT ts, v FROM t EARLIEST ON ts PARTITION BY v"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByDeprecatedSyntaxMultiColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b') s1, rnd_symbol('x', 'y') s2, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Deprecated EARLIEST BY with multiple columns
+            printSql("SELECT ts, s1, s2 FROM t EARLIEST BY s1, s2");
+        });
+    }
+
+    @Test
+    public void testEarliestByLargeDataset() throws Exception {
+        // Larger dataset to exercise cursor iteration and map building more thoroughly
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b', 'c', 'd', 'e') s, rnd_int(0,1000,0) v, " +
+                    "timestamp_sequence(0, 1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(10000)) TIMESTAMP(ts) PARTITION BY HOUR");
+
+            printSql("SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestByWithFilterAndSingleValue() throws Exception {
+        // WHERE filter + single symbol value earliest by
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 10, '1970-01-01T02:00:00'), ('b', 20, '1970-01-01T00:00:00'), " +
+                    "('a', 30, '1970-01-01T00:00:00'), ('b', 40, '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertSql(
+                    "ts\ts\tv\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\t30\n",
+                    "SELECT ts, s, v FROM t WHERE s = 'a' AND v > 15 EARLIEST ON ts PARTITION BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByManySymbolValues() throws Exception {
+        // Tests with many distinct partition values to exercise map growth
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t') s, " +
+                    "timestamp_sequence(0, 1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY HOUR");
+
+            // Many distinct symbols through direct table scan
+            printSql("SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s");
+        });
+    }
 }
 
