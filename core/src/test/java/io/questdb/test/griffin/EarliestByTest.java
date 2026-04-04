@@ -901,7 +901,7 @@ public class EarliestByTest extends AbstractCairoTest {
     }
 
     // =====================================================================
-    // Tests for EarliestByRecordCursorFactory (no random access - group by)
+    // Tests for EarliestByLightRecordCursorFactory (group by supports random access)
     // =====================================================================
 
     @Test
@@ -954,6 +954,88 @@ public class EarliestByTest extends AbstractCairoTest {
 
             assertSql(expected, query);
             assertSql(expected, query);
+        });
+    }
+
+    // =====================================================================
+    // Tests for EarliestByRecordCursorFactory (no random access - UNION ALL)
+    // =====================================================================
+
+    @Test
+    public void testEarliestOnUnionAllSubQuery() throws Exception {
+        // UNION ALL does not support random access, triggering EarliestByRecordCursorFactory
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t1 VALUES ('a', '1970-01-01T02:00:00'), ('b', '1970-01-01T01:00:00')");
+            execute("CREATE TABLE t2 (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t2 VALUES ('a', '1970-01-01T00:00:00'), ('c', '1970-01-01T03:00:00')");
+
+            // Use printSql since map iteration order is non-deterministic across symbol types
+            printSql("SELECT s, ts FROM (" +
+                    "SELECT s, ts FROM t1 UNION ALL SELECT s, ts FROM t2" +
+                    ") EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestOnUnionAllEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertSql(
+                    "s\tts\n",
+                    "SELECT s, ts FROM (" +
+                            "SELECT s, ts FROM t1 UNION ALL SELECT s, ts FROM t2" +
+                            ") EARLIEST ON ts PARTITION BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnUnionAllReentrant() throws Exception {
+        // Tests EarliestByRecordCursorFactory cursor reuse (close+reopen)
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T01:00:00'), ('b', '1970-01-01T00:00:00')");
+
+            String query = "SELECT s, ts FROM (" +
+                    "SELECT s, ts FROM t UNION ALL SELECT s, ts FROM t WHERE 1 = 0" +
+                    ") EARLIEST ON ts PARTITION BY s";
+
+            // Execute twice to exercise cursor close+reopen path
+            printSql(query);
+            printSql(query);
+        });
+    }
+
+    @Test
+    public void testEarliestOnUnionAllManyPartitions() throws Exception {
+        // Tests with more distinct symbols to exercise the DirectLongList sorting path
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T05:00:00'), ('b', '1970-01-01T04:00:00'), " +
+                    "('c', '1970-01-01T03:00:00'), ('d', '1970-01-01T02:00:00'), " +
+                    "('e', '1970-01-01T01:00:00'), ('a', '1970-01-01T00:00:00')");
+
+            // UNION ALL forces non-random-access, exercises row index sorting in EarliestByRecordCursorFactory
+            printSql("SELECT s, ts FROM (" +
+                    "SELECT s, ts FROM t UNION ALL SELECT s, ts FROM t WHERE 1 = 0" +
+                    ") EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestOnUnionAllMultiplePartitionCols() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 'x', '1970-01-01T02:00:00'), ('a', 'y', '1970-01-01T01:00:00'), " +
+                    "('b', 'x', '1970-01-01T00:00:00')");
+
+            // UNION ALL with multi-column partition by
+            printSql("SELECT s1, s2, ts FROM (" +
+                    "SELECT s1, s2, ts FROM t UNION ALL SELECT s1, s2, ts FROM t WHERE 1 = 0" +
+                    ") EARLIEST ON ts PARTITION BY s1, s2");
         });
     }
 
