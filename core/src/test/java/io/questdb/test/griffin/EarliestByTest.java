@@ -1267,5 +1267,239 @@ public class EarliestByTest extends AbstractCairoTest {
             printSql("SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s");
         });
     }
+
+    // =====================================================================
+    // Targeted coverage: excluded symbol values path (ValueListRecordCursor)
+    // =====================================================================
+
+    @Test
+    public void testEarliestByExcludedSymbolNoFilter() throws Exception {
+        // Triggers findRestrictedExcludedOnlyNoFilter in EarliestByValueListRecordCursor
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T01:00:00'), " +
+                    "('c', '1970-01-01T02:00:00'), ('a', '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t WHERE s != 'c' EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByExcludedSymbolWithFilter() throws Exception {
+        // Triggers findRestrictedExcludedOnlyWithFilter in EarliestByValueListRecordCursor
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 10, '1970-01-01T00:00:00'), ('b', 20, '1970-01-01T01:00:00'), " +
+                    "('c', 30, '1970-01-01T02:00:00'), ('a', 40, '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertSql(
+                    "ts\ts\tv\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\tb\t20\n",
+                    "SELECT ts, s, v FROM t WHERE s != 'c' AND s != 'a' AND v > 15 EARLIEST ON ts PARTITION BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIncludedAndExcludedSymbols() throws Exception {
+        // Triggers findRestrictedNoFilter/findRestrictedWithFilter paths
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T01:00:00'), " +
+                    "('c', '1970-01-01T02:00:00'), ('d', '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // IN list with NOT EQUAL: includedSymbolKeys + excludedSymbolKeys
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T02:00:00.000000" + suffix + "\tc\n",
+                    "SELECT ts, s FROM t WHERE s IN ('a', 'b', 'c') AND s != 'b' EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    // =====================================================================
+    // Targeted coverage: non-existent symbol values (DeferredListValues)
+    // =====================================================================
+
+    @Test
+    public void testEarliestByNonExistentSymbolValue() throws Exception {
+        // Triggers VALUE_NOT_FOUND path in lookupDeferredSymbols
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T01:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n",
+                    "SELECT ts, s FROM t WHERE s IN ('a', 'nonexistent') EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByNonExistentExcludedSymbol() throws Exception {
+        // Triggers VALUE_NOT_FOUND path in excluded symbol lookup
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T01:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // Exclude a symbol that doesn't exist in the table
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t WHERE s != 'nonexistent' EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    // =====================================================================
+    // Targeted coverage: AllSymbols early termination
+    // =====================================================================
+
+    @Test
+    public void testEarliestByAllSymbolsEarlyTermination() throws Exception {
+        // Tests early termination when all symbol combinations found in first partition
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            // All combinations appear in first day, second day should not be scanned
+            execute("INSERT INTO t VALUES ('a', 'x', '1970-01-01T00:00:00'), ('a', 'y', '1970-01-01T01:00:00'), " +
+                    "('b', 'x', '1970-01-01T02:00:00'), ('b', 'y', '1970-01-01T03:00:00'), " +
+                    "('a', 'x', '1970-01-02T00:00:00'), ('b', 'y', '1970-01-02T01:00:00')");
+
+            // All 4 combinations found in first partition - exercises early termination
+            printSql("SELECT ts, s1, s2 FROM t EARLIEST ON ts PARTITION BY s1, s2");
+        });
+    }
+
+    @Test
+    public void testEarliestByAllSymbolsWithFilter() throws Exception {
+        // Multi-symbol partition with WHERE filter
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 'x', 10, '1970-01-01T00:00:00'), ('a', 'y', 20, '1970-01-01T01:00:00'), " +
+                    "('b', 'x', 30, '1970-01-01T02:00:00'), ('a', 'x', 40, '1970-01-01T03:00:00')");
+
+            // Filter narrows results
+            printSql("SELECT ts, s1, s2 FROM t WHERE v > 15 EARLIEST ON ts PARTITION BY s1, s2");
+        });
+    }
+
+    // =====================================================================
+    // Targeted coverage: indexed symbol without WHERE (AllIndexed path)
+    // =====================================================================
+
+    @Test
+    public void testEarliestByIndexedSymbolNoFilter() throws Exception {
+        // Triggers EarliestByAllIndexedRecordCursorFactory without filter
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 10, '1970-01-01T02:00:00'), ('b', 20, '1970-01-01T00:00:00'), " +
+                    "('a', 30, '1970-01-01T00:00:00'), ('b', 40, '1970-01-01T03:00:00')");
+
+            // No WHERE clause with indexed symbol column
+            printSql("SELECT ts, s, v FROM t EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedSymbolMultiplePartitions() throws Exception {
+        // Tests indexed scan across multiple table partitions
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00'), ('b', '1970-01-02T00:00:00'), " +
+                    "('a', '1970-01-02T00:00:00'), ('b', '1970-01-01T00:00:00')");
+
+            // Indexed symbol scan across partition boundaries
+            printSql("SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    // =====================================================================
+    // Targeted coverage: interval-filtered EARLIEST ON
+    // =====================================================================
+
+    @Test
+    public void testEarliestByWithIntervalFilterDeterministic() throws Exception {
+        // Triggers IntervalPartitionFrameCursorFactory path in generateEarliestByTableQuery
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T06:00:00'), " +
+                    "('a', '1970-01-01T12:00:00'), ('b', '1970-01-01T18:00:00'), " +
+                    "('a', '1970-01-02T00:00:00'), ('b', '1970-01-02T06:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T12:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T18:00:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t WHERE ts >= '1970-01-01T12:00:00' AND ts < '1970-01-02' EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    // =====================================================================
+    // Targeted coverage: LIMIT/OFFSET with EARLIEST ON
+    // =====================================================================
+
+    @Test
+    public void testEarliestByWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T01:00:00'), " +
+                    "('c', '1970-01-01T02:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertSql(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n",
+                    "SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s LIMIT 1"
+            );
+        });
+    }
+
+    // =====================================================================
+    // Targeted coverage: DefaultCairoConfiguration
+    // =====================================================================
+
+    @Test
+    public void testEarliestByConfigurationDefaults() throws Exception {
+        // Just ensure the configuration method is called
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t as (" +
+                    "SELECT rnd_symbol('a', 'b') s, " +
+                    "timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
+                    "FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            // Execute query that uses earliest by row count configuration
+            printSql("SELECT s, ts FROM (SELECT s, ts FROM t) EARLIEST ON ts PARTITION BY s");
+        });
+    }
 }
 
