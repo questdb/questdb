@@ -160,10 +160,6 @@ public class NanosFormatCompiler {
         }
     }
 
-    public static int getOpCount() {
-        return opList.size();
-    }
-
     public DateFormat compile(CharSequence pattern) {
         return compile(pattern, false);
     }
@@ -1174,7 +1170,7 @@ public class NanosFormatCompiler {
 
                     break;
                 default:
-                    CommonUtils.assembleDefault(assertStringIndex, assertCharIndex, delimIndices, op, delimiters,asm, P_INPUT_STR, LOCAL_POS, P_HI);
+                    CommonUtils.assembleDefault(assertStringIndex, assertCharIndex, delimIndices, op, delimiters, asm, P_INPUT_STR, LOCAL_POS, P_HI);
                     break;
             }
         }
