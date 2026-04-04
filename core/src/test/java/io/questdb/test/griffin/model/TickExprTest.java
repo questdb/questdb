@@ -1531,6 +1531,115 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateListImpreciseYearLevelNonLeap() throws SqlException {
+        // Non-leap year: [2023]T09:30 should expand to 365 days
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        String imprecise = "[2023]T09:30";
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(365, out.size() / 2);
+    }
+
+    @Test
+    public void testDateListImpreciseDecember() throws SqlException {
+        // December (month 12) boundary: [2024-12]T09:30 should produce 31 intervals
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String imprecise = "[2024-12]T09:30";
+        String explicit = "[2024-12-[01..31]]T09:30";
+        out.clear();
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        String impreciseResult = intervalToString(timestampDriver, out).toString();
+        out.clear();
+        parseTickExpr(timestampDriver, explicit, 0, explicit.length(), 0, out, IntervalOperation.INTERSECT);
+        String explicitResult = intervalToString(timestampDriver, out).toString();
+        TestUtils.assertEquals(explicitResult, impreciseResult);
+        Assert.assertEquals(31, out.size() / 2);
+    }
+
+    @Test
+    public void testDateListImpreciseNonLeapFebruary() throws SqlException {
+        // Non-leap year February: [2023-02]T09:30 should produce 28 intervals
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        String imprecise = "[2023-02]T09:30";
+        String explicit = "[2023-02-[01..28]]T09:30";
+        out.clear();
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        String impreciseResult = intervalToString(timestampDriver, out).toString();
+        out.clear();
+        parseTickExpr(timestampDriver, explicit, 0, explicit.length(), 0, out, IntervalOperation.INTERSECT);
+        String explicitResult = intervalToString(timestampDriver, out).toString();
+        TestUtils.assertEquals(explicitResult, impreciseResult);
+        Assert.assertEquals(28, out.size() / 2);
+    }
+
+    @Test
+    public void testDateListImpreciseCenturyNonLeapFebruary() throws SqlException {
+        // Century non-leap year: 2100 is not a leap year (divisible by 100 but not 400)
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        String imprecise = "[2100-02]T09:30";
+        parseTickExpr(timestampDriver, imprecise, 0, imprecise.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(28, out.size() / 2);
+    }
+
+    @Test
+    public void testDateListImpreciseInvalidMonthZero() {
+        // Month 0 should produce an error, not ArrayIndexOutOfBoundsException
+        assertBracketIntervalError("[2024-00]T09:30", "Invalid date");
+    }
+
+    @Test
+    public void testDateListImpreciseInvalidMonth13() {
+        // Month 13 should produce an error, not ArrayIndexOutOfBoundsException
+        assertBracketIntervalError("[2024-13]T09:30", "Invalid date");
+    }
+
+    @Test
+    public void testDateListImpreciseBareInvalidMonth() {
+        // Bare expression with invalid month
+        assertBracketIntervalError("2024-13T09:30", "Invalid date");
+    }
+
+    @Test
+    public void testDateListImpreciseBracketExpansionTimestamps() throws SqlException {
+        // Verify actual timestamp values for bracket expansion, not just count
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        String interval = "2024-[01..02]T09:30";
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        // 31 (Jan) + 29 (Feb, leap year) = 60 days
+        Assert.assertEquals(60, out.size() / 2);
+        // Verify first interval is Jan 1 09:30
+        long firstLo = out.getQuick(0);
+        Assert.assertEquals(2024, timestampDriver.getYear(firstLo));
+        Assert.assertEquals(1, timestampDriver.getMonthOfYear(firstLo));
+        Assert.assertEquals(1, timestampDriver.getDayOfMonth(firstLo));
+        // Verify last interval is Feb 29 09:30
+        long lastLo = out.getQuick((60 - 1) * 2);
+        Assert.assertEquals(2024, timestampDriver.getYear(lastLo));
+        Assert.assertEquals(2, timestampDriver.getMonthOfYear(lastLo));
+        Assert.assertEquals(29, timestampDriver.getDayOfMonth(lastLo));
+    }
+
+    @Test
+    public void testDateListImpreciseMixedPrecisionTimestamps() throws SqlException {
+        // Verify the precise element appears alongside imprecise expansion
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        String interval = "[2024-01-15, 2024-02]T09:30";
+        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(30, out.size() / 2); // 1 + 29
+        // First interval: Jan 15
+        long firstLo = out.getQuick(0);
+        Assert.assertEquals(1, timestampDriver.getMonthOfYear(firstLo));
+        Assert.assertEquals(15, timestampDriver.getDayOfMonth(firstLo));
+        // Second interval: Feb 1
+        long secondLo = out.getQuick(2);
+        Assert.assertEquals(2, timestampDriver.getMonthOfYear(secondLo));
+        Assert.assertEquals(1, timestampDriver.getDayOfMonth(secondLo));
+    }
+
+    @Test
     public void testDateListBracketExpansionWithPerElementDayFilter() throws SqlException {
         // Bracket expansion inside element WITH per-element day filter
         // [2024-01-[01..07]#Mon,2024-01-15] - the #Mon applies to all expanded dates from 01..07
@@ -5290,7 +5399,7 @@ public class TickExprTest {
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
                         : expected,
                 intervalToString(timestampDriver, out)
         );
@@ -5315,7 +5424,7 @@ public class TickExprTest {
         parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, now);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
                         : expected,
                 intervalToString(timestampDriver, out)
         );
@@ -5407,7 +5516,7 @@ public class TickExprTest {
         timestampDriver.append(sink, t);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("Z", "000Z").replaceAll("999999Z", "999999999Z")
+                        ? expected.replace("Z", "000Z").replace("999999Z", "999999999Z")
                         : expected,
                 sink
         );
@@ -5442,7 +5551,7 @@ public class TickExprTest {
         String expected = expectedBuilder.build(randomNow, timestampDriver, timestampType);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
                         : expected,
                 intervalToString(timestampDriver, out)
         );
@@ -5458,7 +5567,7 @@ public class TickExprTest {
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
                         : expected,
                 encodedIntervalToSink(timestampDriver, out)
         );
@@ -5475,7 +5584,7 @@ public class TickExprTest {
         parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, now);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
                         : expected,
                 encodedIntervalToSink(timestampDriver, out)
         );
@@ -5487,7 +5596,7 @@ public class TickExprTest {
         IntervalUtils.intersectInPlace(out, a.size());
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType()) ?
-                        expected.replaceAll("000000Z", "000000000Z").replaceAll("999999Z", "999999999Z")
+                        expected.replace("000000Z", "000000000Z").replace("999999Z", "999999999Z")
                         : expected,
                 intervalToString(timestampType.getDriver(), out)
         );
@@ -5508,7 +5617,7 @@ public class TickExprTest {
         parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
         TestUtils.assertEquals(
                 ColumnType.isTimestampNano(timestampType.getTimestampType())
-                        ? expected.replaceAll("00Z", "00000Z").replaceAll("99Z", "99999Z")
+                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
                         : expected,
                 intervalToString(timestampDriver, out)
         );

@@ -2055,16 +2055,17 @@ public final class IntervalUtils {
             }
         }
         int dayCount = tmp.size() - origSize;
-        // Save day starts (tmp will be reused for per-day interval parsing)
-        long[] dayStarts = new long[dayCount];
+        // Compact day starts to front of tmp so per-day parsing can append
+        // after them without a separate array allocation.
         for (int i = 0; i < dayCount; i++) {
-            dayStarts[i] = tmp.getQuick(origSize + i);
+            tmp.setQuick(i, tmp.getQuick(origSize + i));
         }
+        tmp.setPos(dayCount);
 
         // Step 3: For each day, build "YYYY-MM-DD" + time suffix + duration and parse
         int addedElems = 0;
         for (int d = 0; d < dayCount; d++) {
-            long dayStart = dayStarts[d];
+            long dayStart = tmp.getQuick(d);
             int year = timestampDriver.getYear(dayStart);
             int month = timestampDriver.getMonthOfYear(dayStart);
             int dayOfMonth = timestampDriver.getDayOfMonth(dayStart);
@@ -2088,11 +2089,11 @@ public final class IntervalUtils {
                 parseSink.put(effectiveSeq, tzContentHi, durationHi);
             }
 
-            tmp.clear();
+            tmp.setPos(dayCount);
             parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
             applyLastEncodedInterval(timestampDriver, tmp);
 
-            for (int k = 0; k < tmp.size(); k += 2) {
+            for (int k = dayCount; k < tmp.size(); k += 2) {
                 irList.add(CompiledTickExpression.TAG_STATIC);
                 irList.add(tmp.getQuick(k));
                 irList.add(tmp.getQuick(k + 1));
@@ -2580,7 +2581,7 @@ public final class IntervalUtils {
                     && !hasDatePrecision(sink, 0, sink.length())) {
                 boolean isExpanded = expandImpreciseDateInBracket(
                         timestampDriver, seq, pos, fullLim, errorPos, out, operation,
-                        sink, 0, applyEncoded, outSizeBeforeExpansion
+                        sink, applyEncoded, outSizeBeforeExpansion
                 );
                 if (isExpanded) {
                     sink.clear(startLen);
@@ -3085,18 +3086,11 @@ public final class IntervalUtils {
                         rewriteSink.clear();
                         if (hyphenCount == 1 && firstHyphenPos > resolvedElementStart) {
                             // Month-level YYYY-MM: append -[01..DD]
-                            int year;
-                            int month;
-                            try {
-                                year = Numbers.parseInt(elementSeq, resolvedElementStart, firstHyphenPos);
-                                month = Numbers.parseInt(elementSeq, firstHyphenPos + 1, effectiveElementEnd);
-                            } catch (NumericException e) {
+                            long packed = parseMonthLevelDate(elementSeq, resolvedElementStart, effectiveElementEnd);
+                            if (packed < 0) {
                                 throw SqlException.$(errorPos, "Invalid date: ").put(elementSeq, resolvedElementStart, effectiveElementEnd);
                             }
-                            if (month < 1 || month > 12) {
-                                throw SqlException.$(errorPos, "Invalid date: ").put(elementSeq, resolvedElementStart, effectiveElementEnd);
-                            }
-                            int lastDay = CommonUtils.getDaysPerMonth(month, CommonUtils.isLeapYear(year));
+                            int lastDay = (int) (packed & 0xFF);
                             rewriteSink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
                             rewriteSink.put("-[01..");
                             appendPaddedInt(rewriteSink, lastDay, 2);
@@ -3108,7 +3102,7 @@ public final class IntervalUtils {
                             rewriteSink.put(elementSeq, resolvedElementStart, effectiveElementEnd);
                             rewriteSink.put("-[01..12]");
                         }
-                        if (rewriteSink.length() > 0) {
+                        if (!rewriteSink.isEmpty()) {
                             elementSeq = rewriteSink;
                             resolvedElementStart = 0;
                             effectiveElementEnd = rewriteSink.length();
@@ -3583,7 +3577,7 @@ public final class IntervalUtils {
      * override.
      *
      * @return true if expansion succeeded, false if the date format is not
-     *         recognized (caller falls back to normal parsing)
+     * recognized (caller falls back to normal parsing)
      */
     private static boolean expandImpreciseDateInBracket(
             TimestampDriver timestampDriver,
@@ -3594,41 +3588,20 @@ public final class IntervalUtils {
             LongList out,
             short operation,
             StringSink sink,
-            int startLen,
             boolean applyEncoded,
             int outSizeBeforeExpansion
     ) throws SqlException {
-        // Count hyphens in the accumulated date text to determine precision
-        int hyphenCount = 0;
-        int firstHyphenPos = -1;
-        for (int j = startLen; j < sink.length(); j++) {
-            if (sink.charAt(j) == '-') {
-                if (firstHyphenPos < 0) {
-                    firstHyphenPos = j;
-                }
-                hyphenCount++;
-            }
-        }
-        if (hyphenCount != 1 || firstHyphenPos <= startLen) {
+        long packed = parseMonthLevelDate(sink, 0, sink.length());
+        if (packed < 0) {
             return false; // Not a recognized month-level date
         }
-
-        int year;
-        int month;
-        try {
-            year = Numbers.parseInt(sink, startLen, firstHyphenPos);
-            month = Numbers.parseInt(sink, firstHyphenPos + 1, sink.length());
-        } catch (NumericException e) {
-            return false; // Not a valid YYYY-MM, fall back to normal parsing
-        }
-        if (month < 1 || month > 12) {
-            return false;
-        }
-        int lastDay = CommonUtils.getDaysPerMonth(month, CommonUtils.isLeapYear(year));
+        int year = (int) (packed >> 16);
+        int month = (int) ((packed >> 8) & 0xFF);
+        int lastDay = (int) (packed & 0xFF);
 
         // Iterate each day in the month, building YYYY-MM-DD + suffix and parsing
         for (int d = 1; d <= lastDay; d++) {
-            sink.clear(startLen);
+            sink.clear(0);
             appendPaddedInt(sink, year, 4);
             sink.put('-');
             appendPaddedInt(sink, month, 2);
@@ -3668,17 +3641,8 @@ public final class IntervalUtils {
     ) throws SqlException {
         // Parse the imprecise date from sink[0..afterPrefixLen-1] (before 'T')
         int dateEnd = afterPrefixLen - 1; // Position of 'T'
-        int hyphenCount = 0;
-        int firstHyphenPos = -1;
-        for (int j = 0; j < dateEnd; j++) {
-            if (sink.charAt(j) == '-') {
-                if (firstHyphenPos < 0) {
-                    firstHyphenPos = j;
-                }
-                hyphenCount++;
-            }
-        }
-        if (hyphenCount != 1 || firstHyphenPos <= 0) {
+        long packed = parseMonthLevelDate(sink, 0, dateEnd);
+        if (packed < 0) {
             // Not a recognized month-level date — fall back to normal expansion
             expandTimeListBracket(timestampDriver, configuration, seq,
                     bracketStart, bracketEnd, fullLim, errorPos, out, operation,
@@ -3686,27 +3650,9 @@ public final class IntervalUtils {
                     globalTzSeq, globalTzLo, globalTzHi);
             return;
         }
-
-        int year;
-        int month;
-        try {
-            year = Numbers.parseInt(sink, 0, firstHyphenPos);
-            month = Numbers.parseInt(sink, firstHyphenPos + 1, dateEnd);
-        } catch (NumericException e) {
-            expandTimeListBracket(timestampDriver, configuration, seq,
-                    bracketStart, bracketEnd, fullLim, errorPos, out, operation,
-                    sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion,
-                    globalTzSeq, globalTzLo, globalTzHi);
-            return;
-        }
-        if (month < 1 || month > 12) {
-            expandTimeListBracket(timestampDriver, configuration, seq,
-                    bracketStart, bracketEnd, fullLim, errorPos, out, operation,
-                    sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion,
-                    globalTzSeq, globalTzLo, globalTzHi);
-            return;
-        }
-        int lastDay = CommonUtils.getDaysPerMonth(month, CommonUtils.isLeapYear(year));
+        int year = (int) (packed >> 16);
+        int month = (int) ((packed >> 8) & 0xFF);
+        int lastDay = (int) (packed & 0xFF);
 
         for (int d = 1; d <= lastDay; d++) {
             sink.clear(startLen);
@@ -4366,6 +4312,43 @@ public final class IntervalUtils {
             default:
                 throw SqlException.$(position, "Invalid interval format: ").put(seq, lo, lim);
         }
+    }
+
+    /**
+     * Parses a month-level date (YYYY-MM) and returns the year, month, and
+     * last day of that month packed into a single long, or -1 if the text
+     * does not match the expected format.
+     * <p>
+     * Encoding: {@code (year << 16) | (month << 8) | lastDay}.
+     * Callers extract values via bit shifts.
+     */
+    private static long parseMonthLevelDate(CharSequence seq, int lo, int hi) {
+        int firstHyphenPos = -1;
+        int hyphenCount = 0;
+        for (int j = lo; j < hi; j++) {
+            if (seq.charAt(j) == '-') {
+                if (firstHyphenPos < 0) {
+                    firstHyphenPos = j;
+                }
+                hyphenCount++;
+            }
+        }
+        if (hyphenCount != 1 || firstHyphenPos <= lo) {
+            return -1;
+        }
+        int year;
+        int month;
+        try {
+            year = Numbers.parseInt(seq, lo, firstHyphenPos);
+            month = Numbers.parseInt(seq, firstHyphenPos + 1, hi);
+        } catch (NumericException e) {
+            return -1;
+        }
+        if (month < 1 || month > 12) {
+            return -1;
+        }
+        int lastDay = CommonUtils.getDaysPerMonth(month, CommonUtils.isLeapYear(year));
+        return ((long) year << 16) | ((long) month << 8) | lastDay;
     }
 
     private static void parseRange(
