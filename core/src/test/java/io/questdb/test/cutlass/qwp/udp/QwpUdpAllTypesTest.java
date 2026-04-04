@@ -103,7 +103,8 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     };
     private final ReceiverFactory receiverFactory;
 
-    public QwpUdpAllTypesTest(ReceiverFactory factory) {
+    @SuppressWarnings("unused")
+    public QwpUdpAllTypesTest(String name, ReceiverFactory factory) {
         this.receiverFactory = factory;
     }
 

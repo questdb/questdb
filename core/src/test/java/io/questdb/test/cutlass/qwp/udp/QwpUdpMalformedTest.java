@@ -94,7 +94,8 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     private static final int VALID_MAGIC = 0x31505751;
     private final ReceiverFactory receiverFactory;
 
-    public QwpUdpMalformedTest(ReceiverFactory factory) {
+    @SuppressWarnings("unused")
+    public QwpUdpMalformedTest(String name, ReceiverFactory factory) {
         this.receiverFactory = factory;
     }
 

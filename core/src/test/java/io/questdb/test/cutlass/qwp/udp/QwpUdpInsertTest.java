@@ -85,7 +85,8 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     };
     private final ReceiverFactory receiverFactory;
 
-    public QwpUdpInsertTest(ReceiverFactory factory) {
+    @SuppressWarnings("unused")
+    public QwpUdpInsertTest(String name, ReceiverFactory factory) {
         this.receiverFactory = factory;
     }
 
