@@ -818,8 +818,144 @@ public class EarliestByTest extends AbstractCairoTest {
     }
 
     // =====================================================================
-    // Additional table-based tests for code coverage
+    // Tests for EarliestByLightRecordCursorFactory (subquery with random access)
     // =====================================================================
+
+    @Test
+    public void testEarliestOnSubQueryOrdered() throws Exception {
+        // Triggers EarliestByLightRecordCursorFactory with orderedByTimestampAsc=true
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T02:00:00'), ('b', '1970-01-01T01:00:00'), " +
+                    "('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T03:00:00')");
+
+            // Subquery preserves user column order: s, ts
+            // Map iteration order: a first (first key encountered), then b
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertSql(
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "b\t1970-01-01T01:00:00.000000" + suffix + "\n",
+                    "SELECT s, ts FROM (SELECT s, ts FROM t) EARLIEST ON ts PARTITION BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnSubQueryUnordered() throws Exception {
+        // Triggers EarliestByLightRecordCursorFactory with orderedByTimestampAsc=false
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T02:00:00'), ('b', '1970-01-01T01:00:00'), " +
+                    "('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertSql(
+                    "s\tts\n" +
+                            "b\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                            "a\t1970-01-01T00:00:00.000000" + suffix + "\n",
+                    "SELECT s, ts FROM (SELECT s, ts FROM t ORDER BY ts DESC) EARLIEST ON ts PARTITION BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnSubQueryEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertSql(
+                    "s\tts\n",
+                    "SELECT s, ts FROM (SELECT s, ts FROM t) EARLIEST ON ts PARTITION BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnSubQueryReentrant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T01:00:00'), ('b', '1970-01-01T00:00:00'), ('a', '1970-01-01T00:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            String expected = "s\tts\n" +
+                    "b\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                    "a\t1970-01-01T00:00:00.000000" + suffix + "\n";
+
+            // Execute twice to test cursor close+reopen
+            assertSql(expected, "SELECT s, ts FROM (SELECT s, ts FROM t) EARLIEST ON ts PARTITION BY s");
+            assertSql(expected, "SELECT s, ts FROM (SELECT s, ts FROM t) EARLIEST ON ts PARTITION BY s");
+        });
+    }
+
+    @Test
+    public void testEarliestOnSubQueryMultiplePartitionCols() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 'x', '1970-01-01T02:00:00'), ('a', 'y', '1970-01-01T01:00:00'), " +
+                    "('a', 'x', '1970-01-01T00:00:00'), ('b', 'x', '1970-01-01T03:00:00')");
+
+            // Use printSql to avoid order-dependency in multi-key map iteration
+            printSql("SELECT s1, s2, ts FROM (SELECT s1, s2, ts FROM t) EARLIEST ON ts PARTITION BY s1, s2");
+        });
+    }
+
+    // =====================================================================
+    // Tests for EarliestByRecordCursorFactory (no random access - group by)
+    // =====================================================================
+
+    @Test
+    public void testEarliestOnGroupBySubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 10, '1970-01-01T02:00:00'), ('b', 20, '1970-01-01T01:00:00'), " +
+                    "('a', 30, '1970-01-01T01:00:00'), ('b', 40, '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertSql(
+                    "s\tts\ttotal\n" +
+                            "b\t1970-01-01T01:00:00.000000" + suffix + "\t20\n" +
+                            "a\t1970-01-01T01:00:00.000000" + suffix + "\t30\n",
+                    "SELECT s, ts, total FROM (" +
+                            "SELECT s, ts, sum(v) total FROM t GROUP BY s, ts" +
+                            ") EARLIEST ON ts PARTITION BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnGroupByEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertSql(
+                    "s\tts\ttotal\n",
+                    "SELECT s, ts, total FROM (" +
+                            "SELECT s, ts, sum(v) total FROM t GROUP BY s, ts" +
+                            ") EARLIEST ON ts PARTITION BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnGroupByReentrant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 10, '1970-01-01T02:00:00'), ('b', 20, '1970-01-01T01:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            String expected = "s\tts\ttotal\n" +
+                    "b\t1970-01-01T01:00:00.000000" + suffix + "\t20\n" +
+                    "a\t1970-01-01T02:00:00.000000" + suffix + "\t10\n";
+
+            String query = "SELECT s, ts, total FROM (" +
+                    "SELECT s, ts, sum(v) total FROM t GROUP BY s, ts" +
+                    ") EARLIEST ON ts PARTITION BY s";
+
+            assertSql(expected, query);
+            assertSql(expected, query);
+        });
+    }
 
     // =====================================================================
     // Parser edge cases
