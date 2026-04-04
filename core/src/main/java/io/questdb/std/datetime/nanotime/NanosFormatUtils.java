@@ -344,14 +344,6 @@ public class NanosFormatUtils {
         return Numbers.encodeLowHighInts(0, 0);
     }
 
-    private static boolean isOptionalFractionStart(CharSequence sequence, int p, int lim) {
-        if (p + 1 >= lim || sequence.charAt(p) != '.') {
-            return false;
-        }
-        final char next = sequence.charAt(p + 1);
-        return next >= '0' && next <= '9';
-    }
-
     public static long parseYearGreedy(@NotNull CharSequence in, int pos, int hi) throws NumericException {
         long l = Numbers.parseIntSafely(in, pos, hi);
         int len = Numbers.decodeHighInt(l);
