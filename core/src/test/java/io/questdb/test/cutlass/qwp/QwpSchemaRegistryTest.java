@@ -195,7 +195,13 @@ public class QwpSchemaRegistryTest {
         registry.put(0, createTestSchema("col0", QwpConstants.TYPE_INT));
         registry.put(1, createTestSchema("col1", QwpConstants.TYPE_DOUBLE));
 
-        assertInvalidSchemaId(registry, 2, "maxSchemasPerConnection=2");
+        try {
+            registry.put(2, createTestSchema("col2", QwpConstants.TYPE_INT));
+            Assert.fail("Expected QwpParseException");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_SCHEMA_ID, e.getErrorCode());
+            Assert.assertTrue(e.getMessage().contains("maxSchemasPerConnection=2"));
+        }
     }
 
     private QwpSchema createTestSchema(String columnName, byte typeCode) {
@@ -203,15 +209,5 @@ public class QwpSchemaRegistryTest {
                 new QwpColumnDef(columnName, typeCode)
         };
         return QwpSchema.create(columns);
-    }
-
-    private static void assertInvalidSchemaId(QwpSchemaRegistry registry, int schemaId, String expectedMessagePart) {
-        try {
-            registry.put(schemaId, QwpSchema.create(new QwpColumnDef[]{new QwpColumnDef("x", QwpConstants.TYPE_INT)}));
-            Assert.fail("Expected QwpParseException");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_SCHEMA_ID, e.getErrorCode());
-            Assert.assertTrue(e.getMessage().contains(expectedMessagePart));
-        }
     }
 }
