@@ -28,6 +28,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.ObjList;
 
+/**
+ * RecordSink instances have mutable fields (e.g. Decimal128/Decimal256)
+ * and must not be shared across workers.
+ */
 public interface RecordSink {
     void copy(Record r, RecordSinkSPI w);
 

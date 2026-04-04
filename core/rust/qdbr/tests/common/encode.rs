@@ -10,6 +10,8 @@ use questdbr::parquet_write::{
     ParquetWriter,
 };
 
+use crate::common::Encoding;
+
 /// Packed encoding config values for Column::parquet_encoding_config.
 /// Bit 0-7: encoding enum, bit 24: isExplicitlySet flag.
 pub const PLAIN_CONFIG: i32 = 1 | (1 << 24);
@@ -17,22 +19,14 @@ pub const RLE_DICT_CONFIG: i32 = 2 | (1 << 24);
 pub const DELTA_LENGTH_BYTE_ARRAY_CONFIG: i32 = 3 | (1 << 24);
 pub const DELTA_BINARY_PACKED_CONFIG: i32 = 4 | (1 << 24);
 
-/// Enum for encode test encoding variants.
-#[derive(Debug, Clone, Copy)]
-pub enum EncodeEncoding {
-    Plain,
-    RleDictionary,
-    DeltaBinaryPacked,
-    DeltaLengthByteArray,
-}
-
-impl EncodeEncoding {
+impl Encoding {
     pub fn config(self) -> i32 {
         match self {
-            EncodeEncoding::Plain => PLAIN_CONFIG,
-            EncodeEncoding::RleDictionary => RLE_DICT_CONFIG,
-            EncodeEncoding::DeltaBinaryPacked => DELTA_BINARY_PACKED_CONFIG,
-            EncodeEncoding::DeltaLengthByteArray => DELTA_LENGTH_BYTE_ARRAY_CONFIG,
+            Encoding::Plain => PLAIN_CONFIG,
+            Encoding::RleDictionary => RLE_DICT_CONFIG,
+            Encoding::DeltaBinaryPacked => DELTA_BINARY_PACKED_CONFIG,
+            Encoding::DeltaLengthByteArray => DELTA_LENGTH_BYTE_ARRAY_CONFIG,
+            _ => panic!("unsupported encoding for config: {self:?}"),
         }
     }
 }

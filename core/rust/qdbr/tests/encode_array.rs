@@ -1,12 +1,12 @@
 mod common;
 
 use arrow::array::{Array, Float64Array, ListArray};
-use common::encode::{
-    generate_nulls, read_parquet_batches, write_parquet, EncodeEncoding, ALL_NULL_PATTERNS,
-};
+use common::encode::{generate_nulls, read_parquet_batches, write_parquet, ALL_NULL_PATTERNS};
 use common::types::primitives::rnd;
 use qdb_core::col_type::{encode_array_type, ColumnTypeTag};
 use questdbr::parquet_write::schema::Partition;
+
+use crate::common::Encoding;
 
 const COUNT: usize = 200;
 
@@ -70,7 +70,7 @@ fn encode_and_read_array(
     primary: &[u8],
     aux: &[u8],
     row_count: usize,
-    encoding: EncodeEncoding,
+    encoding: Encoding,
 ) -> Vec<arrow::record_batch::RecordBatch> {
     let col_type = encode_array_type(ColumnTypeTag::Double, 1).expect("array type");
     let column = questdbr::parquet_write::schema::Column::from_raw_data(
@@ -102,7 +102,7 @@ fn encode_and_read_array(
 #[test]
 fn test_encode_1d_double_array() {
     // Arrays only support Plain encoding (RleDictionary falls back to Plain for Array)
-    let encoding = EncodeEncoding::Plain;
+    let encoding = Encoding::Plain;
     for null_pattern in &ALL_NULL_PATTERNS {
         let nulls = generate_nulls(COUNT, *null_pattern);
         let (primary, aux, expected) = build_1d_double_arrays(&nulls);
