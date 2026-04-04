@@ -138,7 +138,8 @@ public class ConvertOperatorImpl implements Closeable {
                     tableWriter.getTableToken(),
                     tableWriter.getMetadata().getTimestampType(),
                     tableWriter.getPartitionBy(),
-                    tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn(),
+                    tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn()
+                            || tableWriter.isCheckpointInProgress(),
                     tableWriter.getTruncateVersion(),
                     tableWriter.getTxn()
             );

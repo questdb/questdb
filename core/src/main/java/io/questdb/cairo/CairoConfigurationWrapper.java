@@ -457,6 +457,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getJsonUnnestMaxValueSize() {
+        return getDelegate().getJsonUnnestMaxValueSize();
+    }
+
+    @Override
     public int getLatestByQueueCapacity() {
         return getDelegate().getLatestByQueueCapacity();
     }
@@ -729,6 +734,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionEncoderParquetCompressionLevel() {
         return getDelegate().getPartitionEncoderParquetCompressionLevel();
+    }
+
+    @Override
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return getDelegate().getPartitionEncoderParquetMinCompressionRatio();
     }
 
     @Override

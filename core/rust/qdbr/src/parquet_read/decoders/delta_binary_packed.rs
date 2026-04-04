@@ -574,10 +574,6 @@ where
 
         Ok(())
     }
-
-    fn result(&self) -> ParquetResult<()> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -721,7 +717,6 @@ mod tests {
                     .unwrap();
             decoder.reserve(count).unwrap();
             decoder.push_slice(count).unwrap();
-            decoder.result().unwrap();
         }
         let out: &[i32] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
@@ -739,7 +734,6 @@ mod tests {
                     .unwrap();
             decoder.reserve(count).unwrap();
             decoder.push_slice(count).unwrap();
-            decoder.result().unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
@@ -759,7 +753,6 @@ mod tests {
             for _ in 0..count {
                 decoder.push().unwrap();
             }
-            decoder.result().unwrap();
         }
         let out: &[i32] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
@@ -872,7 +865,6 @@ mod tests {
             decoder.push_null().unwrap();
             decoder.push_slice(3).unwrap();
             decoder.push_nulls(2).unwrap();
-            decoder.result().unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), total) };
@@ -895,7 +887,6 @@ mod tests {
             decoder.reserve(count).unwrap();
             decoder.skip(3).unwrap();
             decoder.push_slice(count).unwrap();
-            decoder.result().unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), count) };
@@ -921,7 +912,6 @@ mod tests {
             decoder.skip(2).unwrap(); // skip 11, 12
             decoder.push_null().unwrap(); // null
             decoder.push_slice(3).unwrap(); // 13, 14, 15
-            decoder.result().unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), total) };
@@ -941,7 +931,6 @@ mod tests {
             decoder.reserve(1).unwrap();
             decoder.push_slice(0).unwrap();
             decoder.push_slice(1).unwrap();
-            decoder.result().unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), 1) };
@@ -961,7 +950,6 @@ mod tests {
             decoder.reserve(1).unwrap();
             decoder.skip(0).unwrap();
             decoder.push_slice(1).unwrap();
-            decoder.result().unwrap();
         }
         let out: &[i64] =
             unsafe { std::slice::from_raw_parts(buffers.data_vec.as_ptr().cast(), 1) };

@@ -201,6 +201,13 @@ stages:
             lfs: false
             submodules: false
             persistCredentials: true
+          - bash: |
+              sudo apt-get update && sudo apt-get install -y openjdk-17-jdk maven
+              JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
+              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+              echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+            displayName: "Install JDK and Maven"
+            condition: eq(variables['SHOULD_RUN'], 'true')
           - download: current
             artifact: jacoco-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))

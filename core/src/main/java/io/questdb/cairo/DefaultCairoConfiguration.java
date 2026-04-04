@@ -481,6 +481,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getJsonUnnestMaxValueSize() {
+        return 4096;
+    }
+
+    @Override
     public int getLatestByQueueCapacity() {
         return 32;
     }
@@ -747,6 +752,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getPartitionEncoderParquetCompressionLevel() {
         return 0;
+    }
+
+    @Override
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return 0.0;
     }
 
     @Override

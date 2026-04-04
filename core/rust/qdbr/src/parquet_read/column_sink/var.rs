@@ -65,7 +65,7 @@ impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
         append_varchar(
             &mut self.buffers.aux_vec,
             &mut self.buffers.data_vec,
-            self.slicer.next(),
+            self.slicer.next()?,
         )
     }
 
@@ -76,7 +76,7 @@ impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
             append_varchar(
                 &mut self.buffers.aux_vec,
                 &mut self.buffers.data_vec,
-                self.slicer.next(),
+                self.slicer.next()?,
             )?;
         }
         Ok(())
@@ -93,12 +93,7 @@ impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        self.slicer.skip(count);
-        Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.slicer.result()
+        self.slicer.skip(count)
     }
 }
 
@@ -111,7 +106,6 @@ impl<'a, T: DataPageSlicer> VarcharColumnSink<'a, T> {
 pub struct StringColumnSink<'a, T: DataPageSlicer> {
     slicer: &'a mut T,
     buffers: &'a mut ColumnChunkBuffers,
-    error: ParquetResult<()>,
 }
 
 impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
@@ -134,7 +128,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let utf8 = self.slicer.next();
+        let utf8 = self.slicer.next()?;
         let utf8_str = std::str::from_utf8(utf8);
 
         match utf8_str {
@@ -157,8 +151,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
                     .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref())?;
             }
             Err(utf8_str_err) => {
-                self.error = Err(ParquetErrorReason::Utf8Decode(utf8_str_err).into_err());
-                self.push_null()?;
+                return Err(ParquetErrorReason::Utf8Decode(utf8_str_err).into_err());
             }
         }
         Ok(())
@@ -231,18 +224,13 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        self.slicer.skip(count);
-        Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.error.clone().or(self.slicer.result().clone())
+        self.slicer.skip(count)
     }
 }
 
 impl<'a, T: DataPageSlicer> StringColumnSink<'a, T> {
     pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
-        Self { slicer, buffers, error: Ok(()) }
+        Self { slicer, buffers }
     }
 }
 
@@ -271,7 +259,7 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let slice = self.slicer.next();
+        let slice = self.slicer.next()?;
         self.buffers
             .data_vec
             .extend_from_slice(slice.len().to_le_bytes().as_ref())?;
@@ -350,12 +338,7 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        self.slicer.skip(count);
-        Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.slicer.result().clone()
+        self.slicer.skip(count)
     }
 }
 
@@ -382,7 +365,7 @@ impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
         append_raw_array(
             &mut self.buffers.aux_vec,
             &mut self.buffers.data_vec,
-            self.slicer.next(),
+            self.slicer.next()?,
         )
     }
 
@@ -392,7 +375,7 @@ impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
             append_raw_array(
                 &mut self.buffers.aux_vec,
                 &mut self.buffers.data_vec,
-                self.slicer.next(),
+                self.slicer.next()?,
             )?;
         }
         Ok(())
@@ -409,12 +392,7 @@ impl<T: DataPageSlicer> Pushable for RawArrayColumnSink<'_, T> {
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        self.slicer.skip(count);
-        Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.slicer.result()
+        self.slicer.skip(count)
     }
 }
 
@@ -438,14 +416,14 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceColumnSink<'_, T> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let value = self.slicer.next();
+        let value = self.slicer.next()?;
         append_varchar_slice(&mut self.buffers.aux_vec, value, self.ascii)
     }
 
     #[inline]
     fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            let value = self.slicer.next();
+            let value = self.slicer.next()?;
             append_varchar_slice(&mut self.buffers.aux_vec, value, self.ascii)?;
         }
         Ok(())
@@ -462,12 +440,7 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceColumnSink<'_, T> {
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        self.slicer.skip(count);
-        Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.slicer.result()
+        self.slicer.skip(count)
     }
 }
 
@@ -496,7 +469,7 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
 
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
-        let value = self.slicer.next();
+        let value = self.slicer.next()?;
         let len = value.len();
         if len == 0 {
             // Empty string: no data to spill, no fixup needed.
@@ -555,12 +528,7 @@ impl<T: DataPageSlicer> Pushable for VarcharSliceSpillSink<'_, T> {
     }
 
     fn skip(&mut self, count: usize) -> ParquetResult<()> {
-        self.slicer.skip(count);
-        Ok(())
-    }
-
-    fn result(&self) -> ParquetResult<()> {
-        self.slicer.result()
+        self.slicer.skip(count)
     }
 }
 
