@@ -205,8 +205,24 @@ public final class QwpVarint {
         long value = firstByte & DATA_MASK;
         int shift = 7;
         int bytesRead = 1;
-        address++;
-        result.value = decode0(address, limit, value, shift, bytesRead);
+        long addr = address + 1;
+        byte b;
+        do {
+            if (addr >= limit) {
+                throw QwpParseException.incompleteVarint();
+            }
+            if (bytesRead >= MAX_VARINT_BYTES) {
+                throw QwpParseException.varintOverflow();
+            }
+            b = Unsafe.getUnsafe().getByte(addr++);
+            if (shift == 63 && (b & 0x7E) != 0) {
+                throw QwpParseException.varintOverflow();
+            }
+            value |= (long) (b & DATA_MASK) << shift;
+            shift += 7;
+            bytesRead++;
+        } while ((b & CONTINUATION_BIT) != 0);
+        result.value = value;
         result.bytesRead = bytesRead;
     }
 

@@ -82,22 +82,21 @@ public class QwpSchemaRegistry {
     }
 
     public void put(int schemaId, QwpSchema schema) throws QwpParseException {
-        if (schemaId >= maxSchemasPerConnection) {
+        if (schemaId < 0 || schemaId >= maxSchemasPerConnection) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_SCHEMA_ID,
-                    "schema ID exceeds per-connection limit [schemaId=" + schemaId
+                    "schema ID out of range [schemaId=" + schemaId
                             + ", maxSchemasPerConnection=" + maxSchemasPerConnection + ']'
             );
         }
-        if (schemaId != nextExpectedSchemaId) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_SCHEMA_ID,
-                    "schema ID out of sequence [schemaId=" + schemaId
-                            + ", expectedSchemaId=" + nextExpectedSchemaId + ']'
-            );
-        }
+        // Accept re-registration of already-known schemas. The client may
+        // re-send a full schema when its confirmed-schema tracking lags,
+        // or when tables are encoded in hash map iteration order (not
+        // schema ID assignment order).
         schemas.extendAndSet(schemaId, schema);
-        nextExpectedSchemaId++;
+        if (schemaId >= nextExpectedSchemaId) {
+            nextExpectedSchemaId = schemaId + 1;
+        }
     }
 
     public int size() {
