@@ -973,31 +973,36 @@ public final class IntervalUtils {
             return;
         }
 
-        // Check for bare imprecise date with time suffix (e.g. "2024-01T09:30").
+        // Check for bare imprecise date with time or duration suffix
+        // (e.g. "2024-01T09:30" or "2024-01;6h30m").
         // Wrap in brackets and route through expandDateList, which handles the
         // imprecise-to-day expansion.
         if (effectiveSeqLo < effectiveSeqLim && Chars.isAsciiDigit(effectiveSeq.charAt(effectiveSeqLo))) {
-            int timeTPos = -1;
+            int suffixSplitPos = -1;
             for (int i = effectiveSeqLo; i < effectiveSeqLim - 1; i++) {
                 char c = effectiveSeq.charAt(i);
                 if (c == '[') {
                     break; // Has brackets — use bracket expansion path below
                 }
                 if (c == 'T' && (Chars.isAsciiDigit(effectiveSeq.charAt(i + 1)) || effectiveSeq.charAt(i + 1) == '[')) {
-                    timeTPos = i;
+                    suffixSplitPos = i;
+                    break;
+                }
+                if (c == ';') {
+                    suffixSplitPos = i;
                     break;
                 }
             }
-            if (timeTPos >= 0 && !hasDatePrecision(effectiveSeq, effectiveSeqLo, timeTPos)) {
+            if (suffixSplitPos >= 0 && !hasDatePrecision(effectiveSeq, effectiveSeqLo, suffixSplitPos)) {
                 int outSize = out.size();
                 StringSink dateSink = dayFilterMarkerPos >= 0 ? tlSink1.get() : sink;
                 dateSink.clear();
                 StringSink wrappedSink = tlSink2.get();
                 wrappedSink.clear();
                 wrappedSink.putAscii('[');
-                wrappedSink.put(effectiveSeq, effectiveSeqLo, timeTPos);
+                wrappedSink.put(effectiveSeq, effectiveSeqLo, suffixSplitPos);
                 wrappedSink.putAscii(']');
-                wrappedSink.put(effectiveSeq, timeTPos, effectiveSeqLim);
+                wrappedSink.put(effectiveSeq, suffixSplitPos, effectiveSeqLim);
                 try {
                     expandDateList(
                             timestampDriver, configuration, wrappedSink, 0, wrappedSink.length(),
@@ -2573,19 +2578,22 @@ public final class IntervalUtils {
 
         if (bracketStart < 0) {
             // No more brackets - parse the accumulated expansion.
-            // Check if the accumulated date text (sink[startLen..]) is an imprecise
-            // date (month level) and the remaining suffix starts with a time override.
-            // If so, expand to individual days so each gets the time applied.
-            if (pos < fullLim && seq.charAt(pos) == 'T'
-                    && pos + 1 < fullLim && Chars.isAsciiDigit(seq.charAt(pos + 1))
-                    && !hasDatePrecision(sink, 0, sink.length())) {
-                boolean isExpanded = expandImpreciseDateInBracket(
-                        timestampDriver, seq, pos, fullLim, errorPos, out, operation,
-                        sink, applyEncoded, outSizeBeforeExpansion
-                );
-                if (isExpanded) {
-                    sink.clear(startLen);
-                    return false;
+            // Check if the accumulated date text is an imprecise date (month level)
+            // and the remaining suffix starts with a time override or duration.
+            // If so, expand to individual days so each gets the suffix applied.
+            if (pos < fullLim && !hasDatePrecision(sink, 0, sink.length())) {
+                boolean hasSuffixTime = seq.charAt(pos) == 'T'
+                        && pos + 1 < fullLim && Chars.isAsciiDigit(seq.charAt(pos + 1));
+                boolean hasSuffixDuration = seq.charAt(pos) == ';';
+                if (hasSuffixTime || hasSuffixDuration) {
+                    boolean isExpanded = expandImpreciseDateInBracket(
+                            timestampDriver, seq, pos, fullLim, errorPos, out, operation,
+                            sink, applyEncoded, outSizeBeforeExpansion
+                    );
+                    if (isExpanded) {
+                        sink.clear(startLen);
+                        return false;
+                    }
                 }
             }
             // Note: sink always has content here (at minimum the expanded bracket value)
@@ -3057,10 +3065,9 @@ public final class IntervalUtils {
                         && seq.charAt(suffixStart) == 'T'
                         && suffixStart + 1 < lim
                         && (Chars.isAsciiDigit(seq.charAt(suffixStart + 1)) || seq.charAt(suffixStart + 1) == '[');
-                boolean hasDayFilterWithDuration = !elementHasTime
-                        && activeDayFilterMask != 0
+                boolean hasDuration = !elementHasTime
                         && globalDurationSemicolon >= 0;
-                if ((hasSuffixTime || hasDayFilterWithDuration)
+                if ((hasSuffixTime || hasDuration)
                         && !hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd)) {
                     int hyphenCount = 0;
                     int firstHyphenPos = -1;
