@@ -104,7 +104,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int timestampType;
     private int ttlHoursOrMonths;
     private int ttlPosition;
-    private IntList secondarySortIndices;
     private String volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
@@ -138,8 +137,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int volumePosition,
             @Nullable String likeTableName,
             int likeTableNamePosition,
-            boolean ignoreIfExists,
-            IntList secondarySortIndices
+            boolean ignoreIfExists
     ) {
         this.sqlText = sqlText;
         this.tableName = tableName;
@@ -158,7 +156,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
-        this.secondarySortIndices = secondarySortIndices != null ? secondarySortIndices : new IntList();
     }
 
     public CreateTableOperationImpl(
@@ -178,8 +175,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int ttlHoursOrMonths,
             int ttlPosition,
             boolean walEnabled,
-            boolean autoIncludeTimestamp,
-            IntList secondarySortIndices
+            boolean autoIncludeTimestamp
     ) throws SqlException {
         this.autoIncludeTimestamp = autoIncludeTimestamp;
         this.sqlText = sqlText;
@@ -217,7 +213,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
         this.walEnabled = walEnabled;
-        this.secondarySortIndices = secondarySortIndices != null ? secondarySortIndices : new IntList();
 
         this.selectText = null;
         this.selectTextPosition = 0;
@@ -276,8 +271,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             long batchSize,
             long batchO3MaxLag,
             int tableKind,
-            boolean autoIncludeTimestamp,
-            IntList secondarySortIndices
+            boolean autoIncludeTimestamp
     ) {
         this.autoIncludeTimestamp = autoIncludeTimestamp;
         this.sqlText = sqlText;
@@ -300,7 +294,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
-        this.secondarySortIndices = secondarySortIndices != null ? secondarySortIndices : new IntList();
 
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
@@ -403,10 +396,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    public IntList getSecondarySortIndices() {
-        return secondarySortIndices;
     }
 
     @Override

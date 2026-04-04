@@ -112,15 +112,4 @@ public interface TableStructure {
     }
 
     boolean isWalEnabled();
-
-    /**
-     * Returns the indices of columns used for secondary sorting within partitions.
-     * These columns are used to sort data within each partition after the primary timestamp sort.
-     * Returns empty array if no secondary sort is configured.
-     */
-    default int[] getSecondarySortColumnIndices() {
-        return EMPTY_INT_ARRAY;
-    }
-
-    int[] EMPTY_INT_ARRAY = new int[0];
 }

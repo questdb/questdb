@@ -10375,14 +10375,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
 
-            int[] secondarySortIndices = metadata.getSecondarySortColumnIndices();
-            ddlMem.putInt(secondarySortIndices != null ? secondarySortIndices.length : 0);
-            if (secondarySortIndices != null && secondarySortIndices.length > 0) {
-                for (int i = 0; i < secondarySortIndices.length; i++) {
-                    ddlMem.putInt(secondarySortIndices[i]);
-                }
-            }
-
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 int columnType = metadata.getColumnType(i);

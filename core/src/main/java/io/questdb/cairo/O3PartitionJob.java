@@ -50,7 +50,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.MultiKeySort;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -2766,19 +2765,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (tableWriter.isCommitPlainInsert()) {
                     timestampMergeIndexSize = tempIndexSize;
 
-                    int[] secondaryIndices = tableWriter.getMetadata().getSecondarySortColumnIndices();
-                    if (secondaryIndices != null && secondaryIndices.length > 0) {
-                        sortO3BatchBySecondaryKeys(
-                                tableWriter,
-                                oooColumns,
-                                mergeOOOHi - mergeOOOLo + 1,
-                                timestampIndex,
-                                sortedTimestampsAddr,
-                                mergeOOOHi - mergeOOOLo + 1,
-                                MemoryTag.NATIVE_O3
-                        );
-                    }
-
                     timestampMergeIndexAddr = createMergeIndex(
                             srcTimestampAddr,
                             sortedTimestampsAddr,
@@ -3371,76 +3357,5 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         processPartition(queue.get(cursor), cursor, subSeq);
         return true;
-    }
-
-    /**
-     * Sorts O3 batch data by secondary columns after timestamp sort.
-     * This method is called after timestamps have been merged and sorted,
-     * to ensure data is also sorted by configured secondary sort columns.
-     *
-     * @param tableWriter the table writer containing metadata
-     * @param oooColumns the O3 column data
-     * @param rowSize the number of rows in the O3 batch
-     * @param timestampOffset the offset of timestamp column data
-     * @param rowBlockSize the size of a single row block
-     * @param memoryTag the memory tag for allocation
-     * @return the sorted row indices
-     */
-    private static long[] sortO3BatchBySecondaryKeys(
-            TableWriter tableWriter,
-            ReadOnlyObjList<? extends MemoryCR> oooColumns,
-            long rowSize,
-            int timestampIndex,
-            long timestampOffset,
-            long rowBlockSize,
-            long memoryTag
-    ) {
-        int[] secondaryIndices = tableWriter.getMetadata().getSecondarySortColumnIndices();
-        if (secondaryIndices == null || secondaryIndices.length == 0) {
-            return null;
-        }
-
-        int[] columnTypes = new int[oooColumns.size()];
-        for (int i = 0; i < oooColumns.size(); i++) {
-            columnTypes[i] = tableWriter.getMetadata().getColumnType(i);
-        }
-
-        MultiKeySort.RowBlockReader reader = new MultiKeySort.RowBlockReader() {
-            @Override
-            public long get(long rowAddress, int columnIndex, long offset) {
-                return 0;
-            }
-
-            @Override
-            public int getInt(long rowAddress, int columnIndex, long offset) {
-                return oooColumns.get(columnIndex).getInt(rowAddress + offset);
-            }
-
-            @Override
-            public long getLong(long rowAddress, int columnIndex, long offset) {
-                return oooColumns.get(columnIndex).getLong(rowAddress + offset);
-            }
-
-            @Override
-            public double getDouble(long rowAddress, int columnIndex, long offset) {
-                return oooColumns.get(columnIndex).getDouble(rowAddress + offset);
-            }
-
-            @Override
-            public int getSymbol(long rowAddress, int columnIndex, long offset) {
-                return oooColumns.get(columnIndex).getInt(rowAddress + offset);
-            }
-
-            @Override
-            public int getVarcharHash(long rowAddress, int columnIndex, long offset) {
-                return oooColumns.get(columnIndex).getInt(rowAddress + offset);
-            }
-        };
-
-        MultiKeySort sorter = new MultiKeySort(secondaryIndices, columnTypes, timestampOffset, rowBlockSize, reader);
-        long partitionDataAddress = oooColumns.get(timestampIndex).addressOf(0);
-        sorter.sort(partitionDataAddress, (int) rowSize);
-
-        return null;
     }
 }
