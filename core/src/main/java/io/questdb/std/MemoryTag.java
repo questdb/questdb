@@ -67,9 +67,8 @@ public final class MemoryTag {
     public static final int NATIVE_JIT = NATIVE_IO_DISPATCHER_RSS + 1;
     public static final int NATIVE_JIT_LONG_LIST = NATIVE_JIT + 1;
     public static final int NATIVE_JOIN_MAP = NATIVE_JIT_LONG_LIST + 1;
-   public static final int NATIVE_LATEST_BY_LONG_LIST = NATIVE_JOIN_MAP + 1;
-    public static final int NATIVE_EARLIEST_BY_LONG_LIST = NATIVE_LATEST_BY_LONG_LIST + 1;
-    public static final int NATIVE_LOGGER = NATIVE_EARLIEST_BY_LONG_LIST + 1;
+    public static final int NATIVE_LATEST_BY_LONG_LIST = NATIVE_JOIN_MAP + 1;
+    public static final int NATIVE_LOGGER = NATIVE_LATEST_BY_LONG_LIST + 1;
     public static final int NATIVE_LONG_LIST = NATIVE_LOGGER + 1;
     public static final int NATIVE_MIG = NATIVE_LONG_LIST + 1;
     public static final int NATIVE_MIG_MMAP = NATIVE_MIG + 1;
@@ -100,7 +99,8 @@ public final class MemoryTag {
     public static final int NATIVE_ND_ARRAY_DBG2 = NATIVE_ND_ARRAY_DBG1 + 1;
     public static final int NATIVE_PATH_THREAD_LOCAL = NATIVE_ND_ARRAY_DBG2 + 1;
     public static final int NATIVE_PARQUET_EXPORTER = NATIVE_PATH_THREAD_LOCAL + 1;
-    public static final int SIZE = NATIVE_PARQUET_EXPORTER + 1;
+    public static final int NATIVE_EARLIEST_BY_LONG_LIST = NATIVE_PARQUET_EXPORTER + 1;
+    public static final int SIZE = NATIVE_EARLIEST_BY_LONG_LIST + 1;
 
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
@@ -129,7 +129,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(MMAP_INDEX_SLIDER, "MMAP_INDEX_SLIDER");
         tagNameMap.extendAndSet(MMAP_BLOCK_WRITER, "MMAP_BLOCK_WRITER");
         tagNameMap.extendAndSet(NATIVE_REPL, "NATIVE_REPL");
-       tagNameMap.extendAndSet(NATIVE_SAMPLE_BY_LONG_LIST, "NATIVE_SAMPLE_BY_LONG_LIST");
+        tagNameMap.extendAndSet(NATIVE_SAMPLE_BY_LONG_LIST, "NATIVE_SAMPLE_BY_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_LATEST_BY_LONG_LIST, "NATIVE_LATEST_BY_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_EARLIEST_BY_LONG_LIST, "NATIVE_EARLIEST_BY_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_JIT_LONG_LIST, "NATIVE_JIT_LONG_LIST");

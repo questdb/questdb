@@ -6925,7 +6925,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             RecordCursorFactory factory;
 
-     factory = generateSelect(model, executionContext, processJoins);
+            factory = generateSelect(model, executionContext, processJoins);
             factory = generateFilter(factory, model, executionContext);
             factory = generateLatestBy(factory, model);
             factory = generateEarliestBy(factory, model);
@@ -10157,19 +10157,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return getTimestampIndex(model, factory.getMetadata());
     }
 
-     private int getTimestampIndex(QueryModel model, RecordMetadata metadata) throws SqlException {
+    private int getTimestampIndex(QueryModel model, RecordMetadata metadata) throws SqlException {
         final ExpressionNode timestamp = model.getTimestamp();
         if (timestamp != null) {
             int timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
-            if (timestampIndex != -1) {
-                if (!isTimestamp(metadata.getColumnType(timestampIndex))) {
-                    throw SqlException.$(timestamp.position, "not a TIMESTAMP");
-                }
-                return timestampIndex;
+            if (timestampIndex == -1) {
+                throw SqlException.invalidColumn(timestamp.position, timestamp.token);
             }
-            // Timestamp column not found in metadata - this can happen when earliest on
-            // references a column not in the select list. The caller should handle this.
-            return -1;
+            if (!isTimestamp(metadata.getColumnType(timestampIndex))) {
+                throw SqlException.$(timestamp.position, "not a TIMESTAMP");
+            }
+            return timestampIndex;
         }
         return metadata.getTimestampIndex();
     }
