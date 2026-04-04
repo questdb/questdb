@@ -227,7 +227,7 @@ public final class QwpVarint {
     }
 
     /**
-     * Result holder for decoding variants when the number of bytes consumed matters.
+     * Result holder for decoding varints when the number of bytes consumed matters.
      * This class is mutable and should be reused to avoid allocations.
      */
     public static class DecodeResult {
