@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
@@ -73,10 +74,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_LATERAL_LEFT = 15;
     public static final int JOIN_LEFT_OUTER = 2;
     public static final int JOIN_LT = 6;
-    public static final int JOIN_MAX = JOIN_LATERAL_CROSS;
     public static final int JOIN_NONE = 0;
     public static final int JOIN_RIGHT_OUTER = 9;
     public static final int JOIN_SPLICE = 5;
+    public static final int JOIN_UNNEST = 17;
+    public static final int JOIN_MAX = JOIN_UNNEST;
     public static final int JOIN_WINDOW = 7;
     public static final int LATEST_BY_DEPRECATED = 1;
     public static final int LATEST_BY_NEW = 2;
@@ -165,6 +167,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
     private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
+    private final ObjList<CharSequence> unnestColumnAliases = new ObjList<>();
+    private final ObjList<ExpressionNode> unnestExpressions = new ObjList<>();
+    private final ObjList<ObjList<CharSequence>> unnestJsonColumnNames = new ObjList<>();
+    private final ObjList<IntList> unnestJsonColumnTypes = new ObjList<>();
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
@@ -234,6 +240,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int setOperationType;
     private int showKind = -1;
     private boolean skipped;
+    private boolean standaloneUnnest;
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
     private RecordCursorFactory tableNameFunction;
@@ -249,6 +256,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int timestampOffsetValue;           // The offset value (inverse, e.g., +1 for dateadd -1)
     private CharSequence timestampSourceColumn; // The original column name before dateadd transformation
     private QueryModel unionModel;
+    private boolean unnestOrdinality;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode viewNameExpr;
@@ -296,6 +304,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 || joinType == QueryModel.JOIN_LATERAL_LEFT
                 || joinType == QueryModel.JOIN_LATERAL_CROSS;
     }
+
 
     // Window join must be the last join in the query; no other join types can follow it.
     // This constraint is enforced at the SQL parser stage.
@@ -547,6 +556,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         lateralCountColumns.clear();
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
+        standaloneUnnest = false;
+        unnestColumnAliases.clear();
+        unnestExpressions.clear();
+        unnestJsonColumnNames.clear();
+        unnestJsonColumnTypes.clear();
+        unnestOrdinality = false;
         updateTableColumnNames.clear();
         updateTableModel = null;
         updateTableToken = null;
@@ -1263,6 +1278,39 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return unionModel;
     }
 
+    public ObjList<CharSequence> getUnnestColumnAliases() {
+        return unnestColumnAliases;
+    }
+
+    public ObjList<ExpressionNode> getUnnestExpressions() {
+        return unnestExpressions;
+    }
+
+    public ObjList<ObjList<CharSequence>> getUnnestJsonColumnNames() {
+        return unnestJsonColumnNames;
+    }
+
+    public ObjList<IntList> getUnnestJsonColumnTypes() {
+        return unnestJsonColumnTypes;
+    }
+
+    /**
+     * Returns the total number of output columns across all UNNEST sources.
+     * Array sources contribute 1 column each; JSON sources contribute N
+     * columns (one per COLUMNS declaration).
+     */
+    public int getUnnestOutputColumnCount() {
+        int total = 0;
+        for (int i = 0, n = unnestExpressions.size(); i < n; i++) {
+            if (isUnnestJsonSource(i)) {
+                total += unnestJsonColumnNames.getQuick(i).size();
+            } else {
+                total++;
+            }
+        }
+        return total;
+    }
+
     public ObjList<ExpressionNode> getUpdateExpressions() {
         return updateSetColumns;
     }
@@ -1402,6 +1450,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return skipped;
     }
 
+    public boolean isStandaloneUnnest() {
+        return standaloneUnnest;
+    }
+
     @SuppressWarnings("unused")
     public boolean isTemporalJoin() {
         return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
@@ -1409,6 +1461,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isTopDownNameMissing(CharSequence columnName) {
         return topDownNameSet.excludes(columnName);
+    }
+
+    public boolean isUnnestJsonSource(int index) {
+        return index < unnestJsonColumnNames.size()
+                && unnestJsonColumnNames.getQuick(index) != null;
+    }
+
+    public boolean isUnnestOrdinality() {
+        return unnestOrdinality;
     }
 
     public boolean isUpdate() {
@@ -1812,6 +1873,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.skipped = skipped;
     }
 
+    public void setStandaloneUnnest(boolean standaloneUnnest) {
+        this.standaloneUnnest = standaloneUnnest;
+    }
+
     public void setTableId(int id) {
         this.tableId = id;
     }
@@ -1853,6 +1918,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (unionModel != null && viewNameExpr != null) {
             unionModel.setViewNameExpr(viewNameExpr);
         }
+    }
+
+    public void setUnnestOrdinality(boolean unnestOrdinality) {
+        this.unnestOrdinality = unnestOrdinality;
     }
 
     public void setUpdateTableToken(TableToken tableName) {
@@ -2212,6 +2281,50 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                             case JOIN_HORIZON:
                                 sink.putAscii(" horizon join ");
                                 break;
+                            case JOIN_UNNEST:
+                                sink.putAscii(", unnest(");
+                                for (int k = 0, z = model.getUnnestExpressions().size(); k < z; k++) {
+                                    if (k > 0) {
+                                        sink.putAscii(", ");
+                                    }
+                                    model.getUnnestExpressions().getQuick(k).toSink(sink);
+                                    if (model.isUnnestJsonSource(k)) {
+                                        ObjList<CharSequence> colNames =
+                                                model.getUnnestJsonColumnNames().getQuick(k);
+                                        IntList colTypes =
+                                                model.getUnnestJsonColumnTypes().getQuick(k);
+                                        sink.putAscii(" columns(");
+                                        for (int c = 0, cn = colNames.size(); c < cn; c++) {
+                                            if (c > 0) {
+                                                sink.putAscii(", ");
+                                            }
+                                            sink.put(colNames.getQuick(c));
+                                            sink.putAscii(' ');
+                                            sink.putAscii(ColumnType.nameOf(colTypes.getQuick(c)));
+                                        }
+                                        sink.putAscii(')');
+                                    }
+                                }
+                                sink.putAscii(')');
+                                if (model.isUnnestOrdinality()) {
+                                    sink.putAscii(" with ordinality");
+                                }
+                                aliasToSink(model.getAlias().token, sink);
+                                if (model.getUnnestColumnAliases().size() > 0) {
+                                    sink.putAscii('(');
+                                    for (int k = 0, z = model.getUnnestColumnAliases().size(); k < z; k++) {
+                                        if (k > 0) {
+                                            sink.putAscii(", ");
+                                        }
+                                        sink.put(model.getUnnestColumnAliases().getQuick(k));
+                                    }
+                                    sink.putAscii(')');
+                                }
+                                if (model.getPostJoinWhereClause() != null) {
+                                    sink.putAscii(" post-join-where ");
+                                    model.getPostJoinWhereClause().toSink(sink);
+                                }
+                                continue;
                             default:
                                 sink.putAscii(" join ");
                                 break;
