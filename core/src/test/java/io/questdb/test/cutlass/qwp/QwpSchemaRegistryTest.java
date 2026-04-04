@@ -165,20 +165,28 @@ public class QwpSchemaRegistryTest {
     }
 
     @Test
-    public void testSchemaIdMustNotSkip() throws Exception {
+    public void testSchemaIdCanSkip() throws Exception {
         QwpSchemaRegistry registry = new QwpSchemaRegistry();
         registry.put(0, createTestSchema("col0", QwpConstants.TYPE_INT));
 
-        assertInvalidSchemaId(registry, 2, "expectedSchemaId=1");
+        // Gaps are allowed — the client may encode tables in hash map
+        // iteration order, not schema ID assignment order
+        registry.put(2, createTestSchema("col2", QwpConstants.TYPE_DOUBLE));
+        Assert.assertNotNull(registry.get(0));
+        Assert.assertNull(registry.get(1));
+        Assert.assertNotNull(registry.get(2));
     }
 
     @Test
-    public void testSchemaIdMustIncreaseMonotonically() throws Exception {
+    public void testSchemaIdCanBeReRegistered() throws Exception {
         QwpSchemaRegistry registry = new QwpSchemaRegistry();
         registry.put(0, createTestSchema("col0", QwpConstants.TYPE_INT));
         registry.put(1, createTestSchema("col1", QwpConstants.TYPE_DOUBLE));
 
-        assertInvalidSchemaId(registry, 1, "expectedSchemaId=2");
+        // Re-registration replaces the cached schema
+        QwpSchema updated = createTestSchema("col1_v2", QwpConstants.TYPE_LONG);
+        registry.put(1, updated);
+        Assert.assertEquals("col1_v2", registry.get(1).getColumns()[0].getName());
     }
 
     @Test
