@@ -538,7 +538,9 @@ public class NotNullColumnTest extends AbstractCairoTest {
                     INSERT INTO t VALUES
                         (NULL, '2024-01-01'),
                         (1.5, '2024-01-02'),
-                        (CAST('NaN' AS FLOAT), '2024-01-03')
+                        (CAST('Infinity' AS FLOAT), '2024-01-03'),
+                        (CAST('-Infinity' AS FLOAT), '2024-01-04'),
+                        (CAST('NaN' AS FLOAT), '2024-01-05')
                     """);
 
             assertSql(
@@ -546,7 +548,9 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             x\tts
                             NaN\t2024-01-01T00:00:00.000000Z
                             1.5\t2024-01-02T00:00:00.000000Z
-                            NaN\t2024-01-03T00:00:00.000000Z
+                            Infinity\t2024-01-03T00:00:00.000000Z
+                            -Infinity\t2024-01-04T00:00:00.000000Z
+                            NaN\t2024-01-05T00:00:00.000000Z
                             """,
                     "SELECT * FROM t ORDER BY ts"
             );

@@ -55,7 +55,8 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
             return true;
         }
         if (obj instanceof DoubleConstant that) {
-            return this.value == that.value;
+            // Use raw bits so that NaN == NaN and +0.0 != -0.0
+            return Double.doubleToRawLongBits(this.value) == Double.doubleToRawLongBits(that.value);
         }
         return false;
     }

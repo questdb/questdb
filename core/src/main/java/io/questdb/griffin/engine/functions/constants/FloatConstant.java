@@ -53,7 +53,8 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
             return true;
         }
         if (obj instanceof FloatConstant that) {
-            return this.value == that.value;
+            // Use raw bits so that NaN == NaN and +0.0 != -0.0
+            return Float.floatToRawIntBits(this.value) == Float.floatToRawIntBits(that.value);
         }
         return false;
     }

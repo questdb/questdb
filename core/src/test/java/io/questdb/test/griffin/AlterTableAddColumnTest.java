@@ -266,16 +266,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     assertQueryNoLeakCheck(
                             """
                                     c\tmycol
-                                    XYZ\tnull
-                                    ABC\tnull
-                                    ABC\tnull
-                                    XYZ\tnull
-                                    \tnull
-                                    CDE\tnull
-                                    CDE\tnull
-                                    ABC\tnull
-                                    \tnull
-                                    XYZ\tnull
+                                    XYZ\t-2147483648
+                                    ABC\t-2147483648
+                                    ABC\t-2147483648
+                                    XYZ\t-2147483648
+                                    \t-2147483648
+                                    CDE\t-2147483648
+                                    CDE\t-2147483648
+                                    ABC\t-2147483648
+                                    \t-2147483648
+                                    XYZ\t-2147483648
                                     """,
                             "select c, mycol from x"
                     );
@@ -295,16 +295,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     assertQueryNoLeakCheck(
                             """
                                     c\tmycol
-                                    XYZ\tnull
-                                    ABC\tnull
-                                    ABC\tnull
-                                    XYZ\tnull
-                                    \tnull
-                                    CDE\tnull
-                                    CDE\tnull
-                                    ABC\tnull
-                                    \tnull
-                                    XYZ\tnull
+                                    XYZ\t-2147483648
+                                    ABC\t-2147483648
+                                    ABC\t-2147483648
+                                    XYZ\t-2147483648
+                                    \t-2147483648
+                                    CDE\t-2147483648
+                                    CDE\t-2147483648
+                                    ABC\t-2147483648
+                                    \t-2147483648
+                                    XYZ\t-2147483648
                                     """,
                             "select c, mycol from x"
                     );
@@ -382,16 +382,16 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     assertQueryNoLeakCheck(
                             """
                                     c\tmycol
-                                    XYZ\tnull
-                                    ABC\tnull
-                                    ABC\tnull
-                                    XYZ\tnull
-                                    \tnull
-                                    CDE\tnull
-                                    CDE\tnull
-                                    ABC\tnull
-                                    \tnull
-                                    XYZ\tnull
+                                    XYZ\t-2147483648
+                                    ABC\t-2147483648
+                                    ABC\t-2147483648
+                                    XYZ\t-2147483648
+                                    \t-2147483648
+                                    CDE\t-2147483648
+                                    CDE\t-2147483648
+                                    ABC\t-2147483648
+                                    \t-2147483648
+                                    XYZ\t-2147483648
                                     """,
                             "select c, mycol from x"
                     );

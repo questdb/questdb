@@ -115,10 +115,10 @@ class PGUtils {
                 return tsValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
             case ColumnType.FLOAT:
                 final float floatValue = record.getFloat(columnIndex);
-                return Float.isNaN(floatValue) ? Integer.BYTES : Integer.BYTES + Float.BYTES;
+                return !pipelineEntry.isColumnNotNull(columnIndex) && Numbers.isNull(floatValue) ? Integer.BYTES : Integer.BYTES + Float.BYTES;
             case ColumnType.DOUBLE:
                 final double doubleValue = record.getDouble(columnIndex);
-                return Double.isNaN(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
+                return !pipelineEntry.isColumnNotNull(columnIndex) && Numbers.isNull(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
             case ColumnType.UUID:
                 final long lo = record.getLong128Lo(columnIndex);
                 final long hi = record.getLong128Hi(columnIndex);

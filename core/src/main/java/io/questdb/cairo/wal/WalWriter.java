@@ -1582,7 +1582,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                                     commitMode,
                                     newColumnType,
                                     symbolTable,
-                                    symbolMapWriter
+                                    symbolMapWriter,
+                                    metadata.isNotNull(columnIndex)
                             );
                         } else {
                             // Deleted column

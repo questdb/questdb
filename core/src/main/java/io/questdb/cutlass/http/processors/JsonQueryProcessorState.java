@@ -1098,11 +1098,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void putDoubleValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getDouble(col));
+        double v = rec.getDouble(col);
+        if (!Numbers.isFinite(v) && recordCursorFactory.getMetadata().isNotNull(col)) {
+            response.putAscii('"');
+            Numbers.append(response, v);
+            response.putAscii('"');
+        } else {
+            response.put(v);
+        }
     }
 
     private void putFloatValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getFloat(col));
+        float v = rec.getFloat(col);
+        if (!Numbers.isFinite(v) && recordCursorFactory.getMetadata().isNotNull(col)) {
+            response.putAscii('"');
+            Numbers.append(response, v);
+            response.putAscii('"');
+        } else {
+            response.put(v);
+        }
     }
 
     private void putVarcharValue(HttpChunkedResponse response, int columnIdx) {

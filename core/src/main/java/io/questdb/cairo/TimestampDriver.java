@@ -101,7 +101,7 @@ public interface TimestampDriver {
      * @param stringSink the character sink to append the formatted timestamp to
      * @return true if the operation was successful, false otherwise
      */
-    boolean append(long fixedAddr, CharSink<?> stringSink);
+    boolean append(long fixedAddr, CharSink<?> stringSink, boolean notNull);
 
     default void appendToMem(CharSequence value, MemoryA mem) {
         try {

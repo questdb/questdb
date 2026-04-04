@@ -5,7 +5,8 @@ use std::hash::Hash;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
+    build_plain_page, encode_all_ones_def_levels, encode_dict_rle_pages,
+    encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
 use parquet2::bloom_filter::hash_native;
@@ -28,6 +29,7 @@ pub fn decimal_slice_to_page_plain<T>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null: bool,
 ) -> ParquetResult<Page>
 where
     T: Nullable + NativeType + Debug,
@@ -37,6 +39,58 @@ where
     let mut null_count = 0;
     let write_stats = options.write_statistics;
     let mut statistics = MaxMin::new();
+
+    let mut buffer = vec![];
+
+    if not_null {
+        // NOT NULL path: sentinel values are real data, never null.
+        // column_top rows are genuinely missing — they are null.
+        if column_top == 0 {
+            encode_all_ones_def_levels(&mut buffer, num_rows, options.version);
+        } else {
+            let def_levels = (0..num_rows).map(|i| i >= column_top);
+            encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)
+                .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
+        }
+        let definition_levels_byte_length = buffer.len();
+
+        buffer.reserve(size_of::<T>() * slice.len());
+        for &v in slice {
+            if write_stats {
+                statistics.update(v);
+            }
+            if let Some(ref mut h) = bloom_hashes {
+                h.insert(hash_native(v));
+            }
+            buffer.extend_from_slice(v.to_bytes().as_ref());
+        }
+
+        let statistics = if options.write_statistics {
+            let s = &FixedLenStatistics {
+                primitive_type: primitive_type.clone(),
+                null_count: Some(column_top as i64),
+                distinct_count: None,
+                max_value: statistics.max.map(|x| x.to_bytes().as_ref().to_vec()),
+                min_value: statistics.min.map(|x| x.to_bytes().as_ref().to_vec()),
+            } as &dyn parquet2::statistics::Statistics;
+            Some(serialize_statistics(s))
+        } else {
+            None
+        };
+
+        return build_plain_page(
+            buffer,
+            num_rows,
+            column_top,
+            definition_levels_byte_length,
+            statistics,
+            primitive_type,
+            options,
+            Encoding::Plain,
+            false,
+        )
+        .map(Page::Data);
+    }
 
     let deflevels_iter = (0..num_rows).map(|i| {
         if i < column_top {
@@ -57,7 +111,6 @@ where
             }
         }
     });
-    let mut buffer = vec![];
     encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
@@ -97,6 +150,7 @@ pub fn int_slice_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
     primitive_type: PrimitiveType,
     encoding: Encoding,
     bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null: bool,
 ) -> ParquetResult<Page>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
@@ -112,6 +166,7 @@ where
             encoding,
             encode_plain_nullable,
             bloom_hashes,
+            not_null,
         ),
         Encoding::DeltaBinaryPacked => slice_to_page_nullable_impl::<_, P, UNSIGNED_STATS, _>(
             slice,
@@ -121,6 +176,7 @@ where
             encoding,
             encode_delta_nullable,
             bloom_hashes,
+            not_null,
         ),
         other => {
             return Err(fmt_err!(
@@ -165,6 +221,7 @@ fn slice_to_page_nullable_impl<T, P, const UNSIGNED_STATS: bool, F>(
     encoding: Encoding,
     encode_fn: F,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null: bool,
 ) -> ParquetResult<DataPage>
 where
     P: NativeType,
@@ -177,6 +234,56 @@ where
     let mut null_count = 0;
     let write_stats = options.write_statistics;
     let mut statistics: MaxMin<P> = MaxMin::new();
+
+    let mut buffer = vec![];
+
+    if not_null {
+        // NOT NULL path: sentinel values are real data, never null.
+        // column_top rows are genuinely missing — they are null.
+
+        if column_top == 0 {
+            encode_all_ones_def_levels(&mut buffer, num_rows, options.version);
+        } else {
+            let def_levels = (0..num_rows).map(|i| i >= column_top);
+            encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)
+                .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
+        }
+        let definition_levels_byte_length = buffer.len();
+
+        buffer.reserve(size_of::<P>() * slice.len());
+        for &v in slice {
+            let p: P = v.as_();
+            if write_stats {
+                statistics.update_stats(p);
+            }
+            if let Some(ref mut h) = bloom_hashes {
+                h.insert(hash_native(p));
+            }
+            buffer.extend_from_slice(p.to_bytes().as_ref());
+        }
+
+        let statistics = if options.write_statistics {
+            Some(build_statistics(
+                Some(column_top as i64),
+                statistics,
+                primitive_type.clone(),
+            ))
+        } else {
+            None
+        };
+
+        return build_plain_page(
+            buffer,
+            num_rows,
+            column_top,
+            definition_levels_byte_length,
+            statistics,
+            primitive_type,
+            options,
+            Encoding::Plain,
+            false,
+        );
+    }
 
     let def_levels_iter = (0..num_rows).map(|i| {
         if i < column_top {
@@ -198,7 +305,6 @@ where
             }
         }
     });
-    let mut buffer = vec![];
     encode_primitive_def_levels(&mut buffer, def_levels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
@@ -453,8 +559,13 @@ pub trait SimdEncodable: NativeType {
     /// Check if a value represents null.
     fn is_null(&self) -> bool;
 
-    /// Encode data with delta encoding. Override for types that support it.
+    /// Encode data with delta encoding (nullable — filters sentinel values).
     fn encode_delta(_slice: &[Self], _non_null_count: usize, _buffer: &mut Vec<u8>) -> bool {
+        false // Not supported by default
+    }
+
+    /// Encode ALL values with delta encoding (NOT NULL — no sentinel filtering).
+    fn encode_delta_all(_slice: &[Self], _buffer: &mut Vec<u8>) -> bool {
         false // Not supported by default
     }
 
@@ -526,6 +637,11 @@ impl SimdEncodable for i64 {
         encode(iterator, buffer);
         true
     }
+
+    fn encode_delta_all(slice: &[Self], buffer: &mut Vec<u8>) -> bool {
+        encode(slice.iter().copied(), buffer);
+        true
+    }
 }
 
 impl SimdEncodable for i32 {
@@ -551,6 +667,11 @@ impl SimdEncodable for i32 {
             .map(|&x| x as i64);
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode_i32(iterator, buffer);
+        true
+    }
+
+    fn encode_delta_all(slice: &[Self], buffer: &mut Vec<u8>) -> bool {
+        encode_i32(slice.iter().map(|&x| x as i64), buffer);
         true
     }
 }
@@ -590,18 +711,88 @@ impl SimdEncodable for f32 {
 }
 
 /// Generic SIMD-optimized page encoder for nullable columns.
+/// When `not_null` is true, all values (including sentinel/NaN) are written
+/// as non-null with all-ones definition levels — no null filtering.
 pub fn slice_to_page_simd<T: SimdEncodable>(
     slice: &[T],
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-    bloom_hashes: Option<&mut HashSet<u64>>,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null: bool,
 ) -> ParquetResult<Page> {
     assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
     let num_rows = column_top + slice.len();
 
     let mut buffer = vec![];
+
+    if not_null {
+        // NOT NULL path: sentinel values (NaN, INT_MIN, etc.) are real data, never null.
+        // column_top rows are genuinely missing (column added later) — they are null.
+        // All data values from the slice are written without sentinel filtering.
+
+        // 1. Definition levels
+        if column_top == 0 {
+            encode_all_ones_def_levels(&mut buffer, num_rows, options.version);
+        } else {
+            let def_levels = (0..num_rows).map(|i| i >= column_top);
+            encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)
+                .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
+        }
+        let definition_levels_byte_length = buffer.len();
+
+        // 2. Data: write ALL values from slice, no sentinel filtering
+        let actual_encoding = match encoding {
+            Encoding::DeltaBinaryPacked if T::encode_delta_all(slice, &mut buffer) => {
+                Encoding::DeltaBinaryPacked
+            }
+            _ => {
+                // Plain: memcpy entire slice
+                buffer.reserve(size_of::<T>() * slice.len());
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(slice.as_ptr() as *const u8, size_of_val(slice))
+                };
+                buffer.extend_from_slice(bytes);
+                Encoding::Plain
+            }
+        };
+
+        // 3. Bloom hashes
+        if let Some(ref mut h) = bloom_hashes {
+            for &v in slice {
+                h.insert(hash_native(v));
+            }
+        }
+
+        // 4. Statistics (column_top rows count as null)
+        let statistics = if options.write_statistics {
+            let mut stats = MaxMin::<T>::new();
+            for &v in slice {
+                stats.update(v);
+            }
+            Some(build_statistics(
+                Some(column_top as i64),
+                stats,
+                primitive_type.clone(),
+            ))
+        } else {
+            None
+        };
+
+        return build_plain_page(
+            buffer,
+            num_rows,
+            column_top,
+            definition_levels_byte_length,
+            statistics,
+            primitive_type,
+            options,
+            actual_encoding,
+            false,
+        )
+        .map(Page::Data);
+    }
 
     // For V1, write a 4-byte length prefix placeholder
     let def_levels_start = if matches!(options.version, parquet2::write::Version::V1) {
@@ -671,6 +862,7 @@ pub fn slice_to_dict_pages_simd<T: SimdEncodable>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null: bool,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
 where
     T::Bytes: Eq + Hash,
@@ -679,7 +871,8 @@ where
     let num_rows = column_top + slice.len();
     let value_size = size_of::<T>();
 
-    // Build dictionary: use byte representation as key
+    // Build dictionary: use byte representation as key.
+    // When not_null, sentinel values are real data — never skip them.
     let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
     let mut dict_entries: Vec<T> = Vec::new();
     let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
@@ -687,7 +880,7 @@ where
     let mut statistics = MaxMin::new();
 
     for &value in slice {
-        if value.is_null() {
+        if !not_null && value.is_null() {
             null_count += 1;
         } else {
             statistics.update(value);
@@ -712,17 +905,27 @@ where
     }
 
     // Encode data page: def levels + bit_width + RLE-encoded keys
+    // When not_null: column_top rows are null (missing), data rows are all non-null.
     let total_null_count = column_top + null_count;
     let mut data_buffer = Vec::new();
 
-    let def_levels = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
+    if not_null {
+        if column_top == 0 {
+            encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
         } else {
-            !slice[i - column_top].is_null()
+            let def_levels = (0..num_rows).map(|i| i >= column_top);
+            encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
         }
-    });
-    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    } else {
+        let def_levels = (0..num_rows).map(|i| {
+            if i < column_top {
+                false
+            } else {
+                !slice[i - column_top].is_null()
+            }
+        });
+        encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    }
     let definition_levels_byte_length = data_buffer.len();
 
     let non_null_len = slice.len() - null_count;
@@ -759,6 +962,7 @@ pub fn int_slice_to_dict_pages_nullable<T, P>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null: bool,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
 where
     P: NativeType,
@@ -776,7 +980,7 @@ where
     let mut statistics = MaxMin::new();
 
     for &value in slice {
-        if value.is_null() {
+        if !not_null && value.is_null() {
             null_count += 1;
         } else {
             let p: P = value.as_();
@@ -803,14 +1007,23 @@ where
     let total_null_count = column_top + null_count;
     let mut data_buffer = Vec::new();
 
-    let def_levels = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
+    if not_null {
+        if column_top == 0 {
+            encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
         } else {
-            !slice[i - column_top].is_null()
+            let def_levels = (0..num_rows).map(|i| i >= column_top);
+            encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
         }
-    });
-    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    } else {
+        let def_levels = (0..num_rows).map(|i| {
+            if i < column_top {
+                false
+            } else {
+                !slice[i - column_top].is_null()
+            }
+        });
+        encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    }
     let definition_levels_byte_length = data_buffer.len();
 
     let non_null_len = slice.len() - null_count;
@@ -932,6 +1145,7 @@ pub fn decimal_slice_to_dict_pages<T>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null: bool,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
 where
     T: Nullable + NativeType + Debug,
@@ -947,7 +1161,7 @@ where
     let mut statistics = MaxMin::new();
 
     for &value in slice {
-        if value.is_null() {
+        if !not_null && value.is_null() {
             null_count += 1;
         } else {
             statistics.update(value);
@@ -973,14 +1187,23 @@ where
     let total_null_count = column_top + null_count;
     let mut data_buffer = Vec::new();
 
-    let def_levels = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
+    if not_null {
+        if column_top == 0 {
+            encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
         } else {
-            !slice[i - column_top].is_null()
+            let def_levels = (0..num_rows).map(|i| i >= column_top);
+            encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
         }
-    });
-    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    } else {
+        let def_levels = (0..num_rows).map(|i| {
+            if i < column_top {
+                false
+            } else {
+                !slice[i - column_top].is_null()
+            }
+        });
+        encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    }
     let definition_levels_byte_length = data_buffer.len();
 
     let non_null_len = slice.len() - null_count;
