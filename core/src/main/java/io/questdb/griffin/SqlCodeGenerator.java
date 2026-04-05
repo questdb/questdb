@@ -214,6 +214,7 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.ArrayUnnestSource;
 import io.questdb.griffin.engine.join.AsOfJoinDenseRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinDenseSingleSymbolRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
@@ -236,6 +237,7 @@ import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
+import io.questdb.griffin.engine.join.JsonUnnestSource;
 import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
@@ -253,6 +255,8 @@ import io.questdb.griffin.engine.join.SymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.SymbolKeyMappingRecordCopier;
 import io.questdb.griffin.engine.join.SymbolShortCircuit;
 import io.questdb.griffin.engine.join.SymbolToSymbolJoinKeyMapping;
+import io.questdb.griffin.engine.join.UnnestRecordCursorFactory;
+import io.questdb.griffin.engine.join.UnnestSource;
 import io.questdb.griffin.engine.join.VarcharToSymbolJoinKeyMapping;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
@@ -4520,9 +4524,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else { // i == 0
                     // This is first model in the sequence of joins
                     // TS requirement is symmetrical on both right and left sides
-                    // check if next join requires a timestamp
-                    int nextJointType = joinModels.getQuick(ordered.getQuick(1)).getJoinType();
-                    executionContext.pushTimestampRequiredFlag(joinsRequiringTimestamp[nextJointType]);
+                    // check if any right-side join requires a timestamp
+                    boolean isTimestampRequired = false;
+                    for (int k = 1; k < n; k++) {
+                        if (joinsRequiringTimestamp[joinModels.getQuick(ordered.getQuick(k)).getJoinType()]) {
+                            isTimestampRequired = true;
+                            break;
+                        }
+                    }
+                    executionContext.pushTimestampRequiredFlag(isTimestampRequired);
                     // For successive JOIN operations, if the left table requires timestamp,
                     // it must be the timestamp from the first table in the JOIN chain
                     executionContext.pushHasInterval(0);
@@ -4540,6 +4550,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 try {
                     // Skip synthetic horizon offset model - it's handled as part of HORIZON JOIN
                     if (isHorizonOffsetModel(slaveModel)) {
+                        continue;
+                    }
+
+                    // UNNEST join - no slave query to compile
+                    if (slaveModel.getJoinType() == JOIN_UNNEST) {
+                        assert master != null : "UNNEST requires a master factory";
+                        master = generateUnnest(master, masterAlias, slaveModel, executionContext);
+                        closeSlaveOnFailure = false;
+                        masterAlias = null;
+                        // Apply post-UNNEST filter (e.g., WHERE u.val > 3.0)
+                        ExpressionNode unnestFilter = slaveModel.getPostJoinWhereClause();
+                        if (unnestFilter != null) {
+                            master = new FilteredRecordCursorFactory(
+                                    master,
+                                    compileBooleanFilter(unnestFilter, master.getMetadata(), executionContext)
+                            );
+                        }
                         continue;
                     }
 
@@ -4758,7 +4785,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (windowJoinColCheckVisitor.shouldInclude) {
                                                 QueryColumn column = columns.get(j);
                                                 aggregateCols.add(columns.get(j));
-                                                aggModel.replaceColumn(j, SqlUtil.nextColumn(queryColumnPool, expressionNodePool, column.getAlias(), column.getAlias(), ast.position));
+                                                aggModel.replaceColumn(j, SqlUtil.nextColumn(queryColumnPool, expressionNodePool, column.getAlias(), column.getAlias(), column.isIncludeIntoWildcard(), ast.position));
                                             } else if (windowJoinColCheckVisitor.hasIncludeCol) {
                                                 throw SqlException.position(ast.position).put("WINDOW join aggregate function cannot reference columns from multiple models");
                                             }
@@ -9443,6 +9470,215 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return generateSetFactory(model.getUnionModel(), unionFactory, executionContext);
         }
         return unionFactory;
+    }
+
+    private RecordCursorFactory generateUnnest(
+            RecordCursorFactory masterFactory,
+            CharSequence masterAlias,
+            QueryModel unnestModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final ObjList<ExpressionNode> unnestExprs =
+                unnestModel.getUnnestExpressions();
+        final ObjList<CharSequence> columnAliases =
+                unnestModel.getUnnestColumnAliases();
+        final boolean hasOrdinality = unnestModel.isUnnestOrdinality();
+        final boolean isStandalone = unnestModel.isStandaloneUnnest();
+        final int exprCount = unnestExprs.size();
+        final RecordMetadata masterMetadata = masterFactory.getMetadata();
+        final int masterColumnCount = masterMetadata.getColumnCount();
+        final CharSequence unnestAlias = unnestModel.getName();
+        final int totalOutputCols = unnestModel.getUnnestOutputColumnCount();
+        final int totalUnnestColumns = totalOutputCols + (hasOrdinality ? 1 : 0);
+
+        // For standalone UNNEST, the base is a synthetic
+        // long_sequence(1) whose columns we exclude from output.
+        final int columnSplit = isStandalone ? 0 : masterColumnCount;
+
+        // Build JoinRecordMetadata with master columns first so
+        // the function parser can resolve table-qualified
+        // references like t.arr against the master alias.
+        JoinRecordMetadata parserMetadata = new JoinRecordMetadata(
+                configuration,
+                masterColumnCount + totalUnnestColumns
+        );
+        try {
+            parserMetadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
+
+            ObjList<Function> functions = new ObjList<>(exprCount);
+            ObjList<UnnestSource> sources = new ObjList<>(exprCount);
+            try {
+                // Build output metadata separately from the
+                // parser metadata to avoid leaking UNNEST columns
+                // into subsequent parseFunction() calls.
+                JoinRecordMetadata outputMetadata =
+                        new JoinRecordMetadata(
+                                configuration,
+                                isStandalone
+                                        ? totalUnnestColumns
+                                        : masterColumnCount
+                                        + totalUnnestColumns
+                        );
+                if (!isStandalone) {
+                    outputMetadata.copyColumnMetadataFrom(
+                            masterAlias, masterMetadata
+                    );
+                }
+
+                try {
+                    ObjList<CharSequence> columnNames = new ObjList<>(totalUnnestColumns);
+                    int aliasIdx = 0;
+
+                    // Compile each UNNEST expression and build
+                    // source + metadata entries.
+                    for (int i = 0; i < exprCount; i++) {
+                        Function f = functionParser.parseFunction(
+                                unnestExprs.getQuick(i),
+                                parserMetadata,
+                                executionContext
+                        );
+                        functions.add(f);
+
+                        if (unnestModel.isUnnestJsonSource(i)) {
+                            // JSON source: VARCHAR input, N output
+                            // columns from COLUMNS declaration
+                            int fType = f.getType();
+                            if (ColumnType.tagOf(fType)
+                                    != ColumnType.VARCHAR) {
+                                throw SqlException
+                                        .$(unnestExprs.getQuick(i)
+                                                        .position,
+                                                "VARCHAR expected for "
+                                                        + "JSON UNNEST")
+                                        .put(", got ")
+                                        .put(ColumnType.nameOf(fType));
+                            }
+                            ObjList<CharSequence> jsonColNames =
+                                    unnestModel
+                                            .getUnnestJsonColumnNames()
+                                            .getQuick(i);
+                            IntList jsonColTypes =
+                                    unnestModel
+                                            .getUnnestJsonColumnTypes()
+                                            .getQuick(i);
+                            sources.add(new JsonUnnestSource(f, jsonColNames, jsonColTypes, configuration.getJsonUnnestMaxValueSize()));
+                            for (int j = 0, jn = jsonColNames.size();
+                                 j < jn; j++) {
+                                CharSequence colName;
+                                if (aliasIdx < columnAliases.size()) {
+                                    colName = columnAliases
+                                            .getQuick(aliasIdx);
+                                } else {
+                                    colName = jsonColNames.getQuick(j);
+                                }
+                                columnNames.add(colName);
+                                outputMetadata.add(
+                                        unnestAlias, colName,
+                                        jsonColTypes.getQuick(j),
+                                        false, 0, false, null
+                                );
+                                aliasIdx++;
+                            }
+                        } else {
+                            // Array source: array input, 1 output
+                            int fType = f.getType();
+                            if (!ColumnType.isArray(fType)) {
+                                throw SqlException
+                                        .$(unnestExprs.getQuick(i)
+                                                        .position,
+                                                "array type expected "
+                                                        + "in UNNEST")
+                                        .put(", got ")
+                                        .put(ColumnType.nameOf(fType));
+                            }
+                            sources.add(new ArrayUnnestSource(f));
+                            CharSequence colName;
+                            if (aliasIdx < columnAliases.size()) {
+                                colName = columnAliases
+                                        .getQuick(aliasIdx);
+                            } else if (totalOutputCols == 1) {
+                                colName = "value";
+                            } else {
+                                colName = "value" + (aliasIdx + 1);
+                            }
+                            columnNames.add(colName);
+                            int elemType = ColumnType
+                                    .decodeArrayElementType(fType);
+                            int dims = ColumnType
+                                    .decodeArrayDimensionality(fType);
+                            int outputType;
+                            if (dims > 1) {
+                                outputType =
+                                        ColumnType.encodeArrayType(
+                                                (short) elemType,
+                                                dims - 1
+                                        );
+                            } else {
+                                outputType = elemType;
+                            }
+                            outputMetadata.add(
+                                    unnestAlias, colName, outputType,
+                                    false, 0, false, null
+                            );
+                            aliasIdx++;
+                        }
+                    }
+
+                    // Add ordinality column.
+                    if (hasOrdinality) {
+                        CharSequence ordColName;
+                        if (columnAliases.size()
+                                == totalUnnestColumns) {
+                            ordColName = columnAliases
+                                    .getQuick(totalOutputCols);
+                        } else {
+                            ordColName = "ordinality";
+                        }
+                        columnNames.add(ordColName);
+                        outputMetadata.add(
+                                unnestAlias, ordColName,
+                                ColumnType.LONG,
+                                false, 0, false, null
+                        );
+                    }
+
+                    if (!isStandalone
+                            && masterMetadata.getTimestampIndex()
+                            != -1
+                    ) {
+                        outputMetadata.setTimestampIndex(
+                                masterMetadata.getTimestampIndex()
+                        );
+                    }
+
+                    RecordCursorFactory factory =
+                            new UnnestRecordCursorFactory(
+                                    outputMetadata,
+                                    masterFactory,
+                                    functions,
+                                    sources,
+                                    columnSplit,
+                                    hasOrdinality,
+                                    columnNames
+                            );
+                    // parserMetadata was only needed for
+                    // function compilation; outputMetadata is
+                    // now owned by the factory.
+                    Misc.free(parserMetadata);
+                    return factory;
+                } catch (Throwable th) {
+                    Misc.free(outputMetadata);
+                    throw th;
+                }
+            } catch (Throwable th) {
+                Misc.freeObjList(functions);
+                Misc.freeObjListIfCloseable(sources);
+                throw th;
+            }
+        } catch (Throwable th) {
+            Misc.free(parserMetadata);
+            throw th;
+        }
     }
 
     @Nullable
