@@ -287,6 +287,7 @@ io.questdb.griffin.engine.functions.date.TimestampFloorFromFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory
 io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory
+io.questdb.griffin.engine.functions.date.DateTruncWithTimezoneFunctionFactory
 io.questdb.griffin.engine.functions.date.PgPostmasterStartTimeFunctionFactory
 io.questdb.griffin.engine.functions.date.TodayFunctionFactory
 io.questdb.griffin.engine.functions.date.TodayWithTimezoneFunctionFactory
