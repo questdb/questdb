@@ -3509,6 +3509,63 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetActiveColumnsNarrowingThenOpenNewPartition() throws Exception {
+        // Verifies that after narrowing the active column set, opening a
+        // previously-unopened partition only maps the narrow set.
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            // 3 days = 3 partitions
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 72; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                Assert.assertEquals(3, reader.getPartitionCount());
+
+                // open partition 0 with all 3 data columns
+                IntList wideSet = new IntList();
+                wideSet.add(0);
+                wideSet.add(1);
+                wideSet.add(2);
+                reader.setActiveColumns(wideSet);
+                reader.openPartition(0);
+
+                int columnBase0 = reader.getColumnBase(0);
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase0, 0)));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase0, 1)));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase0, 2)));
+
+                // narrow to only "a", then open partition 1 (never opened before)
+                IntList narrowSet = new IntList();
+                narrowSet.add(0);
+                reader.setActiveColumns(narrowSet);
+                reader.openPartition(1);
+
+                int columnBase1 = reader.getColumnBase(1);
+                // "a" mapped in partition 1
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase1, 0)));
+                // "b" and "c" NOT mapped in partition 1
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase1, 1)));
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase1, 2)));
+            }
+        });
+    }
+
+    @Test
     public void testSetActiveColumnsNullMapsAllColumns() throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
@@ -4350,6 +4407,71 @@ public class TableReaderTest extends AbstractCairoTest {
                 // "s" still mapped
                 Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(sPrimary));
                 Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(sPrimary + 1));
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsVarSizeColumnsVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("v", ColumnType.VARCHAR)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(60 * 60);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putVarchar(1, new io.questdb.std.str.Utf8String("vc_" + i));
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+            }
+
+            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+                // activate only VARCHAR and timestamp, exclude "a" and "c"
+                IntList columnIndexes = new IntList();
+                columnIndexes.add(1); // v
+                columnIndexes.add(3); // timestamp
+                reader.setActiveColumns(columnIndexes);
+                reader.openPartition(0);
+
+                int columnBase = reader.getColumnBase(0);
+                // "a" not mapped
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 0)));
+                // "v" primary (data) and secondary (aux) both mapped
+                int vPrimary = TableReader.getPrimaryColumnIndex(columnBase, 1);
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(vPrimary));
+                Assert.assertNotSame(NullMemoryCMR.INSTANCE, reader.getColumn(vPrimary + 1));
+                // "c" not mapped
+                Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 2)));
+
+                // broaden to include all columns and verify data
+                IntList allColumns = new IntList();
+                allColumns.add(0);
+                allColumns.add(1);
+                allColumns.add(2);
+                allColumns.add(3);
+                reader.setActiveColumns(allColumns);
+                reader.openPartition(0);
+
+                // verify all data is readable through cursor
+                try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+                    final Record record = cursor.getRecord();
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, record.getInt(0));
+                        TestUtils.assertEquals("vc_" + count, record.getVarcharA(1));
+                        Assert.assertEquals(count * 1.5, record.getDouble(2), 0.0001);
+                        count++;
+                    }
+                    Assert.assertEquals(24, count);
+                }
             }
         });
     }
