@@ -66,6 +66,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = PARTITIONS_SLOT_OFFSET_SIZE + 1;
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
+    // 1 when all active columns have been initialized; reset to 0 by setActiveColumns()
     private static final int PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
@@ -618,6 +619,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         closeExcessPartitions();
         hasActiveColumns = false;
+        resetAllColumnsOpenFlag();
         streamingMode = false;
     }
 
@@ -693,6 +695,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public void setActiveColumns(@Nullable IntList columnIndexes) {
+        resetAllColumnsOpenFlag();
+
         if (columnIndexes == null || columnIndexes.size() == 0) {
             hasActiveColumns = false;
             return;
@@ -1271,9 +1275,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             path.trimTo(rootLen);
         }
 
-        if (!hasActiveColumns) {
-            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
-        }
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
     }
 
     @NotNull
@@ -1326,11 +1328,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
-                        // Parquet partitions don't have per-column memory mappings, but
-                        // openPartitionColumns() initializes column tops and bitmap index
-                        // readers only for active columns, so track completeness the same
-                        // way native partitions do.
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, hasActiveColumns ? 0 : 1);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
 
                         final long parquetSize = txFile.getPartitionParquetFileSize(partitionIndex);
                         assert parquetSize > 0;
@@ -1380,7 +1378,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, hasActiveColumns ? 0 : 1);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
                         openPartitionCount++;
                     }
 
@@ -1914,6 +1912,15 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
         symbolMapReaders.setQuick(columnIndex, reader);
+    }
+
+    private void resetAllColumnsOpenFlag() {
+        for (int i = 0; i < partitionCount; i++) {
+            final int offset = i * PARTITIONS_SLOT_SIZE;
+            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) > -1) {
+                openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
+            }
+        }
     }
 
     private void reshuffleColumns(TableReaderMetadataTransitionIndex transitionIndex) {
