@@ -193,9 +193,9 @@ public class DoubleArraySortFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWithNegativeInfinity() throws SqlException {
-        // -Infinity sorts after all finite values because it is null
+        // -Infinity is preserved as a distinct value and sorts before all finite values
         assertSqlWithTypes(
-                "array_sort\n[1.0,2.0,null]:DOUBLE[]\n",
+                "array_sort\n[null,1.0,2.0]:DOUBLE[]\n",
                 "SELECT array_sort(ARRAY[2.0, '-Infinity'::double, 1.0])");
     }
 
