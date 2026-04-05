@@ -263,7 +263,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             drainWalQueue();
 
             String header = "column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n";
-            String left = "a\tSYMBOL\tfalse\t256\t";
+            String left = "a\tSYMBOL\tfalse\t256\t\t\t";
             String right = "\t128\t0\tfalse\tfalse\n";
 
             // check its true by default
