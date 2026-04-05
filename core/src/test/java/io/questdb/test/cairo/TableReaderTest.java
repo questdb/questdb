@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
@@ -3591,9 +3592,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testSetActiveColumnsOpenMissingColumnsAllColumnsOpenParquet() throws Exception {
-        // Verifies that Parquet partitions set ALL_COLUMNS_OPEN = 1 immediately
-        // in both openPartition0 and openMissingColumnsInPartition, since Parquet
-        // decodes column data on the fly (no per-column memory mappings).
+        // Verifies that Parquet partitions handle active column filtering
+        // correctly: openPartition0 initializes only active columns, and
+        // repeated openPartition calls are idempotent.
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -3628,7 +3629,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 reader.openPartition(1);
 
                 // Calling openPartition again on the Parquet partition should
-                // not attempt to open missing columns (flag is already 1)
+                // be idempotent
                 reader.openPartition(0);
             }
         });
@@ -3711,6 +3712,56 @@ public class TableReaderTest extends AbstractCairoTest {
                             reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i))
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsOpenMissingColumnsParquetBroadening() throws Exception {
+        // Verifies that openMissingColumnsInPartition() correctly handles
+        // Parquet partitions when the active column set broadens. With the
+        // fix, ALL_COLUMNS_OPEN=0 after a narrow open triggers
+        // openMissingColumnsInPartition on broadening. Without the fix,
+        // ALL_COLUMNS_OPEN=1 would skip it entirely.
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, sym, b, ts) VALUES
+                            (1, 's0', 100, '2020-01-01T01:00:00.000Z'),
+                            (2, 's1', 200, '2020-01-01T02:00:00.000Z'),
+                            (3, 's0', 300, '2020-01-01T03:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                // Close partition left open by drainWalQueue() to get a clean state
+                reader.closePartitionByIndex(0);
+
+                // Open Parquet partition with only column "a"
+                IntList narrowSet = new IntList();
+                narrowSet.add(0); // a
+                reader.setActiveColumns(narrowSet);
+                reader.openPartition(0);
+
+                // Broaden to include all columns (indexed SYMBOL, LONG, timestamp)
+                reader.setActiveColumns(null);
+                reader.openPartition(0);
+
+                // Verify bitmap index reader works for the previously-skipped indexed column
+                int symIndex = reader.getMetadata().getColumnIndex("sym");
+                BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
+                Assert.assertNotNull(indexReader);
+                Assert.assertTrue(indexReader.isOpen());
             }
         });
     }

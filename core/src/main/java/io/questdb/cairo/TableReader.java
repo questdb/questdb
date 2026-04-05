@@ -1230,14 +1230,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void openMissingColumnsInPartition(int partitionIndex, int offset, long partitionSize) {
-        final byte format = (byte) openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT);
-        if (format != PartitionFormat.NATIVE) {
-            // Parquet partitions don't have per-column memory mappings;
-            // column data is decoded on the fly, so there is nothing to open.
-            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
-            return;
-        }
-
         final int columnBase = getColumnBase(partitionIndex);
         boolean hasNewColumns = false;
         try {
@@ -1334,9 +1326,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
-                        // Parquet partitions don't have per-column memory mappings;
-                        // column data is decoded on the fly, so they are always complete.
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
+                        // Parquet partitions don't have per-column memory mappings, but
+                        // openPartitionColumns() initializes column tops and bitmap index
+                        // readers only for active columns, so track completeness the same
+                        // way native partitions do.
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, hasActiveColumns ? 0 : 1);
 
                         final long parquetSize = txFile.getPartitionParquetFileSize(partitionIndex);
                         assert parquetSize > 0;
