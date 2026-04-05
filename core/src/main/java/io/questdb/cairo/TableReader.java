@@ -1328,7 +1328,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
 
                         final long parquetSize = txFile.getPartitionParquetFileSize(partitionIndex);
                         assert parquetSize > 0;
@@ -1347,6 +1346,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         path.trimTo(rootLen);
                         Path nativePath = pathGenNativePartition(partitionIndex, partitionNameTxn);
                         openPartitionColumns(partitionIndex, nativePath, getColumnBase(partitionIndex), partitionSize);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
                         openPartitionCount++;
                     }
                     PartitionDecoder decoder = parquetPartitionDecoders.getQuick(partitionIndex);
