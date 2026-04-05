@@ -3893,6 +3893,77 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetActiveColumnsReloadColumnFilesGrowsAllOpenColumns() throws Exception {
+        // Verifies that reloadColumnFiles() grows ALL already-open columns,
+        // not just the active ones. Previously, narrowing active columns before
+        // a reload left already-mapped inactive columns at stale sizes.
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("a", ColumnType.INT)
+                    .col("b", ColumnType.LONG)
+                    .col("c", ColumnType.DOUBLE)
+                    .timestamp(timestampType);
+            TestUtils.createTable(engine, model);
+
+            long tsStep = timestampDriver.fromSeconds(30 * 60);
+            try (
+                    TableWriter writer = newOffPoolWriter(configuration, "x");
+                    TableReader reader = newOffPoolReader(configuration, "x")
+            ) {
+                // write first batch — 24 rows in partition 0
+                for (int i = 0; i < 24; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+
+                // open partition with ALL columns (ALL_COLUMNS_OPEN = 1)
+                reader.setActiveColumns(null);
+                Assert.assertTrue(reader.reload());
+                reader.openPartition(0);
+
+                // narrow to column "a" only
+                IntList narrowSet = new IntList();
+                narrowSet.add(0);
+                reader.setActiveColumns(narrowSet);
+
+                // append more rows to the same partition
+                for (int i = 24; i < 48; i++) {
+                    TableWriter.Row row = writer.newRow(i * tsStep);
+                    row.putInt(0, i);
+                    row.putLong(1, i * 100L);
+                    row.putDouble(2, i * 1.5);
+                    row.append();
+                }
+                writer.commit();
+
+                // reload — reloadColumnFiles must grow columns b, c too
+                Assert.assertTrue(reader.reload());
+
+                // broaden back to all columns
+                reader.setActiveColumns(null);
+                reader.openPartition(0);
+
+                // verify ALL columns read correctly for all 48 rows
+                try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+                    final Record record = cursor.getRecord();
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, record.getInt(0));
+                        Assert.assertEquals(count * 100L, record.getLong(1));
+                        Assert.assertEquals(count * 1.5, record.getDouble(2), 0.0001);
+                        count++;
+                    }
+                    Assert.assertEquals(48, count);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSetActiveColumnsSameSetDoesNotReopenPartitions() throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY)

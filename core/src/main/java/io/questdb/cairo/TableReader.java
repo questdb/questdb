@@ -705,7 +705,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
         // When all columns are referenced, skip per-column BitSet checks
-        // in openPartitionColumns() and reloadColumnFiles().
+        // in openPartitionColumns().
         hasActiveColumns = distinctCount < columnCount;
     }
 
@@ -1797,11 +1797,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean reloadColumnFiles(int partitionIndex, long rowCount) {
         int columnBase = getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
-            if (hasActiveColumns && !activeColumns.get(i)) {
-                continue;
-            }
             final int index = getPrimaryColumnIndex(columnBase, i);
             MemoryCMR mem1 = columns.getQuick(index);
+            if (mem1 == null) {
+                continue; // column was never opened — nothing to grow
+            }
 
             long columnFilesRowCount = rowCount - getColumnTop(columnBase, i);
             if (columnFilesRowCount > 0 &&
@@ -1814,7 +1814,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 return false;
             }
             closeIndexReader(columnBase, i);
-
         }
         return true;
     }
