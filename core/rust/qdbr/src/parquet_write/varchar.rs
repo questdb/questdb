@@ -263,6 +263,9 @@ pub fn varchar_to_dict_pages(
     )
 }
 
+/// `(aux_entries, overflow_data, column_top)` for one partition slice.
+pub type VarcharPartitionSlice<'a> = (&'a [[u8; 16]], &'a [u8], usize);
+
 /// Build a single dictionary-encoded column chunk from multiple partition slices.
 ///
 /// Each partition is represented as `(aux, data, column_top)` where `aux` and
@@ -271,7 +274,7 @@ pub fn varchar_to_dict_pages(
 /// Returns `Ok(None)` when the dictionary exceeds `max_dict_bytes`, signalling
 /// the caller to fall back to a non-dictionary encoding.
 pub fn varchar_to_dict_pages_merged(
-    partitions: &[(&[[u8; 16]], &[u8], usize)],
+    partitions: &[VarcharPartitionSlice],
     max_dict_bytes: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,

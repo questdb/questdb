@@ -2933,6 +2933,113 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCopyVarcharHighCardinalityMultiPartition() throws Exception {
+        // Export 100_000 distinct VARCHAR values from a multi-partition table
+        // via COPY (SELECT ...) — the streaming/hybrid path that merges
+        // partitions into row groups. A small row_group_size forces multiple
+        // row group flushes, exercising the unified-dictionary code path.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_high_card AS (
+                        SELECT
+                            'val_' || lpad(x::STRING, 6, '0') AS vc,
+                            x AS id,
+                            timestamp_sequence('2024-01-01', 100_000L) AS ts
+                        FROM long_sequence(100_000)
+                    ) TIMESTAMP(ts) PARTITION BY HOUR""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT vc, id FROM vc_high_card) TO 'vc_high_card_output' WITH FORMAT parquet row_group_size 50000",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "status\nfinished\n",
+                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql(
+                                "count\n100000\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "vc_high_card_output.parquet')"
+                        );
+                        assertSql(
+                                "distinct_count\n100000\n",
+                                "SELECT count(DISTINCT vc) AS distinct_count FROM read_parquet('" + exportRoot + File.separator + "vc_high_card_output.parquet')"
+                        );
+                        // Spot-check boundary values.
+                        assertSql("""
+                                        vc\tid
+                                        val_000001\t1
+                                        """,
+                                "SELECT vc, id FROM read_parquet('" + exportRoot + File.separator + "vc_high_card_output.parquet') WHERE id = 1"
+                        );
+                        assertSql("""
+                                        vc\tid
+                                        val_100000\t100000
+                                        """,
+                                "SELECT vc, id FROM read_parquet('" + exportRoot + File.separator + "vc_high_card_output.parquet') WHERE id = 100000"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyVarcharHighCardinalitySmallRowGroups() throws Exception {
+        // Same streaming path but with an even smaller row_group_size to force
+        // many row group flushes, each merging several partitions.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_stream AS (
+                        SELECT
+                            'item_' || lpad(x::STRING, 6, '0') AS vc,
+                            x AS id,
+                            timestamp_sequence('2024-01-01', 100_000L) AS ts
+                        FROM long_sequence(10_000)
+                    ) TIMESTAMP(ts) PARTITION BY HOUR""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT vc, id FROM vc_stream) TO 'vc_stream_output' WITH FORMAT parquet row_group_size 3000",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "status\nfinished\n",
+                                "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql(
+                                "count\n10000\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "vc_stream_output.parquet')"
+                        );
+                        assertSql(
+                                "distinct_count\n10000\n",
+                                "SELECT count(DISTINCT vc) AS distinct_count FROM read_parquet('" + exportRoot + File.separator + "vc_stream_output.parquet')"
+                        );
+                        assertSql("""
+                                        vc\tid
+                                        item_000001\t1
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_stream_output.parquet') WHERE id = 1"
+                        );
+                        assertSql("""
+                                        vc\tid
+                                        item_010000\t10000
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_stream_output.parquet') WHERE id = 10000"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
     private static Thread createJobThread(Job job, CountDownLatch workCount, AtomicBoolean stop, int workerId) {
         return new Thread(() -> {
             try {

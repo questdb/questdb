@@ -4,13 +4,15 @@ use std::io::Cursor;
 
 use arrow::array::{Array, StringArray};
 use common::encode::{
-    build_qdb_varchar_data, generate_nulls, make_varchar_column, read_parquet_batches,
-    NullPattern, RLE_DICT_CONFIG,
+    build_qdb_varchar_data, generate_nulls, make_varchar_column, read_parquet_batches, NullPattern,
+    RLE_DICT_CONFIG,
 };
 use common::types::varchar::expected_varchar_str;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::bench::WriteOptions;
-use questdbr::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Partition};
+use questdbr::parquet_write::schema::{
+    to_compressions, to_encodings, to_parquet_schema, Partition,
+};
 use questdbr::parquet_write::varchar::varchar_to_dict_pages_merged;
 use questdbr::parquet_write::ParquetWriter;
 
@@ -134,13 +136,7 @@ fn test_two_partitions_with_nulls() {
 
     let bytes = write_multi_partition_parquet(&[&p1, &p2], Some(1_000_000), None);
 
-    let expected: Vec<Option<&str>> = vec![
-        Some("alpha"),
-        None,
-        Some("gamma"),
-        None,
-        Some("alpha"),
-    ];
+    let expected: Vec<Option<&str>> = vec![Some("alpha"), None, Some("gamma"), None, Some("alpha")];
     assert_varchar_values(&bytes, &expected);
 }
 
@@ -225,8 +221,7 @@ fn test_multi_partition_single_partition_path() {
 
     let bytes = write_multi_partition_parquet(&[&p], Some(1_000_000), None);
 
-    let expected: Vec<Option<&str>> =
-        vec![Some("one"), Some("two"), Some("three"), Some("one")];
+    let expected: Vec<Option<&str>> = vec![Some("one"), Some("two"), Some("three"), Some("one")];
     assert_varchar_values(&bytes, &expected);
 }
 
@@ -329,8 +324,7 @@ fn test_dict_size_within_limit() {
 
     let bytes = write_multi_partition_parquet(&[&p1, &p2], Some(1_000_000), None);
 
-    let expected: Vec<Option<&str>> =
-        vec![Some("a"), Some("b"), Some("c"), Some("b"), Some("d")];
+    let expected: Vec<Option<&str>> = vec![Some("a"), Some("b"), Some("c"), Some("b"), Some("d")];
     assert_varchar_values(&bytes, &expected);
 }
 
@@ -368,8 +362,13 @@ fn aux_as_entries(aux: &[u8]) -> &[[u8; 16]] {
 fn test_merged_empty_partitions() {
     let partitions: Vec<(&[[u8; 16]], &[u8], usize)> = vec![];
 
-    let result =
-        varchar_to_dict_pages_merged(&partitions, 1_000_000, test_write_options(), test_primitive_type(), None);
+    let result = varchar_to_dict_pages_merged(
+        &partitions,
+        1_000_000,
+        test_write_options(),
+        test_primitive_type(),
+        None,
+    );
     let pages = result.unwrap().unwrap();
     assert_eq!(pages.len(), 2); // DictPage + DataPage
 }
@@ -388,8 +387,13 @@ fn test_merged_returns_none_on_dict_overflow() {
     let partitions = vec![(aux_entries, overflow.as_slice(), 0usize)];
 
     // max_dict_bytes = 1 byte — guaranteed to overflow.
-    let result =
-        varchar_to_dict_pages_merged(&partitions, 1, test_write_options(), test_primitive_type(), None);
+    let result = varchar_to_dict_pages_merged(
+        &partitions,
+        1,
+        test_write_options(),
+        test_primitive_type(),
+        None,
+    );
     assert!(result.unwrap().is_none(), "expected None (dict too large)");
 }
 
@@ -527,7 +531,10 @@ fn test_merged_all_nulls_produces_empty_dict() {
     let pages = result.unwrap().unwrap();
 
     if let Page::Dict(ref dict_page) = pages[0] {
-        assert_eq!(dict_page.num_values, 0, "expected empty dict for all-null input");
+        assert_eq!(
+            dict_page.num_values, 0,
+            "expected empty dict for all-null input"
+        );
     } else {
         panic!("expected DictPage");
     }

@@ -801,7 +801,7 @@ fn varchar_column_to_pages_multi_partition(
         return Ok(Some(vec![]));
     }
 
-    let partition_slices: Vec<(&[[u8; 16]], &[u8], usize)> = partition_ranges
+    let partition_slices: Vec<varchar::VarcharPartitionSlice> = partition_ranges
         .iter()
         .map(|(col, offset, length)| {
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
