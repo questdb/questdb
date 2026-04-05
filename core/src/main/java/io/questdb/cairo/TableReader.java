@@ -1269,6 +1269,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             closePartitionColumns(columnBase);
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+            openPartitionCount--;
             throw th;
         } finally {
             path.trimTo(rootLen);
@@ -1339,8 +1340,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                             parquetMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetSize, MemoryTag.MMAP_TABLE_READER, false);
                             parquetPartitions.setQuick(partitionIndex, parquetMem);
                         }
-                        openPartitionCount++;
-
                         // Initialize columns and bitmap index readers for parquet partitions.
                         // reloadColumnAt() sets columns to null (not NullMemoryCMR) for parquet,
                         // which allows createBitmapIndexReaderAt() to open real bitmap index
@@ -1348,6 +1347,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         path.trimTo(rootLen);
                         Path nativePath = pathGenNativePartition(partitionIndex, partitionNameTxn);
                         openPartitionColumns(partitionIndex, nativePath, getColumnBase(partitionIndex), partitionSize);
+                        openPartitionCount++;
                     }
                     PartitionDecoder decoder = parquetPartitionDecoders.getQuick(partitionIndex);
                     if (decoder != null) {

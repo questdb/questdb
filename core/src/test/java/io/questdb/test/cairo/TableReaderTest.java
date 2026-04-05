@@ -3680,6 +3680,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 narrowSet.add(0);
                 reader.setActiveColumns(narrowSet);
                 reader.openPartition(0);
+                assertOpenPartitionCount(reader);
 
                 int columnBase = reader.getColumnBase(0);
                 Assert.assertNull(reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, 1)));
@@ -3700,10 +3701,15 @@ public class TableReaderTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
                 }
 
+                // The error path must decrement openPartitionCount to keep
+                // it consistent with the actual number of open partitions.
+                assertOpenPartitionCount(reader);
+
                 // After the error the partition must be marked as closed
                 // (size == -1) so re-opening goes through openPartition0.
                 // The next attempt should succeed because counter > 1.
                 reader.openPartition(0);
+                assertOpenPartitionCount(reader);
                 columnBase = reader.getColumnBase(0);
                 for (int i = 0; i < reader.getColumnCount(); i++) {
                     Assert.assertNotSame(
@@ -3762,6 +3768,81 @@ public class TableReaderTest extends AbstractCairoTest {
                 BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
                 Assert.assertNotNull(indexReader);
                 Assert.assertTrue(indexReader.isOpen());
+            }
+        });
+    }
+
+    @Test
+    public void testSetActiveColumnsOpenPartitionColumnsErrorPathParquet() throws Exception {
+        // Verifies that openPartitionCount stays consistent when
+        // openPartitionColumns() throws during Parquet partition open.
+        // The bitmap index .k file open is the only I/O in this path
+        // that can fail, and it requires a non-null (previously created)
+        // bitmap index reader in the slot.
+        AtomicInteger failCounter = new AtomicInteger();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, ".k") && failCounter.get() > 0 && failCounter.decrementAndGet() >= 0) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, sym SYMBOL INDEX CAPACITY 4, b LONG, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, sym, b, ts) VALUES
+                            (1, 's0', 100, '2020-01-01T01:00:00.000Z'),
+                            (2, 's1', 200, '2020-01-01T02:00:00.000Z'),
+                            (3, 's0', 300, '2020-01-01T03:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                // Close partition left open by drainWalQueue() to get a clean state.
+                reader.closePartitionByIndex(0);
+
+                // Open the Parquet partition and access the bitmap index reader
+                // to populate the bitmapIndexes slot with a non-null reader.
+                reader.openPartition(0);
+                int symIndex = reader.getMetadata().getColumnIndex("sym");
+                reader.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
+                assertOpenPartitionCount(reader);
+
+                // Close the partition. The bitmap index reader is closed but
+                // the slot remains non-null, so the next openPartition0 will
+                // call indexReader.of() which does I/O.
+                reader.closePartitionByIndex(0);
+                assertOpenPartitionCount(reader);
+
+                // Arm the failure: next .k file open will fail.
+                failCounter.set(1);
+                try {
+                    reader.openPartition(0);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+
+                // openPartitionCount must stay consistent after the failure.
+                assertOpenPartitionCount(reader);
+
+                // Disarm failure and verify recovery.
+                failCounter.set(0);
+                reader.openPartition(0);
+                assertOpenPartitionCount(reader);
             }
         });
     }
