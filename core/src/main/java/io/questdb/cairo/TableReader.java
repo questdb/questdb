@@ -66,8 +66,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = PARTITIONS_SLOT_OFFSET_SIZE + 1;
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
-    // 1 when all active columns have been initialized; reset to 0 by setActiveColumns()
-    private static final int PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
@@ -661,7 +660,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long size = getPartitionRowCount(partitionIndex);
         if (size != -1) {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN) == 0) {
+            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN) == 0) {
                 openMissingColumnsInPartition(partitionIndex, offset, size);
             }
             return size;
@@ -922,7 +921,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 break;
         }
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
     }
 
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase) {
@@ -941,7 +940,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             }
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
-            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
             openPartitionCount--;
             return -1;
         }
@@ -1174,7 +1173,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
-            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
         }
         return openPartitionInfo;
     }
@@ -1201,7 +1200,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();
@@ -1269,13 +1268,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         } catch (Throwable th) {
             closePartitionColumns(columnBase);
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
-            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
             throw th;
         } finally {
             path.trimTo(rootLen);
         }
 
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
     }
 
     @NotNull
@@ -1328,7 +1327,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
 
                         final long parquetSize = txFile.getPartitionParquetFileSize(partitionIndex);
                         assert parquetSize > 0;
@@ -1378,7 +1377,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 1);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
                         openPartitionCount++;
                     }
 
@@ -1918,7 +1917,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         for (int i = 0; i < partitionCount; i++) {
             final int offset = i * PARTITIONS_SLOT_SIZE;
             if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) > -1) {
-                openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ALL_COLUMNS_OPEN, 0);
+                openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
             }
         }
     }
