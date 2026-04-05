@@ -263,6 +263,150 @@ pub fn varchar_to_dict_pages(
     )
 }
 
+/// Build a single dictionary-encoded column chunk from multiple partition slices.
+///
+/// Each partition is represented as `(aux, data, column_top)` where `aux` and
+/// `data` follow the standard QuestDB VARCHAR column layout.
+///
+/// Returns `Ok(None)` when the dictionary exceeds `max_dict_bytes`, signalling
+/// the caller to fall back to a non-dictionary encoding.
+pub fn varchar_to_dict_pages_merged(
+    partitions: &[(&[[u8; 16]], &[u8], usize)],
+    max_dict_bytes: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Option<Vec<Page>>> {
+    debug_assert!(
+        mem::size_of::<AuxEntryInlined>() == 16 && mem::size_of::<AuxEntrySplit>() == 16,
+        "size_of(AuxEntryInlined) or size_of(AuxEntrySplit) is not 16"
+    );
+
+    let total_rows: usize = partitions.iter().map(|(aux, _, ct)| ct + aux.len()).sum();
+
+    // Pass 1: decode aux entries from all partitions.
+    struct PartData<'a> {
+        slices: Vec<Option<&'a [u8]>>,
+        column_top: usize,
+        null_count: usize,
+    }
+
+    let mut part_data: Vec<PartData> = Vec::with_capacity(partitions.len());
+    let mut total_non_null = 0usize;
+
+    for &(aux_raw, data, column_top) in partitions {
+        // SAFETY: `AuxEntryInlined` is `#[repr(C, packed)]` and exactly 16 bytes (asserted above).
+        // The source `&[[u8; 16]]` has compatible size and alignment 1.
+        let aux: &[AuxEntryInlined] = unsafe { mem::transmute(aux_raw) };
+        let mut null_count = 0usize;
+        let slices = aux
+            .iter()
+            .map(|entry| {
+                if is_null(entry.header) {
+                    null_count += 1;
+                    Ok(None)
+                } else if is_inlined(entry.header) {
+                    let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
+                    Ok(Some(&entry.chars[..size]))
+                } else {
+                    // SAFETY: Both `AuxEntryInlined` and `AuxEntrySplit` are `#[repr(C, packed)]`
+                    // and 16 bytes. The header flag check above determines which interpretation
+                    // is valid.
+                    let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
+                    let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
+                    let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
+                    if offset + size > data.len() {
+                        return Err(fmt_err!(
+                            Layout,
+                            "data corruption in VARCHAR column: offset {} + size {} exceeds data length {}",
+                            offset,
+                            size,
+                            data.len()
+                        ));
+                    }
+                    Ok(Some(&data[offset..][..size]))
+                }
+            })
+            .collect::<ParquetResult<Vec<_>>>()?;
+        total_non_null += slices.len() - null_count;
+        part_data.push(PartData { slices, column_top, null_count });
+    }
+
+    // Pass 2: build unified dictionary across all partitions.
+    let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<&[u8]> = Vec::new();
+    let mut keys = Vec::with_capacity(total_non_null);
+    let mut total_dict_bytes = 0usize;
+
+    for pd in &part_data {
+        for s in pd.slices.iter().flatten() {
+            let next_id = u32::try_from(dict_entries.len())
+                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+            let key = *dict_map.entry(s).or_insert_with(|| {
+                dict_entries.push(s);
+                total_dict_bytes += 4 + s.len(); // 4 bytes for length prefix
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    // Dictionary size threshold: fall back to non-dict encoding if too large.
+    if total_dict_bytes > max_dict_bytes {
+        return Ok(None);
+    }
+
+    // Build dict buffer (length-prefixed UTF-8).
+    let mut dict_buffer = Vec::with_capacity(total_dict_bytes);
+    let mut stats = if options.write_statistics {
+        Some(BinaryMaxMinStats::new(&primitive_type))
+    } else {
+        None
+    };
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+        dict_buffer.extend_from_slice(entry);
+        if let Some(ref mut stats) = stats {
+            stats.update(entry);
+        }
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_byte(entry));
+        }
+    }
+
+    // Encode data page: def levels + RLE-encoded keys.
+    let total_null_count: usize = part_data.iter().map(|p| p.column_top + p.null_count).sum();
+    let mut data_buffer = Vec::with_capacity(total_rows / 4);
+
+    let def_levels = part_data.iter().flat_map(|pd| {
+        let top_nulls = std::iter::repeat_n(false, pd.column_top);
+        let data_levels = pd.slices.iter().map(|s| s.is_some());
+        top_nulls.chain(data_levels)
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, total_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let statistics = stats.map(|s| s.into_parquet_stats(total_null_count));
+
+    let pages_iter = encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        total_non_null,
+        data_buffer,
+        definition_levels_byte_length,
+        total_rows,
+        total_null_count,
+        statistics,
+        primitive_type,
+        options,
+        false,
+    )?;
+
+    let pages: Vec<Page> = pages_iter.collect::<ParquetResult<Vec<_>>>()?;
+    Ok(Some(pages))
+}
+
 fn encode_plain(
     utf8_slices: &[Option<&[u8]>],
     buffer: &mut Vec<u8>,

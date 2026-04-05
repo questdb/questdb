@@ -499,9 +499,12 @@ pub fn create_row_group_from_partitions(
         // Multi-partition dict encoding fallback: when merging multiple partitions,
         // non-Symbol dict columns would emit multiple DictPages per column chunk
         // (invalid Parquet). Fall back to the type's default encoding.
+        // Symbol and Varchar are excluded: they have dedicated multi-partition
+        // paths that build a single unified dictionary.
         if num_partitions > 1
             && col_encoding == Encoding::RleDictionary
             && !first_partition_column.data_type.is_symbol()
+            && first_partition_column.data_type.tag() != ColumnTypeTag::Varchar
         {
             col_encoding = super::schema::encoding_map(first_partition_column.data_type);
         }
@@ -554,6 +557,38 @@ pub fn create_row_group_from_partitions(
                 min_ratio,
             );
             return Ok(DynStreamingIterator::new(compressor));
+        }
+
+        if num_partitions > 1
+            && col_encoding == Encoding::RleDictionary
+            && first_partition_column.data_type.tag() == ColumnTypeTag::Varchar
+        {
+            let primitive_type = match column_type {
+                ParquetType::PrimitiveType(pt) => pt,
+                _ => {
+                    return Err(fmt_err!(
+                        InvalidType,
+                        "Varchar column must have primitive parquet type"
+                    ))
+                }
+            };
+
+            if let Some(pages) = varchar_column_to_pages_multi_partition(
+                &partition_ranges,
+                primitive_type,
+                options,
+                bloom_set.clone(),
+            )? {
+                let compressor = Compressor::new(
+                    pages.into_iter().map(Ok),
+                    col_compression,
+                    vec![],
+                    options.min_compression_ratio,
+                );
+                return Ok(DynStreamingIterator::new(compressor));
+            }
+            // Dictionary too large — fall through with non-dict encoding.
+            col_encoding = super::schema::encoding_map(first_partition_column.data_type);
         }
 
         let all_pages = collect_multi_partition_pages(
@@ -730,6 +765,73 @@ fn compute_symbol_slice(
     };
 
     (&keys[lower_bound..upper_bound], adjusted_column_top)
+}
+
+#[inline]
+fn compute_varchar_slice(
+    aux: &[[u8; 16]],
+    column_top: usize,
+    offset: usize,
+    length: usize,
+) -> (&[[u8; 16]], usize) {
+    let mut adjusted_column_top = 0;
+    let lower_bound = if offset < column_top {
+        adjusted_column_top = column_top - offset;
+        0
+    } else {
+        (offset - column_top).min(aux.len())
+    };
+    let upper_bound = if offset + length < column_top {
+        adjusted_column_top = length;
+        0
+    } else {
+        (offset + length - column_top).min(aux.len())
+    };
+
+    (&aux[lower_bound..upper_bound], adjusted_column_top)
+}
+
+fn varchar_column_to_pages_multi_partition(
+    partition_ranges: &[(Column, usize, usize)],
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+) -> ParquetResult<Option<Vec<Page>>> {
+    if partition_ranges.is_empty() {
+        return Ok(Some(vec![]));
+    }
+
+    let partition_slices: Vec<(&[[u8; 16]], &[u8], usize)> = partition_ranges
+        .iter()
+        .map(|(col, offset, length)| {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is page-aligned.
+            // The byte content represents valid `[u8; 16]` values.
+            let aux: &[[u8; 16]] = unsafe { util::transmute_slice(col.secondary_data) };
+            let data = col.primary_data;
+            let (aux_slice, adjusted_column_top) =
+                compute_varchar_slice(aux, col.column_top, *offset, *length);
+            (aux_slice, data, adjusted_column_top)
+        })
+        .collect();
+
+    let max_dict_bytes = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
+
+    let mut bloom_guard = bloom_set
+        .as_ref()
+        .map(|arc| {
+            arc.lock()
+                .map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))
+        })
+        .transpose()?;
+    let bloom_hashes = bloom_guard.as_deref_mut();
+
+    varchar::varchar_to_dict_pages_merged(
+        &partition_slices,
+        max_dict_bytes,
+        options,
+        primitive_type.clone(),
+        bloom_hashes,
+    )
 }
 
 pub(crate) fn column_chunk_to_pages(
