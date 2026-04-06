@@ -115,10 +115,21 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long constantDeltaValue;
         private int currentBlock;
         private int currentGen;
+        // Elias-Fano backward streaming state
+        private int efHighWordIdx;
+        private long efHighStart;
+        private int efL;
+        private long efLowMask;
+        private long efLowStart;
+        private int efNumHighWords;
+        private long efRankDirAddr;
+        private int efRankDirCapacity;
+        private int efTotalCount;
         private int encodedBlockCount;
         private long flatBaseValue;
         private int flatBitWidth;
         private long flatDataBase;
+        private boolean isEFMode;
         private boolean isFlatMode;
         private int flatRemaining;
         private int flatStartIdx;
@@ -189,6 +200,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
 
+                // EF mode: decode previous high-bits word chunk
+                if (isEFMode && efHighWordIdx >= 0) {
+                    decodeNextEFChunkReverse();
+                    continue;
+                }
+
                 // Flat mode: decode previous batch
                 if (isFlatMode && flatRemaining > 0) {
                     decodeNextFlatBatchReverse();
@@ -220,6 +237,11 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (blockBufferAddr != 0) {
                 Unsafe.free(blockBufferAddr, (long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 blockBufferAddr = 0;
+            }
+            if (efRankDirAddr != 0) {
+                Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                efRankDirAddr = 0;
+                efRankDirCapacity = 0;
             }
             closeCoveringResources();
         }
@@ -293,7 +315,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
 
                 loadSparseGenWithBinarySearch(currentGen);
-                if (encodedBlockCount > 0 || isFlatMode) {
+                if (encodedBlockCount > 0 || isFlatMode || isEFMode) {
                     return true;
                 }
                 currentGen--;
@@ -358,7 +380,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
 
                 loadSparseGenWithBinarySearch(currentGen);
-                if (encodedBlockCount > 0 || isFlatMode) {
+                if (encodedBlockCount > 0 || isFlatMode || isEFMode) {
                     return true;
                 }
                 currentGen--;
@@ -401,6 +423,38 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
             }
             blockBufferPos = count - 1;
+        }
+
+        /**
+         * Decodes the previous chunk of EF values by processing one 64-bit word
+         * of high bits in reverse. Fills blockBuffer and sets blockBufferPos to
+         * the last decoded value for backward iteration.
+         */
+        private void decodeNextEFChunkReverse() {
+            while (efHighWordIdx >= 0) {
+                long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
+                if (word == 0) {
+                    efHighWordIdx--;
+                    continue;
+                }
+                int rankBefore = Unsafe.getUnsafe().getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
+                // Decode all values in this word into blockBuffer
+                int bufIdx = 0;
+                long w = word;
+                while (w != 0) {
+                    int trail = Long.numberOfTrailingZeros(w);
+                    int globalIdx = rankBefore + bufIdx;
+                    long highValue = (long) efHighWordIdx * 64 + trail - globalIdx;
+                    long low = PostingIndexUtils.readBitsWord(efLowStart, (long) globalIdx * efL, efL) & efLowMask;
+                    Unsafe.getUnsafe().putLong(blockBufferAddr + (long) bufIdx * Long.BYTES, (highValue << efL) | low);
+                    bufIdx++;
+                    w &= w - 1;
+                }
+                blockBufferPos = bufIdx - 1; // iterate backward from end
+                efHighWordIdx--;
+                return;
+            }
+            blockBufferPos = -1; // exhausted
         }
 
         private void decodeNextFlatBatchReverse() {
@@ -661,11 +715,45 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         private void readDeltaBlockMetadata(long encodedAddr, int totalValueCount) {
             long pos = encodedAddr;
-            int blockCount = Unsafe.getUnsafe().getInt(pos);
+            int firstWord = Unsafe.getUnsafe().getInt(pos);
+
+            // Elias-Fano format: build rank directory for backward iteration
+            if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
+                pos += 4; // skip sentinel
+                efTotalCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
+                efL = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
+                long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
+                efLowMask = (efL < 64) ? (1L << efL) - 1 : -1L;
+                efLowStart = pos;
+                int lowBytes = PostingIndexUtils.efLowBytesAligned(efTotalCount, efL);
+                efHighStart = pos + lowBytes;
+                efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
+                // Build rank directory for backward word-by-word iteration
+                if (efNumHighWords > efRankDirCapacity) {
+                    if (efRankDirAddr != 0) {
+                        Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                    efRankDirCapacity = Math.max(efNumHighWords, efRankDirCapacity * 2);
+                    efRankDirAddr = Unsafe.malloc((long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                PostingIndexUtils.efBuildRankDirectory(encodedAddr, efRankDirAddr);
+                // Start from the last high-bits word
+                efHighWordIdx = efNumHighWords - 1;
+                isEFMode = true;
+                isFlatMode = false;
+                encodedBlockCount = 0;
+                currentBlock = -1;
+                minBlock = 0;
+                blockBufferPos = -1;
+                return;
+            }
+
+            int blockCount = firstWord;
             if (blockCount < 0 || blockCount > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
                 throw CairoException.critical(0).put("corrupt posting index: invalid block count [blockCount=")
                         .put(blockCount).put(", totalValues=").put(totalValueCount).put(']');
             }
+            isEFMode = false;
             pos += 4;
 
             // Point directly into mapped value memory — no copies
