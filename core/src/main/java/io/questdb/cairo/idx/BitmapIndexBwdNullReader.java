@@ -50,7 +50,7 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-        final NullCursor cursor = getCursor(cachedInstance);
+        final NullCursor cursor = cachedInstance ? this.cursor : new NullCursor();
         // Cursor only returns records when key is for the NULL value.
         cursor.value = key == 0 ? maxValue - minValue : -1;
         return cursor;
@@ -107,9 +107,6 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
         // no-op
     }
 
-    private NullCursor getCursor(boolean cachedInstance) {
-        return cachedInstance ? cursor : new NullCursor();
-    }
 
     private static class NullCursor implements RowCursor {
         private long value;

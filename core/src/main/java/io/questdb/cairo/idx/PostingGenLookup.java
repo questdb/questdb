@@ -230,6 +230,13 @@ class PostingGenLookup implements Closeable {
         return genKeyCounts[gen];
     }
 
+    long getGenPrefixSumOffset(int gen) {
+        int minKey = genMinKeys[gen];
+        int maxKey = genMaxKeys[gen];
+        int keyRange = maxKey - minKey + 1;
+        return genFileOffsets[gen] + genDataSizes[gen] - (long) (keyRange + 2) * Integer.BYTES;
+    }
+
     int getGenMaxKey(int gen) {
         return genMaxKeys[gen];
     }
@@ -278,6 +285,12 @@ class PostingGenLookup implements Closeable {
         }
 
         if (sparseGenCount == 0 && fromGen == 0) {
+            tier = TIER_NONE;
+            return;
+        }
+
+        // Single sparse gen: use stored prefix-sum for O(1) lookup, skip CSR build
+        if (sparseGenCount == 1) {
             tier = TIER_NONE;
             return;
         }
