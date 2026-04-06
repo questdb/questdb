@@ -428,30 +428,42 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         /**
          * Decodes the next chunk of EF values by processing one 64-bit word of high bits.
-         * Typically produces ~20-40 values per call (the popcount of the high-bits word).
+         * Bulk-unpacks the low bits for the chunk, then scans high bits and merges.
          */
         private void decodeNextEFChunk() {
-            int bufPos = 0;
             while (efHighWordIdx < efNumHighWords && efOutputCount < efTotalCount) {
                 long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
                 if (word == 0) {
                     efHighWordIdx++;
                     continue;
                 }
-                while (word != 0 && efOutputCount < efTotalCount) {
+                int chunkSize = Math.min(Long.bitCount(word), efTotalCount - efOutputCount);
+
+                // Bulk-unpack low bits for this chunk
+                if (efL > 0) {
+                    BitpackUtils.unpackValuesFrom(efLowStart, efOutputCount, chunkSize, efL, 0, blockBufferAddr);
+                } else {
+                    Unsafe.getUnsafe().setMemory(blockBufferAddr, (long) chunkSize * Long.BYTES, (byte) 0);
+                }
+
+                // Scan high bits and merge with pre-unpacked low values
+                int bufPos = 0;
+                while (word != 0 && bufPos < chunkSize) {
                     int trail = Long.numberOfTrailingZeros(word);
                     long highValue = (long) efHighWordIdx * 64 + trail - efOutputCount;
-                    long low = PostingIndexUtils.readBitsWord(efLowStart, (long) efOutputCount * efL, efL) & efLowMask;
-                    Unsafe.getUnsafe().putLong(blockBufferAddr + (long) bufPos * Long.BYTES, (highValue << efL) | low);
+                    long addr = blockBufferAddr + (long) bufPos * Long.BYTES;
+                    Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) | (highValue << efL));
                     bufPos++;
                     efOutputCount++;
                     word &= word - 1;
                 }
                 efHighWordIdx++;
-                break; // one word per chunk — keeps buffer bounded
+                blockBufferPos = 0;
+                blockBufferEnd = bufPos;
+                return;
             }
             blockBufferPos = 0;
-            blockBufferEnd = bufPos;
+            blockBufferEnd = 0;
         }
 
         private void decodeNextFlatBatch() {

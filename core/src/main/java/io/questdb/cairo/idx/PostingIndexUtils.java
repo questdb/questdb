@@ -418,14 +418,20 @@ public final class PostingIndexUtils {
         long highStart = pos + lowBytes;
         int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
 
+        // Extract low bits per value (no bulk path for Java arrays)
+        for (int i = 0; i < n; i++) {
+            dest[i] = readBitsWord(lowStart, (long) i * L, L) & lowMask;
+        }
+
+        // Scan high bits and merge
         int outputIdx = 0;
         for (int w = 0; w < numHighWords && outputIdx < n; w++) {
             long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
             while (word != 0 && outputIdx < n) {
                 int trail = Long.numberOfTrailingZeros(word);
                 long highValue = (long) w * 64 + trail - outputIdx;
-                long low = readBitsWord(lowStart, (long) outputIdx * L, L) & lowMask;
-                dest[outputIdx++] = (highValue << L) | low;
+                dest[outputIdx] |= (highValue << L);
+                outputIdx++;
                 word &= word - 1;
             }
         }
@@ -433,7 +439,8 @@ public final class PostingIndexUtils {
 
     /**
      * Decodes an Elias-Fano encoded key directly to native memory.
-     * Uses word-at-a-time high-bit scanning with tzcnt for ~5x throughput vs delta-FoR.
+     * Two-pass approach: (1) bulk-unpack all low bits using SIMD-friendly
+     * BitpackUtils, (2) scan high bits word-at-a-time and merge.
      */
     public static void decodeKeyEFToNative(long srcAddr, long destAddr) {
         long pos = srcAddr + 4; // skip sentinel
@@ -441,20 +448,28 @@ public final class PostingIndexUtils {
         int L = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
         long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
 
-        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
         long lowStart = pos;
         int lowBytes = efLowBytesAligned(n, L);
         long highStart = pos + lowBytes;
         int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
 
+        // Pass 1: bulk-unpack all low bits into destAddr (SIMD for L <= 32)
+        if (L > 0) {
+            BitpackUtils.unpackAllValues(lowStart, n, L, 0, destAddr);
+        } else {
+            // L=0: all low bits are 0, zero the output
+            Unsafe.getUnsafe().setMemory(destAddr, (long) n * Long.BYTES, (byte) 0);
+        }
+
+        // Pass 2: scan high bits, read pre-unpacked low from destAddr, write final value
         int outputIdx = 0;
         for (int w = 0; w < numHighWords && outputIdx < n; w++) {
             long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
             while (word != 0 && outputIdx < n) {
                 int trail = Long.numberOfTrailingZeros(word);
                 long highValue = (long) w * 64 + trail - outputIdx;
-                long low = readBitsWord(lowStart, (long) outputIdx * L, L) & lowMask;
-                Unsafe.getUnsafe().putLong(destAddr + (long) outputIdx * 8, (highValue << L) | low);
+                long addr = destAddr + (long) outputIdx * 8;
+                Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) | (highValue << L));
                 outputIdx++;
                 word &= word - 1;
             }
@@ -574,10 +589,23 @@ public final class PostingIndexUtils {
             Unsafe.getUnsafe().putInt(destAddr, 0);
             return 4;
         }
-        // Copy values to native staging buffer, then encode EF
+        // Estimate sizes and pick the smaller format.
+        // For delta-FoR, use the Java-array encoder directly (no aliasing issues).
+        // For EF, copy values to native staging buffer first.
+        long lastValue = values[count - 1];
+        long u = lastValue + 1;
+        int L = Math.max(0, 63 - Long.numberOfLeadingZeros(u / count));
+        int efSize = EF_HEADER_SIZE + efLowBytesAligned(count, L)
+                + (int) ((count + (u >>> L) + 63) / 64) * 8;
+
         long srcAddr = ctx.deltasAddr;
         for (int i = 0; i < count; i++) {
             Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
+        }
+        int deltaSize = estimateDeltaFoRSize(srcAddr, count);
+
+        if (deltaSize <= efSize) {
+            return encodeKeyDeltaFoR(values, count, destAddr, ctx);
         }
         return encodeKeyEF(srcAddr, count, destAddr);
     }
@@ -793,7 +821,59 @@ public final class PostingIndexUtils {
             Unsafe.getUnsafe().putInt(destAddr, 0);
             return 4;
         }
+        assert count <= ctx.deltaCapacity : "encodeKeyNative: count=" + count + " exceeds ctx.deltaCapacity=" + ctx.deltaCapacity;
+
+        // Estimate both sizes to decide format without double-encoding.
+        // EF size is computable from n, L, u in O(1).
+        // Delta-FoR size requires computing per-block bitwidths in O(n).
+        long lastValue = Unsafe.getUnsafe().getLong(srcAddr + (long) (count - 1) * Long.BYTES);
+        long u = lastValue + 1;
+        int L = Math.max(0, 63 - Long.numberOfLeadingZeros(u / count));
+        int efSize = EF_HEADER_SIZE + efLowBytesAligned(count, L)
+                + (int) ((count + (u >>> L) + 63) / 64) * 8;
+
+        int deltaSize = estimateDeltaFoRSize(srcAddr, count);
+
+        if (deltaSize <= efSize) {
+            return encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
+        }
         return encodeKeyEF(srcAddr, count, destAddr);
+    }
+
+    /**
+     * Estimates delta-FoR encoded size by computing per-block bitwidths
+     * on-the-fly, without any scratch buffer. O(n) single pass over srcAddr.
+     */
+    private static int estimateDeltaFoRSize(long srcAddr, int count) {
+        int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
+        int packedTotal = 0;
+
+        for (int b = 0; b < blockCount; b++) {
+            int blockStart = b * BLOCK_CAPACITY;
+            int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
+            int numDeltas = blockEnd - blockStart - 1;
+            if (numDeltas > 0) {
+                long prev = Unsafe.getUnsafe().getLong(srcAddr + (long) blockStart * Long.BYTES);
+                long minD = Long.MAX_VALUE;
+                long maxD = Long.MIN_VALUE;
+                for (int i = blockStart + 1; i < blockEnd; i++) {
+                    long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+                    long d = val - prev;
+                    if (d < minD) minD = d;
+                    if (d > maxD) maxD = d;
+                    prev = val;
+                }
+                long range = maxD - minD;
+                int bw = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
+                packedTotal += BitpackUtils.packedDataSize(numDeltas, bw);
+            }
+        }
+
+        int headerSize = 4 + blockCount + blockCount * 8 + blockCount * 8 + blockCount;
+        if (blockCount > 1) {
+            headerSize += blockCount * 4;
+        }
+        return headerSize + packedTotal;
     }
 
     /**

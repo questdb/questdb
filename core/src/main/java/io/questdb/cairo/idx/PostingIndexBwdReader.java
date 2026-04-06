@@ -427,8 +427,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         /**
          * Decodes the previous chunk of EF values by processing one 64-bit word
-         * of high bits in reverse. Fills blockBuffer and sets blockBufferPos to
-         * the last decoded value for backward iteration.
+         * of high bits in reverse. Bulk-unpacks low bits, then merges with high bits.
          */
         private void decodeNextEFChunkReverse() {
             while (efHighWordIdx >= 0) {
@@ -438,23 +437,32 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
                 int rankBefore = Unsafe.getUnsafe().getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
-                // Decode all values in this word into blockBuffer
+                int chunkSize = Long.bitCount(word);
+
+                // Bulk-unpack low bits for this chunk
+                if (efL > 0) {
+                    BitpackUtils.unpackValuesFrom(efLowStart, rankBefore, chunkSize, efL, 0, blockBufferAddr);
+                } else {
+                    Unsafe.getUnsafe().setMemory(blockBufferAddr, (long) chunkSize * Long.BYTES, (byte) 0);
+                }
+
+                // Scan high bits and merge
                 int bufIdx = 0;
                 long w = word;
                 while (w != 0) {
                     int trail = Long.numberOfTrailingZeros(w);
                     int globalIdx = rankBefore + bufIdx;
                     long highValue = (long) efHighWordIdx * 64 + trail - globalIdx;
-                    long low = PostingIndexUtils.readBitsWord(efLowStart, (long) globalIdx * efL, efL) & efLowMask;
-                    Unsafe.getUnsafe().putLong(blockBufferAddr + (long) bufIdx * Long.BYTES, (highValue << efL) | low);
+                    long addr = blockBufferAddr + (long) bufIdx * Long.BYTES;
+                    Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) | (highValue << efL));
                     bufIdx++;
                     w &= w - 1;
                 }
-                blockBufferPos = bufIdx - 1; // iterate backward from end
+                blockBufferPos = bufIdx - 1;
                 efHighWordIdx--;
                 return;
             }
-            blockBufferPos = -1; // exhausted
+            blockBufferPos = -1;
         }
 
         private void decodeNextFlatBatchReverse() {
