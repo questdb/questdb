@@ -8036,10 +8036,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
     @Test
     public void testIndexRebuildAfterDrop() throws Exception {
         assertMemoryLeak(() -> {
-        // Tests DROP INDEX + re-ADD INDEX produces correct results.
-        // Old .pd files from the first index version are queued for async purge
-        // via ColumnPurgeOperator.removeSidecarFiles which handles .pd cleanup.
-        // The purge lifecycle itself is tested in ColumnPurgeJobTest.
         execute("""
                 CREATE TABLE t_rebuild (
                     ts TIMESTAMP,
@@ -8063,7 +8059,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 30.0
                 """, "SELECT price FROM t_rebuild WHERE sym = 'A'");
 
-        // Drop and re-add: new index version is created, old files queued for purge
+        // Drop and re-add: new index version created, old files purged
         execute("ALTER TABLE t_rebuild ALTER COLUMN sym DROP INDEX");
         execute("ALTER TABLE t_rebuild ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
         engine.releaseAllWriters();

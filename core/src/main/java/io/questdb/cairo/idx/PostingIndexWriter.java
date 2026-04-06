@@ -88,13 +88,16 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean hasSealBumpedTxn;
     private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     private int coverCount;
+    // O3 addr-based covering: caller-provided native memory addresses
     private long[] coveredColumnAddrs;
-    private MemoryMA[] coveredColumnAuxMems;
-    private MemoryMA[] coveredColumnMems;
-    // Read-only mappings of covered column files for sidecar writes.
-    // MemoryPMARImpl maps one page at a time, so addressOf() fails for random
-    // reads. These are separate RO mmaps (via mmap cache) of the same files,
-    // providing O(1) addressOf for any offset.
+    // Name-based covering: writer opens its own RO mmaps from file paths.
+    // coveredPartitionPath is the partition directory at configureCovering time,
+    // which may differ from the writer's current partitionPath.
+    private String coveredPartitionPath;
+    private String[] coveredColumnNames;
+    private long[] coveredColumnNameTxns;
+    // RO mmaps owned by the writer (opened from coveredColumnNames + partitionPath).
+    // size > 0 means writer-owned; size == 0 means addr-based (O3, not owned).
     private long[] coveredColReadAddrs;
     private long[] coveredColReadSizes;
     private long[] coveredAuxReadAddrs;
@@ -103,6 +106,7 @@ public class PostingIndexWriter implements IndexWriter {
     private int[] coveredColumnShifts;
     private long[] coveredColumnTops;
     private int[] coveredColumnTypes;
+    private int timestampColumnIndex = -1;
     private long flushHeaderBuf;
     private int flushHeaderBufCapacity;
     private int genCount;
@@ -243,10 +247,6 @@ public class PostingIndexWriter implements IndexWriter {
             // because rollback writes in-place (no txn bump).
             if (keyMem.isOpen() && partitionPath != null) {
                 boolean hadCovering = coverCount > 0;
-                if (coveredColumnMems != null && coveredColumnMems.length > 0
-                        && !coveredColumnMems[0].isOpen()) {
-                    coveredColumnMems = null;
-                }
                 seal();
                 // If covering was configured but the seal ran without covered
                 // column data (memories were already closed by the TableWriter),
@@ -254,7 +254,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // Remove them so readers don't misinterpret per-gen raw data as
                 // stride format. Skip this for non-covering indexes (coverCount == 0)
                 // where .pd is the only auxiliary file and was just written by seal.
-                if (hadCovering && coveredColumnMems == null && coveredColumnAddrs == null && sidecarMems == null) {
+                if (hadCovering && coveredColumnNames == null && coveredColumnAddrs == null && sidecarMems == null) {
                     try (Path p = new Path().of(partitionPath)) {
                         PostingIndexUtils.removeSidecarFiles(ff, p, p.size(), indexName, sidecarTxn);
                     }
@@ -309,12 +309,81 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Close all resources without sealing. Used when the index is being dropped —
+     * sealing would create new files that become orphaned.
+     */
+    public void discard() {
+        try {
+            if (keyMem.isOpen()) {
+                try {
+                    keyMem.setSize(KEY_FILE_RESERVED);
+                } finally {
+                    Misc.free(keyMem);
+                }
+            }
+        } finally {
+            try {
+                Misc.free(sealValueMem);
+                if (valueMem.isOpen()) {
+                    valueMem.close(false, (byte) 0);
+                }
+            } finally {
+                closeSidecarMems();
+                freeNativeBuffers();
+                keyCount = 0;
+                valueMemSize = 0;
+                genCount = 0;
+                hasPendingData = false;
+                activeKeyCount = 0;
+                coverCount = 0;
+                hasSealBumpedTxn = false;
+                sealTarget = null;
+            }
+        }
+    }
+
     public void clearCovering() {
+        unmapCoveredColumnReads();
         this.coveredColumnAddrs = null;
-        this.coveredColumnMems = null;
+        this.coveredPartitionPath = null;
+        this.coveredColumnNames = null;
+        this.coveredColumnNameTxns = null;
         this.coverCount = 0;
     }
 
+    /**
+     * Configure covering with column names. The writer opens its own RO mmaps
+     * of the column files during seal using partitionPath + names + txns.
+     */
+    public void configureCovering(
+            String[] coveredColumnNames,
+            long[] coveredColumnNameTxns,
+            long[] coveredColumnTops,
+            int[] coveredColumnShifts,
+            int[] coveredColumnIndices,
+            int[] coveredColumnTypes,
+            int coverCount,
+            int timestampColumnIndex
+    ) {
+        unmapCoveredColumnReads();
+        this.coveredPartitionPath = partitionPath;
+        this.coveredColumnNames = coveredColumnNames;
+        this.coveredColumnNameTxns = coveredColumnNameTxns;
+        this.coveredColumnAddrs = null;
+        this.coveredColumnTops = coveredColumnTops;
+        this.coveredColumnShifts = coveredColumnShifts;
+        this.coveredColumnIndices = coveredColumnIndices;
+        this.coveredColumnTypes = coveredColumnTypes;
+        this.coverCount = coverCount;
+        this.timestampColumnIndex = timestampColumnIndex;
+    }
+
+    /**
+     * Configure covering with pre-mapped addresses. Used by O3 where column
+     * data lives in native memory buffers, not files on disk. The caller
+     * owns the mmaps and is responsible for unmapping them.
+     */
     public void configureCovering(
             long[] coveredColumnAddrs,
             long[] coveredColumnTops,
@@ -325,32 +394,15 @@ public class PostingIndexWriter implements IndexWriter {
     ) {
         unmapCoveredColumnReads();
         this.coveredColumnAddrs = coveredColumnAddrs;
-        this.coveredColumnMems = null;
+        this.coveredPartitionPath = null;
+        this.coveredColumnNames = null;
+        this.coveredColumnNameTxns = null;
         this.coveredColumnTops = coveredColumnTops;
         this.coveredColumnShifts = coveredColumnShifts;
         this.coveredColumnIndices = coveredColumnIndices;
         this.coveredColumnTypes = coveredColumnTypes;
         this.coverCount = coverCount;
-    }
-
-    public void configureCovering(
-            MemoryMA[] coveredColumnMems,
-            MemoryMA[] coveredColumnAuxMems,
-            long[] coveredColumnTops,
-            int[] coveredColumnShifts,
-            int[] coveredColumnIndices,
-            int[] coveredColumnTypes,
-            int coverCount
-    ) {
-        unmapCoveredColumnReads();
-        this.coveredColumnMems = coveredColumnMems;
-        this.coveredColumnAuxMems = coveredColumnAuxMems;
-        this.coveredColumnAddrs = null;
-        this.coveredColumnTops = coveredColumnTops;
-        this.coveredColumnShifts = coveredColumnShifts;
-        this.coveredColumnIndices = coveredColumnIndices;
-        this.coveredColumnTypes = coveredColumnTypes;
-        this.coverCount = coverCount;
+        this.timestampColumnIndex = -1;
     }
 
     /**
@@ -1334,7 +1386,7 @@ public class PostingIndexWriter implements IndexWriter {
             long sidecarBuf,
             long sidecarBufSize
     ) {
-        if (coverCount <= 0 || sidecarMems == null || (coveredColumnMems == null && coveredColumnAddrs == null)) {
+        if (coverCount <= 0 || sidecarMems == null || (coveredColumnNames == null && coveredColumnAddrs == null)) {
             return;
         }
         // Pre-allocate workspaces once for all covered columns (maxKeyCount is the same)
@@ -1357,9 +1409,6 @@ public class PostingIndexWriter implements IndexWriter {
                 continue;
             }
 
-            boolean useMem = coveredColumnMems != null;
-            long stableColAddr = useMem ? 0 : coveredColumnAddrs[c];
-            MemoryMA colMem = useMem ? coveredColumnMems[c] : null;
             long colTop = coveredColumnTops[c];
             int valueSize = 1 << shift;
 
@@ -1398,23 +1447,21 @@ public class PostingIndexWriter implements IndexWriter {
                             writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
                         } else {
                             long srcOffset = (rowId - colTop) << shift;
-                            if (colMem != null) {
-                                long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
-                                if (addr != 0) {
-                                    Unsafe.getUnsafe().copyMemory(addr, sidecarBuf + rawOffset, valueSize);
-                                } else {
-                                    writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
-                                }
+                            long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
+                            if (addr != 0) {
+                                Unsafe.getUnsafe().copyMemory(addr, sidecarBuf + rawOffset, valueSize);
                             } else {
-                                Unsafe.getUnsafe().copyMemory(stableColAddr + srcOffset, sidecarBuf + rawOffset, valueSize);
+                                writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
                             }
                         }
                         rawOffset += valueSize;
                     }
 
                     // Compress and write
+                    boolean isDesignatedTs = timestampColumnIndex >= 0
+                            && coveredColumnIndices[c] == timestampColumnIndex;
                     int compressedSize = compressSidecarBlock(sidecarBuf, count, shift, colType,
-                            compressBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+                            isDesignatedTs, compressBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
                     sidecarMems[c].putBlockOfBytes(compressBuf, compressedSize);
                 }
             } finally {
@@ -1434,15 +1481,17 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType,
+                                              boolean isDesignatedTs,
                                               long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
+        if (isDesignatedTs) {
+            // Designated timestamp: non-null, monotonically increasing per key.
+            // Linear-prediction FoR gives O(1) random access with same compression as delta.
+            return CoveringCompressor.compressLongsLinearPred(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+        }
         return switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE ->
                     CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-            case ColumnType.TIMESTAMP ->
-                    // Delta FoR for timestamps — values are in row-ID order within each key,
-                    // so they're monotonically increasing with small regular deltas.
-                    CoveringCompressor.compressLongsDelta(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
                     CoveringCompressor.compressLongs(rawBuf, valueCount, destBuf);
             case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
                     CoveringCompressor.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
@@ -2313,7 +2362,7 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private int writeSidecarGenData(int totalValues) {
         if (coverCount <= 0 || totalValues == 0
-                || (coveredColumnMems == null && coveredColumnAddrs == null)) {
+                || (coveredColumnNames == null && coveredColumnAddrs == null)) {
             return 0;
         }
         // Lazily open sidecar files on first gen flush.
@@ -2337,11 +2386,6 @@ public class PostingIndexWriter implements IndexWriter {
             if (ColumnType.isVarSize(colType)) {
                 writeSidecarVarGenBlock(sidecarMems[c], c, colTop, colType, totalValues);
             } else {
-                // coveredColumnAddrs are stable contiguous native addresses.
-                // coveredColumnMems are MemoryMA instances with paged mappings —
-                // addressOf(offset) resolves to the correct page for that offset.
-                boolean useMem = coveredColumnMems != null;
-                long stableColAddr = useMem ? 0 : coveredColumnAddrs[c];
                 int shift = coveredColumnShifts[c];
                 int valueSize = 1 << shift;
 
@@ -2357,7 +2401,7 @@ public class PostingIndexWriter implements IndexWriter {
                         for (int i = 0; i < spillCount; i++) {
                             long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
                             writeSidecarValueSafe(sidecarMems[c], c,
-                                    stableColAddr, colTop, rowId, shift, valueSize, colType);
+                                    0, colTop, rowId, shift, valueSize, colType);
                         }
                     }
 
@@ -2365,7 +2409,7 @@ public class PostingIndexWriter implements IndexWriter {
                     for (int i = 0; i < pendingCount; i++) {
                         long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
                         writeSidecarValueSafe(sidecarMems[c], c,
-                                stableColAddr, colTop, rowId, shift, valueSize, colType);
+                                0, colTop, rowId, shift, valueSize, colType);
                     }
                 }
             }
@@ -2550,29 +2594,50 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private void ensureCoveredColumnReadMaps() {
         if (coveredColReadAddrs != null) {
-            return; // already mapped
+            return;
         }
         coveredColReadAddrs = new long[coverCount];
         coveredColReadSizes = new long[coverCount];
         coveredAuxReadAddrs = new long[coverCount];
         coveredAuxReadSizes = new long[coverCount];
 
-        for (int c = 0; c < coverCount; c++) {
-            if (coveredColumnMems != null && coveredColumnMems[c] != null) {
-                long fd = coveredColumnMems[c].getFd();
-                long fileSize = ff.length(fd);
-                if (fileSize > 0) {
-                    coveredColReadAddrs[c] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-                    coveredColReadSizes[c] = fileSize;
+        if (coveredColumnNames != null && coveredPartitionPath != null) {
+            // Name-based: open files ourselves via mmap cache
+            try (Path p = new Path()) {
+                for (int c = 0; c < coverCount; c++) {
+                    mapColumnFile(p, coveredColumnNames[c], coveredColumnNameTxns[c],
+                            coveredColReadAddrs, coveredColReadSizes, c, false);
+                    if (ColumnType.isVarSize(coveredColumnTypes[c])) {
+                        mapColumnFile(p, coveredColumnNames[c], coveredColumnNameTxns[c],
+                                coveredAuxReadAddrs, coveredAuxReadSizes, c, true);
+                    }
                 }
             }
-            if (coveredColumnAuxMems != null && coveredColumnAuxMems[c] != null) {
-                long fd = coveredColumnAuxMems[c].getFd();
+        } else if (coveredColumnAddrs != null) {
+            // Addr-based (O3): reference caller's addresses, size=0 means not owned
+            for (int c = 0; c < coverCount; c++) {
+                coveredColReadAddrs[c] = coveredColumnAddrs[c];
+                coveredColReadSizes[c] = 0; // not owned — caller unmaps
+            }
+        }
+    }
+
+    private void mapColumnFile(Path p, String colName, long colNameTxn,
+                               long[] addrs, long[] sizes, int idx, boolean isAux) {
+        p.of(coveredPartitionPath);
+        LPSZ fileName = isAux
+                ? TableUtils.iFile(p, colName, colNameTxn)
+                : TableUtils.dFile(p, colName, colNameTxn);
+        long fd = ff.openRO(fileName);
+        if (fd >= 0) {
+            try {
                 long fileSize = ff.length(fd);
                 if (fileSize > 0) {
-                    coveredAuxReadAddrs[c] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-                    coveredAuxReadSizes[c] = fileSize;
+                    addrs[idx] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                    sizes[idx] = fileSize;
                 }
+            } finally {
+                ff.close(fd); // mmap keeps data accessible after FD close
             }
         }
     }
@@ -2580,13 +2645,18 @@ public class PostingIndexWriter implements IndexWriter {
     private void unmapCoveredColumnReads() {
         if (coveredColReadAddrs != null) {
             for (int c = 0; c < coveredColReadAddrs.length; c++) {
-                if (coveredColReadAddrs[c] != 0) {
-                    Files.getMmapCache().unmap(coveredColReadAddrs[c], coveredColReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
-                    coveredColReadAddrs[c] = 0;
+                // Only unmap if owned (size > 0). Size == 0 means O3 addr path.
+                if (coveredColReadAddrs[c] != 0 && coveredColReadSizes[c] > 0) {
+                    Files.munmap(coveredColReadAddrs[c], coveredColReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
                 }
-                if (coveredAuxReadAddrs[c] != 0) {
-                    Files.getMmapCache().unmap(coveredAuxReadAddrs[c], coveredAuxReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+                coveredColReadAddrs[c] = 0;
+                coveredColReadSizes[c] = 0;
+                if (coveredAuxReadAddrs != null && coveredAuxReadAddrs[c] != 0 && coveredAuxReadSizes[c] > 0) {
+                    Files.munmap(coveredAuxReadAddrs[c], coveredAuxReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+                }
+                if (coveredAuxReadAddrs != null) {
                     coveredAuxReadAddrs[c] = 0;
+                    coveredAuxReadSizes[c] = 0;
                 }
             }
             coveredColReadAddrs = null;
@@ -2596,51 +2666,66 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    /**
-     * Returns the RO mmap address for reading covered column aux data at the given offset.
-     * Remaps if the file has grown since the last mapping.
-     */
     private long getCoveredAuxReadAddr(int covIdx, long offset, long needed) {
         ensureCoveredColumnReadMaps();
-        if (coveredAuxReadAddrs[covIdx] == 0 || offset + needed > coveredAuxReadSizes[covIdx]) {
-            // Remap — file has grown since we last mapped
-            if (coveredAuxReadAddrs[covIdx] != 0) {
-                Files.getMmapCache().unmap(coveredAuxReadAddrs[covIdx], coveredAuxReadSizes[covIdx], MemoryTag.MMAP_INDEX_WRITER);
+        long addr = coveredAuxReadAddrs[covIdx];
+        long size = coveredAuxReadSizes[covIdx];
+        if (addr == 0) {
+            return 0;
+        }
+        if (size == 0) {
+            return addr + offset;
+        }
+        if (offset + needed > size) {
+            Files.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
+            coveredAuxReadAddrs[covIdx] = 0;
+            if (coveredColumnNames != null && coveredPartitionPath != null) {
+                try (Path p = new Path()) {
+                    mapColumnFile(p, coveredColumnNames[covIdx], coveredColumnNameTxns[covIdx],
+                            coveredAuxReadAddrs, coveredAuxReadSizes, covIdx, true);
+                }
             }
-            long fd = coveredColumnAuxMems[covIdx].getFd();
-            long fileSize = ff.length(fd);
-            if (fileSize <= 0 || offset + needed > fileSize) {
-                coveredAuxReadAddrs[covIdx] = 0;
-                coveredAuxReadSizes[covIdx] = 0;
+            addr = coveredAuxReadAddrs[covIdx];
+            size = coveredAuxReadSizes[covIdx];
+            if (addr == 0 || offset + needed > size) {
                 return 0;
             }
-            coveredAuxReadAddrs[covIdx] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-            coveredAuxReadSizes[covIdx] = fileSize;
         }
-        return coveredAuxReadAddrs[covIdx] + offset;
+        return addr + offset;
     }
 
     private long getCoveredDataReadAddr(int covIdx, long offset, long needed) {
         ensureCoveredColumnReadMaps();
-        if (coveredColReadAddrs[covIdx] == 0 || offset + needed > coveredColReadSizes[covIdx]) {
-            if (coveredColReadAddrs[covIdx] != 0) {
-                Files.getMmapCache().unmap(coveredColReadAddrs[covIdx], coveredColReadSizes[covIdx], MemoryTag.MMAP_INDEX_WRITER);
+        long addr = coveredColReadAddrs[covIdx];
+        long size = coveredColReadSizes[covIdx];
+        if (addr == 0) {
+            return 0;
+        }
+        // size == 0 means addr-based (O3): caller-provided buffer, no bounds check or remap
+        if (size == 0) {
+            return addr + offset;
+        }
+        // size > 0 means name-based: writer-owned mmap, remap if file grew
+        if (offset + needed > size) {
+            Files.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
+            coveredColReadAddrs[covIdx] = 0;
+            if (coveredColumnNames != null && coveredPartitionPath != null) {
+                try (Path p = new Path()) {
+                    mapColumnFile(p, coveredColumnNames[covIdx], coveredColumnNameTxns[covIdx],
+                            coveredColReadAddrs, coveredColReadSizes, covIdx, false);
+                }
             }
-            long fd = coveredColumnMems[covIdx].getFd();
-            long fileSize = ff.length(fd);
-            if (fileSize <= 0 || offset + needed > fileSize) {
-                coveredColReadAddrs[covIdx] = 0;
-                coveredColReadSizes[covIdx] = 0;
+            addr = coveredColReadAddrs[covIdx];
+            size = coveredColReadSizes[covIdx];
+            if (addr == 0 || offset + needed > size) {
                 return 0;
             }
-            coveredColReadAddrs[covIdx] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-            coveredColReadSizes[covIdx] = fileSize;
         }
-        return coveredColReadAddrs[covIdx] + offset;
+        return addr + offset;
     }
 
     private void writeVarcharValue(MemoryMARW mem, int covIdx, long row) {
-        if (coveredColumnAuxMems == null || coveredColumnAuxMems[covIdx] == null) {
+        if (coveredColumnNames == null && coveredColumnAddrs == null) {
             return;
         }
         long auxOffset = VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES * row;
@@ -2658,7 +2743,7 @@ public class PostingIndexWriter implements IndexWriter {
             }
         } else {
             int size = (header >>> 4) & 0x0FFFFFFF;
-            if (size > 0 && coveredColumnMems[covIdx] != null) {
+            if (size > 0) {
                 long dataOffset = Unsafe.getUnsafe().getLong(auxAddr + 8) >>> 16;
                 long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, size);
                 if (dataAddr != 0) {
@@ -2669,8 +2754,8 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void writeBinaryLikeValue(MemoryMARW mem, int covIdx, long row) {
-        if (coveredColumnAuxMems == null || coveredColumnAuxMems[covIdx] == null
-                || coveredColumnMems == null || coveredColumnMems[covIdx] == null) {
+        if (coveredColumnNames == null && coveredColumnAddrs == null
+                || coveredColumnNames == null && coveredColumnAddrs == null) {
             return;
         }
         int colType = coveredColumnTypes[covIdx];
@@ -2708,8 +2793,8 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void writeStringValue(MemoryMARW mem, int covIdx, long row) {
-        if (coveredColumnAuxMems == null || coveredColumnAuxMems[covIdx] == null
-                || coveredColumnMems == null || coveredColumnMems[covIdx] == null) {
+        if (coveredColumnNames == null && coveredColumnAddrs == null
+                || coveredColumnNames == null && coveredColumnAddrs == null) {
             return;
         }
         long auxAddr = getCoveredAuxReadAddr(covIdx, row << 3, Long.BYTES);
@@ -2759,7 +2844,7 @@ public class PostingIndexWriter implements IndexWriter {
             writeNullSentinel(mem, valueSize, colType);
         } else {
             long srcOffset = (rowId - colTop) << shift;
-            if (coveredColumnMems != null && coveredColumnMems[covIdx] != null) {
+            if (coveredColumnNames != null || coveredColumnAddrs != null) {
                 long addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
                 if (addr == 0) {
                     writeNullSentinel(mem, valueSize, colType);
@@ -3172,17 +3257,35 @@ public class PostingIndexWriter implements IndexWriter {
             encodedOffset += bytesWritten;
         }
 
-        int totalGenSize = headerSize + encodedOffset;
-        // Set actual append position (encoded data may be smaller than reserved max)
+        // Min/max key from the sorted active keyIds
+        int minKey = activeKeyIds[0];
+        int maxKey = activeKeyIds[activeKeyCount - 1];
+
+        // Append per-gen prefix-sum index: keyOffsets[keyRange + 2] where
+        // keyOffsets[k - minKey] = position of key k in the keyIds array.
+        // Enables O(1) key lookup without binary search or CSR build.
+        int keyRange = maxKey - minKey + 1;
+        int prefixSumSize = (keyRange + 2) * Integer.BYTES;
+        int totalGenSize = headerSize + encodedOffset + prefixSumSize;
         valueMem.jumpTo(genOffset + totalGenSize);
+        long prefixSumAddr = valueMem.addressOf(genOffset + headerSize + encodedOffset);
+        Unsafe.getUnsafe().setMemory(prefixSumAddr, prefixSumSize, (byte) 0);
+        for (int i = 0; i < activeKeyCount; i++) {
+            int k = activeKeyIds[i] - minKey;
+            Unsafe.getUnsafe().putInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES,
+                    Unsafe.getUnsafe().getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES) + 1);
+        }
+        // Convert counts to prefix sums
+        for (int i = 1; i <= keyRange + 1; i++) {
+            Unsafe.getUnsafe().putInt(prefixSumAddr + (long) i * Integer.BYTES,
+                    Unsafe.getUnsafe().getInt(prefixSumAddr + (long) i * Integer.BYTES)
+                            + Unsafe.getUnsafe().getInt(prefixSumAddr + (long) (i - 1) * Integer.BYTES));
+        }
+
         valueMemSize = genOffset + totalGenSize;
 
         long headerAddr = valueMem.addressOf(genOffset);
         Unsafe.getUnsafe().copyMemory(flushHeaderBuf, headerAddr, headerSize);
-
-        // Min/max key from the sorted active keyIds
-        int minKey = activeKeyIds[0];
-        int maxKey = activeKeyIds[activeKeyCount - 1];
 
         // Write per-gen sidecar data: raw covered column values in posting order
         int sidecarOffset = writeSidecarGenData((int) totalValues);
@@ -3354,6 +3457,9 @@ public class PostingIndexWriter implements IndexWriter {
             unpackBatchCapacity = 0;
         }
         unmapCoveredColumnReads();
+        // Don't null coveredColumnNames/coveredPartitionPath/coveredColumnNameTxns here —
+        // those are configuration set by configureCovering(), not runtime buffers.
+        // They must survive truncate() + rebuild cycles during commit.
         keyCapacity = 0;
     }
 

@@ -33,29 +33,39 @@ import io.questdb.std.str.Path;
 
 public interface ColumnIndexer extends QuietCloseable {
 
-    default void configureCovering(
-            MemoryMA[] coveredColumnMems,
-            long[] coveredColumnTops,
-            int[] coveredColumnShifts,
-            int[] coveredColumnIndices,
-            int[] coveredColumnTypes,
-            int coverCount
-    ) {
-        configureCovering(coveredColumnMems, null, coveredColumnTops, coveredColumnShifts, coveredColumnIndices, coveredColumnTypes, coverCount);
+    default void clearCovering() {
+        // no-op by default
     }
 
+    /**
+     * Close without sealing. Used when the index is being dropped —
+     * sealing would create new files that become orphans.
+     */
+    default void discardAndClose() {
+        close();
+    }
+
+    /**
+     * Configure covering with column names so the writer can open its own
+     * read-only mmaps. Used for both active and historic partitions.
+     */
     default void configureCovering(
-            MemoryMA[] coveredColumnMems,
-            MemoryMA[] coveredColumnAuxMems,
+            String[] coveredColumnNames,
+            long[] coveredColumnNameTxns,
             long[] coveredColumnTops,
             int[] coveredColumnShifts,
             int[] coveredColumnIndices,
             int[] coveredColumnTypes,
-            int coverCount
+            int coverCount,
+            int timestampColumnIndex
     ) {
         // no-op by default
     }
 
+    /**
+     * Configure covering with pre-mapped addresses. Used by O3 where column
+     * data lives in native memory buffers, not files on disk.
+     */
     default void configureCovering(
             long[] coveredColumnAddrs,
             long[] coveredColumnTops,

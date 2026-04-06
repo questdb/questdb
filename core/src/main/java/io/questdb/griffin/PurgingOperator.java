@@ -146,6 +146,9 @@ public final class PurgingOperator {
                                         PostingIndexUtils.removeSidecarFiles(ff, path, pathPartitionLen, columnName, columnVersion);
                                         if (sealTxn > 0 && sealTxn != columnVersion) {
                                             ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(pathPartitionLen), columnName, sealTxn));
+                                            // Seal bumps columnNameTxn — sidecar files (.pci, .pc0, ...)
+                                            // are also written with the sealed txn.
+                                            PostingIndexUtils.removeSidecarFiles(ff, path, pathPartitionLen, columnName, sealTxn);
                                         }
                                     }
                                     IndexFactory.valueFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);

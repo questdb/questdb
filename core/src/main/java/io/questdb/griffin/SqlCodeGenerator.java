@@ -7631,6 +7631,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                     PartitionFrameCursorFactory dfcFactory;
                                     if (distinctIntrinsic != null && distinctIntrinsic.hasIntervalFilters()) {
+                                        // Interval filtering requires the timestamp column to be open
+                                        int tsIdx = tableMeta.getTimestampIndex();
+                                        if (tsIdx >= 0 && !colIndexes.contains(tsIdx)) {
+                                            colIndexes.add(tsIdx);
+                                            colSizeShifts.add(ColumnType.pow2SizeOf(ColumnType.TIMESTAMP));
+                                        }
                                         RuntimeIntrinsicIntervalModel intervalModel = distinctIntrinsic.buildIntervalModel();
                                         dfcFactory = new IntervalPartitionFrameCursorFactory(
                                                 tableToken,

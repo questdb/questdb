@@ -68,8 +68,14 @@ public class CoveringCompressor {
     static final int LONG_HEADER_SIZE = 13;
     // LONG delta: valueCount(4) + bitWidth|0x80(1) + deltaBase(8) + firstValue(8) = 21
     static final int LONG_DELTA_HEADER_SIZE = 21;
-    // Bit 7 of the bitWidth byte indicates delta encoding
+    // Bit 7 of the bitWidth byte indicates delta encoding (bw in bits 0-6, max 63)
     static final int DELTA_FLAG = 0x80;
+    // Bits 7+6 both set indicate linear-prediction encoding (bw in bits 0-5, max 63).
+    // Distinguishes from delta-only (bit 7 only) and plain FoR (no flags).
+    static final int LINEAR_PRED_FLAG = 0xC0;
+    private static final int BW_MASK_6BIT = 0x3F;
+    // LONG linear-pred: valueCount(4) + bw|0x40(1) + residualBase(8) + firstValue(8) + stride(8) = 29
+    static final int LONG_LINEAR_PRED_HEADER_SIZE = 29;
     // INT: valueCount(4) + bitWidth(1) + forBase(4) = 9
     static final int INT_HEADER_SIZE = 9;
     // SHORT: valueCount(4) + bitWidth(1) + forBase(2) = 7
@@ -451,6 +457,112 @@ public class CoveringCompressor {
     }
 
     /**
+     * Compress longs using linear prediction + FoR. Computes a linear stride
+     * from first to last value, then FoR-compresses the residuals (deviations
+     * from the predicted line). Provides O(1) random-access decode.
+     * <p>
+     * Header: count(4B) + bw|LINEAR_PRED_FLAG(1B) + residualBase(8B) + firstValue(8B) + stride(8B) = 29 bytes.
+     *
+     * @param longWorkspaceAddr workspace for count longs (used to store residuals)
+     * @return number of bytes written
+     */
+    public static int compressLongsLinearPred(long srcAddr, int count, long destAddr, long longWorkspaceAddr) {
+        if (count <= 1) {
+            return compressLongs(srcAddr, count, destAddr);
+        }
+        // Caller guarantees sorted ascending, non-null values (designated timestamp).
+        long firstValue = Unsafe.getUnsafe().getLong(srcAddr);
+        long lastValue = Unsafe.getUnsafe().getLong(srcAddr + (long) (count - 1) * Long.BYTES);
+        long stride = (lastValue - firstValue) / (count - 1);
+
+        // Compute residuals and find min/max
+        long resMin = Long.MAX_VALUE;
+        long resMax = Long.MIN_VALUE;
+        for (int i = 0; i < count; i++) {
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+            long predicted = firstValue + (long) i * stride;
+            long residual = val - predicted;
+            Unsafe.getUnsafe().putLong(longWorkspaceAddr + (long) i * Long.BYTES, residual);
+            resMin = Math.min(resMin, residual);
+            resMax = Math.max(resMax, residual);
+        }
+        if (resMin == Long.MAX_VALUE) {
+            resMin = 0;
+        }
+        int bw = (resMax == resMin) ? 0 : 64 - Long.numberOfLeadingZeros(resMax - resMin);
+
+        long pos = destAddr;
+        Unsafe.getUnsafe().putInt(pos, count);
+        pos += 4;
+        Unsafe.getUnsafe().putByte(pos++, (byte) (bw | LINEAR_PRED_FLAG));
+        Unsafe.getUnsafe().putLong(pos, resMin);
+        pos += 8;
+        Unsafe.getUnsafe().putLong(pos, firstValue);
+        pos += 8;
+        Unsafe.getUnsafe().putLong(pos, stride);
+        pos += 8;
+
+        if (bw > 0) {
+            BitpackUtils.packValues(longWorkspaceAddr, count, resMin, bw, pos);
+        }
+        pos += BitpackUtils.packedDataSize(count, bw);
+
+        return (int) (pos - destAddr);
+    }
+
+    /**
+     * Compress timestamps using the best available encoding. Tries linear-prediction
+     * FoR first (O(1) random access), falls back to delta FoR if linear-pred produces
+     * a larger result (e.g., data contains NULL sentinels or highly irregular intervals).
+     *
+     * @param longWorkspaceAddr workspace for 2 × count longs (used by both encoders)
+     * @return number of bytes written
+     */
+    public static int compressTimestamps(long srcAddr, int count, long destAddr, long longWorkspaceAddr) {
+        if (count <= 2) {
+            return compressLongsDelta(srcAddr, count, destAddr, longWorkspaceAddr);
+        }
+
+        // Compute linear-pred size without writing
+        long firstValue = Unsafe.getUnsafe().getLong(srcAddr);
+        long lastValue = Unsafe.getUnsafe().getLong(srcAddr + (long) (count - 1) * Long.BYTES);
+        long stride = (lastValue - firstValue) / (count - 1);
+
+        long resMin = Long.MAX_VALUE;
+        long resMax = Long.MIN_VALUE;
+        for (int i = 0; i < count; i++) {
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+            long predicted = firstValue + (long) i * stride;
+            long residual = val - predicted;
+            resMin = Math.min(resMin, residual);
+            resMax = Math.max(resMax, residual);
+        }
+        long lpRange = resMax - resMin;
+        int lpBw = (lpRange == 0) ? 0 : 64 - Long.numberOfLeadingZeros(lpRange);
+        int lpSize = LONG_LINEAR_PRED_HEADER_SIZE + BitpackUtils.packedDataSize(count, lpBw);
+
+        // Compute delta size
+        long deltaMin = Long.MAX_VALUE;
+        long deltaMax = Long.MIN_VALUE;
+        long prev = firstValue;
+        for (int i = 1; i < count; i++) {
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+            long delta = val - prev;
+            prev = val;
+            deltaMin = Math.min(deltaMin, delta);
+            deltaMax = Math.max(deltaMax, delta);
+        }
+        long dRange = deltaMax - deltaMin;
+        int dBw = (dRange == 0) ? 0 : 64 - Long.numberOfLeadingZeros(dRange);
+        int deltaSize = LONG_DELTA_HEADER_SIZE + BitpackUtils.packedDataSize(count - 1, dBw);
+
+        if (lpSize <= deltaSize) {
+            return compressLongsLinearPred(srcAddr, count, destAddr, longWorkspaceAddr);
+        }
+        return compressLongsDelta(srcAddr, count, destAddr, longWorkspaceAddr);
+    }
+
+    /**
      * Decompress FoR-encoded longs (allocates workspace internally).
      * Transparently handles both plain FoR and delta FoR.
      */
@@ -474,43 +586,64 @@ public class CoveringCompressor {
         int count = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
         int rawBw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        boolean isDelta = (rawBw & DELTA_FLAG) != 0;
-        int bw = rawBw & 0x7F;
+        boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
+        boolean isDelta = !isLinearPred && (rawBw & DELTA_FLAG) != 0;
+        int bw = isLinearPred ? (rawBw & BW_MASK_6BIT) : isDelta ? (rawBw & 0x7F) : rawBw;
         long forBase = Unsafe.getUnsafe().getLong(pos);
         pos += 8;
 
-        long firstValue = 0;
-        int packedCount;
-        if (isDelta) {
-            firstValue = Unsafe.getUnsafe().getLong(pos);
+        if (isLinearPred) {
+            long firstValue = Unsafe.getUnsafe().getLong(pos);
             pos += 8;
-            packedCount = count - 1;
-        } else {
-            packedCount = count;
-        }
-
-        int packedBytes = BitpackUtils.packedDataSize(packedCount, bw);
-        if (bw > 0) {
-            BitpackUtils.unpackAllValues(pos, packedCount, bw, forBase, workspaceAddr);
-        } else {
-            for (int i = 0; i < packedCount; i++) {
-                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+            long stride = Unsafe.getUnsafe().getLong(pos);
+            pos += 8;
+            int packedBytes = BitpackUtils.packedDataSize(count, bw);
+            if (bw > 0) {
+                BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
+            } else {
+                for (int i = 0; i < count; i++) {
+                    Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+                }
             }
-        }
-
-        if (isDelta) {
-            output[0] = firstValue;
-            long current = firstValue;
-            for (int i = 0; i < packedCount; i++) {
-                current += Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
-                output[i + 1] = current;
-            }
-        } else {
             for (int i = 0; i < count; i++) {
-                output[i] = Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
+                output[i] = firstValue + (long) i * stride
+                        + Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
             }
+            pos += packedBytes;
+        } else {
+            long firstValue = 0;
+            int packedCount;
+            if (isDelta) {
+                firstValue = Unsafe.getUnsafe().getLong(pos);
+                pos += 8;
+                packedCount = count - 1;
+            } else {
+                packedCount = count;
+            }
+
+            int packedBytes = BitpackUtils.packedDataSize(packedCount, bw);
+            if (bw > 0) {
+                BitpackUtils.unpackAllValues(pos, packedCount, bw, forBase, workspaceAddr);
+            } else {
+                for (int i = 0; i < packedCount; i++) {
+                    Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+                }
+            }
+
+            if (isDelta) {
+                output[0] = firstValue;
+                long current = firstValue;
+                for (int i = 0; i < packedCount; i++) {
+                    current += Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
+                    output[i + 1] = current;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    output[i] = Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
+                }
+            }
+            pos += packedBytes;
         }
-        pos += packedBytes;
         return (int) (pos - srcAddr);
     }
 
@@ -526,38 +659,58 @@ public class CoveringCompressor {
         int count = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
         int rawBw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        boolean isDelta = (rawBw & DELTA_FLAG) != 0;
-        int bw = rawBw & 0x7F;
+        boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
+        boolean isDelta = !isLinearPred && (rawBw & DELTA_FLAG) != 0;
+        int bw = isLinearPred ? (rawBw & BW_MASK_6BIT) : isDelta ? (rawBw & 0x7F) : rawBw;
         long forBase = Unsafe.getUnsafe().getLong(pos);
         pos += 8;
 
-        long firstValue = 0;
-        int packedCount;
-        if (isDelta) {
-            firstValue = Unsafe.getUnsafe().getLong(pos);
+        if (isLinearPred) {
+            long firstValue = Unsafe.getUnsafe().getLong(pos);
             pos += 8;
-            packedCount = count - 1;
-        } else {
-            packedCount = count;
-        }
-
-        if (bw > 0) {
-            BitpackUtils.unpackAllValues(pos, packedCount, bw, forBase, workspaceAddr);
-        } else {
-            for (int i = 0; i < packedCount; i++) {
-                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+            long stride = Unsafe.getUnsafe().getLong(pos);
+            pos += 8;
+            if (bw > 0) {
+                BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
+            } else {
+                for (int i = 0; i < count; i++) {
+                    Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+                }
             }
-        }
-
-        if (isDelta) {
-            Unsafe.getUnsafe().putLong(outputAddr, firstValue);
-            long current = firstValue;
-            for (int i = 0; i < packedCount; i++) {
-                current += Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
-                Unsafe.getUnsafe().putLong(outputAddr + (long) (i + 1) * Long.BYTES, current);
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(outputAddr + (long) i * Long.BYTES,
+                        firstValue + (long) i * stride
+                                + Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES));
             }
         } else {
-            Unsafe.getUnsafe().copyMemory(workspaceAddr, outputAddr, (long) count * Long.BYTES);
+            long firstValue = 0;
+            int packedCount;
+            if (isDelta) {
+                firstValue = Unsafe.getUnsafe().getLong(pos);
+                pos += 8;
+                packedCount = count - 1;
+            } else {
+                packedCount = count;
+            }
+
+            if (bw > 0) {
+                BitpackUtils.unpackAllValues(pos, packedCount, bw, forBase, workspaceAddr);
+            } else {
+                for (int i = 0; i < packedCount; i++) {
+                    Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+                }
+            }
+
+            if (isDelta) {
+                Unsafe.getUnsafe().putLong(outputAddr, firstValue);
+                long current = firstValue;
+                for (int i = 0; i < packedCount; i++) {
+                    current += Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
+                    Unsafe.getUnsafe().putLong(outputAddr + (long) (i + 1) * Long.BYTES, current);
+                }
+            } else {
+                Unsafe.getUnsafe().copyMemory(workspaceAddr, outputAddr, (long) count * Long.BYTES);
+            }
         }
 
         return count;
@@ -698,8 +851,8 @@ public class CoveringCompressor {
             case ColumnType.DECIMAL64:
                 return LONG_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
             case ColumnType.TIMESTAMP:
-                // May use delta encoding (8B extra for firstValue)
-                return LONG_DELTA_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
+                // Linear-prediction header is larger than delta (29 vs 21 bytes)
+                return LONG_LINEAR_PRED_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
             case ColumnType.INT:
             case ColumnType.IPv4:
             case ColumnType.FLOAT:
@@ -717,6 +870,114 @@ public class CoveringCompressor {
                 // raw copy with count header (4B) + valueSize each
                 return 4 + count * ColumnType.sizeOf(columnType);
         }
+    }
+
+    // ==================================================================================
+    // Point-access decoders: decode a single value at a given index from compressed data.
+    // O(1) random access, zero allocation.
+    // ==================================================================================
+
+    /**
+     * Read a single ALP-compressed double at the given index.
+     * Parses the header, unpacks one FoR value, ALP-decodes it, and checks exceptions.
+     */
+    public static double readDoubleAt(long srcAddr, int index) {
+        long pos = srcAddr;
+        int count = Unsafe.getUnsafe().getInt(pos);
+        if (index < 0 || index >= count) return Double.NaN;
+        pos += 4;
+        int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int excCount = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        long forBase = Unsafe.getUnsafe().getLong(pos);
+        pos += 8;
+
+        // Check exceptions first (sparse — typically 0-5 entries)
+        int packedBytes = BitpackUtils.packedDataSize(count, bw);
+        long excPosAddr = pos + packedBytes;
+        long excValAddr = excPosAddr + (long) excCount * Integer.BYTES;
+        for (int i = 0; i < excCount; i++) {
+            if (Unsafe.getUnsafe().getInt(excPosAddr + (long) i * Integer.BYTES) == index) {
+                return Unsafe.getUnsafe().getDouble(excValAddr + (long) i * Double.BYTES);
+            }
+        }
+
+        long encoded = (bw > 0) ? BitpackUtils.unpackValue(pos, index, bw, forBase) : forBase;
+        return alpDecode(encoded, e, f);
+    }
+
+    /**
+     * Read a single FoR-compressed long at the given index.
+     * Handles plain FoR, delta FoR (sequential fallback), and linear-prediction FoR.
+     */
+    public static long readLongAt(long srcAddr, int index) {
+        long pos = srcAddr;
+        int count = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int rawBw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
+        boolean isDelta = !isLinearPred && (rawBw & DELTA_FLAG) != 0;
+        int bw = isLinearPred ? (rawBw & BW_MASK_6BIT) : isDelta ? (rawBw & 0x7F) : rawBw;
+        long forBase = Unsafe.getUnsafe().getLong(pos);
+        pos += 8;
+
+        if (isLinearPred) {
+            long firstValue = Unsafe.getUnsafe().getLong(pos);
+            pos += 8;
+            long stride = Unsafe.getUnsafe().getLong(pos);
+            pos += 8;
+            long residual = (bw > 0) ? BitpackUtils.unpackValue(pos, index, bw, forBase) : forBase;
+            return firstValue + (long) index * stride + residual;
+        } else if (isDelta) {
+            // Delta FoR: must sum deltas sequentially — O(index) fallback for old data
+            long firstValue = Unsafe.getUnsafe().getLong(pos);
+            pos += 8;
+            if (index == 0) return firstValue;
+            long current = firstValue;
+            for (int i = 0; i < index; i++) {
+                long delta = (bw > 0) ? BitpackUtils.unpackValue(pos, i, bw, forBase) : forBase;
+                current += delta;
+            }
+            return current;
+        } else {
+            return (bw > 0) ? BitpackUtils.unpackValue(pos, index, bw, forBase) : forBase;
+        }
+    }
+
+    /**
+     * Read a single FoR-compressed int at the given index.
+     */
+    public static int readIntAt(long srcAddr, int index) {
+        long pos = srcAddr;
+        pos += 4; // skip count
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int forBase = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        if (bw == 0) return forBase;
+        return forBase + (int) BitpackUtils.unpackValue(pos, index, bw, 0);
+    }
+
+    /**
+     * Read a single FoR-compressed float (stored as int) at the given index.
+     */
+    public static float readFloatAt(long srcAddr, int index) {
+        return Float.intBitsToFloat(readIntAt(srcAddr, index));
+    }
+
+    /**
+     * Read a single uncompressed short at the given index (raw format: count + shorts).
+     */
+    public static short readShortAt(long srcAddr, int index) {
+        return Unsafe.getUnsafe().getShort(srcAddr + 4 + (long) index * Short.BYTES);
+    }
+
+    /**
+     * Read a single uncompressed byte at the given index (raw format: count + bytes).
+     */
+    public static byte readByteAt(long srcAddr, int index) {
+        return Unsafe.getUnsafe().getByte(srcAddr + 4 + index);
     }
 
     /**

@@ -2192,11 +2192,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
 
-            // remove indexer
+            // remove indexer — skip seal since the index is being dropped
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
             if (columnIndexer != null) {
+                columnIndexer.discardAndClose();
                 indexers.setQuick(columnIndex, null);
-                Misc.free(columnIndexer);
                 populateDenseIndexerList();
             }
 
@@ -5919,28 +5919,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         int coverCount = coveringCols.length;
-        MemoryMA[] mems = new MemoryMA[coverCount];
-        MemoryMA[] auxMems = null;
+        String[] names = new String[coverCount];
+        long[] nameTxns = new long[coverCount];
         long[] tops = new long[coverCount];
         int[] shifts = new int[coverCount];
         int[] indices = new int[coverCount];
         int[] types = new int[coverCount];
         for (int i = 0; i < coverCount; i++) {
             int covCol = coveringCols[i];
-            mems[i] = getPrimaryColumn(covCol);
+            names[i] = Chars.toString(metadata.getColumnName(covCol));
+            nameTxns[i] = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
             tops[i] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
             int covType = metadata.getColumnType(covCol);
             types[i] = covType;
             indices[i] = covCol;
             shifts[i] = ColumnType.pow2SizeOf(covType);
-            if (ColumnType.isVarSize(covType)) {
-                if (auxMems == null) {
-                    auxMems = new MemoryMA[coverCount];
-                }
-                auxMems[i] = getSecondaryColumn(covCol);
-            }
         }
-        indexer.configureCovering(mems, auxMems, tops, shifts, indices, types, coverCount);
+        indexer.configureCovering(names, nameTxns, tops, shifts, indices, types, coverCount,
+                metadata.getTimestampIndex());
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -6273,62 +6269,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnDataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
             try {
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                configureCoveringForHistoricPartition(indexer, columnIndex, timestamp, plen);
+                configureCoveringIfNeeded(indexer, columnIndex, timestamp);
                 indexer.index(ff, columnDataFd, columnTop, partitionSize);
             } finally {
                 ff.close(columnDataFd);
             }
-        }
-    }
-
-    private void configureCoveringForHistoricPartition(ColumnIndexer indexer, int columnIndex, long partitionTimestamp, int plen) {
-        TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
-        int[] coveringCols = colMeta.getCoveringColumnIndices();
-        if (coveringCols == null || coveringCols.length == 0) {
-            return;
-        }
-        int coverCount = coveringCols.length;
-        MemoryMA[] mems = new MemoryMA[coverCount];
-        MemoryMA[] auxMems = null;
-        long[] tops = new long[coverCount];
-        int[] shifts = new int[coverCount];
-        int[] indices = new int[coverCount];
-        int[] types = new int[coverCount];
-        try {
-            for (int i = 0; i < coverCount; i++) {
-                int covCol = coveringCols[i];
-                int covType = metadata.getColumnType(covCol);
-                CharSequence covName = metadata.getColumnName(covCol);
-                long covNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
-                tops[i] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
-                types[i] = covType;
-                indices[i] = covCol;
-                shifts[i] = ColumnType.pow2SizeOf(covType);
-                // Open the covering column data file for this historic partition
-                MemoryMA mem = Vm.getSmallCMARWInstance(
-                        ff,
-                        dFile(path.trimTo(plen), covName, covNameTxn),
-                        MemoryTag.MMAP_TABLE_WRITER,
-                        configuration.getWriterFileOpenOpts()
-                );
-                mems[i] = mem;
-                if (ColumnType.isVarSize(covType)) {
-                    if (auxMems == null) {
-                        auxMems = new MemoryMA[coverCount];
-                    }
-                    auxMems[i] = Vm.getSmallCMARWInstance(
-                            ff,
-                            iFile(path.trimTo(plen), covName, covNameTxn),
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            configuration.getWriterFileOpenOpts()
-                    );
-                }
-            }
-            indexer.configureCovering(mems, auxMems, tops, shifts, indices, types, coverCount);
-        } finally {
-            // Don't close the mems here — the indexer needs them during index().
-            // They'll be closed when the indexer is reconfigured for the next partition
-            // or when the indexer writer is released.
         }
     }
 
