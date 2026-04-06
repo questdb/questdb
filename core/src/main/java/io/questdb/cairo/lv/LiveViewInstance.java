@@ -18,7 +18,8 @@ public class LiveViewInstance implements QuietCloseable {
     private final LiveViewDefinition definition;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
     private final InMemoryTable table = new InMemoryTable();
-    private long lastProcessedSeqTxn = -1;
+    private volatile boolean isClosed;
+    private volatile long lastProcessedSeqTxn = -1;
 
     public LiveViewInstance(LiveViewDefinition definition) {
         this.definition = definition;
@@ -27,6 +28,7 @@ public class LiveViewInstance implements QuietCloseable {
 
     @Override
     public void close() {
+        isClosed = true;
         lock.writeLock().lock();
         try {
             Misc.free(table);
@@ -45,6 +47,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public InMemoryTable getTable() {
         return table;
+    }
+
+    public boolean isClosed() {
+        return isClosed;
     }
 
     public void lockForRead() {
@@ -99,8 +105,21 @@ public class LiveViewInstance implements QuietCloseable {
                         case ColumnType.SYMBOL:
                             table.putSymbol(i, record.getSymA(i));
                             break;
+                        case ColumnType.STRING:
+                            table.putStr(i, record.getStrA(i));
+                            break;
+                        case ColumnType.VARCHAR:
+                            table.putVarchar(i, record.getVarcharA(i));
+                            break;
+                        case ColumnType.BINARY:
+                            table.putBin(i, record.getBin(i));
+                            break;
                         default:
-                            table.putLong(i, record.getLong(i));
+                            if (ColumnType.isArray(type)) {
+                                table.putArray(i, record.getArray(i, type), type);
+                            } else {
+                                table.putLong(i, record.getLong(i));
+                            }
                             break;
                     }
                 }

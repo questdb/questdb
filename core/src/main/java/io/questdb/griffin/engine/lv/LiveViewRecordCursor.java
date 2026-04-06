@@ -1,9 +1,12 @@
 package io.questdb.griffin.engine.lv;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.ObjList;
 
 /**
  * Cursor that iterates over the rows of a live view's InMemoryTable.
@@ -11,6 +14,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
  */
 public class LiveViewRecordCursor implements RecordCursor {
     private final LiveViewRecord record;
+    private final LiveViewRecord recordB;
     private final LiveViewInstance viewInstance;
     private long currentRow;
     private boolean isOpen;
@@ -19,6 +23,7 @@ public class LiveViewRecordCursor implements RecordCursor {
     public LiveViewRecordCursor(LiveViewInstance viewInstance) {
         this.viewInstance = viewInstance;
         this.record = new LiveViewRecord(viewInstance.getTable());
+        this.recordB = new LiveViewRecord(viewInstance.getTable());
     }
 
     @Override
@@ -30,8 +35,8 @@ public class LiveViewRecordCursor implements RecordCursor {
     @Override
     public void close() {
         if (isOpen) {
-            viewInstance.unlockAfterRead();
             isOpen = false;
+            viewInstance.unlockAfterRead();
         }
     }
 
@@ -42,12 +47,12 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecordB() {
-        throw new UnsupportedOperationException("live view does not support record B");
+        return recordB;
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        ((LiveViewRecord) record).setRow(atRowId);
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return newSymbolTable(columnIndex);
     }
 
     @Override
@@ -59,16 +64,54 @@ public class LiveViewRecordCursor implements RecordCursor {
         return false;
     }
 
+    public void open() {
+        if (isOpen) {
+            // cursor reuse: reset state without re-acquiring lock
+            currentRow = 0;
+            return;
+        }
+        viewInstance.lockForRead();
+        try {
+            rowCount = viewInstance.getTable().getRowCount();
+            currentRow = 0;
+            isOpen = true;
+        } catch (Throwable t) {
+            viewInstance.unlockAfterRead();
+            throw t;
+        }
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        int type = viewInstance.getTable().getColumnType(columnIndex);
+        if (ColumnType.tagOf(type) != ColumnType.SYMBOL) {
+            return null;
+        }
+        ObjList<String> st = viewInstance.getTable().getSymbolTable(columnIndex);
+        return new SymbolTable() {
+            @Override
+            public CharSequence valueBOf(int key) {
+                return valueOf(key);
+            }
+
+            @Override
+            public CharSequence valueOf(int key) {
+                if (key < 0 || st == null || key >= st.size()) {
+                    return null;
+                }
+                return st.getQuick(key);
+            }
+        };
+    }
+
     @Override
     public long preComputedStateSize() {
         return rowCount;
     }
 
-    public void open() {
-        viewInstance.lockForRead();
-        isOpen = true;
-        rowCount = viewInstance.getTable().getRowCount();
-        currentRow = 0;
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        ((LiveViewRecord) record).setRow(atRowId);
     }
 
     @Override

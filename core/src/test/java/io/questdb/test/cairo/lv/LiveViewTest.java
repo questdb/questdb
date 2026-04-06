@@ -55,6 +55,70 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewAllColumnTypes() throws Exception {
+        execute(
+                "CREATE TABLE all_types (" +
+                        " b BOOLEAN," +
+                        " bt BYTE," +
+                        " sh SHORT," +
+                        " i INT," +
+                        " l LONG," +
+                        " f FLOAT," +
+                        " d DOUBLE," +
+                        " ch CHAR," +
+                        " sym SYMBOL," +
+                        " str STRING," +
+                        " vc VARCHAR," +
+                        " dt DATE," +
+                        " ts TIMESTAMP" +
+                        ") TIMESTAMP(ts) PARTITION BY HOUR WAL"
+        );
+        drainWalQueue();
+
+        execute(
+                "CREATE LIVE VIEW lv_all AS" +
+                        " SELECT b, bt, sh, i, l, f, d, ch, sym, str, vc, dt, ts," +
+                        " row_number() OVER () AS rn" +
+                        " FROM all_types"
+        );
+
+        execute(
+                "INSERT INTO all_types VALUES" +
+                        " (true, 1, 2, 3, 4, 1.5, 2.5, 'A', 'SYM1', 'hello', 'world'," +
+                        "  '2024-01-01', '2024-01-01T00:00:00.000000Z')," +
+                        " (false, 10, 20, 30, 40, 10.5, 20.5, 'B', 'SYM2', NULL, 'test'," +
+                        "  '2024-01-02', '2024-01-01T00:00:01.000000Z')"
+        );
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        assertQueryNoLeakCheck(
+                "b\tbt\tsh\ti\tl\tf\td\tch\tsym\tstr\tvc\tdt\tts\trn\n" +
+                        "true\t1\t2\t3\t4\t1.5\t2.5\tA\tSYM1\thello\tworld\t2024-01-01T00:00:00.000Z\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "false\t10\t20\t30\t40\t10.5\t20.5\tB\tSYM2\t\ttest\t2024-01-02T00:00:00.000Z\t2024-01-01T00:00:01.000000Z\t2\n",
+                "SELECT * FROM lv_all",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv_all");
+    }
+
+    @Test
+    public void testLiveViewBaseTableMustBeWal() throws Exception {
+        execute("CREATE TABLE non_wal (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+
+        try {
+            execute("CREATE LIVE VIEW lv AS SELECT val, ts, row_number() OVER () AS rn FROM non_wal");
+            Assert.fail("expected SqlException");
+        } catch (SqlException e) {
+            Assert.assertTrue(e.getMessage().contains("WAL"));
+        }
+    }
+
+    @Test
     public void testLiveViewQueryEmpty() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -64,9 +128,13 @@ public class LiveViewTest extends AbstractCairoTest {
                 " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
                 " FROM trades");
 
-        assertSql(
+        assertQueryNoLeakCheck(
                 "symbol\tprice\tts\trn\n",
-                "SELECT * FROM live_rn"
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
         );
 
         execute("DROP LIVE VIEW live_rn");
@@ -91,12 +159,16 @@ public class LiveViewTest extends AbstractCairoTest {
         drainWalQueue();
         drainLiveViewQueue();
 
-        assertSql(
+        assertQueryNoLeakCheck(
                 "symbol\tprice\tts\trn\n" +
                         "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
                         "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
                         "AAPL\t151.0\t2024-01-01T00:00:02.000000Z\t2\n",
-                "SELECT * FROM live_rn"
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
         );
 
         // insert second batch (incremental)
@@ -107,29 +179,21 @@ public class LiveViewTest extends AbstractCairoTest {
         drainWalQueue();
         drainLiveViewQueue();
 
-        assertSql(
+        assertQueryNoLeakCheck(
                 "symbol\tprice\tts\trn\n" +
                         "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
                         "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
                         "AAPL\t151.0\t2024-01-01T00:00:02.000000Z\t2\n" +
                         "GOOG\t2810.0\t2024-01-01T00:00:03.000000Z\t2\n" +
                         "AAPL\t152.0\t2024-01-01T00:00:04.000000Z\t3\n",
-                "SELECT * FROM live_rn"
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
         );
 
         execute("DROP LIVE VIEW live_rn");
-    }
-
-    @Test
-    public void testLiveViewBaseTableMustBeWal() throws Exception {
-        execute("CREATE TABLE non_wal (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
-
-        try {
-            execute("CREATE LIVE VIEW lv AS SELECT val, ts, row_number() OVER () AS rn FROM non_wal");
-            Assert.fail("expected SqlException");
-        } catch (SqlException e) {
-            Assert.assertTrue(e.getMessage().contains("WAL"));
-        }
     }
 
     private static void drainLiveViewQueue() {

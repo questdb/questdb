@@ -32,12 +32,12 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
-import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshTask;
 import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.lv.LiveViewTableStructure;
+import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshTask;
@@ -621,6 +621,58 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.configureThreadLocalPoolSupervisor(supervisor);
     }
 
+    public void createLiveView(
+            CreateLiveViewOperation op,
+            TableToken baseTableToken,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // compile the SELECT to validate and get metadata
+        GenericRecordMetadata metadata;
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            CompiledQuery cq = compiler.compile(op.getSelectSql(), executionContext);
+            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
+            }
+        }
+
+        // create disk directory with _meta and _txn via the standard infrastructure
+        LiveViewTableStructure struct = new LiveViewTableStructure(op.getViewName(), metadata);
+        try (
+                MemoryMARW mem = Vm.getCMARWInstance();
+                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                Path path = new Path()
+        ) {
+            TableToken liveViewToken = createTableOrViewOrMatViewUnsecure(
+                    executionContext.getSecurityContext(),
+                    mem,
+                    blockFileWriter,
+                    path,
+                    op.isIgnoreIfExists(),
+                    struct,
+                    false,
+                    false,
+                    TableUtils.TABLE_KIND_REGULAR_TABLE
+            );
+
+            // write _lv definition file
+            path.of(configuration.getDbRoot()).concat(liveViewToken);
+            blockFileWriter.of(path.concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+            LiveViewDefinition definition = new LiveViewDefinition(
+                    op.getViewName(),
+                    op.getSelectSql(),
+                    op.getBaseTableName(),
+                    baseTableToken,
+                    op.getLagMicros(),
+                    op.getRetentionMicros(),
+                    metadata
+            );
+            LiveViewDefinition.append(definition, blockFileWriter);
+
+            LiveViewInstance instance = new LiveViewInstance(definition);
+            liveViewRegistry.registerView(instance);
+        }
+    }
+
     public @NotNull MatViewDefinition createMatView(
             SecurityContext securityContext,
             MemoryMARW mem,
@@ -720,6 +772,19 @@ public class CairoEngine implements Closeable, WriterSource {
     // The reader will ignore close() calls until attached back.
     public void detachReader(TableReader reader) {
         readerPool.detach(reader);
+    }
+
+    public void dropLiveView(CharSequence name) {
+        LiveViewInstance instance = liveViewRegistry.removeView(name);
+        if (instance != null) {
+            Misc.free(instance);
+        }
+        TableToken token = tableNameRegistry.getTableToken(name);
+        if (token != null) {
+            try (Path path = new Path()) {
+                dropTableOrViewOrMatView(path, token);
+            }
+        }
     }
 
     public void dropTableOrViewOrMatView(@Transient Path path, TableToken tableToken) {
@@ -869,6 +934,14 @@ public class CairoEngine implements Closeable, WriterSource {
             return getTableMetadata(tableToken, desiredVersion);
         }
         return getSequencerMetadata(tableToken, desiredVersion);
+    }
+
+    public LiveViewRegistry getLiveViewRegistry() {
+        return liveViewRegistry;
+    }
+
+    public ConcurrentLinkedQueue<LiveViewRefreshTask> getLiveViewTaskQueue() {
+        return liveViewTaskQueue;
     }
 
     public @NotNull MatViewGraph getMatViewGraph() {
@@ -1496,79 +1569,6 @@ public class CairoEngine implements Closeable, WriterSource {
             return true;
         }
         return false;
-    }
-
-    public void createLiveView(
-            CreateLiveViewOperation op,
-            TableToken baseTableToken,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        // compile the SELECT to validate and get metadata
-        GenericRecordMetadata metadata;
-        try (SqlCompiler compiler = getSqlCompiler()) {
-            CompiledQuery cq = compiler.compile(op.getSelectSql(), executionContext);
-            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
-            }
-        }
-
-        // create disk directory with _meta and _txn via the standard infrastructure
-        LiveViewTableStructure struct = new LiveViewTableStructure(op.getViewName(), metadata);
-        try (
-                MemoryMARW mem = Vm.getCMARWInstance();
-                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
-                Path path = new Path()
-        ) {
-            TableToken liveViewToken = createTableOrViewOrMatViewUnsecure(
-                    executionContext.getSecurityContext(),
-                    mem,
-                    blockFileWriter,
-                    path,
-                    op.isIgnoreIfExists(),
-                    struct,
-                    false,
-                    false,
-                    TableUtils.TABLE_KIND_REGULAR_TABLE
-            );
-
-            // write _lv definition file
-            path.of(configuration.getDbRoot()).concat(liveViewToken);
-            blockFileWriter.of(path.concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
-            LiveViewDefinition definition = new LiveViewDefinition(
-                    op.getViewName(),
-                    op.getSelectSql(),
-                    op.getBaseTableName(),
-                    baseTableToken,
-                    op.getLagMicros(),
-                    op.getRetentionMicros(),
-                    metadata
-            );
-            LiveViewDefinition.append(definition, blockFileWriter);
-
-            LiveViewInstance instance = new LiveViewInstance(definition);
-            liveViewRegistry.registerView(instance);
-        }
-    }
-
-    public void dropLiveView(CharSequence name) {
-        LiveViewInstance instance = liveViewRegistry.removeView(name);
-        if (instance != null) {
-            Misc.free(instance);
-        }
-        TableToken token = tableNameRegistry.getTableToken(name);
-        if (token != null) {
-            try (Path path = new Path()) {
-                dropTableOrViewOrMatView(path, token);
-            }
-        }
-    }
-
-    public LiveViewRegistry getLiveViewRegistry() {
-        return liveViewRegistry;
-    }
-
-    public ConcurrentLinkedQueue<LiveViewRefreshTask> getLiveViewTaskQueue() {
-        return liveViewTaskQueue;
     }
 
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {

@@ -2,13 +2,11 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -65,9 +63,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.refresh(cursor);
                 }
             }
-        } catch (SqlException e) {
+        } catch (Throwable t) {
             LOG.error().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
-                    .$(", error=").$(e.getFlyweightMessage())
+                    .$(", error=").$(t.getMessage())
                     .I$();
         }
     }
@@ -78,6 +76,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         for (int i = 0, n = viewInstanceSink.size(); i < n; i++) {
             LiveViewInstance instance = viewInstanceSink.getQuick(i);
+            if (instance.isClosed()) {
+                continue;
+            }
             if (seqTxn > instance.getLastProcessedSeqTxn()) {
                 refreshInstance(instance);
                 instance.setLastProcessedSeqTxn(seqTxn);
