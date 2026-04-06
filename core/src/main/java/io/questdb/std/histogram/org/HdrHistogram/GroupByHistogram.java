@@ -75,13 +75,11 @@ public class GroupByHistogram implements Mutable {
     private long lowestDiscernibleValue;
     private int numberOfSignificantValueDigits;
 
-    // AbstractHistogram(int) at lines 140-143
     public GroupByHistogram(int numberOfSignificantValueDigits) {
         this(1, 2, numberOfSignificantValueDigits);
         this.autoResize = true;
     }
 
-    // AbstractHistogram(long, long, int) at lines 161-180
     public GroupByHistogram(long lowestDiscernibleValue, long highestTrackableValue, int numberOfSignificantValueDigits) {
         if (lowestDiscernibleValue < 1) {
             throw new IllegalArgumentException("lowestDiscernibleValue must be >= 1");
@@ -111,14 +109,10 @@ public class GroupByHistogram implements Mutable {
         this.ptr = ptr;
 
         if (ptr != 0) {
-            this.lowestDiscernibleValue = Unsafe.getUnsafe().getLong(ptr + lowestDiscernibleValuePosition);
-            this.numberOfSignificantValueDigits = Unsafe.getUnsafe().getInt(ptr + numberOfSignificantValueDigitsPosition);
             this.countsArrayLength = Unsafe.getUnsafe().getInt(ptr + countsArrayLengthPosition);
             this.bucketCount = Unsafe.getUnsafe().getInt(ptr + bucketCountPosition);
             this.highestTrackableValue = Unsafe.getUnsafe().getLong(ptr + highestTrackableValuePosition);
             this.allocatedSize = headerSize + (countsArrayLength * 8L);
-
-            recalculateDerivedFields();
         } else {
             this.allocatedSize = 0;
         }
@@ -132,10 +126,12 @@ public class GroupByHistogram implements Mutable {
         }
 
         if (this.ptr == 0) {
-            ensureCapacity();
-        }
-
-        if (other.getMaxValue() > this.highestTrackableValue) {
+            if (other.getMaxValue() > this.highestTrackableValue) {
+                resize(other.getMaxValue());
+            } else {
+                ensureCapacity();
+            }
+        } else if (other.getMaxValue() > this.highestTrackableValue) {
             resize(other.getMaxValue());
         }
 
@@ -147,7 +143,6 @@ public class GroupByHistogram implements Mutable {
         allocatedSize = 0;
     }
 
-    // See Histogram.getCountAtIndex(int) at lines 209-211
     public long getCountAtIndex(int index) {
         if (ptr == 0) {
             return 0;
@@ -160,7 +155,6 @@ public class GroupByHistogram implements Mutable {
         return (ptr != 0) ? Unsafe.getUnsafe().getLong(ptr) : 0;
     }
 
-    // See AbstractHistogram.getMaxValue() at lines 637-639
     public long getMaxValue() {
         if (ptr == 0) {
             return 0;
@@ -169,7 +163,6 @@ public class GroupByHistogram implements Mutable {
         return (maxVal == 0) ? 0 : highestEquivalentValue(maxVal);
     }
 
-    // See AbstractHistogram.getMinNonZeroValue() at lines 676-679
     public long getMinNonZeroValue() {
         if (ptr == 0) {
             return Long.MAX_VALUE;
@@ -198,7 +191,6 @@ public class GroupByHistogram implements Mutable {
         }
     }
 
-    // Histogram.addToCountAtIndex(int, long) at lines 234-236
     void addToCountAtIndex(int index, long value) {
         checkBounds(index);
         ensureCapacity();
@@ -207,7 +199,6 @@ public class GroupByHistogram implements Mutable {
         Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + value);
     }
 
-    // Histogram.addToTotalCount(long) at lines 239-241
     void addToTotalCount(long value) {
         if (ptr != 0) {
             long totalCount = Unsafe.getUnsafe().getLong(ptr);
@@ -215,12 +206,10 @@ public class GroupByHistogram implements Mutable {
         }
     }
 
-    // Histogram.getNormalizingIndexOffset() at lines 255-257
     int getNormalizingIndexOffset() {
         return (ptr != 0) ? Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition) : 0;
     }
 
-    // Histogram.incrementCountAtIndex(int) at lines 260-262
     void incrementCountAtIndex(int index) {
         checkBounds(index);
         ensureCapacity();
@@ -229,7 +218,6 @@ public class GroupByHistogram implements Mutable {
         Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
     }
 
-    // Histogram.incrementTotalCount() at lines 265-267
     void incrementTotalCount() {
         if (ptr != 0) {
             long totalCount = Unsafe.getUnsafe().getLong(ptr);
@@ -237,7 +225,6 @@ public class GroupByHistogram implements Mutable {
         }
     }
 
-    // Histogram.resize(long) at lines 270-287
     void resize(long newHighestTrackableValue) {
         int oldNormalizingIndexOffset = (ptr != 0) ? Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition) : 0;
         int oldNormalizedZeroIndex = normalizeIndex(0, oldNormalizingIndexOffset, countsArrayLength);
@@ -293,7 +280,6 @@ public class GroupByHistogram implements Mutable {
         Vect.memset(ptr + headerSize, countsArrayLength * 8L, 0);
     }
 
-    // Histogram.resize(long) at lines 279-284
     private void shiftCounts(int oldNormalizedZeroIndex, int oldCountsArrayLength, int countsDelta) {
         int newNormalizedZeroIndex = oldNormalizedZeroIndex + countsDelta;
         int lengthToCopy = oldCountsArrayLength - oldNormalizedZeroIndex;
@@ -308,14 +294,12 @@ public class GroupByHistogram implements Mutable {
         Vect.memset(gapStart, gapSize, 0);
     }
 
-    // Histogram.setTotalCount(long) at lines 304-306
     void setTotalCount(long totalCount) {
         if (ptr != 0) {
             Unsafe.getUnsafe().putLong(ptr, totalCount);
         }
     }
 
-    // See AbstractHistogram.updateMinAndMax(long) at lines 2301-2312
     void updateMinAndMax(long value) {
         if (ptr == 0) {
             return;
@@ -337,7 +321,6 @@ public class GroupByHistogram implements Mutable {
         }
     }
 
-    // See AbstractHistogram.updateMaxValue(long) at lines 2297-2299
     private void updateMaxValue(long value) {
         if (ptr == 0) {
             return;
@@ -347,7 +330,6 @@ public class GroupByHistogram implements Mutable {
         Unsafe.getUnsafe().putLong(ptr + maxValuePosition, newMax);
     }
 
-    // See AbstractHistogram.updateMinNonZeroValue(long) at lines 2320-2325
     private void updateMinNonZeroValue(long value) {
         if (ptr == 0) {
             return;
@@ -375,7 +357,6 @@ public class GroupByHistogram implements Mutable {
         }
     }
 
-    // AbstractHistogram.init() at lines 1620-1671
     private void init(final long lowestDiscernibleValue,
                       final long highestTrackableValue,
                       final int numberOfSignificantValueDigits) {
@@ -387,7 +368,6 @@ public class GroupByHistogram implements Mutable {
         establishSize(highestTrackableValue);
     }
 
-    // AbstractHistogram.init() at lines 1638-1667 for the derived field calculations
     private void recalculateDerivedFields() {
         final long largestValueWithSingleUnitResolution = 2 * (long) Math.pow(10, numberOfSignificantValueDigits);
 
@@ -407,14 +387,12 @@ public class GroupByHistogram implements Mutable {
         leadingZeroCountBase = 64 - unitMagnitude - subBucketCountMagnitude;
     }
 
-    // AbstractHistogram.establishSize(long) at lines 2014-2021
     private void establishSize(long newHighestTrackableValue) {
         countsArrayLength = determineArrayLengthNeeded(newHighestTrackableValue);
         bucketCount = getBucketsNeededToCoverValue(newHighestTrackableValue);
         highestTrackableValue = newHighestTrackableValue;
     }
 
-    // AbstractHistogram.determineArrayLengthNeeded(long) at lines 1960-1967
     private int determineArrayLengthNeeded(long highestTrackableValue) {
         if (highestTrackableValue < 2L * lowestDiscernibleValue) {
             throw new IllegalArgumentException("highestTrackableValue (" + highestTrackableValue +
@@ -423,7 +401,6 @@ public class GroupByHistogram implements Mutable {
         return getLengthForNumberOfBuckets(getBucketsNeededToCoverValue(highestTrackableValue));
     }
 
-    // AbstractHistogram.getBucketsNeededToCoverValue(long) at lines 2054-2071
     private int getBucketsNeededToCoverValue(final long value) {
         long smallestUntrackableValue = ((long) subBucketCount) << unitMagnitude;
         int bucketsNeeded = 1;
@@ -437,50 +414,41 @@ public class GroupByHistogram implements Mutable {
         return bucketsNeeded;
     }
 
-    // AbstractHistogram.getLengthForNumberOfBuckets(int) at lines 2081-2083
     private int getLengthForNumberOfBuckets(final int numberOfBuckets) {
         return (numberOfBuckets + 1) * (subBucketHalfCount);
     }
 
-    // AbstractHistogram.highestEquivalentValue(long) at lines 896-898
     public long highestEquivalentValue(final long value) {
         return nextNonEquivalentValue(value) - 1;
     }
 
-    // AbstractHistogram.nextNonEquivalentValue(long) at lines 988-990
     public long nextNonEquivalentValue(final long value) {
         return lowestEquivalentValue(value) + sizeOfEquivalentValueRange(value);
     }
 
-    // AbstractHistogram.lowestEquivalentValue(long) at lines 951-955
     public long lowestEquivalentValue(final long value) {
         int bucketIndex = getBucketIndex(value);
         int subBucketIndex = getSubBucketIndex(value, bucketIndex);
         return valueFromIndex(bucketIndex, subBucketIndex);
     }
 
-    // AbstractHistogram.sizeOfEquivalentValueRange(long) at lines 1332-1335
     private long sizeOfEquivalentValueRange(final long value) {
         int bucketIndex = getBucketIndex(value);
         return 1L << (unitMagnitude + bucketIndex);
     }
 
-    // AbstractHistogram.getBucketIndex(long) at lines 533-538
     private int getBucketIndex(final long value) {
         return leadingZeroCountBase - Long.numberOfLeadingZeros(value | subBucketMask);
     }
 
-    // AbstractHistogram.getSubBucketIndex(long, int) at lines 789-797
     private int getSubBucketIndex(final long value, final int bucketIndex) {
         return (int) (value >>> (bucketIndex + unitMagnitude));
     }
 
-    // AbstractHistogram.valueFromIndex(int, int) at lines 1870-1872
     private long valueFromIndex(final int bucketIndex, final int subBucketIndex) {
         return ((long) subBucketIndex) << (bucketIndex + unitMagnitude);
     }
 
-    // AbstractHistogram.normalizeIndex(int, int, int) at lines 2131-2151
     private int normalizeIndex(int index, int normalizingIndexOffset, int arrayLength) {
         if (normalizingIndexOffset == 0) {
             return index;
@@ -497,7 +465,6 @@ public class GroupByHistogram implements Mutable {
         return normalizedIndex;
     }
 
-    // AbstractHistogram.valueFromIndex(int) at lines 1393-1401
     private long valueFromIndex(final int index) {
         int bucketIndex = (index >> subBucketHalfCountMagnitude) - 1;
         int subBucketIndex = (index & (subBucketHalfCount - 1)) + subBucketHalfCount;
@@ -508,7 +475,6 @@ public class GroupByHistogram implements Mutable {
         return valueFromIndex(bucketIndex, subBucketIndex);
     }
 
-    // AbstractHistogram.countsArrayIndex(long) at lines 354-361
     private int countsArrayIndex(final long value) {
         if (value < 0) {
             throw CairoException.nonCritical().put("Histogram recorded value cannot be negative.");
@@ -518,7 +484,6 @@ public class GroupByHistogram implements Mutable {
         return countsArrayIndex(bucketIndex, subBucketIndex);
     }
 
-    // AbstractHistogram.countsArrayIndex(int, int) at lines 1534-1546
     private int countsArrayIndex(final int bucketIndex, final int subBucketIndex) {
         assert(subBucketIndex < subBucketCount);
         assert(bucketIndex == 0 || (subBucketIndex >= subBucketHalfCount));
@@ -527,33 +492,25 @@ public class GroupByHistogram implements Mutable {
         return bucketBaseIndex + offsetInBucket;
     }
 
-    public void setAutoResize(boolean autoResize) {
-        this.autoResize = autoResize;
-    }
-
-    // AbstractHistogram.recordValue(long) at lines 1152-1154
     public void recordValue(final long value) throws CairoException {
         recordSingleValue(value);
     }
 
-    // AbstractHistogram.recordValueWithCount(long, long) at lines 1164-1166
     public void recordValueWithCount(final long value, final long count) throws CairoException {
         recordCountAtValue(count, value);
     }
 
-    // AbstractHistogram.recordSingleValue(long) at lines 1726-1735
     private void recordSingleValue(final long value) throws CairoException {
         int countsIndex = countsArrayIndex(value);
         try {
             incrementCountAtIndex(countsIndex);
-        } catch (CairoException | ArrayIndexOutOfBoundsException ex) {
+        } catch (CairoException ex) {
             handleRecordException(1, value, ex);
         }
         updateMinAndMax(value);
         incrementTotalCount();
     }
 
-    // AbstractHistogram.recordCountAtValue(long, long) at lines 1713-1722
     private void recordCountAtValue(final long count, final long value) throws CairoException {
         int countsIndex = countsArrayIndex(value);
         try {
@@ -565,7 +522,6 @@ public class GroupByHistogram implements Mutable {
         addToTotalCount(count);
     }
 
-    // AbstractHistogram.handleRecordException(long, long, Exception) at lines 1607-1616
     private void handleRecordException(final long count, final long value, Exception ex) {
         if (!autoResize) {
             throw CairoException.nonCritical().put("value ").put(value)
@@ -575,9 +531,9 @@ public class GroupByHistogram implements Mutable {
         int countsIndex = countsArrayIndex(value);
         addToCountAtIndex(countsIndex, count);
         this.highestTrackableValue = highestEquivalentValue(valueFromIndex(countsArrayLength - 1));
+        Unsafe.getUnsafe().putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
     }
 
-    // AbstractHistogram.add(AbstractHistogram) at lines 206-251
     public void add(final GroupByHistogram otherHistogram) throws CairoException {
         long highestRecordableValue = highestEquivalentValue(valueFromIndex(countsArrayLength - 1));
         if (highestRecordableValue < otherHistogram.getMaxValue()) {
@@ -618,7 +574,6 @@ public class GroupByHistogram implements Mutable {
         setEndTimeStamp(Math.max(getEndTimeStamp(), otherHistogram.getEndTimeStamp()));
     }
 
-    // AbstractHistogram.getMinValue() at lines 687-692
     public long getMinValue() {
         if ((getCountAtIndex(0) > 0) || (getTotalCount() == 0)) {
             return 0;
@@ -626,7 +581,6 @@ public class GroupByHistogram implements Mutable {
         return getMinNonZeroValue();
     }
 
-    // AbstractHistogram.getMean() at lines 656-668
     public double getMean() {
         if (getTotalCount() == 0) {
             return 0.0;
@@ -641,7 +595,6 @@ public class GroupByHistogram implements Mutable {
         return totalValue / getTotalCount();
     }
 
-    // AbstractHistogram.getStdDeviation() at lines 774-787
     public double getStdDeviation() {
         if (getTotalCount() == 0) {
             return 0.0;
@@ -661,12 +614,10 @@ public class GroupByHistogram implements Mutable {
         return Math.sqrt(variance / totalCount);
     }
 
-    // AbstractHistogram.medianEquivalentValue(long) at lines 976-978
     private long medianEquivalentValue(final long value) {
         return (lowestEquivalentValue(value) + (sizeOfEquivalentValueRange(value) >> 1));
     }
 
-    // AbstractHistogram.getValueAtPercentile(double) at lines 838-860
     public long getValueAtPercentile(final double percentile) {
         double requestedPercentile =
                 Math.min(Math.max(Math.nextAfter(percentile, Double.NEGATIVE_INFINITY), 0.0D), 100.0D);
@@ -687,13 +638,11 @@ public class GroupByHistogram implements Mutable {
         return 0;
     }
 
-    // AbstractHistogram.getCountAtValue(long) at lines 549-552
     public long getCountAtValue(final long value) throws CairoException {
         final int index = Math.min(Math.max(0, countsArrayIndex(value)), (countsArrayLength - 1));
         return getCountAtIndex(index);
     }
 
-    // AbstractHistogram.getCountBetweenValues(long, long) at lines 584-592
     public long getCountBetweenValues(final long lowValue, final long highValue) throws CairoException {
         final int lowIndex = Math.max(0, countsArrayIndex(lowValue));
         final int highIndex = Math.min(countsArrayIndex(highValue), (countsArrayLength - 1));
