@@ -774,6 +774,40 @@ public class GroupByHistogramTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRepointAndRecordFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+                int numGroups = 10;
+                Histogram[] oracles = new Histogram[numGroups];
+                long[] ptrs = new long[numGroups];
+                GroupByHistogram flyweight = new GroupByHistogram(3);
+                flyweight.setAllocator(allocator);
+
+                for (int i = 0; i < numGroups; i++) {
+                    oracles[i] = new Histogram(3);
+                }
+
+                for (int i = 0; i < 50_000; i++) {
+                    int group = rnd.nextInt(numGroups);
+                    long value = rnd.nextLong(1_000_000_000L) + 1;
+
+                    flyweight.of(ptrs[group]);
+                    flyweight.recordValue(value);
+                    ptrs[group] = flyweight.ptr();
+
+                    oracles[group].recordValue(value);
+                }
+
+                for (int i = 0; i < numGroups; i++) {
+                    flyweight.of(ptrs[i]);
+                    assertHistogramsEqual(oracles[i], flyweight);
+                }
+            }
+        });
+    }
+
     private void assertHistogramsEqual(Histogram oracle, GroupByHistogram offHeap) {
         Assert.assertEquals(oracle.getTotalCount(), offHeap.getTotalCount());
         Assert.assertEquals(oracle.getMinValue(), offHeap.getMinValue());
