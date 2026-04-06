@@ -13,7 +13,7 @@ use questdbr::parquet_write::bench::WriteOptions;
 use questdbr::parquet_write::schema::{
     to_compressions, to_encodings, to_parquet_schema, Partition,
 };
-use questdbr::parquet_write::varchar::varchar_to_dict_pages_merged;
+use questdbr::parquet_write::varchar::{varchar_to_dict_pages_merged, VarcharPartitionSlice};
 use questdbr::parquet_write::ParquetWriter;
 
 /// Helper: build a Partition with a single VARCHAR column using RLE_DICTIONARY encoding.
@@ -360,7 +360,7 @@ fn aux_as_entries(aux: &[u8]) -> &[[u8; 16]] {
 
 #[test]
 fn test_merged_empty_partitions() {
-    let partitions: Vec<(&[[u8; 16]], &[u8], usize)> = vec![];
+    let partitions: Vec<VarcharPartitionSlice> = vec![];
 
     let result = varchar_to_dict_pages_merged(
         &partitions,
