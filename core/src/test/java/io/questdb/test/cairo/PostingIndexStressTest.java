@@ -290,7 +290,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     long prev = Long.MIN_VALUE;
                     int count = 0;
                     while (cursor.hasNext()) {
-                        long val = cursor.next();
+                        long val = cursor.next() + lo; // cursor returns values relative to minValue
                         Assert.assertTrue("trial=" + trial + " val=" + val + " < lo=" + lo, val >= lo);
                         Assert.assertTrue("trial=" + trial + " val=" + val + " > hi=" + hi, val <= hi);
                         Assert.assertTrue("trial=" + trial + " not ascending: " + prev + " -> " + val, val >= prev);
@@ -797,6 +797,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentReadersWhileWriterCommits() throws Exception {
+        assertMemoryLeak(64, () -> {
         // Writer commits in a loop while multiple reader threads continuously
         // read and verify data integrity.
         final String dbRoot = configuration.getDbRoot().toString();
@@ -825,9 +826,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         try (Path rPath = new Path().of(dbRoot);
                              PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                            while (writerDone.getCount() > 0 || committedBatches.get() <= writerCommits) {
+                            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committedBatches.get() < writerCommits)) {
                                 reader.reloadConditionally();
-                                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                                 long prev = -1;
                                 int count = 0;
                                 while (cursor.hasNext()) {
@@ -880,10 +881,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
     public void testConcurrentReadersWhileWriterSeals() throws Exception {
+        assertMemoryLeak(64, () -> {
         // Writer builds up gens then seals while readers are iterating.
         final String dbRoot = configuration.getDbRoot().toString();
         final String name = "conc_seal";
@@ -980,10 +983,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 Assert.assertEquals(totalBatches * BP_BATCH, count);
             }
         }
+        });
     }
 
     @Test
     public void testConcurrentReaderReloadWhileWriterCommits() throws Exception {
+        assertMemoryLeak(64, () -> {
         // Reader repeatedly reloads and reads while writer commits — exercises
         // the seq/seqCheck atomicity handshake under contention.
         final String dbRoot = configuration.getDbRoot().toString();
@@ -1005,9 +1010,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                          PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                  configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         int iterations = 0;
-                        while (writerDone.getCount() > 0 || iterations < writerBatches) {
+                        while (!Thread.interrupted() && (writerDone.getCount() > 0 || iterations < writerBatches)) {
                             reader.reloadConditionally();
-                            RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                             long prev = -1;
                             int count = 0;
                             while (cursor.hasNext()) {
@@ -1051,6 +1056,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     // ===================================================================
@@ -1059,6 +1065,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentMultiKeyReadersWhileWriting() throws Exception {
+        assertMemoryLeak(64, () -> {
         // Multiple keys, each reader thread reads a different key while writer
         // commits across all keys.
         final String dbRoot = configuration.getDbRoot().toString();
@@ -1088,9 +1095,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         try (Path rPath = new Path().of(dbRoot);
                              PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                            while (writerDone.getCount() > 0) {
+                            while (!Thread.interrupted() && writerDone.getCount() > 0) {
                                 reader.reloadConditionally();
-                                RowCursor cursor = reader.getCursor(false, key, 0, Long.MAX_VALUE);
+                                RowCursor cursor = reader.getCursor(true, key, 0, Long.MAX_VALUE);
                                 long prev = -1;
                                 int count = 0;
                                 while (cursor.hasNext()) {
@@ -1145,6 +1152,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     // ===================================================================
@@ -1683,6 +1691,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentBwdReadersWhileWriterCommits() throws Exception {
+        assertMemoryLeak(64, () -> {
         // Writer commits while multiple backward reader threads continuously read.
         final String dbRoot = configuration.getDbRoot().toString();
         final String name = "conc_bwd_rw";
@@ -1708,9 +1717,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         try (Path rPath = new Path().of(dbRoot);
                              PostingIndexBwdReader reader = new PostingIndexBwdReader(
                                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                            while (writerDone.getCount() > 0 || committedBatches.get() <= writerCommits) {
+                            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committedBatches.get() < writerCommits)) {
                                 reader.reloadConditionally();
-                                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                                 long prev = Long.MAX_VALUE;
                                 int count = 0;
                                 while (cursor.hasNext()) {
@@ -1761,10 +1770,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
     public void testConcurrentBwdReadersWhileWriterSeals() throws Exception {
+        assertMemoryLeak(64, () -> {
         // Backward cursor mid-iteration survives seal.
         final String dbRoot = configuration.getDbRoot().toString();
         final String name = "conc_bwd_seal";
@@ -1837,10 +1848,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test
     public void testConcurrentMixedFwdBwdReaders() throws Exception {
+        assertMemoryLeak(64, () -> {
         // Both forward and backward readers simultaneously during writes.
         final String dbRoot = configuration.getDbRoot().toString();
         final String name = "conc_mixed";
@@ -1867,9 +1880,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 try (Path rPath = new Path().of(dbRoot);
                                      PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                              configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                                    while (writerDone.getCount() > 0) {
+                                    while (!Thread.interrupted() && writerDone.getCount() > 0) {
                                         reader.reloadConditionally();
-                                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
                                         long prev = -1;
                                         int count = 0;
                                         while (cursor.hasNext()) {
@@ -1892,7 +1905,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 try (Path rPath = new Path().of(dbRoot);
                                      PostingIndexBwdReader reader = new PostingIndexBwdReader(
                                              configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                                    while (writerDone.getCount() > 0) {
+                                    while (!Thread.interrupted() && writerDone.getCount() > 0) {
                                         reader.reloadConditionally();
                                         RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                                         long prev = Long.MAX_VALUE;
@@ -1942,6 +1955,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     // ===================================================================
@@ -2150,6 +2164,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
     @Test
     public void testSnapshotDecoupledFromPage() throws Exception {
+        assertMemoryLeak(64, () -> {
         // Writer commits 5 batches. Reader reloads and snapshots gen dir.
         // Then the writer seals (overwriting gen dir on the inactive page and flipping).
         // The reader's cursor should still iterate correctly using its snapshotted gen dir.
@@ -2246,6 +2261,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     @Test

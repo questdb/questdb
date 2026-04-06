@@ -71,6 +71,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
     }
 
     private void runConcurrentTest(String name, int numReaders, boolean useFwd, boolean useBwd) throws Exception {
+        assertMemoryLeak(64, () -> {
         final String dbRoot = configuration.getDbRoot().toString();
         final AtomicReference<Throwable> error = new AtomicReference<>();
         final AtomicInteger committed = new AtomicInteger(0);
@@ -134,6 +135,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                 }
             }
         }
+        });
     }
 
     private static void readForward(String dbRoot, String name, int id,
@@ -141,7 +143,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
         try (Path rPath = new Path().of(dbRoot);
              PostingIndexFwdReader reader = new PostingIndexFwdReader(
                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-            while (writerDone.getCount() > 0 || committed.get() <= COMMITS) {
+            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
                 reader.reloadConditionally();
                 RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                 long prev = -1;
@@ -170,7 +172,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
         try (Path rPath = new Path().of(dbRoot);
              PostingIndexBwdReader reader = new PostingIndexBwdReader(
                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-            while (writerDone.getCount() > 0 || committed.get() <= COMMITS) {
+            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
                 reader.reloadConditionally();
                 RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
                 long prev = Long.MAX_VALUE;

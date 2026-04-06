@@ -8035,6 +8035,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testIndexRebuildAfterDrop() throws Exception {
+        assertMemoryLeak(() -> {
         // Tests DROP INDEX + re-ADD INDEX produces correct results.
         // Old .pd files from the first index version are queued for async purge
         // via ColumnPurgeOperator.removeSidecarFiles which handles .pd cleanup.
@@ -8080,6 +8081,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 """, "SELECT price FROM t_rebuild WHERE sym = 'B'");
 
         execute("DROP TABLE t_rebuild");
+        });
     }
 
     // --- Issue 4: Page frame with BINARY covered column (GROUP BY) ---
