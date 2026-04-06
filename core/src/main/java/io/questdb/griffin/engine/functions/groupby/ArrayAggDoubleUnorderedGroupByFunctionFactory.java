@@ -53,6 +53,6 @@ public class ArrayAggDoubleUnorderedGroupByFunctionFactory implements FunctionFa
             SqlExecutionContext sqlExecutionContext
     ) {
         boolean ordered = args.getQuick(1).getBool(null);
-        return new ArrayAggDoubleGroupByFunction(args.getQuick(0), ordered);
+        return new ArrayAggDoubleGroupByFunction(args.getQuick(0), ordered, configuration.maxArrayElementCount());
     }
 }

@@ -148,6 +148,61 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayInputConcatenation() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int iter = 0; iter < ITERATIONS; iter++) {
+                int numGroups = rnd.nextInt(5) + 1;
+                int rowsPerGroup = rnd.nextInt(10) + 1;
+
+                execute("DROP TABLE IF EXISTS t");
+                execute("CREATE TABLE t (grp INT, arr DOUBLE[])");
+
+                StringBuilder insert = new StringBuilder("INSERT INTO t VALUES\n");
+                int[][] expectedCounts = new int[numGroups][1];
+                boolean first = true;
+                for (int g = 0; g < numGroups; g++) {
+                    for (int r = 0; r < rowsPerGroup; r++) {
+                        if (!first) {
+                            insert.append(",\n");
+                        }
+                        first = false;
+                        boolean isNull = rnd.nextDouble() < 0.2;
+                        if (isNull) {
+                            insert.append("(").append(g).append(", null)");
+                        } else {
+                            int arrLen = rnd.nextInt(5) + 1;
+                            insert.append("(").append(g).append(", ARRAY[");
+                            for (int i = 0; i < arrLen; i++) {
+                                if (i > 0) {
+                                    insert.append(",");
+                                }
+                                double val = Math.round(rnd.nextDouble() * 1000.0) / 10.0;
+                                insert.append(val);
+                            }
+                            insert.append("])");
+                            expectedCounts[g][0] += arrLen;
+                        }
+                    }
+                }
+                execute(insert.toString());
+
+                // Verify element counts match per group
+                // When all arrays in a group are null, array_agg returns null,
+                // and array_count(null) returns 0.
+                StringBuilder expected = new StringBuilder("grp\tcnt\n");
+                for (int g = 0; g < numGroups; g++) {
+                    expected.append(g).append("\t").append(expectedCounts[g][0]).append("\n");
+                }
+
+                assertSql(
+                        expected,
+                        "SELECT grp, array_count(array_agg(arr)) cnt FROM t ORDER BY grp"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testUnorderedCountsMatch() throws Exception {
         assertMemoryLeak(() -> {
             for (int iter = 0; iter < ITERATIONS; iter++) {
