@@ -46,11 +46,11 @@ import org.jetbrains.annotations.NotNull;
 /**
  * Collects double values into a 1D {@code DOUBLE[]} array during GROUP BY / SAMPLE BY.
  * <p>
- * Buffer layout in native memory (managed by {@link GroupByAllocator}):
+ * Buffer layout in native memory (managed by {@link io.questdb.griffin.engine.groupby.GroupByAllocator}):
  * <pre>
  * | count: INT (4 bytes) | capacity: INT (4 bytes) | d0: 8 bytes | d1: 8 bytes | ...
  * </pre>
- * The count field at offset 0 doubles as the shape descriptor for {@link BorrowedArray}.
+ * The count field at offset 0 doubles as the shape descriptor for {@link io.questdb.cairo.arr.BorrowedArray}.
  * <p>
  * A single LONG slot in the map value stores the buffer pointer (0 = null/empty group).
  */
@@ -60,14 +60,16 @@ public class ArrayAggDoubleGroupByFunction extends ArrayFunction implements Grou
     private static final int INITIAL_CAPACITY = 16;
     private final Function arg;
     private final BorrowedArray borrowedArray = new BorrowedArray();
+    private final int maxArrayElementCount;
     private final boolean ordered;
     private GroupByAllocator allocator;
     private int valueIndex;
 
-    public ArrayAggDoubleGroupByFunction(@NotNull Function arg, boolean ordered) {
+    public ArrayAggDoubleGroupByFunction(@NotNull Function arg, boolean ordered, int maxArrayElementCount) {
         this.arg = arg;
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         this.ordered = ordered;
+        this.maxArrayElementCount = maxArrayElementCount;
     }
 
     @Override
@@ -88,6 +90,7 @@ public class ArrayAggDoubleGroupByFunction extends ArrayFunction implements Grou
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         long ptr = mapValue.getLong(valueIndex);
         int count = Unsafe.getUnsafe().getInt(ptr);
+        checkCapacityLimit(count + 1);
         int capacity = Unsafe.getUnsafe().getInt(ptr + CAPACITY_OFFSET);
         if (count == capacity) {
             if (capacity > (Integer.MAX_VALUE >> 1)) {
@@ -125,6 +128,11 @@ public class ArrayAggDoubleGroupByFunction extends ArrayFunction implements Grou
     @Override
     public String getName() {
         return "array_agg";
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
     }
 
     @Override
@@ -171,6 +179,10 @@ public class ArrayAggDoubleGroupByFunction extends ArrayFunction implements Grou
 
         long destPtr = destValue.getLong(valueIndex);
         if (destPtr == 0) {
+            // Shallow pointer copy: the GroupBy framework guarantees that src map entries
+            // are not reused after merge, so transferring ownership of the buffer is safe.
+            // This avoids an unnecessary deep copy and is consistent with the pattern used
+            // by other GroupBy functions (e.g. FirstArrayGroupByFunction).
             destValue.putLong(valueIndex, srcPtr);
             return;
         }
@@ -185,6 +197,7 @@ public class ArrayAggDoubleGroupByFunction extends ArrayFunction implements Grou
         if (newCount < 0) {
             throw CairoException.nonCritical().put("array_agg: merged array exceeds maximum capacity");
         }
+        checkCapacityLimit(newCount);
         if (newCount > destCapacity) {
             int newCapacity = Numbers.ceilPow2(newCount);
             if (newCapacity < newCount) {
@@ -221,6 +234,19 @@ public class ArrayAggDoubleGroupByFunction extends ArrayFunction implements Grou
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("array_agg(").val(arg).val(')');
+        if (ordered) {
+            sink.val("array_agg(").val(arg).val(')');
+        } else {
+            sink.val("array_agg(").val(arg).val(",false)");
+        }
+    }
+
+    private void checkCapacityLimit(int count) {
+        if (count > maxArrayElementCount) {
+            throw CairoException.nonCritical()
+                    .put("array_agg: array size exceeds configured maximum [maxArrayElementCount=")
+                    .put(maxArrayElementCount)
+                    .put(']');
+        }
     }
 }

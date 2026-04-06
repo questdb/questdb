@@ -46,11 +46,11 @@ import org.jetbrains.annotations.NotNull;
 /**
  * Concatenates {@code DOUBLE[]} arrays into a single flat {@code DOUBLE[]} during GROUP BY / SAMPLE BY.
  * <p>
- * Buffer layout in native memory (managed by {@link GroupByAllocator}):
+ * Buffer layout in native memory (managed by {@link io.questdb.griffin.engine.groupby.GroupByAllocator}):
  * <pre>
  * | count: INT (4 bytes) | capacity: INT (4 bytes) | d0: 8 bytes | d1: 8 bytes | ...
  * </pre>
- * The count field at offset 0 doubles as the shape descriptor for {@link BorrowedArray}.
+ * The count field at offset 0 doubles as the shape descriptor for {@link io.questdb.cairo.arr.BorrowedArray}.
  * <p>
  * A single LONG slot in the map value stores the buffer pointer (0 = null/empty group).
  */
@@ -60,14 +60,16 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
     private static final int INITIAL_CAPACITY = 16;
     private final Function arg;
     private final BorrowedArray borrowedArray = new BorrowedArray();
+    private final int maxArrayElementCount;
     private final boolean ordered;
     private GroupByAllocator allocator;
     private int valueIndex;
 
-    public ArrayAggDoubleArrayGroupByFunction(@NotNull Function arg, boolean ordered) {
+    public ArrayAggDoubleArrayGroupByFunction(@NotNull Function arg, boolean ordered, int maxArrayElementCount) {
         this.arg = arg;
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         this.ordered = ordered;
+        this.maxArrayElementCount = maxArrayElementCount;
     }
 
     @Override
@@ -87,6 +89,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
             mapValue.putLong(valueIndex, 0);
             return;
         }
+        checkCapacityLimit(len);
         int capacity = Math.max(INITIAL_CAPACITY, Numbers.ceilPow2(len));
         long ptr = allocator.malloc(HEADER_SIZE + (long) capacity * Double.BYTES);
         Unsafe.getUnsafe().putInt(ptr, len);
@@ -110,14 +113,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
         long ptr = mapValue.getLong(valueIndex);
         if (ptr == 0) {
             // First non-null array in this group (previous rows were all null).
-            int capacity = Math.max(INITIAL_CAPACITY, Numbers.ceilPow2(len));
-            ptr = allocator.malloc(HEADER_SIZE + (long) capacity * Double.BYTES);
-            Unsafe.getUnsafe().putInt(ptr, len);
-            Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, capacity);
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + (long) i * Double.BYTES, arr.getDouble(i));
-            }
-            mapValue.putLong(valueIndex, ptr);
+            computeFirst(mapValue, record, rowId);
             return;
         }
         int count = Unsafe.getUnsafe().getInt(ptr);
@@ -126,6 +122,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
         if (newCount < 0) {
             throw CairoException.nonCritical().put("array_agg: array exceeds maximum capacity");
         }
+        checkCapacityLimit(newCount);
         if (newCount > capacity) {
             int newCapacity = Numbers.ceilPow2(newCount);
             if (newCapacity < newCount) {
@@ -165,6 +162,11 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
     @Override
     public String getName() {
         return "array_agg";
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return SAMPLE_BY_FILL_NONE | SAMPLE_BY_FILL_NULL | SAMPLE_BY_FILL_PREVIOUS;
     }
 
     @Override
@@ -211,6 +213,10 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
 
         long destPtr = destValue.getLong(valueIndex);
         if (destPtr == 0) {
+            // Shallow pointer copy: the GroupBy framework guarantees that src map entries
+            // are not reused after merge, so transferring ownership of the buffer is safe.
+            // This avoids an unnecessary deep copy and is consistent with the pattern used
+            // by other GroupBy functions (e.g. FirstArrayGroupByFunction).
             destValue.putLong(valueIndex, srcPtr);
             return;
         }
@@ -225,6 +231,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
         if (newCount < 0) {
             throw CairoException.nonCritical().put("array_agg: merged array exceeds maximum capacity");
         }
+        checkCapacityLimit(newCount);
         if (newCount > destCapacity) {
             int newCapacity = Numbers.ceilPow2(newCount);
             if (newCapacity < newCount) {
@@ -261,6 +268,19 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("array_agg(").val(arg).val(')');
+        if (ordered) {
+            sink.val("array_agg(").val(arg).val(')');
+        } else {
+            sink.val("array_agg(").val(arg).val(",false)");
+        }
+    }
+
+    private void checkCapacityLimit(int count) {
+        if (count > maxArrayElementCount) {
+            throw CairoException.nonCritical()
+                    .put("array_agg: array size exceeds configured maximum [maxArrayElementCount=")
+                    .put(maxArrayElementCount)
+                    .put(']');
+        }
     }
 }

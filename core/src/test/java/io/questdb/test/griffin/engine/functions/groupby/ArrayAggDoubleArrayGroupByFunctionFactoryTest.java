@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -236,6 +237,24 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testMaxArrayElementCountExceeded() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 5);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (arr DOUBLE[])");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (ARRAY[1.0, 2.0, 3.0]),
+                    (ARRAY[4.0, 5.0, 6.0])
+                    """);
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(arr) FROM tab",
+                    0,
+                    "array_agg: array size exceeds configured maximum [maxArrayElementCount=5]"
+            );
+        });
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
@@ -270,6 +289,26 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                             "2024-01-01T01:00:00.000000Z\tnull\n" +
                             "2024-01-01T02:00:00.000000Z\t[3.0,4.0]\n",
                     "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NULL)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillPrev() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', ARRAY[1.0, 2.0]),
+                    ('2024-01-01T01:00:00', ARRAY[3.0]),
+                    ('2024-01-01T04:00:00', ARRAY[4.0, 5.0])
+                    """);
+            assertSql(
+                    "ts\tagg\n" +
+                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
+                            "2024-01-01T02:00:00.000000Z\t[1.0,2.0,3.0]\n" +
+                            "2024-01-01T04:00:00.000000Z\t[4.0,5.0]\n",
+                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 2h FILL(PREV)"
             );
         });
     }

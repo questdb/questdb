@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -373,6 +374,23 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     null,
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testMaxArrayElementCountExceeded() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 5);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            execute("""
+                    INSERT INTO tab VALUES
+                    (1.0), (2.0), (3.0), (4.0), (5.0), (6.0)
+                    """);
+            assertExceptionNoLeakCheck(
+                    "SELECT array_agg(val) FROM tab",
+                    0,
+                    "array_agg: array size exceeds configured maximum [maxArrayElementCount=5]"
             );
         });
     }
