@@ -31,11 +31,11 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.ColumnConversionOffsetSink;
 import io.questdb.griffin.ConvertersNative;
+import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -350,7 +350,7 @@ public class ColumnTypeConverter {
         try {
             dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
             dstVarMem.jumpTo(0);
-            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, VarcharTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
             dstFixMem.jumpTo(0);
             Utf8StringSink sink = sinkUtf8TL.get();
             columnSizesSink.setSrcOffsets(skipBytes, -1);
@@ -1115,6 +1115,7 @@ public class ColumnTypeConverter {
         long srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
+        StringSink sink = sinkUtf16TL.get();
 
         try {
             dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
@@ -1122,7 +1123,6 @@ public class ColumnTypeConverter {
             dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
             dstFixMem.jumpTo(0);
             dstFixMem.putLong(0L);
-            StringSink sink = sinkUtf16TL.get();
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             int scale = ColumnType.getDecimalScale(srcColumnType);
@@ -1145,6 +1145,7 @@ public class ColumnTypeConverter {
             }
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
         } finally {
+            sink.clear();
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
             dstFixMem.detachFdClose();
             dstVarMem.detachFdClose();
@@ -1171,13 +1172,13 @@ public class ColumnTypeConverter {
         long srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
+        Utf8StringSink sink = sinkUtf8TL.get();
 
         try {
             dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
             dstVarMem.jumpTo(0);
-            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
+            dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, VarcharTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
             dstFixMem.jumpTo(0);
-            Utf8StringSink sink = sinkUtf8TL.get();
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             int scale = ColumnType.getDecimalScale(srcColumnType);
@@ -1200,6 +1201,8 @@ public class ColumnTypeConverter {
             }
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
         } finally {
+            sink.clear();
+            sink.resetCapacity();
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
             dstFixMem.detachFdClose();
             dstVarMem.detachFdClose();

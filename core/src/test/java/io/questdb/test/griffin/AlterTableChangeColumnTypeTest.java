@@ -176,6 +176,27 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeDecimalToStringWithNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col DECIMAL(18, 4)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 12345.6789m)", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', -99.9999m)", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE STRING", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ts\tcol\n" +
+                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
+                    "2024-05-14T16:00:01.000000Z\t\n" +
+                    "2024-05-14T16:00:02.000000Z\t-99.9999\n", "x");
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
     public void testChangeDecimalToVarcharWithNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, col DECIMAL(18, 4)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
@@ -227,6 +248,31 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         // STRING -> DECIMAL64
         assertChangeVarToDecimal("'123456789012345678'", "123456789012345678", "STRING", "decimal(18, 0)");
         assertChangeVarToDecimal("'12345678901234.5678'", "12345678901234.5678", "STRING", "decimal(18, 4)");
+    }
+
+    @Test
+    public void testChangeStringToDecimalWithInvalidValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col STRING) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', 'abc')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:03.000000Z', '12.34.56')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:04.000000Z', NULL)", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ts\tcol\n" +
+                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
+                    "2024-05-14T16:00:01.000000Z\t\n" +
+                    "2024-05-14T16:00:02.000000Z\t\n" +
+                    "2024-05-14T16:00:03.000000Z\t\n" +
+                    "2024-05-14T16:00:04.000000Z\t\n", "x");
+
+            execute("DROP TABLE x");
+        });
     }
 
     @Test
