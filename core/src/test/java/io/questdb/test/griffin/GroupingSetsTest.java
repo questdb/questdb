@@ -1054,7 +1054,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     "SELECT symbol, SUM(quantity), GROUPING(symbol) " +
                             "FROM trades " +
                             "GROUP BY symbol",
-                    0,
+                    30,
                     "GROUPING() / GROUPING_ID() can only be used with GROUPING SETS, ROLLUP, or CUBE"
             );
         });
@@ -1071,7 +1071,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             assertException(
                     "SELECT SUM(quantity), GROUPING(symbol) " +
                             "FROM trades",
-                    0,
+                    22,
                     "GROUPING() / GROUPING_ID() can only be used with GROUPING SETS, ROLLUP, or CUBE"
             );
         });
@@ -1089,7 +1089,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     "SELECT symbol, SUM(quantity), GROUPING_ID(symbol) " +
                             "FROM trades " +
                             "GROUP BY symbol",
-                    0,
+                    30,
                     "GROUPING() / GROUPING_ID() can only be used with GROUPING SETS, ROLLUP, or CUBE"
             );
         });
@@ -1487,6 +1487,65 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     "SELECT * FROM t GROUP BY CUBE(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15,c16)",
                     25,
                     "CUBE supports at most 15 columns"
+            );
+        });
+    }
+
+    @Test
+    public void testFilterByGroupingViaSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('A', 10.0),
+                    ('A', 20.0),
+                    ('B', 30.0)
+                    """);
+            // QuestDB has no HAVING, so filter subtotal/grand total rows via subquery
+            assertSql(
+                    "sym\ts\tgs\n" +
+                            "A\t30.0\t0\n" +
+                            "B\t30.0\t0\n",
+                    "SELECT * FROM (SELECT sym, SUM(val) s, GROUPING(sym) gs FROM t GROUP BY ROLLUP(sym)) WHERE gs = 0 ORDER BY sym"
+            );
+        });
+    }
+
+    @Test
+    public void testDuplicateGroupingSets() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, val DOUBLE)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('A', 10.0),
+                    ('B', 20.0)
+                    """);
+            // Duplicate sets should produce duplicate output rows per SQL standard
+            assertSql(
+                    "sym\ts\n" +
+                            "A\t10.0\n" +
+                            "A\t10.0\n" +
+                            "B\t20.0\n" +
+                            "B\t20.0\n",
+                    "SELECT sym, SUM(val) s FROM t GROUP BY GROUPING SETS ((sym), (sym)) ORDER BY sym, s"
+            );
+        });
+    }
+
+    @Test
+    public void testGroupingIdThreeColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a SYMBOL, b SYMBOL, c SYMBOL, val DOUBLE)");
+            execute("INSERT INTO t VALUES ('x', 'y', 'z', 1.0)");
+            // GROUPING_ID(a, b, c) with ROLLUP(a, b, c) produces:
+            // (a,b,c) -> 0b000=0, (a,b) -> 0b001=1, (a) -> 0b011=3, () -> 0b111=7
+            assertSql(
+                    "a\tb\tc\ts\tgid\n" +
+                            "\t\t\t1.0\t7\n" +
+                            "x\t\t\t1.0\t3\n" +
+                            "x\ty\t\t1.0\t1\n" +
+                            "x\ty\tz\t1.0\t0\n",
+                    "SELECT a, b, c, SUM(val) s, GROUPING_ID(a, b, c) gid FROM t GROUP BY ROLLUP(a, b, c) ORDER BY gid DESC"
             );
         });
     }

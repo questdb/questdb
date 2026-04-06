@@ -346,6 +346,10 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
             this.managedCursor = managedCursor;
+            // Clear baseCursor to prevent stale state if buildDataMaps() throws
+            // (e.g. circuit breaker). Without this, close() could see a baseCursor
+            // from a previous execution cycle.
+            this.baseCursor = null;
             if (!isOpen) {
                 isOpen = true;
                 for (int i = 0; i < setCount; i++) {

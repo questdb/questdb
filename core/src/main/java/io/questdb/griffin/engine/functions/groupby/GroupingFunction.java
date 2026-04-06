@@ -40,7 +40,7 @@ import io.questdb.std.Numbers;
  * bit 1 means the column is rolled up (not actively grouped) in the current
  * grouping set, bit 0 means the column is actively grouped.
  *
- * <p>Implements {@link GroupByFunction} so that the optimizer keeps it in the
+ * <p>Implements {@link io.questdb.griffin.engine.functions.GroupByFunction} so that the optimizer keeps it in the
  * GROUP BY model's projection. The bitmask value is stored in the map value
  * column: during the data scan, {@link #setCurrentSet(int)} is called per
  * grouping set before the updater runs, and {@link #computeFirst} stores
@@ -68,6 +68,10 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         // All rows in a given grouping set produce the same bitmask,
         // so no update is needed after the first row.
+    }
+
+    public int getPosition() {
+        return position;
     }
 
     public IntList getArgColumnIndices() {

@@ -871,7 +871,7 @@ public class SqlParser {
      * Rejects expressions in ROLLUP/CUBE/GROUPING SETS to avoid ambiguity
      * in set membership resolution.
      */
-    private static void ensureColumnReferences(ObjList<ExpressionNode> columns, int kwPos) throws SqlException {
+    private static void ensureColumnReferences(ObjList<ExpressionNode> columns) throws SqlException {
         for (int i = 0, n = columns.size(); i < n; i++) {
             ExpressionNode node = columns.getQuick(i);
             if (node.type != ExpressionNode.LITERAL) {
@@ -3015,7 +3015,7 @@ public class SqlParser {
                 if (columnList.size() == 0) {
                     throw SqlException.$(kwPos, (isRollup ? "ROLLUP" : "CUBE") + " requires at least one column");
                 }
-                ensureColumnReferences(columnList, kwPos);
+                ensureColumnReferences(columnList);
                 checkMixedQualification(columnList);
                 if (!isRollup && columnList.size() > 15) {
                     throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
@@ -3391,7 +3391,7 @@ public class SqlParser {
             if (columns.size() == 0) {
                 throw SqlException.$(kwPos, isRollup ? "ROLLUP requires at least one column" : "CUBE requires at least one column");
             }
-            ensureColumnReferences(columns, kwPos);
+            ensureColumnReferences(columns);
             checkMixedQualification(columns);
             if (!isRollup && columns.size() > 15) {
                 throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
@@ -3437,7 +3437,7 @@ public class SqlParser {
                 if (rollupCols.size() == 0) {
                     throw SqlException.$(kwPos, isRollup ? "ROLLUP requires at least one column" : "CUBE requires at least one column");
                 }
-                ensureColumnReferences(rollupCols, kwPos);
+                ensureColumnReferences(rollupCols);
                 if (!isRollup && rollupCols.size() > 15) {
                     throw SqlException.$(kwPos, "CUBE supports at most 15 columns");
                 }

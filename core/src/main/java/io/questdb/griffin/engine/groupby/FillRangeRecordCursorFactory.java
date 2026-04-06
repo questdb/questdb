@@ -146,6 +146,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 // all non-timestamp columns. SYMBOL columns are GROUP BY keys
                 // (never aggregates), so they get NULL in fill rows. Other
                 // columns get the user-specified fill value.
+                //
+                // Note: fill values assigned to key columns (including GROUPING()
+                // / GROUPING_ID() columns) are never read at runtime because
+                // isKeyColumn() intercepts all reads and returns the actual key
+                // value from the key map instead.
                 final Function singleFill = fillValues.getQuick(0);
                 final Function fillFunc = singleFill.isNullConstant() ? NullConstant.NULL : singleFill;
                 final RecordMetadata metadata = getMetadata();
