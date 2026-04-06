@@ -873,11 +873,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     }
 
     private static void drainReceiver(QwpUdpReceiver receiver) {
-        drainReceiver(receiver, 20);
-    }
-
-    private static void drainReceiver(QwpUdpReceiver receiver, int timeoutSeconds) {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
         boolean everReceived = false;
         while (System.nanoTime() < deadline) {
             boolean received = receiver.runSerially();

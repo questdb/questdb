@@ -31,6 +31,8 @@ import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
 /**
  * Tests for WebSocket handshake processing.
  */
@@ -204,17 +206,19 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testResponseSize() {
-        String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-        int expectedSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, 1);
+    public void testResponseSize() throws Exception {
+        assertMemoryLeak(() -> {
+            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+            int expectedSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, 1);
 
-        long buf = allocateBuffer(256);
-        try {
-            int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
-            Assert.assertEquals(expectedSize, written);
-        } finally {
-            freeBuffer(buf, 256);
-        }
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
+                Assert.assertEquals(expectedSize, written);
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
     }
 
     @Test
@@ -267,50 +271,54 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testWriteResponse() {
-        long buf = allocateBuffer(256);
-        try {
-            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-            int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
+    public void testWriteResponse() throws Exception {
+        assertMemoryLeak(() -> {
+            long buf = allocateBuffer(256);
+            try {
+                String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+                int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
 
-            byte[] response = readBytes(buf, written);
-            String responseStr = new String(response, StandardCharsets.US_ASCII);
+                byte[] response = readBytes(buf, written);
+                String responseStr = new String(response, StandardCharsets.US_ASCII);
 
-            Assert.assertTrue(responseStr.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
-            Assert.assertTrue(responseStr.contains("Upgrade: websocket\r\n"));
-            Assert.assertTrue(responseStr.contains("Connection: Upgrade\r\n"));
-            Assert.assertTrue(responseStr.contains("Sec-WebSocket-Accept: " + acceptKey + "\r\n"));
-            Assert.assertTrue(responseStr.endsWith("\r\n\r\n"));
-        } finally {
-            freeBuffer(buf, 256);
-        }
+                Assert.assertTrue(responseStr.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+                Assert.assertTrue(responseStr.contains("Upgrade: websocket\r\n"));
+                Assert.assertTrue(responseStr.contains("Connection: Upgrade\r\n"));
+                Assert.assertTrue(responseStr.contains("Sec-WebSocket-Accept: " + acceptKey + "\r\n"));
+                Assert.assertTrue(responseStr.endsWith("\r\n\r\n"));
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
     }
 
     @Test
-    public void testWriteResponseComplete() {
-        // Full end-to-end test
-        String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
+    public void testWriteResponseComplete() throws Exception {
+        assertMemoryLeak(() -> {
+            // Full end-to-end test
+            String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";
+            String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
 
-        long buf = allocateBuffer(256);
-        try {
-            int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
 
-            byte[] response = readBytes(buf, written);
-            String responseStr = new String(response, StandardCharsets.US_ASCII);
+                byte[] response = readBytes(buf, written);
+                String responseStr = new String(response, StandardCharsets.US_ASCII);
 
-            // Verify full response
-            String expected = """
-                    HTTP/1.1 101 Switching Protocols\r
-                    Upgrade: websocket\r
-                    Connection: Upgrade\r
-                    Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
-                    X-QWP-Version: 1\r
-                    \r
-                    """;
-            Assert.assertEquals(expected, responseStr);
-        } finally {
-            freeBuffer(buf, 256);
-        }
+                // Verify full response
+                String expected = """
+                        HTTP/1.1 101 Switching Protocols\r
+                        Upgrade: websocket\r
+                        Connection: Upgrade\r
+                        Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
+                        X-QWP-Version: 1\r
+                        \r
+                        """;
+                Assert.assertEquals(expected, responseStr);
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
     }
 }
