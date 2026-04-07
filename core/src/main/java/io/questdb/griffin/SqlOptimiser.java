@@ -410,6 +410,16 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private static boolean columnNotExistsInJoinModels(QueryModel baseModel, CharSequence columnName) {
+        final ObjList<QueryModel> joinModels = baseModel.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            if (joinModels.getQuick(i).getAliasToColumnMap().contains(columnName)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static ExpressionNode concatFilters(
             boolean cairoSqlLegacyOperatorPrecedence,
             ObjectPool<ExpressionNode> expressionNodePool,
@@ -3135,7 +3145,7 @@ public class SqlOptimiser implements Mutable {
 
             // also search the virtual model and do not register the literal with the
             // translating model if this is a projection only reference.
-            if (baseModel.getAliasToColumnMap().excludes(node.token) && innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(node.token)) {
+            if (columnNotExistsInJoinModels(baseModel, node.token) && innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(node.token)) {
                 return node;
             }
 
@@ -9130,7 +9140,7 @@ public class SqlOptimiser implements Mutable {
                             //  the same model's columns, then introduce an innerValueModel to handle this case.
                             //  This would change the processing logic for all columns.
                             if (
-                                    (!forceNotUseInnerModel && baseModel.getAliasToColumnMap().excludes(qc.getAst().token) &&
+                                    (!forceNotUseInnerModel && columnNotExistsInJoinModels(baseModel, qc.getAst().token) &&
                                             innerVirtualModel.getAliasToColumnMap().contains(qc.getAst().token))
                             ) {
                                 // column is referencing another column or function on the same projection
