@@ -354,15 +354,17 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public void restoreInitialCapacity() {
         if (memStart == 0 || keyCapacity != initialKeyCapacity) {
+            final long sizeBytes = entrySize * initialKeyCapacity;
+            long newMemStart;
+            if (memStart == 0) {
+                newMemStart = Unsafe.malloc(sizeBytes, memoryTag);
+            } else {
+                newMemStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+            }
+            memStart = newMemStart;
+            memLimit = memStart + sizeBytes;
             keyCapacity = initialKeyCapacity;
             mask = keyCapacity - 1;
-            final long sizeBytes = entrySize * keyCapacity;
-            if (memStart == 0) {
-                memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            } else {
-                memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
-            }
-            memLimit = memStart + sizeBytes;
 
             keySink.reopen();
         }

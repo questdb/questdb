@@ -575,9 +575,9 @@ public class OrderedMap implements Map, Reopenable {
             return;
         }
 
-        mask = (int) newKeyCapacity - 1;
         final long newOffsetsAddr = Unsafe.malloc(newKeyCapacity << 3, listMemoryTag);
         Vect.memset(newOffsetsAddr, newKeyCapacity << 3, 0);
+        final int newMask = (int) newKeyCapacity - 1;
 
         for (int i = 0; i < keyCapacity; i++) {
             long offsetAddr = offsetsAddr + ((long) i << 3);
@@ -586,11 +586,11 @@ public class OrderedMap implements Map, Reopenable {
                 continue;
             }
             int hashCodeLo = Unsafe.getUnsafe().getInt(offsetAddr + 4);
-            int index = hashCodeLo & mask;
+            int index = hashCodeLo & newMask;
 
             long newOffsetAddr = newOffsetsAddr + ((long) index << 3);
             while (Unsafe.getUnsafe().getInt(newOffsetAddr) > 0) {
-                index = (index + 1) & mask;
+                index = (index + 1) & newMask;
                 newOffsetAddr = newOffsetsAddr + ((long) index << 3);
             }
             Unsafe.getUnsafe().putInt(newOffsetAddr, rawOffset);
@@ -598,6 +598,7 @@ public class OrderedMap implements Map, Reopenable {
         }
         Unsafe.free(offsetsAddr, (long) keyCapacity << 3, listMemoryTag);
         offsetsAddr = newOffsetsAddr;
+        mask = newMask;
         free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
         keyCapacity = (int) newKeyCapacity;
     }
