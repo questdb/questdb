@@ -42,6 +42,17 @@ public class LiveViewRegistry implements QuietCloseable {
         }
     }
 
+    /**
+     * Invalidates all live view instances that depend on the given base table.
+     */
+    public void invalidateViewsForBaseTable(CharSequence baseTableName, String reason) {
+        for (LiveViewInstance instance : viewsByName.values()) {
+            if (instance.getDefinition().getBaseTableName().contentEquals(baseTableName)) {
+                instance.invalidate(reason);
+            }
+        }
+    }
+
     public boolean hasView(CharSequence name) {
         return viewsByName.get(name) != null;
     }

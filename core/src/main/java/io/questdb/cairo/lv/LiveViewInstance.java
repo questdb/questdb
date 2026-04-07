@@ -19,6 +19,7 @@ public class LiveViewInstance implements QuietCloseable {
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
     private final InMemoryTable table = new InMemoryTable();
     private volatile boolean isClosed;
+    private volatile String invalidationReason;
     private volatile long lastProcessedSeqTxn = -1;
 
     public LiveViewInstance(LiveViewDefinition definition) {
@@ -45,12 +46,24 @@ public class LiveViewInstance implements QuietCloseable {
         return lastProcessedSeqTxn;
     }
 
+    public String getInvalidationReason() {
+        return invalidationReason;
+    }
+
     public InMemoryTable getTable() {
         return table;
     }
 
+    public void invalidate(String reason) {
+        invalidationReason = reason;
+    }
+
     public boolean isClosed() {
         return isClosed;
+    }
+
+    public boolean isInvalid() {
+        return invalidationReason != null;
     }
 
     public void lockForRead() {

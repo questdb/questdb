@@ -1,5 +1,6 @@
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
@@ -8,6 +9,45 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LiveViewTest extends AbstractCairoTest {
+
+    @Test
+    public void testBaseTableDropColumnInvalidatesLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+        Assert.assertFalse(instance.isInvalid());
+
+        execute("ALTER TABLE trades DROP COLUMN price");
+        drainWalQueue();
+
+        Assert.assertTrue(instance.isInvalid());
+        Assert.assertEquals("drop column operation", instance.getInvalidationReason());
+    }
+
+    @Test
+    public void testBaseTableDropInvalidatesLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+        Assert.assertFalse(instance.isInvalid());
+
+        execute("DROP TABLE trades");
+        drainWalQueue();
+
+        Assert.assertTrue(instance.isInvalid());
+        Assert.assertEquals("base table drop", instance.getInvalidationReason());
+    }
+
+    @Test
+    public void testBaseTableTruncateInvalidatesLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+        Assert.assertFalse(instance.isInvalid());
+
+        execute("TRUNCATE TABLE trades");
+        drainWalQueue();
+
+        Assert.assertTrue(instance.isInvalid());
+        Assert.assertEquals("truncate operation", instance.getInvalidationReason());
+    }
 
     @Test
     public void testCannotAlterLiveView() throws Exception {

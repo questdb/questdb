@@ -795,6 +795,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 matViewGraph.removeView(tableToken);
+                liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop");
                 recentWriteTracker.removeTable(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken).I$();
@@ -816,6 +817,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // Then it can push the scoreboard max txn value into incorrect state.
                     scoreboardPool.remove(tableToken);
                     notifyViewStoresAboutDrop(tableToken);
+                    liveViewRegistry.invalidateViewsForBaseTable(tableToken.getTableName(), "base table drop");
                     recentWriteTracker.removeTable(tableToken);
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
@@ -1571,6 +1573,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return false;
     }
 
+    public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
+        liveViewRegistry.invalidateViewsForBaseTable(baseTableToken.getTableName(), reason);
+    }
+
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {
         if (liveViewRegistry.hasViewsForBaseTable(baseTableToken.getTableName())) {
             LiveViewRefreshTask task = new LiveViewRefreshTask();
@@ -1763,6 +1769,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             if (fromTableToken.isWal()) {
                                 matViewStateStore.enqueueInvalidateDependentViews(fromTableToken, "table rename operation");
                             }
+                            liveViewRegistry.invalidateViewsForBaseTable(fromTableToken.getTableName(), "base table rename");
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").$safe(fromTableName)

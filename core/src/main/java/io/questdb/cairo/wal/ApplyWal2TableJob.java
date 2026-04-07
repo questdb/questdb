@@ -431,6 +431,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         if (matViewInvalidationReason != null) {
                                             mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                             mvRefreshTask.invalidationReason = matViewInvalidationReason;
+                                            engine.invalidateLiveViewsForBaseTable(tableToken, matViewInvalidationReason);
                                         }
                                         if (metadataChangeOp.shouldCompileDependentViews()) {
                                             engine.enqueueCompileView(tableToken);
@@ -718,9 +719,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.markSeqTxnCommitted(seqTxn);
                 }
                 lastCommittedRows = 0;
-                // Invalidate dependent mat views on truncate.
+                // Invalidate dependent views on truncate.
                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                 mvRefreshTask.invalidationReason = "truncate operation";
+                engine.invalidateLiveViewsForBaseTable(writer.getTableToken(), "truncate operation");
                 return 1;
             case MAT_VIEW_INVALIDATE:
                 try (WalEventReader eventReader = walEventReader) {
@@ -792,6 +794,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             if (matViewInvalidationReason != null) {
                                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                 mvRefreshTask.invalidationReason = matViewInvalidationReason;
+                                engine.invalidateLiveViewsForBaseTable(tableWriter.getTableToken(), matViewInvalidationReason);
                             }
                             return;
                         case CMD_UPDATE_TABLE:

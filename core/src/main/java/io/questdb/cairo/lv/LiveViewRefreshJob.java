@@ -76,7 +76,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         for (int i = 0, n = viewInstanceSink.size(); i < n; i++) {
             LiveViewInstance instance = viewInstanceSink.getQuick(i);
-            if (instance.isClosed()) {
+            if (instance.isClosed() || instance.isInvalid()) {
                 continue;
             }
             if (seqTxn > instance.getLastProcessedSeqTxn()) {
