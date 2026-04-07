@@ -965,9 +965,11 @@ class LateralJoinRewriter implements Mutable {
             CharSequence cloneAlias = branchOuterRef.getAlias().token;
             int aliasSaveBase = saveAndRemapOuterToInnerAlias(cloneAlias);
             rebuildGroupingCols();
-
-            current.addJoinModel(branchOuterRef);
-            current.addModelAliasIndex(branchOuterRef.getAlias(), current.getJoinModels().size() - 1);
+            boolean isPushDeep = current.getTableNameExpr() == null && current.getNestedModel() != null;
+            if (!isPushDeep) {
+                current.addJoinModel(branchOuterRef);
+                current.addModelAliasIndex(branchOuterRef.getAlias(), current.getJoinModels().size() - 1);
+            }
 
             rewriteSelectExpressions(current, outerToInnerAlias, depth);
             rewriteExpressionList(current.getOrderBy(), outerToInnerAlias, depth);
@@ -980,14 +982,7 @@ class LateralJoinRewriter implements Mutable {
                 compensateWindow(current, cloneAlias);
             }
 
-            if (current.getTableNameExpr() == null && current.getNestedModel() != null) {
-                if (branchOuterRef.getJoinType() == IQueryModel.JOIN_CROSS) {
-                    current.getJoinModels().remove(branchOuterRef);
-                    if (branchOuterRef.getAlias() != null) {
-                        current.getModelAliasIndexes().removeEntry(cloneAlias);
-                    }
-                }
-
+            if (isPushDeep) {
                 IQueryModel deepOuterRef = queryModelPool.next();
                 deepOuterRef.setNestedModel(branchOuterRef.getNestedModel());
                 deepOuterRef.setAlias(branchOuterRef.getAlias());
