@@ -265,11 +265,14 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T01:00:00', ARRAY[4.0, 5.0]),
                     ('2024-01-01T01:30:00', ARRAY[6.0])
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tagg\n" +
                             "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
                             "2024-01-01T01:00:00.000000Z\t[4.0,5.0,6.0]\n",
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h ALIGN TO CALENDAR"
+                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h ALIGN TO CALENDAR",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -283,12 +286,15 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T00:00:00', ARRAY[1.0, 2.0]),
                     ('2024-01-01T02:00:00', ARRAY[3.0, 4.0])
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tagg\n" +
                             "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
                             "2024-01-01T01:00:00.000000Z\tnull\n" +
                             "2024-01-01T02:00:00.000000Z\t[3.0,4.0]\n",
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NULL)"
+                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NULL)",
+                    "ts",
+                    true,
+                    false
             );
         });
     }
@@ -303,12 +309,13 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     ('2024-01-01T01:00:00', ARRAY[3.0]),
                     ('2024-01-01T04:00:00', ARRAY[4.0, 5.0])
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tagg\n" +
                             "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
                             "2024-01-01T02:00:00.000000Z\t[1.0,2.0,3.0]\n" +
                             "2024-01-01T04:00:00.000000Z\t[4.0,5.0]\n",
-                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 2h FILL(PREV)"
+                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 2h FILL(PREV)",
+                    "ts"
             );
         });
     }

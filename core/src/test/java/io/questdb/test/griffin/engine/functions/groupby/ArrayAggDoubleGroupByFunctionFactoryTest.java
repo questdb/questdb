@@ -238,12 +238,13 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     ('2024-01-01T05:30:00', 5.0),
                     ('2024-01-01T09:00:00', 6.0)
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tarr\n" +
                             "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
                             "2024-01-01T03:00:00.000000Z\t[4.0,5.0]\n" +
                             "2024-01-01T09:00:00.000000Z\t[6.0]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 3h ALIGN TO FIRST OBSERVATION"
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 3h ALIGN TO FIRST OBSERVATION",
+                    "ts"
             );
         });
     }
@@ -259,11 +260,14 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     ('2024-01-01T01:00:00', 3.0),
                     ('2024-01-01T01:15:00', 4.0)
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tarr\n" +
                             "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
                             "2024-01-01T01:00:00.000000Z\t[3.0,4.0]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h ALIGN TO CALENDAR"
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h ALIGN TO CALENDAR",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -278,12 +282,15 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     ('2024-01-01T01:00:00', 2.0),
                     ('2024-01-01T04:00:00', 3.0)
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tarr\n" +
                             "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
                             "2024-01-01T02:00:00.000000Z\tnull\n" +
                             "2024-01-01T04:00:00.000000Z\t[3.0]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 2h FILL(NULL)"
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 2h FILL(NULL)",
+                    "ts",
+                    true,
+                    false
             );
         });
     }
@@ -298,12 +305,13 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     ('2024-01-01T01:00:00', 2.0),
                     ('2024-01-01T04:00:00', 3.0)
                     """);
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tarr\n" +
                             "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
                             "2024-01-01T02:00:00.000000Z\t[1.0,2.0]\n" +
                             "2024-01-01T04:00:00.000000Z\t[3.0]\n",
-                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 2h FILL(PREV)"
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 2h FILL(PREV)",
+                    "ts"
             );
         });
     }
