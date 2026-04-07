@@ -278,6 +278,30 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testSampleByFillNone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', ARRAY[1.0, 2.0]),
+                    ('2024-01-01T00:30:00', ARRAY[3.0]),
+                    ('2024-01-01T00:45:00', null),
+                    ('2024-01-01T03:00:00', ARRAY[4.0, 5.0]),
+                    ('2024-01-01T06:00:00', ARRAY[6.0])
+                    """);
+            // Two gaps (01:00-03:00 and 04:00-06:00) must be omitted.
+            // Null array at 00:45 is skipped by array_agg, not by FILL(NONE).
+            assertSql(
+                    "ts\tagg\n" +
+                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0]\n" +
+                            "2024-01-01T03:00:00.000000Z\t[4.0,5.0]\n" +
+                            "2024-01-01T06:00:00.000000Z\t[6.0]\n",
+                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 1h FILL(NONE)"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFillNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
@@ -348,15 +372,15 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                 sb.append("('g").append(i % 5).append("', ARRAY[").append(i).append(".0, ").append(i + 1).append(".0])");
             }
             execute(sb.toString());
-            // verify element counts: 200 arrays * 2 elements each = 400 per group
+            // verify element counts and value sums: 200 arrays * 2 elements each = 400 per group
             assertQueryNoLeakCheck(
-                    "grp\tcnt\n" +
-                            "g0\t400\n" +
-                            "g1\t400\n" +
-                            "g2\t400\n" +
-                            "g3\t400\n" +
-                            "g4\t400\n",
-                    "SELECT grp, array_count(array_agg(arr, false)) cnt FROM tab ORDER BY grp",
+                    "grp\tcnt\ttotal\n" +
+                            "g0\t400\t199200.0\n" +
+                            "g1\t400\t199600.0\n" +
+                            "g2\t400\t200000.0\n" +
+                            "g3\t400\t200400.0\n" +
+                            "g4\t400\t200800.0\n",
+                    "SELECT grp, array_count(array_agg(arr, false)) cnt, array_sum(array_agg(arr, false)) total FROM tab ORDER BY grp",
                     null,
                     true,
                     true

@@ -99,9 +99,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
         long ptr = allocator.malloc(HEADER_SIZE + (long) capacity * Double.BYTES);
         Unsafe.getUnsafe().putInt(ptr, len);
         Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, capacity);
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + (long) i * Double.BYTES, arr.getDouble(i));
-        }
+        copyArrayElements(arr, len, ptr + HEADER_SIZE);
         mapValue.putLong(valueIndex, ptr);
     }
 
@@ -139,10 +137,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
             Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, newCapacity);
             mapValue.putLong(valueIndex, ptr);
         }
-        long base = ptr + HEADER_SIZE + (long) count * Double.BYTES;
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putDouble(base + (long) i * Double.BYTES, arr.getDouble(i));
-        }
+        copyArrayElements(arr, len, ptr + HEADER_SIZE + (long) count * Double.BYTES);
         Unsafe.getUnsafe().putInt(ptr, newCount);
     }
 
@@ -252,9 +247,9 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
             Unsafe.getUnsafe().putInt(destPtr + CAPACITY_OFFSET, newCapacity);
             destValue.putLong(valueIndex, destPtr);
         }
-        Unsafe.getUnsafe().copyMemory(
-                srcPtr + HEADER_SIZE,
+        Vect.memcpy(
                 destPtr + HEADER_SIZE + (long) destCount * Double.BYTES,
+                srcPtr + HEADER_SIZE,
                 (long) srcCount * Double.BYTES
         );
         Unsafe.getUnsafe().putInt(destPtr, newCount);
@@ -281,6 +276,16 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
             sink.val("array_agg(").val(arg).val(')');
         } else {
             sink.val("array_agg(").val(arg).val(",false)");
+        }
+    }
+
+    private static void copyArrayElements(ArrayView arr, int len, long destAddr) {
+        if (arr.isVanilla()) {
+            arr.flatView().appendPlainDoubleValue(destAddr, arr.getFlatViewOffset(), len);
+        } else {
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putDouble(destAddr + (long) i * Double.BYTES, arr.getDouble(i));
+            }
         }
     }
 

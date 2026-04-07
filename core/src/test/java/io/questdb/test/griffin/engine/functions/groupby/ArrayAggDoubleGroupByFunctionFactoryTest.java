@@ -226,6 +226,45 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testBufferGrowthPreservesNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (val DOUBLE)");
+            // Insert >16 rows to force buffer growth past INITIAL_CAPACITY.
+            // Place nulls at boundaries: first, at capacity boundary (16th), and last.
+            execute("""
+                    INSERT INTO tab VALUES
+                    (null),
+                    (1.0),
+                    (2.0),
+                    (3.0),
+                    (4.0),
+                    (5.0),
+                    (6.0),
+                    (7.0),
+                    (8.0),
+                    (9.0),
+                    (10.0),
+                    (11.0),
+                    (12.0),
+                    (13.0),
+                    (14.0),
+                    (null),
+                    (16.0),
+                    (-17.5),
+                    (null)
+                    """);
+            assertQueryNoLeakCheck(
+                    "arr\n" +
+                            "[null,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0,11.0,12.0,13.0,14.0,null,16.0,-17.5,null]\n",
+                    "SELECT array_agg(val) arr FROM tab",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -268,6 +307,31 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                     "ts",
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFillNone() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', 1.0),
+                    ('2024-01-01T00:30:00', 2.0),
+                    ('2024-01-01T03:00:00', 3.0),
+                    ('2024-01-01T06:00:00', 4.0),
+                    ('2024-01-01T06:30:00', 5.0),
+                    ('2024-01-01T06:45:00', null)
+                    """);
+            // Two gaps (01:00-03:00 and 04:00-06:00) must be omitted.
+            // Null at 06:45 is preserved in the array, not skipped by FILL(NONE).
+            assertSql(
+                    "ts\tarr\n" +
+                            "2024-01-01T00:00:00.000000Z\t[1.0,2.0]\n" +
+                            "2024-01-01T03:00:00.000000Z\t[3.0]\n" +
+                            "2024-01-01T06:00:00.000000Z\t[4.0,5.0,null]\n",
+                    "SELECT ts, array_agg(val) arr FROM tab SAMPLE BY 1h FILL(NONE)"
             );
         });
     }
@@ -365,20 +429,20 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
                 sb.append("('g").append(i % 10).append("', ").append(i).append(".0)");
             }
             execute(sb.toString());
-            // verify all elements are present (order may vary with parallelism)
+            // verify element counts and value sums (order may vary with parallelism)
             assertQueryNoLeakCheck(
-                    "grp\tcnt\n" +
-                            "g0\t1000\n" +
-                            "g1\t1000\n" +
-                            "g2\t1000\n" +
-                            "g3\t1000\n" +
-                            "g4\t1000\n" +
-                            "g5\t1000\n" +
-                            "g6\t1000\n" +
-                            "g7\t1000\n" +
-                            "g8\t1000\n" +
-                            "g9\t1000\n",
-                    "SELECT grp, array_count(array_agg(val, false)) cnt FROM tab ORDER BY grp",
+                    "grp\tcnt\ttotal\n" +
+                            "g0\t1000\t4995000.0\n" +
+                            "g1\t1000\t4996000.0\n" +
+                            "g2\t1000\t4997000.0\n" +
+                            "g3\t1000\t4998000.0\n" +
+                            "g4\t1000\t4999000.0\n" +
+                            "g5\t1000\t5000000.0\n" +
+                            "g6\t1000\t5001000.0\n" +
+                            "g7\t1000\t5002000.0\n" +
+                            "g8\t1000\t5003000.0\n" +
+                            "g9\t1000\t5004000.0\n",
+                    "SELECT grp, array_count(array_agg(val, false)) cnt, array_sum(array_agg(val, false)) total FROM tab ORDER BY grp",
                     null,
                     true,
                     true
