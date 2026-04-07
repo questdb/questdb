@@ -517,4 +517,39 @@ mod tests {
         let reader2 = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert!(reader2.verify_checksum().is_err());
     }
+
+    #[test]
+    fn unused_bytes_through_reader() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.unused_bytes(4096);
+        let (bytes, footer_offset) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        assert_eq!(reader.unused_bytes(), 4096);
+    }
+
+    #[test]
+    fn data_accessor_returns_full_slice() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (bytes, footer_offset) = w.finish().unwrap();
+
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        assert_eq!(reader.data().len(), bytes.len());
+        assert_eq!(reader.data().as_ptr(), bytes.as_ptr());
+    }
+
+    #[test]
+    fn footer_region_too_small_for_trailer() {
+        // Build a valid file, then call new() with a footer_offset so close to
+        // the end that the remaining bytes can't hold the 4-byte trailer.
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (bytes, _) = w.finish().unwrap();
+
+        // Pass a footer offset that leaves only 3 bytes after it (less than FOOTER_TRAILER_SIZE).
+        let bad_offset = (bytes.len() - 3) as u64;
+        assert!(ParquetMetaReader::new(&bytes, bad_offset).is_err());
+    }
 }

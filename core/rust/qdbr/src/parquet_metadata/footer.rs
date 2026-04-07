@@ -369,4 +369,29 @@ mod tests {
         let footer = Footer::new(&buf[start..], footer_length).unwrap();
         assert_eq!(footer.unused_bytes(), 8192);
     }
+
+    #[test]
+    fn footer_length_too_small_for_base() {
+        // Build a valid empty footer, then call Footer::new with a
+        // footer_length_through_crc that is smaller than base_size_through_crc.
+        // base_through_crc for 0 row groups = FOOTER_FIXED_SIZE(24) + FOOTER_CHECKSUM_SIZE(4) = 28.
+        let fb = FooterBuilder::new(0, 0);
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        // Pass a footer_length_through_crc smaller than the required base size.
+        let too_small = (FOOTER_FIXED_SIZE + FOOTER_CHECKSUM_SIZE - 1) as u32;
+        assert!(Footer::new(&buf[start..], too_small).is_err());
+    }
+
+    #[test]
+    fn footer_length_exactly_base_size() {
+        // Boundary: footer_length_through_crc exactly equals base_through_crc must succeed.
+        let fb = FooterBuilder::new(0, 0);
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        let exact = (FOOTER_FIXED_SIZE + FOOTER_CHECKSUM_SIZE) as u32;
+        Footer::new(&buf[start..], exact).unwrap();
+    }
 }
