@@ -19,7 +19,6 @@ pub struct DecodeContext {
     pub dict_decompress_buffer: Vec<u8>,
     pub decompress_buffer: Vec<u8>,
     pub varchar_slice_buf_pool: Vec<Vec<u8>>,
-    pub varchar_slice_dict_buf: Vec<u8>,
 }
 
 impl DecodeContext {
@@ -30,7 +29,6 @@ impl DecodeContext {
             dict_decompress_buffer: Vec::new(),
             decompress_buffer: Vec::new(),
             varchar_slice_buf_pool: Vec::new(),
-            varchar_slice_dict_buf: Vec::new(),
         }
     }
 }
