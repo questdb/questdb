@@ -220,6 +220,74 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testAutoCreateByteColumn() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_auto_byte";
+            // Pre-create the table without the byte column so QwpWalAppender
+            // auto-creates it, exercising the TYPE_BYTE branch in mapQwpTypeToQuestDB.
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .byteColumn("b", (byte) 42)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT b FROM " + table, "b\n42\n");
+        });
+    }
+
+    @Test
+    public void testAutoCreateDecimalColumns() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_auto_decimal";
+            // Pre-create the table without decimal columns so QwpWalAppender
+            // auto-creates them, exercising the private mapQwpTypeToQuestDB
+            // overload that extracts decimal scale from the wire data.
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .decimalColumn("d64", Decimal64.fromLong(12_345, 2))
+                        .decimalColumn("d128", Decimal128.fromLong(67_890, 3))
+                        .decimalColumn("d256", Decimal256.fromLong(11_111, 1))
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertSql(
+                    "SELECT d64, d128, d256 FROM " + table,
+                    """
+                            d64\td128\td256
+                            123.45\t67.890\t1111.1
+                            """);
+        });
+    }
+
+    @Test
+    public void testAutoCreateNewColumnsDisabled() throws Exception {
+        runInContextNoAutoCreate((port) -> {
+            String table = "test_qwp_no_auto_col";
+            execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .longColumn("v", 1L)
+                        .longColumn("extra", 2L)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+                Assert.fail("Expected LineSenderException");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("new columns not allowed"));
+            }
+        });
+    }
+
+    @Test
     public void testBoolean() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_boolean";
@@ -662,6 +730,54 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testCoercionToDecimal128Errors() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_dec128_err";
+            execute("CREATE TABLE " + table + " (v DECIMAL(38,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write UUID", "DECIMAL(38,2)");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write BOOLEAN", "DECIMAL(38,2)");
+        });
+    }
+
+    @Test
+    public void testCoercionToDecimal256Errors() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_dec256_err";
+            execute("CREATE TABLE " + table + " (v DECIMAL(76,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write UUID", "DECIMAL(76,2)");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write BOOLEAN", "DECIMAL(76,2)");
+        });
+    }
+
+    @Test
+    public void testCoercionToDecimal64Errors() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_dec64_err";
+            execute("CREATE TABLE " + table + " (v DECIMAL(18,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            UUID uuid = UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write UUID", "DECIMAL(18,2)");
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).boolColumn("v", true).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write BOOLEAN", "DECIMAL(18,2)");
+        });
+    }
+
+    @Test
     public void testCoercionToDecimalVariants() throws Exception {
         runInContext((port) -> {
             // dec8: DECIMAL(2,1)
@@ -854,6 +970,16 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             assertCoercionError(port, "test_da_ts_err",
                     (s, t) -> s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS),
                     "cannot write DOUBLE_ARRAY", "TIMESTAMP");
+        });
+    }
+
+    @Test
+    public void testCoercionToDoubleArrayFromStringError() throws Exception {
+        runInContext((port) -> {
+            execute("CREATE TABLE test_da_from_str (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertCoercionError(port, "test_da_from_str",
+                    (s, t) -> s.table(t).stringColumn("v", "not an array").at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write STRING", "DOUBLE[]");
         });
     }
 
@@ -1623,6 +1749,16 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testCoercionToVarcharFromArrayError() throws Exception {
+        runInContext((port) -> {
+            execute("CREATE TABLE test_vc_arr_err (v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertCoercionError(port, "test_vc_arr_err",
+                    (s, t) -> s.table(t).doubleArray("v", new double[]{1.0}).at(1_000_000, ChronoUnit.MICROS),
+                    "cannot write DOUBLE_ARRAY", "VARCHAR");
+        });
+    }
+
+    @Test
     public void testConcurrentSenders_differentTables() throws Exception {
         runInContext((port) -> {
             int senderCount = 3;
@@ -2070,6 +2206,23 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testLongArrayRejected() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_long_arr";
+
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .longArray("arr", new long[]{1L, 2L, 3L})
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+                Assert.fail("Expected LineSenderException");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("long arrays are not supported"));
+            }
+        });
+    }
+
+    @Test
     public void testMixedTimestampModesMicro() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_mixed_ts";
@@ -2195,6 +2348,34 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                             value\tts
                             99\t2022-02-25T00:00:00.111111000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testMixedTimestampServerTimeLessThanExplicit() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_mixed_ts_future";
+
+            // Send explicit timestamps far in the future (year 3000) mixed with
+            // atNow. Server time (~2026) is less than the explicit timestamps,
+            // covering the serverTimestamp < minTimestamp branch.
+            long futureTs1 = 32_503_680_000_000_000L; // ~year 3000 in micros
+            long futureTs2 = futureTs1 + 1_000_000L;
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .longColumn("id", 1L)
+                        .at(futureTs1, ChronoUnit.MICROS);
+                sender.table(table)
+                        .longColumn("id", 2L)
+                        .at(futureTs2, ChronoUnit.MICROS);
+                sender.table(table)
+                        .longColumn("id", 3L)
+                        .atNow();
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM " + table, "count\n3\n");
         });
     }
 
@@ -3015,6 +3196,28 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                             ts_col\tts
                             2022-02-25T00:00:00.111111000Z\t1970-01-01T00:00:01.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testTimestampMicrosToNanosDesignatedOverflow() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_ts_overflow";
+            // Create table with nanos designated timestamp
+            execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Send a micros timestamp that overflows when converted to nanos.
+            // The threshold is Long.MAX_VALUE / 1000 = 9_223_372_036_854_775.
+            long overflowMicros = Long.MAX_VALUE / 1000 + 1;
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+                sender.table(table)
+                        .longColumn("v", 1L)
+                        .at(overflowMicros, ChronoUnit.MICROS);
+                sender.flush();
+                Assert.fail("Expected LineSenderException");
+            } catch (LineSenderException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("timestamp overflow converting micros to nanos"));
+            }
         });
     }
 

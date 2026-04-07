@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -62,6 +63,14 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize) throws Exception {
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, true);
+    }
+
+    protected void runInContextNoAutoCreate(QwpTestContext r) throws Exception {
+        runInContext(r, 65_536, Integer.MAX_VALUE, false);
+    }
+
+    private void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, boolean autoCreateNewColumns) throws Exception {
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 configuration,
                 new DefaultHttpContextConfiguration() {
@@ -74,6 +83,19 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
             @Override
             public int getBindPort() {
                 return 0;
+            }
+
+            @Override
+            public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                if (autoCreateNewColumns) {
+                    return super.getLineHttpProcessorConfiguration();
+                }
+                return new DefaultLineHttpProcessorConfiguration(configuration) {
+                    @Override
+                    public boolean autoCreateNewColumns() {
+                        return false;
+                    }
+                };
             }
 
             @Override

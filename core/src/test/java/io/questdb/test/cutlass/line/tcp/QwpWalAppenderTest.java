@@ -160,8 +160,36 @@ public class QwpWalAppenderTest {
     }
 
     @Test
+    public void testMapQwpTypeToQuestDBChar() {
+        assertEquals(ColumnType.CHAR, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_CHAR));
+    }
+
+    @Test
     public void testMapQwpTypeToQuestDBDate() {
         assertEquals(ColumnType.DATE, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_DATE));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBDecimal128() {
+        assertEquals(ColumnType.DECIMAL128, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_DECIMAL128));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBDecimal256() {
+        assertEquals(ColumnType.DECIMAL256, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_DECIMAL256));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBDecimal64() {
+        assertEquals(ColumnType.DECIMAL64, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_DECIMAL64));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBDoubleArray() {
+        assertEquals(
+                ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, false),
+                QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_DOUBLE_ARRAY)
+        );
     }
 
     @Test
@@ -194,6 +222,11 @@ public class QwpWalAppenderTest {
         assertEquals(ColumnType.LONG256, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_LONG256));
     }
 
+    @Test(expected = CairoException.class)
+    public void testMapQwpTypeToQuestDBLongArrayRejected() {
+        QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_LONG_ARRAY);
+    }
+
     @Test
     public void testMapQwpTypeToQuestDBShort() {
         assertEquals(ColumnType.SHORT, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_SHORT));
@@ -213,6 +246,11 @@ public class QwpWalAppenderTest {
     @Test
     public void testMapQwpTypeToQuestDBTimestamp() {
         assertEquals(ColumnType.TIMESTAMP, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_TIMESTAMP));
+    }
+
+    @Test
+    public void testMapQwpTypeToQuestDBTimestampNanos() {
+        assertEquals(ColumnType.TIMESTAMP_NANO, QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_TIMESTAMP_NANOS));
     }
 
     @Test
@@ -239,6 +277,7 @@ public class QwpWalAppenderTest {
                 QwpConstants.TYPE_BOOLEAN,
                 QwpConstants.TYPE_BYTE,
                 QwpConstants.TYPE_SHORT,
+                QwpConstants.TYPE_CHAR,
                 QwpConstants.TYPE_INT,
                 QwpConstants.TYPE_LONG,
                 QwpConstants.TYPE_FLOAT,
@@ -246,6 +285,7 @@ public class QwpWalAppenderTest {
                 QwpConstants.TYPE_VARCHAR,
                 QwpConstants.TYPE_SYMBOL,
                 QwpConstants.TYPE_TIMESTAMP,
+                QwpConstants.TYPE_TIMESTAMP_NANOS,
                 QwpConstants.TYPE_DATE,
                 QwpConstants.TYPE_UUID,
                 QwpConstants.TYPE_LONG256
