@@ -109,6 +109,7 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -188,6 +189,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> externalDecls = new LowerCaseCharSequenceObjHashMap<>();
+    // Raw override key/value pairs supplied to compileWithOverrides(). Survives
+    // clearExceptSqlText() so the externalDecls pooled-node map can be rebuilt
+    // after the inner-SELECT compile paths (CTAS/VIEW/MAT VIEW, select retry)
+    // wipe compiler state. Cleared by the public clear() method between
+    // top-level compilations.
+    private final LowerCaseCharSequenceObjHashMap<CharSequence> rawOverrideValues = new LowerCaseCharSequenceObjHashMap<>();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
@@ -370,6 +377,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @Override
     public void clear() {
+        // Drop the override snapshot at the public boundary so a subsequent
+        // top-level compile() call without overrides starts clean. Inner-SELECT
+        // recompiles call clearExceptSqlText() instead, which preserves it.
+        rawOverrideValues.clear();
         clearExceptSqlText();
         sqlText = null;
     }
@@ -381,22 +392,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @NotNull LowerCaseCharSequenceObjHashMap<CharSequence> overrideValues
     ) throws SqlException {
         clear();
-        // Build ExpressionNode declarations from string values after clear(),
-        // so they're allocated from the fresh pool.
-        this.externalDecls.clear();
+        // Snapshot the raw override values into a field that survives
+        // clearExceptSqlText() so nested recompiles (CTAS/VIEW/MAT VIEW inner
+        // SELECT, select retry) can rebuild the pooled externalDecls.
+        rawOverrideValues.clear();
         ObjList<CharSequence> keys = overrideValues.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             CharSequence varName = keys.getQuick(i);
-            CharSequence value = overrideValues.get(varName);
-            ExpressionNode lhs = sqlNodePool.next().of(ExpressionNode.LITERAL, varName, 0, 0);
-            ExpressionNode rhs = sqlNodePool.next().of(ExpressionNode.CONSTANT, value, 0, 0);
-            ExpressionNode assign = sqlNodePool.next().of(ExpressionNode.OPERATION, ":=", 100, 0);
-            assign.paramCount = 2;
-            assign.lhs = lhs;
-            assign.rhs = rhs;
-            this.externalDecls.put(varName, assign);
+            rawOverrideValues.put(Chars.toString(varName), Chars.toString(overrideValues.get(varName)));
         }
-        this.overrideDeclare = true;
+        rebuildExternalDecls();
 
         lexer.of(sqlText);
         isSingleQueryMode = true;
@@ -411,6 +416,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         return compiledQuery;
+    }
+
+    /**
+     * Rebuild {@link #externalDecls} (which is wiped by {@link #clearExceptSqlText()})
+     * from the snapshot in {@link #rawOverrideValues}. Called by
+     * {@link #compileWithOverrides} once at the start, and by {@link #clearExceptSqlText()}
+     * whenever an override snapshot is present so retries and inner-SELECT
+     * compilation paths still see the caller-supplied values.
+     */
+    private void rebuildExternalDecls() {
+        externalDecls.clear();
+        if (rawOverrideValues.size() == 0) {
+            return;
+        }
+        ObjList<CharSequence> keys = rawOverrideValues.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            CharSequence varName = keys.getQuick(i);
+            CharSequence value = rawOverrideValues.get(varName);
+            ExpressionNode lhs = sqlNodePool.next().of(ExpressionNode.LITERAL, varName, 0, 0);
+            ExpressionNode rhs = sqlNodePool.next().of(ExpressionNode.CONSTANT, value, 0, 0);
+            ExpressionNode assign = sqlNodePool.next().of(ExpressionNode.OPERATION, ":=", 100, 0);
+            assign.paramCount = 2;
+            assign.lhs = lhs;
+            assign.rhs = rhs;
+            externalDecls.put(varName, assign);
+        }
+        overrideDeclare = true;
     }
 
     @Override
@@ -1886,6 +1918,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         columnNames.clear();
         externalDecls.clear();
         overrideDeclare = false;
+        // Re-materialize externalDecls from the surviving raw override snapshot
+        // so nested recompiles (CTAS/VIEW/MAT VIEW inner SELECT, select retry)
+        // still see the caller-supplied DECLARE OVERRIDABLE values.
+        rebuildExternalDecls();
     }
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -4490,13 +4526,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // Check if transform already exists
             if (store.hasTransform(executionContext, op.getName())) {
                 if (op.isReplace()) {
-                    // OR REPLACE performs an implicit drop, so the caller needs both permissions
+                    // OR REPLACE supersedes the existing definition, so the caller needs the drop permission too.
+                    // We DO NOT drop the existing entry up-front: the store uses LATEST ON ts PARTITION BY name
+                    // semantics, so the new row written by createTransform() below atomically replaces the
+                    // previous active row. If validation below fails, the old definition is left untouched
+                    // and the live ingest path stays online.
                     executionContext.getSecurityContext().authorizePayloadTransformDrop();
-                    // OR REPLACE uses a non-atomic drop-then-create pattern. A concurrent
-                    // reader may briefly observe the transform as absent. This is a
-                    // documented v1 limitation consistent with PayloadTransformStore's
-                    // class-level concurrency comment.
-                    store.dropTransform(executionContext, op.getName());
                 } else if (op.ignoreIfExists()) {
                     QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
                     return false;
@@ -5247,7 +5282,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void validateNoTableReferences(QueryModel model) throws SqlException {
         ExpressionNode tableName = model.getTableNameExpr();
         if (tableName != null && tableName.type == ExpressionNode.LITERAL) {
-            throw SqlException.$(tableName.position, "payload transform must not reference tables [table=").put(tableName.token).put(']');
+            // Skip pure CTE references: a literal that resolves to a CTE name in the
+            // current scope is not a real table reference, and the CTE definition itself
+            // is validated below.
+            if (model.getWithClauses().get(tableName.token) == null) {
+                throw SqlException.$(tableName.position, "payload transform must not reference tables [table=").put(tableName.token).put(']');
+            }
         }
 
         ObjList<QueryModel> joinModels = model.getJoinModels();
@@ -5266,6 +5306,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         QueryModel union = model.getUnionModel();
         if (union != null) {
             validateNoTableReferences(union);
+        }
+
+        // Recurse into CTE definitions: WithClauseModel holds nested QueryModels with
+        // their own tableNameExpr, so a hidden table reference inside a CTE body
+        // (e.g. WITH cte AS (SELECT * FROM real_table) SELECT * FROM cte) would
+        // bypass the checks above without this traversal.
+        LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses = model.getWithClauses();
+        if (withClauses.size() > 0) {
+            ObjList<CharSequence> keys = withClauses.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                WithClauseModel wcm = withClauses.get(keys.getQuick(i));
+                if (wcm != null) {
+                    QueryModel cteModel = wcm.peekModel();
+                    if (cteModel != null) {
+                        validateNoTableReferences(cteModel);
+                    }
+                }
+            }
         }
     }
 
@@ -5297,9 +5355,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             queryModel = optimiser.optimise(queryModel, executionContext, this);
             try (RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false)) {
-                // Validate that every output column exists in the target table and types are convertible
+                // Validate that every output column exists in the target table and types are convertible.
+                // Reject duplicate output aliases that map to the same target column - the name-based
+                // mapping contract requires each target column to be assigned at most once.
                 RecordMetadata cursorMetadata = factory.getMetadata();
                 try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(targetToken)) {
+                    final LowerCaseCharSequenceHashSet seenTargetColumns = new LowerCaseCharSequenceHashSet();
                     for (int i = 0, n = cursorMetadata.getColumnCount(); i < n; i++) {
                         CharSequence colName = cursorMetadata.getColumnName(i);
                         int writerIndex = writerMetadata.getColumnIndexQuiet(colName);
@@ -5309,13 +5370,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     "column not found in target table [column="
                             ).put(colName).put(", table=").put(targetToken.getTableName()).put(']');
                         }
+                        final CharSequence writerColName = writerMetadata.getColumnName(writerIndex);
+                        if (!seenTargetColumns.add(writerColName)) {
+                            throw SqlException.$(
+                                    queryModel.getBottomUpColumns().getQuick(i).getAst().position,
+                                    "duplicate output alias maps to the same target column [column="
+                            ).put(writerColName).put(']');
+                        }
                         int fromType = cursorMetadata.getColumnType(i);
                         int toType = writerMetadata.getColumnType(writerIndex);
                         if (!ColumnType.isConvertibleFrom(fromType, toType)) {
                             throw SqlException.inconvertibleTypes(
                                     queryModel.getBottomUpColumns().getQuick(i).getAst().position,
                                     fromType, colName,
-                                    toType, writerMetadata.getColumnName(writerIndex)
+                                    toType, writerColName
                             );
                         }
                     }

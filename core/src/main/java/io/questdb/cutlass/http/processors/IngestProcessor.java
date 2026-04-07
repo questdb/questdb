@@ -161,6 +161,10 @@ public class IngestProcessor implements HttpRequestHandler {
 
                 // Decode UTF-8 body into a pooled CharSequence to avoid heap String copy
                 final DirectUtf8Sink bodySink = transientState.getBodySink();
+                if (bodySink.size() == 0) {
+                    sendError(context, HTTP_BAD_REQUEST, "request body is empty");
+                    return;
+                }
                 final StringSink payloadSink = transientState.getPayloadSink();
                 payloadSink.clear();
                 if (!Utf8s.utf8ToUtf16(bodySink, payloadSink)) {

@@ -40,6 +40,18 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
+/**
+ * Cursor factory for {@code SHOW PAYLOAD TRANSFORMS}.
+ * <p>
+ * Access control: payload transform metadata (name, target table, SELECT body, DLQ
+ * configuration) is intentionally readable by any authenticated user, mirroring the
+ * convention used by all other {@code SHOW *} catalogue factories in this package
+ * (e.g. {@code SHOW TABLES}, {@code SHOW DATE STYLE}). The {@code SecurityContext}
+ * permission boundary is enforced at create/drop time via
+ * {@link io.questdb.cairo.SecurityContext#authorizePayloadTransformCreate()} and
+ * {@link io.questdb.cairo.SecurityContext#authorizePayloadTransformDrop()}; the
+ * SHOW path does not introduce a new permission.
+ */
 public class ShowPayloadTransformsCursorFactory extends AbstractRecordCursorFactory {
     private static final GenericRecordMetadata METADATA = new GenericRecordMetadata();
 

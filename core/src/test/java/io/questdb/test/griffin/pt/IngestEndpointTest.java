@@ -395,14 +395,24 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
                             json_extract(payload(), '$.value')::DOUBLE AS value
                         """);
 
-                // Send empty body - payload() returns empty string, json_extract returns NULLs
-                assertIngestSuccess(engine, "/ingest?transform=empty_body", "");
+                // An empty body must be rejected with HTTP 400 - silently inserting a NULL row
+                // would mask client mistakes and is not the documented contract for /ingest.
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                    HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
+                    request.POST().url("/ingest?transform=empty_body");
+                    request.withContent().put("");
 
-                assertSqlEventually(engine,
-                        "SELECT sensor, value FROM readings",
-                        "sensor\tvalue\n" +
-                                "\tnull\n"
-                );
+                    Utf8StringSink sink = new Utf8StringSink();
+                    try (HttpClient.ResponseHeaders rsp = request.send()) {
+                        rsp.await();
+                        TestUtils.assertEquals("400", Utf8s.toString(rsp.getStatusCode()));
+                        rsp.getResponse().copyTextTo(sink);
+                    }
+                    TestUtils.assertContains(sink.toString(), "request body is empty");
+                }
+
+                // Verify no row was inserted.
+                assertSqlEventually(engine, "SELECT count() FROM readings", "count()\n0\n");
             }
         });
     }
@@ -828,8 +838,17 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {
                 serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
 
-                // Try SQL injection via transform name - single quotes and special chars
+                // Seed a victim table that the injected SQL would destroy if the lookup
+                // were vulnerable to SQL injection.
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("INSERT INTO readings VALUES (now(), 'sentinel', 1.0)");
+                TestUtils.drainWalQueue(engine);
+
+                // Try SQL injection via transform name - single quotes and special chars.
+                // The handler must reject the request with 400 and must NOT execute the
+                // payload as SQL against the system table.
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                     HttpClient.Request request = httpClient.newRequest("localhost", HTTP_PORT);
                     request.POST().url("/ingest?transform=';DROP TABLE readings;--");
@@ -838,10 +857,18 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
                     Utf8StringSink sink = new Utf8StringSink();
                     try (HttpClient.ResponseHeaders rsp = request.send()) {
                         rsp.await();
+                        TestUtils.assertEquals("400", Utf8s.toString(rsp.getStatusCode()));
                         rsp.getResponse().copyTextTo(sink);
                     }
                     TestUtils.assertContains(sink.toString(), "transform not found");
                 }
+
+                // The victim table must still exist and still hold its row.
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "sentinel\t1.0\n"
+                );
             }
         });
     }

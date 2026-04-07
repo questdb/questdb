@@ -972,7 +972,18 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        final QueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, false);
+        return parseAsSubQueryAndExpectClosingBrace(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, false);
+    }
+
+    private QueryModel parseAsSubQueryAndExpectClosingBrace(
+            GenericLexer lexer,
+            LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
+            boolean useTopLevelWithClauses,
+            SqlParserCallback sqlParserCallback,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
+    ) throws SqlException {
+        final QueryModel model = parseAsSubQuery(lexer, withClauses, useTopLevelWithClauses, sqlParserCallback, decls, overrideDeclare);
         expectTok(lexer, ')');
         return model;
     }
@@ -1238,7 +1249,7 @@ public class SqlParser {
             return parseCreateView(lexer, executionContext, sqlParserCallback);
         }
         if (isPayloadKeyword(tok)) {
-            return parseCreatePayloadTransform(lexer, isReplace);
+            return parseCreatePayloadTransform(lexer, sqlParserCallback, isReplace);
         }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
@@ -1252,7 +1263,7 @@ public class SqlParser {
     // CREATE [OR REPLACE] PAYLOAD TRANSFORM name INTO target_table
     //   [DLQ dlq_table [PARTITION BY unit] [TTL value unit]]
     //   AS SELECT ...
-    private ExecutionModel parseCreatePayloadTransform(GenericLexer lexer, boolean isReplace) throws SqlException {
+    private ExecutionModel parseCreatePayloadTransform(GenericLexer lexer, SqlParserCallback sqlParserCallback, boolean isReplace) throws SqlException {
         expectTok(lexer, "transform");
         final CreatePayloadTransformOperationBuilderImpl builder = createPayloadTransformOperationBuilder;
         builder.clear();
@@ -1268,7 +1279,10 @@ public class SqlParser {
             }
         }
         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-        builder.setName(GenericLexer.unquote(tok));
+        // Copy the identifier off the lexer flyweight before continuing to lex.
+        // The builder retains this CharSequence until build(), so storing the
+        // raw lexer token would let later tokens overwrite it.
+        builder.setName(GenericLexer.immutableOf(GenericLexer.unquote(tok)));
         builder.setNamePosition(lexer.lastTokenPosition());
 
         // INTO target_table
@@ -1277,17 +1291,21 @@ public class SqlParser {
             throw SqlException.position(lexer.lastTokenPosition()).put("'into' expected");
         }
         tok = tok(lexer, "target table name");
+        tok = sansPublicSchema(tok, lexer);
         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-        builder.setTargetTable(GenericLexer.unquote(tok));
+        builder.setTargetTable(GenericLexer.immutableOf(
+                assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition())));
         builder.setTargetTablePosition(lexer.lastTokenPosition());
 
         // Optional DLQ clause
         tok = tok(lexer, "'dlq' or 'as'");
         if (isDlqKeyword(tok)) {
             tok = tok(lexer, "DLQ table name");
+            tok = sansPublicSchema(tok, lexer);
             assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             builder.setDlqTablePosition(lexer.lastTokenPosition());
-            builder.setDlqTable(GenericLexer.unquote(tok));
+            builder.setDlqTable(GenericLexer.immutableOf(
+                    assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition())));
 
             tok = tok(lexer, "'partition' or 'ttl' or 'as'");
             if (isPartitionKeyword(tok)) {
@@ -1320,49 +1338,13 @@ public class SqlParser {
             throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
         }
 
-        int startOfQuery = lexer.getPosition();
-        tok = tok(lexer, "'(' or 'select'");
-        boolean enclosedInParentheses = Chars.equals(tok, '(');
-        if (enclosedInParentheses) {
-            startOfQuery = lexer.getPosition();
-        }
-        // Consume all remaining tokens until end of statement
-        int endOfQuery;
-        if (enclosedInParentheses) {
-            int depth = 1;
-            while (depth > 0) {
-                tok = tok(lexer, "query body");
-                if (Chars.equals(tok, '(')) {
-                    depth++;
-                } else if (Chars.equals(tok, ')')) {
-                    depth--;
-                }
-            }
-            endOfQuery = lexer.getPosition() - 1;
-            tok = optTok(lexer);
-            if (tok != null && !Chars.equals(tok, ';')) {
-                throw errUnexpected(lexer, tok);
-            }
-        } else {
-            // Consume all remaining tokens
-            while ((tok = optTok(lexer)) != null) {
-                if (Chars.equals(tok, ';')) {
-                    break;
-                }
-            }
-            endOfQuery = lexer.getPosition();
-            // Trim trailing whitespace
-            while (endOfQuery > startOfQuery) {
-                char c = lexer.getContent().charAt(endOfQuery - 1);
-                if (c == ';' || c == ' ' || c == '\n' || c == '\r' || c == '\t') {
-                    endOfQuery--;
-                } else {
-                    break;
-                }
-            }
-        }
-        builder.setSelectSql(Chars.toString(lexer.getContent(), startOfQuery, endOfQuery));
-        builder.setSelectSqlPosition(startOfQuery);
+        // Reuse the regular query parser (matches CREATE VIEW). This accepts
+        // both bare SELECT and WITH ... SELECT (CTEs), and rejects trailing
+        // garbage after a parenthesised query.
+        int selectSqlPosition = lexer.getPosition();
+        final String selectSql = parseViewSql(lexer, sqlParserCallback);
+        builder.setSelectSql(selectSql);
+        builder.setSelectSqlPosition(selectSqlPosition);
         return builder;
     }
 
@@ -4484,10 +4466,23 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
-        parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);
+        return parseWith(lexer, sqlParserCallback, decls, false);
+    }
+
+    private ExecutionModel parseWith(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
+    ) throws SqlException {
+        parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls, overrideDeclare);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, decls);
+            // Route through parseSelectWithOverrides so the SELECT body that follows
+            // a top-level WITH still respects DECLARE OVERRIDABLE values supplied by
+            // the caller (compileWithOverrides). Without this, CTE bodies and the
+            // outer SELECT would silently fall back to inline DECLARE defaults.
+            return parseSelectWithOverrides(lexer, sqlParserCallback, decls, overrideDeclare);
         }
 
         if (isUpdateKeyword(tok)) {
@@ -4527,6 +4522,16 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
+        parseWithClauses(lexer, model, sqlParserCallback, decls, false);
+    }
+
+    private void parseWithClauses(
+            GenericLexer lexer,
+            LowerCaseCharSequenceObjHashMap<WithClauseModel> model,
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            boolean overrideDeclare
+    ) throws SqlException {
         do {
             ExpressionNode name = expectLiteral(lexer);
             if (name.token.isEmpty()) {
@@ -4542,7 +4547,7 @@ public class SqlParser {
             int lo = lexer.lastTokenPosition();
             WithClauseModel wcm = withClauseModelPool.next();
             // todo: review passing non-null here
-            wcm.of(lo + 1, model, parseAsSubQueryAndExpectClosingBrace(lexer, model, true, sqlParserCallback, decls));
+            wcm.of(lo + 1, model, parseAsSubQueryAndExpectClosingBrace(lexer, model, true, sqlParserCallback, decls, overrideDeclare));
             model.put(name.token, wcm);
 
             CharSequence tok = optTok(lexer);
@@ -5279,7 +5284,7 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, externalDecls);
+            return parseWith(lexer, sqlParserCallback, externalDecls, overrideDeclare);
         }
 
         if (isCompileKeyword(tok)) {
