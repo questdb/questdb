@@ -1501,10 +1501,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             } else {
                 SymbolMapReaderImpl readerImpl = (SymbolMapReaderImpl) reader;
                 if (readerImpl.needsReopen(symbolTableNameTxn)) {
-                    // Capacity rebuild - re-hardlink and reopen via configureSymbolMapWriter
-                    // Close existing resources before configureSymbolMapWriter creates new ones
+                    // Capacity rebuild - re-hardlink and reopen via configureSymbolMapWriter.
+                    // Null out list entries after freeing so that doClose() does not
+                    // double-close if configureSymbolMapWriter() throws below.
                     Misc.free(readerImpl);
+                    symbolMapReaders.setQuick(i, null);
                     Misc.free(symbolMaps.getQuick(i));
+                    symbolMaps.setQuick(i, null);
                     // Remove old symbol files before re-hardlinking (files exist from previous segment)
                     removeSymbolFiles(path, pathSize, metadata.getColumnName(i));
                     configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, symbolTableNameTxn);

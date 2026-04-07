@@ -74,9 +74,9 @@ public class QwpTudCache implements QuietCloseable {
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
-    private MemoryMARW ddlMem = Vm.getCMARWInstance();
+    private MemoryMARW ddlMem;
     private boolean isDistressed = false;
-    private Path path = new Path();
+    private Path path;
     private WeakClosableObjectPool<SymbolCache> symbolCachePool;
 
     public QwpTudCache(
@@ -86,16 +86,23 @@ public class QwpTudCache implements QuietCloseable {
             DefaultColumnTypes defaultColumnTypes,
             int defaultPartitionBy
     ) {
-        this.engine = engine;
-        this.telemetry = engine.getTelemetry();
-        this.autoCreateNewColumns = autoCreateNewColumns;
-        this.autoCreateNewTables = autoCreateNewTables;
-        this.defaultColumnTypes = defaultColumnTypes;
-        this.defaultPartitionBy = defaultPartitionBy;
-        this.symbolCachePool = new WeakClosableObjectPool<>(
-                () -> new SymbolCache(engine.getConfiguration().getMicrosecondClock(), 10_000),
-                5
-        );
+        try {
+            this.ddlMem = Vm.getCMARWInstance();
+            this.path = new Path();
+            this.engine = engine;
+            this.telemetry = engine.getTelemetry();
+            this.autoCreateNewColumns = autoCreateNewColumns;
+            this.autoCreateNewTables = autoCreateNewTables;
+            this.defaultColumnTypes = defaultColumnTypes;
+            this.defaultPartitionBy = defaultPartitionBy;
+            this.symbolCachePool = new WeakClosableObjectPool<>(
+                    () -> new SymbolCache(engine.getConfiguration().getMicrosecondClock(), 10_000),
+                    5
+            );
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
     }
 
     public void clear() {
