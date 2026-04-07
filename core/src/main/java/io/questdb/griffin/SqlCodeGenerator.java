@@ -7240,10 +7240,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (overrideTimestampRequired) {
                 executionContext.pushTimestampRequiredFlag(false);
             }
-            if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
+            if (model instanceof QueryModel qm && qm.getSharedRefCount() > 0) {
                 IQueryModel nested = qm.getNestedModel();
                 if (nested instanceof QueryModel nestedQm) {
-                    nestedQm.setSharedRefByParentCount(model.getSharedRefs().size());
+                    nestedQm.setSharedRefByParentCount(qm.getSharedRefCount());
                 }
             }
             factory = generateSubQuery(model, executionContext);
