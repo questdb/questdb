@@ -95,35 +95,6 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Maps a QuestDB column type to QWP v1 type code.
-     *
-     * @param columnType QuestDB column type
-     * @return QWP v1 type code
-     */
-    public static byte mapQuestDBTypeToQwp(int columnType) {
-        return switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN -> TYPE_BOOLEAN;
-            case ColumnType.BYTE -> TYPE_BYTE;
-            case ColumnType.SHORT -> TYPE_SHORT;
-            case ColumnType.INT -> TYPE_INT;
-            case ColumnType.LONG -> TYPE_LONG;
-            case ColumnType.FLOAT -> TYPE_FLOAT;
-            case ColumnType.DOUBLE -> TYPE_DOUBLE;
-            case ColumnType.CHAR -> TYPE_CHAR;
-            case ColumnType.STRING -> TYPE_STRING;
-            case ColumnType.VARCHAR -> TYPE_VARCHAR;
-            case ColumnType.SYMBOL -> TYPE_SYMBOL;
-            case ColumnType.TIMESTAMP ->
-                    columnType == ColumnType.TIMESTAMP_NANO ? TYPE_TIMESTAMP_NANOS : TYPE_TIMESTAMP;
-            case ColumnType.DATE -> TYPE_DATE;
-            case ColumnType.UUID -> TYPE_UUID;
-            case ColumnType.LONG256 -> TYPE_LONG256;
-            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> TYPE_GEOHASH;
-            default -> throw CairoException.nonCritical().put("unsupported QuestDB type: ").put(columnType);
-        };
-    }
-
-    /**
      * Maps a QWP v1 type code to QuestDB column type.
      *
      * @param qwpType QWP v1 type code

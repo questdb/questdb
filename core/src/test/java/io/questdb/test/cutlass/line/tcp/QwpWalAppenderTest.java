@@ -30,6 +30,7 @@ import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import org.junit.Test;
 
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 import static org.junit.Assert.assertEquals;
 
 /**
@@ -49,103 +50,103 @@ public class QwpWalAppenderTest {
 
     @Test
     public void testMapQuestDBTypeToQwpBoolean() {
-        assertEquals(QwpConstants.TYPE_BOOLEAN, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.BOOLEAN));
+        assertEquals(QwpConstants.TYPE_BOOLEAN, mapQuestDBTypeToQwp(ColumnType.BOOLEAN));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpByte() {
-        assertEquals(QwpConstants.TYPE_BYTE, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.BYTE));
+        assertEquals(QwpConstants.TYPE_BYTE, mapQuestDBTypeToQwp(ColumnType.BYTE));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpDate() {
-        assertEquals(QwpConstants.TYPE_DATE, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.DATE));
+        assertEquals(QwpConstants.TYPE_DATE, mapQuestDBTypeToQwp(ColumnType.DATE));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpDouble() {
-        assertEquals(QwpConstants.TYPE_DOUBLE, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.DOUBLE));
+        assertEquals(QwpConstants.TYPE_DOUBLE, mapQuestDBTypeToQwp(ColumnType.DOUBLE));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpFloat() {
-        assertEquals(QwpConstants.TYPE_FLOAT, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.FLOAT));
+        assertEquals(QwpConstants.TYPE_FLOAT, mapQuestDBTypeToQwp(ColumnType.FLOAT));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpGeoByte() {
-        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOBYTE));
+        assertEquals(QwpConstants.TYPE_GEOHASH, mapQuestDBTypeToQwp(ColumnType.GEOBYTE));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpGeoInt() {
-        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOINT));
+        assertEquals(QwpConstants.TYPE_GEOHASH, mapQuestDBTypeToQwp(ColumnType.GEOINT));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpGeoLong() {
-        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOLONG));
+        assertEquals(QwpConstants.TYPE_GEOHASH, mapQuestDBTypeToQwp(ColumnType.GEOLONG));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpGeoShort() {
-        assertEquals(QwpConstants.TYPE_GEOHASH, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.GEOSHORT));
+        assertEquals(QwpConstants.TYPE_GEOHASH, mapQuestDBTypeToQwp(ColumnType.GEOSHORT));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpInt() {
-        assertEquals(QwpConstants.TYPE_INT, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.INT));
+        assertEquals(QwpConstants.TYPE_INT, mapQuestDBTypeToQwp(ColumnType.INT));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpLong() {
-        assertEquals(QwpConstants.TYPE_LONG, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.LONG));
+        assertEquals(QwpConstants.TYPE_LONG, mapQuestDBTypeToQwp(ColumnType.LONG));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpLong256() {
-        assertEquals(QwpConstants.TYPE_LONG256, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.LONG256));
+        assertEquals(QwpConstants.TYPE_LONG256, mapQuestDBTypeToQwp(ColumnType.LONG256));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpShort() {
-        assertEquals(QwpConstants.TYPE_SHORT, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.SHORT));
+        assertEquals(QwpConstants.TYPE_SHORT, mapQuestDBTypeToQwp(ColumnType.SHORT));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpString() {
-        assertEquals(QwpConstants.TYPE_STRING, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.STRING));
+        assertEquals(QwpConstants.TYPE_STRING, mapQuestDBTypeToQwp(ColumnType.STRING));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpSymbol() {
-        assertEquals(QwpConstants.TYPE_SYMBOL, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.SYMBOL));
+        assertEquals(QwpConstants.TYPE_SYMBOL, mapQuestDBTypeToQwp(ColumnType.SYMBOL));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpTimestamp() {
-        assertEquals(QwpConstants.TYPE_TIMESTAMP, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.TIMESTAMP));
+        assertEquals(QwpConstants.TYPE_TIMESTAMP, mapQuestDBTypeToQwp(ColumnType.TIMESTAMP));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpTimestampNanos() {
-        assertEquals(QwpConstants.TYPE_TIMESTAMP_NANOS, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.TIMESTAMP_NANO));
+        assertEquals(QwpConstants.TYPE_TIMESTAMP_NANOS, mapQuestDBTypeToQwp(ColumnType.TIMESTAMP_NANO));
     }
 
     @Test
     public void testMapQuestDBTypeToQwpUUID() {
-        assertEquals(QwpConstants.TYPE_UUID, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.UUID));
+        assertEquals(QwpConstants.TYPE_UUID, mapQuestDBTypeToQwp(ColumnType.UUID));
     }
 
     @Test(expected = CairoException.class)
     public void testMapQuestDBTypeToQwpUnsupported() {
         // IPV4 is not supported in QWP v1
-        QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.IPv4);
+        mapQuestDBTypeToQwp(ColumnType.IPv4);
     }
 
     @Test
     public void testMapQuestDBTypeToQwpVarchar() {
-        assertEquals(QwpConstants.TYPE_VARCHAR, QwpWalAppender.mapQuestDBTypeToQwp(ColumnType.VARCHAR));
+        assertEquals(QwpConstants.TYPE_VARCHAR, mapQuestDBTypeToQwp(ColumnType.VARCHAR));
     }
 
     @Test
@@ -252,7 +253,7 @@ public class QwpWalAppenderTest {
 
         for (int ilpType : ilpTypes) {
             int questdbType = QwpWalAppender.mapQwpTypeToQuestDB(ilpType);
-            byte mappedBack = QwpWalAppender.mapQuestDBTypeToQwp(questdbType);
+            byte mappedBack = mapQuestDBTypeToQwp(questdbType);
             assertEquals("Round-trip failed for ILP type " + ilpType, ilpType, mappedBack & 0xFF);
         }
     }
@@ -264,7 +265,30 @@ public class QwpWalAppenderTest {
         int questdbType = QwpWalAppender.mapQwpTypeToQuestDB(QwpConstants.TYPE_STRING);
         assertEquals(ColumnType.VARCHAR, questdbType);
 
-        byte mappedBack = QwpWalAppender.mapQuestDBTypeToQwp(questdbType);
+        byte mappedBack = mapQuestDBTypeToQwp(questdbType);
         assertEquals(QwpConstants.TYPE_VARCHAR, mappedBack);
+    }
+
+    private static byte mapQuestDBTypeToQwp(int columnType) {
+        return switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN -> TYPE_BOOLEAN;
+            case ColumnType.BYTE -> TYPE_BYTE;
+            case ColumnType.SHORT -> TYPE_SHORT;
+            case ColumnType.INT -> TYPE_INT;
+            case ColumnType.LONG -> TYPE_LONG;
+            case ColumnType.FLOAT -> TYPE_FLOAT;
+            case ColumnType.DOUBLE -> TYPE_DOUBLE;
+            case ColumnType.CHAR -> TYPE_CHAR;
+            case ColumnType.STRING -> TYPE_STRING;
+            case ColumnType.VARCHAR -> TYPE_VARCHAR;
+            case ColumnType.SYMBOL -> TYPE_SYMBOL;
+            case ColumnType.TIMESTAMP ->
+                    columnType == ColumnType.TIMESTAMP_NANO ? TYPE_TIMESTAMP_NANOS : TYPE_TIMESTAMP;
+            case ColumnType.DATE -> TYPE_DATE;
+            case ColumnType.UUID -> TYPE_UUID;
+            case ColumnType.LONG256 -> TYPE_LONG256;
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> TYPE_GEOHASH;
+            default -> throw CairoException.nonCritical().put("unsupported QuestDB type: ").put(columnType);
+        };
     }
 }
