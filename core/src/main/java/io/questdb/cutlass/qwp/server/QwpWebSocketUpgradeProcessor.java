@@ -85,6 +85,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     """).getBytes(StandardCharsets.US_ASCII);
     // Dependencies for ILP processing (safe as instance fields — config only)
     private final CairoEngine engine;
+    private final int forceRecvFragmentationChunkSize;
     // WebSocket frame parser (scratchpad — fully reset within each processWebSocketFrames call)
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final HttpFullFatServerConfiguration httpConfiguration;
@@ -93,6 +94,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
     public QwpWebSocketUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
         this.engine = engine;
+        this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
+                .getForceRecvFragmentationChunkSize();
         this.httpConfiguration = httpConfiguration;
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
@@ -339,7 +342,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 throw ServerDisconnectException.INSTANCE;
             }
 
-            int read = socket.recv(recvBuffer + recvBufferLen, recvBufferSize - recvBufferLen);
+            int remaining = recvBufferSize - recvBufferLen;
+            int read = socket.recv(recvBuffer + recvBufferLen, Math.min(forceRecvFragmentationChunkSize, remaining));
             if (read < 0) {
                 // Connection closed
                 LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
@@ -359,6 +363,13 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     .I$();
 
             processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
+
+            if (read == forceRecvFragmentationChunkSize) {
+                // Read was capped by the fragmentation chunk size — more data
+                // may be available. Schedule for re-read via the dispatcher,
+                // matching HttpConnectionContext.consumeChunked() behavior.
+                throw PeerIsSlowToWriteException.INSTANCE;
+            }
 
         } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
             throw e;

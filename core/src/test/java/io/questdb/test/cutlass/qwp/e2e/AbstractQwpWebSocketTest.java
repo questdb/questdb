@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
@@ -57,7 +58,19 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize) throws Exception {
-        final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+        runInContext(r, recvBufferSize, Integer.MAX_VALUE);
+    }
+
+    protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize) throws Exception {
+        final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
+                configuration,
+                new DefaultHttpContextConfiguration() {
+                    @Override
+                    public int getForceRecvFragmentationChunkSize() {
+                        return forceRecvFragmentationChunkSize;
+                    }
+                }
+        ) {
             @Override
             public int getBindPort() {
                 return 0;
