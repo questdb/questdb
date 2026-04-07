@@ -58,6 +58,7 @@ pub struct SlicePageReader<'a> {
     seen_num_values: i64,
     total_num_values: i64,
     max_page_size: usize,
+    seen_dict_page: bool,
 }
 
 impl<'a> SlicePageReader<'a> {
@@ -82,6 +83,7 @@ impl<'a> SlicePageReader<'a> {
             seen_num_values: 0,
             total_num_values: column.num_values(),
             max_page_size,
+            seen_dict_page: false,
         })
     }
 
@@ -122,6 +124,14 @@ impl<'a> SlicePageReader<'a> {
 
         match type_ {
             PageType::DictionaryPage => {
+                if self.seen_dict_page || self.seen_num_values > 0 {
+                    return Err(Error::oos(
+                    "A column chunk must contain at most one dictionary page, as its first page"
+                        .to_string(),
+                ));
+                }
+                self.seen_dict_page = true;
+
                 let dict_header =
                     page_header.dictionary_page_header.as_ref().ok_or_else(|| {
                         Error::oos(
@@ -181,5 +191,30 @@ impl<'a> Iterator for SlicePageReader<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.read_next().transpose()
+    }
+}
+
+impl<'a> SlicePageReader<'a> {
+    /// Test-only constructor that builds a reader from a raw page-stream slice and a synthetic
+    /// descriptor, bypassing `ColumnChunkMetaData`. The reader keeps consuming pages until `data`
+    /// is exhausted because `total_num_values` is set to `i64::MAX`.
+    #[doc(hidden)]
+    pub fn for_test(
+        data: &'a [u8],
+        descriptor: Descriptor,
+        compression: Compression,
+        max_page_size: usize,
+    ) -> Self {
+        Self {
+            data,
+            offset: 0,
+            end: data.len(),
+            compression,
+            descriptor,
+            seen_num_values: 0,
+            total_num_values: i64::MAX,
+            max_page_size,
+            seen_dict_page: false,
+        }
     }
 }
