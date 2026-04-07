@@ -661,6 +661,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                     final int columnType = metadata.getColumnType(i);
                     final long pageAddress = frame.getPageAddress(i);
+                    // Var-size columns may have an empty .d file when all values are inlined
+                    // into the aux vector (see FwdTableReaderPageFrameCursor for the producer
+                    // contract); use the aux address as the column-top detector to avoid
+                    // materialising live rows as NULL.
                     final long localColTop;
                     if (ColumnType.isVarSize(columnType)) {
                         localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;

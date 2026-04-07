@@ -384,8 +384,14 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                             long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
                             for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
-                                long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                                 int columnType = metadata.getColumnType(i);
+                                long pageAddress = frame.getPageAddress(i);
+                                long localColTop;
+                                if (ColumnType.isVarSize(columnType)) {
+                                    localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
+                                } else {
+                                    localColTop = pageAddress > 0 ? 0 : frameRowCount;
+                                }
 
                                 if (ColumnType.isSymbol(columnType)) {
                                     SymbolMapReader symbolMapReader = (SymbolMapReader) pageFrameCursor.getSymbolTable(i);
