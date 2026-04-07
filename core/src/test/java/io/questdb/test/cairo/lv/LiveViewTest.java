@@ -1,5 +1,7 @@
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
@@ -112,6 +114,16 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotReindexLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertException(
+                "REINDEX TABLE live_rn COLUMN symbol LOCK EXCLUSIVE",
+                14,
+                "cannot modify live view [view=live_rn]"
+        );
+    }
+
+    @Test
     public void testCannotUpdateLiveView() throws Exception {
         createBaseTableAndLiveView();
         assertException(
@@ -119,6 +131,30 @@ public class LiveViewTest extends AbstractCairoTest {
                 0,
                 "cannot modify live view [view=live_rn]"
         );
+    }
+
+    @Test
+    public void testCannotVacuumLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertException(
+                "VACUUM TABLE live_rn",
+                13,
+                "cannot modify live view [view=live_rn]"
+        );
+    }
+
+    @Test
+    public void testCannotGetReaderForLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        TableToken token = engine.getTableTokenIfExists("live_rn");
+        Assert.assertNotNull(token);
+        Assert.assertTrue(token.isLiveView());
+        try {
+            engine.getReader(token);
+            Assert.fail("expected CairoException");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getMessage().contains("cannot get a reader for view"));
+        }
     }
 
     @Test
