@@ -46,7 +46,7 @@ import java.io.Closeable;
  * Gen metadata cache (all tiers): genFileOffsets, genDataSizes, genKeyCounts,
  * genMinKeys, genMaxKeys — avoids re-reading key file gen dir entries.
  */
-class PostingGenLookup implements Closeable {
+public class PostingGenLookup implements Closeable {
     static final int TIER_NONE = 0;
     static final int TIER_PER_KEY = 1;
     static final int TIER_SBBF = 2;
@@ -54,134 +54,29 @@ class PostingGenLookup implements Closeable {
     private static final long DEFAULT_MEMORY_BUDGET = 256L * 1024 * 1024; // 256MB
     private static final double DEFAULT_TARGET_FPP = 0.01; // 1% FPR
     private static final double MAX_FPP = 0.5; // don't degrade SBBF beyond 50%
-
-    // Tier selection
-    private int tier;
-
-    // Tier 1: per-key off-heap CSR arrays
-    private long keyOffsetsAddr;   // (keyCount+1) × 4B native
-    private long genIndicesAddr;   // totalEntries × 4B native
-    private long posInGenAddr;     // totalEntries × 4B native
-    private int totalEntries;
-    private long tier1KeyOffsetsSize; // actual alloc size for keyOffsetsAddr
-    private long tier1EntriesSize;    // actual alloc size for genIndicesAddr/posInGenAddr
-
-    // Tier 2: per-gen SBBF on native memory
-    private long[] sbbfAddrs;      // [genCount] native address per gen's SBBF
-    private int sbbfSizePerGen;    // uniform size per gen
-    private int sbbfGenCount;      // number of SBBFs allocated
-
-    // Shared: gen metadata cache
-    private long[] genFileOffsets;
-    private long[] genDataSizes;
-    private int[] genKeyCounts;    // negative = sparse
-    private int[] genMinKeys;
-    private int[] genMaxKeys;
-    private int[] genSidecarOffsets;
-
     // State
     private int builtForGenCount;
+    private long[] genDataSizes;
+    // Shared: gen metadata cache
+    private long[] genFileOffsets;
+    private long genIndicesAddr;   // totalEntries × 4B native
+    private int[] genKeyCounts;    // negative = sparse
+    private int[] genMaxKeys;
+    private int[] genMinKeys;
+    private int[] genSidecarOffsets;
     private int keyCount;
+    // Tier 1: per-key off-heap CSR arrays
+    private long keyOffsetsAddr;   // (keyCount+1) × 4B native
     private long memoryBudget = DEFAULT_MEMORY_BUDGET;
-
-    /**
-     * Snapshots gen dir entries from keyMem into local arrays. Called by the reader
-     * inside the seq_start/seq_end validation window so the snapshot is consistent.
-     * Does NOT build the lookup index (tier1/tier2) — call buildLookupIfNeeded after.
-     */
-    void snapshotMetadata(MemoryMR keyMem, int genCount, long pageOffset) {
-        if (genCount == 0) {
-            return;
-        }
-        // Ensure arrays are large enough
-        if (genFileOffsets == null || genFileOffsets.length < genCount) {
-            int newSize = Math.max(genCount, 16);
-            genFileOffsets = new long[newSize];
-            genDataSizes = new long[newSize];
-            genKeyCounts = new int[newSize];
-            genMinKeys = new int[newSize];
-            genMaxKeys = new int[newSize];
-            genSidecarOffsets = new int[newSize];
-        }
-        for (int g = 0; g < genCount; g++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, g);
-            genFileOffsets[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
-            genDataSizes[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
-            genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
-            genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
-            genSidecarOffsets[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET);
-        }
-        // Free stale lookup index; buildLookupIfNeeded will rebuild
-        freeTier1();
-        freeTier2();
-        builtForGenCount = 0;
-    }
-
-    /**
-     * Builds the lookup index (tier1/tier2) if the gen dir metadata has been
-     * snapshotted but the index hasn't been built yet for the current genCount.
-     * Called from ensureGenLookup() after snapshotMetadata() has populated the arrays.
-     */
-    void buildLookupIfNeeded(MemoryMR valueMem, int keyCount, int genCount) {
-        if (genCount <= builtForGenCount && this.keyCount == keyCount) {
-            return;
-        }
-        this.keyCount = keyCount;
-        if (genCount == 0 || keyCount == 0 || genFileOffsets == null) {
-            this.builtForGenCount = genCount;
-            this.tier = TIER_NONE;
-            return;
-        }
-        // Metadata is already in the arrays from snapshotMetadata — just build the index
-        freeTier1();
-        freeTier2();
-        buildLookupIndex(null, valueMem, keyCount, genCount, 0);
-        this.builtForGenCount = genCount;
-    }
-
-    void build(MemoryMR keyMem, MemoryMR valueMem, int keyCount, int genCount, long activePageOffset) {
-        close();
-        this.keyCount = keyCount;
-        this.builtForGenCount = 0;
-
-        if (keyCount == 0 || genCount == 0) {
-            this.builtForGenCount = genCount;
-            this.tier = TIER_NONE;
-            return;
-        }
-
-        buildMetadata(keyMem, 0, genCount, activePageOffset);
-        buildLookupIndex(keyMem, valueMem, keyCount, genCount, 0);
-        this.builtForGenCount = genCount;
-    }
-
-    void buildIncremental(MemoryMR keyMem, MemoryMR valueMem, int keyCount, int newGenCount, long activePageOffset) {
-        if (newGenCount <= builtForGenCount && this.keyCount == keyCount) {
-            return;
-        }
-
-        if (this.keyCount != keyCount || builtForGenCount == 0 || genFileOffsets == null) {
-            // Key count changed or no prior build — full rebuild
-            build(keyMem, valueMem, keyCount, newGenCount, activePageOffset);
-            return;
-        }
-
-        int oldGenCount = builtForGenCount;
-
-        // Extend metadata arrays
-        buildMetadata(keyMem, oldGenCount, newGenCount, activePageOffset);
-
-        // Extend lookup index
-        if (tier == TIER_PER_KEY) {
-            incrementalBuildTier1(keyMem, valueMem, keyCount, oldGenCount, newGenCount);
-        } else if (tier == TIER_SBBF) {
-            incrementalBuildTier2(valueMem, oldGenCount, newGenCount);
-        }
-        // TIER_NONE: nothing to do
-
-        this.builtForGenCount = newGenCount;
-    }
+    private long posInGenAddr;     // totalEntries × 4B native
+    // Tier 2: per-gen SBBF on native memory
+    private long[] sbbfAddrs;      // [genCount] native address per gen's SBBF
+    private int sbbfGenCount;      // number of SBBFs allocated
+    private int sbbfSizePerGen;    // uniform size per gen
+    // Tier selection
+    private int tier;
+    private long tier1EntriesSize;    // actual alloc size for genIndicesAddr/posInGenAddr
+    private long tier1KeyOffsetsSize; // actual alloc size for keyOffsetsAddr
 
     @Override
     public void close() {
@@ -197,94 +92,18 @@ class PostingGenLookup implements Closeable {
         tier = TIER_NONE;
     }
 
-    int getBuiltForGenCount() {
-        return builtForGenCount;
-    }
-
-    // Tier 1 accessors
-    int getEntryEnd(int key) {
-        return Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) (key + 1) * Integer.BYTES);
-    }
-
-    int getEntryStart(int key) {
-        return Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) key * Integer.BYTES);
-    }
-
-    long getGenDataSize(int gen) {
-        return genDataSizes[gen];
-    }
-
-    long getGenFileOffset(int gen) {
-        return genFileOffsets[gen];
-    }
-
-    int getGenIndex(int entryPos) {
-        return Unsafe.getUnsafe().getInt(genIndicesAddr + (long) entryPos * Integer.BYTES);
-    }
-
-    int getGenSidecarOffset(int gen) {
-        return genSidecarOffsets != null ? genSidecarOffsets[gen] : 0;
-    }
-
-    int getGenKeyCount(int gen) {
-        return genKeyCounts[gen];
-    }
-
-    long getGenPrefixSumOffset(int gen) {
-        int minKey = genMinKeys[gen];
-        int maxKey = genMaxKeys[gen];
-        int keyRange = maxKey - minKey + 1;
-        return genFileOffsets[gen] + genDataSizes[gen] - (long) (keyRange + 2) * Integer.BYTES;
-    }
-
-    int getGenMaxKey(int gen) {
-        return genMaxKeys[gen];
-    }
-
-    int getGenMinKey(int gen) {
-        return genMinKeys[gen];
-    }
-
-    int getKeyCount() {
-        return keyCount;
-    }
-
-    int getPosInGen(int entryPos) {
-        return Unsafe.getUnsafe().getInt(posInGenAddr + (long) entryPos * Integer.BYTES);
-    }
-
-    int getTier() {
-        return tier;
-    }
-
-    boolean isPerKeyMode() {
-        return tier == TIER_PER_KEY;
-    }
-
-    // Tier 2 accessor
-    boolean mightContainKey(int gen, int key) {
-        if (gen >= sbbfGenCount || sbbfAddrs[gen] == 0) {
-            return true; // no SBBF for this gen (dense gen), assume present
-        }
-        return SplitBlockBloomFilter.mightContain(sbbfAddrs[gen], sbbfSizePerGen, SplitBlockBloomFilter.hashKey(key));
-    }
-
-    void setMemoryBudget(long budget) {
-        this.memoryBudget = budget;
-    }
-
-    private void buildLookupIndex(MemoryMR keyMem, MemoryMR valueMem, int keyCount, int genCount, int fromGen) {
+    private void buildLookupIndex(MemoryMR valueMem, int keyCount, int genCount) {
         // Count sparse gen entries to estimate memory
         int sparseGenCount = 0;
         long totalSparseEntries = 0;
-        for (int g = fromGen; g < genCount; g++) {
+        for (int g = 0; g < genCount; g++) {
             if (genKeyCounts[g] < 0) {
                 sparseGenCount++;
-                totalSparseEntries += -genKeyCounts[g];
+                totalSparseEntries -= genKeyCounts[g];
             }
         }
 
-        if (sparseGenCount == 0 && fromGen == 0) {
+        if (sparseGenCount == 0) {
             tier = TIER_NONE;
             return;
         }
@@ -299,7 +118,7 @@ class PostingGenLookup implements Closeable {
         long tier1Mem = (long) (keyCount + 1) * Integer.BYTES + totalSparseEntries * 2L * Integer.BYTES;
 
         if (tier1Mem <= memoryBudget) {
-            buildTier1(keyMem, valueMem, keyCount, genCount);
+            buildTier1(valueMem, keyCount, genCount);
         } else if (genCount > 2) {
             buildTier2(valueMem, genCount, sparseGenCount);
         } else {
@@ -307,47 +126,7 @@ class PostingGenLookup implements Closeable {
         }
     }
 
-    private void buildMetadata(MemoryMR keyMem, int fromGen, int toGenCount, long activePageOffset) {
-        if (genFileOffsets == null || genFileOffsets.length < toGenCount) {
-            int newSize = Math.max(toGenCount, 16);
-            long[] newOffsets = new long[newSize];
-            long[] newSizes = new long[newSize];
-            int[] newKeyCounts = new int[newSize];
-            int[] newMinKeys = new int[newSize];
-            int[] newMaxKeys = new int[newSize];
-            int[] newSidecarOffsets = new int[newSize];
-
-            if (genFileOffsets != null && fromGen > 0) {
-                System.arraycopy(genFileOffsets, 0, newOffsets, 0, fromGen);
-                System.arraycopy(genDataSizes, 0, newSizes, 0, fromGen);
-                System.arraycopy(genKeyCounts, 0, newKeyCounts, 0, fromGen);
-                System.arraycopy(genMinKeys, 0, newMinKeys, 0, fromGen);
-                System.arraycopy(genMaxKeys, 0, newMaxKeys, 0, fromGen);
-                if (genSidecarOffsets != null) {
-                    System.arraycopy(genSidecarOffsets, 0, newSidecarOffsets, 0, fromGen);
-                }
-            }
-
-            genFileOffsets = newOffsets;
-            genDataSizes = newSizes;
-            genKeyCounts = newKeyCounts;
-            genMinKeys = newMinKeys;
-            genMaxKeys = newMaxKeys;
-            genSidecarOffsets = newSidecarOffsets;
-        }
-
-        for (int g = fromGen; g < toGenCount; g++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-            genFileOffsets[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
-            genDataSizes[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
-            genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
-            genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
-            genSidecarOffsets[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET);
-        }
-    }
-
-    private void buildTier1(MemoryMR keyMem, MemoryMR valueMem, int kc, int genCount) {
+    private void buildTier1(MemoryMR valueMem, int kc, int genCount) {
         // Pass 1: count entries per key across all sparse gens (native scratch buffer)
         long countsSize = (long) kc * Integer.BYTES;
         long countsAddr = Unsafe.malloc(countsSize, MemoryTag.NATIVE_INDEX_READER);
@@ -402,7 +181,6 @@ class PostingGenLookup implements Closeable {
                 keyOffsetsAddr = 0;
                 throw e;
             }
-            totalEntries = total;
             tier1KeyOffsetsSize = keyOffsetsSize;
             tier1EntriesSize = entriesSize;
 
@@ -496,7 +274,6 @@ class PostingGenLookup implements Closeable {
             keyOffsetsAddr = 0;
             genIndicesAddr = 0;
             posInGenAddr = 0;
-            totalEntries = 0;
             tier1KeyOffsetsSize = 0;
             tier1EntriesSize = 0;
         }
@@ -513,58 +290,131 @@ class PostingGenLookup implements Closeable {
         }
     }
 
-    private void incrementalBuildTier1(MemoryMR keyMem, MemoryMR valueMem, int kc, int oldGenCount, int newGenCount) {
-        // Count new entries per key for new gens only
-        int newEntries = 0;
-        for (int g = oldGenCount; g < newGenCount; g++) {
-            if (genKeyCounts[g] < 0) {
-                newEntries += -genKeyCounts[g];
-            }
-        }
-
-        if (newEntries == 0) {
+    /**
+     * Builds the lookup index (tier1/tier2) if the gen dir metadata has been
+     * snapshotted but the index hasn't been built yet for the current genCount.
+     * Called from ensureGenLookup() after snapshotMetadata() has populated the arrays.
+     */
+    void buildLookupIfNeeded(MemoryMR valueMem, int keyCount, int genCount) {
+        if (genCount <= builtForGenCount && this.keyCount == keyCount) {
             return;
         }
-
-        // Full rebuild for simplicity — incremental CSR append is complex
-        // (requires realloc + prefix sum rebuild). The cost is O(totalEntries)
-        // which is already the cost of the original build.
+        this.keyCount = keyCount;
+        if (genCount == 0 || keyCount == 0 || genFileOffsets == null) {
+            this.builtForGenCount = genCount;
+            this.tier = TIER_NONE;
+            return;
+        }
+        // Metadata is already in the arrays from snapshotMetadata — just build the index
         freeTier1();
-        buildTier1(keyMem, valueMem, kc, newGenCount);
+        freeTier2();
+        buildLookupIndex(valueMem, keyCount, genCount);
+        this.builtForGenCount = genCount;
     }
 
-    private void incrementalBuildTier2(MemoryMR valueMem, int oldGenCount, int newGenCount) {
-        // Grow SBBF array if needed
-        if (sbbfAddrs == null || sbbfAddrs.length < newGenCount) {
-            long[] newAddrs = new long[newGenCount];
-            if (sbbfAddrs != null) {
-                System.arraycopy(sbbfAddrs, 0, newAddrs, 0, sbbfGenCount);
-            }
-            sbbfAddrs = newAddrs;
+    // Tier 1 accessors
+    int getEntryEnd(int key) {
+        return Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) (key + 1) * Integer.BYTES);
+    }
+
+    int getEntryStart(int key) {
+        return Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) key * Integer.BYTES);
+    }
+
+    long getGenDataSize(int gen) {
+        return genDataSizes[gen];
+    }
+
+    long getGenFileOffset(int gen) {
+        return genFileOffsets[gen];
+    }
+
+    int getGenIndex(int entryPos) {
+        return Unsafe.getUnsafe().getInt(genIndicesAddr + (long) entryPos * Integer.BYTES);
+    }
+
+    int getGenKeyCount(int gen) {
+        return genKeyCounts[gen];
+    }
+
+    int getGenMaxKey(int gen) {
+        return genMaxKeys[gen];
+    }
+
+    int getGenMinKey(int gen) {
+        return genMinKeys[gen];
+    }
+
+    long getGenPrefixSumOffset(int gen) {
+        int minKey = genMinKeys[gen];
+        int maxKey = genMaxKeys[gen];
+        int keyRange = maxKey - minKey + 1;
+        return genFileOffsets[gen] + genDataSizes[gen] - (long) (keyRange + 2) * Integer.BYTES;
+    }
+
+    int getGenSidecarOffset(int gen) {
+        return genSidecarOffsets != null ? genSidecarOffsets[gen] : 0;
+    }
+
+    int getKeyCount() {
+        return keyCount;
+    }
+
+    int getPosInGen(int entryPos) {
+        return Unsafe.getUnsafe().getInt(posInGenAddr + (long) entryPos * Integer.BYTES);
+    }
+
+    int getTier() {
+        return tier;
+    }
+
+    boolean isPerKeyMode() {
+        return tier == TIER_PER_KEY;
+    }
+
+    // Tier 2 accessor
+    boolean mightContainKey(int gen, int key) {
+        if (gen >= sbbfGenCount || sbbfAddrs[gen] == 0) {
+            return true; // no SBBF for this gen (dense gen), assume present
         }
+        return SplitBlockBloomFilter.mightContain(sbbfAddrs[gen], sbbfSizePerGen, SplitBlockBloomFilter.hashKey(key));
+    }
 
-        // Allocate SBBFs for new sparse gens only
-        for (int g = oldGenCount; g < newGenCount; g++) {
-            if (genKeyCounts[g] >= 0) {
-                sbbfAddrs[g] = 0;
-                continue;
-            }
-            int activeKeyCount = -genKeyCounts[g];
-            long genAddr = valueMem.addressOf(genFileOffsets[g]);
+    void setMemoryBudget(long budget) {
+        this.memoryBudget = budget;
+    }
 
-            // Recompute size for this gen if it has more keys than prior gens
-            int genSbbfSize = SplitBlockBloomFilter.computeSize(activeKeyCount, DEFAULT_TARGET_FPP);
-            if (genSbbfSize > sbbfSizePerGen) {
-                genSbbfSize = sbbfSizePerGen; // keep uniform size for simplicity
-            }
-
-            sbbfAddrs[g] = SplitBlockBloomFilter.allocate(sbbfSizePerGen);
-            sbbfGenCount = g + 1; // track for cleanup if later allocations fail
-            for (int i = 0; i < activeKeyCount; i++) {
-                int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
-                SplitBlockBloomFilter.insert(sbbfAddrs[g], sbbfSizePerGen, SplitBlockBloomFilter.hashKey(key));
-            }
+    /**
+     * Snapshots gen dir entries from keyMem into local arrays. Called by the reader
+     * inside the seq_start/seq_end validation window so the snapshot is consistent.
+     * Does NOT build the lookup index (tier1/tier2) — call buildLookupIfNeeded after.
+     */
+    void snapshotMetadata(MemoryMR keyMem, int genCount, long pageOffset) {
+        if (genCount == 0) {
+            return;
         }
-        sbbfGenCount = newGenCount;
+        // Ensure arrays are large enough
+        if (genFileOffsets == null || genFileOffsets.length < genCount) {
+            int newSize = Math.max(genCount, 16);
+            genFileOffsets = new long[newSize];
+            genDataSizes = new long[newSize];
+            genKeyCounts = new int[newSize];
+            genMinKeys = new int[newSize];
+            genMaxKeys = new int[newSize];
+            genSidecarOffsets = new int[newSize];
+        }
+        for (int g = 0; g < genCount; g++) {
+            long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, g);
+            genFileOffsets[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
+            genDataSizes[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
+            genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
+            genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
+            genSidecarOffsets[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET);
+        }
+        // Free stale lookup index; buildLookupIfNeeded will rebuild
+        freeTier1();
+        freeTier2();
+        builtForGenCount = 0;
     }
 }

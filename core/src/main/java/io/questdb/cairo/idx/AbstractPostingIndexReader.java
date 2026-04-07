@@ -319,7 +319,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     sidecarMems[c] = Vm.getCMRInstance();
                     // Use -1 to map the full file via fd-based length check,
                     // avoiding stale length from ff.length(path).
-                    ((MemoryCMR) sidecarMems[c]).of(ff, pcFile, ff.getMapPageSize(), -1, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+                    sidecarMems[c].of(ff, pcFile, ff.getMapPageSize(), -1, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
                 } else {
                     allSidecarsPresent = false;
                 }
@@ -332,7 +332,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 coverCount = 0;
             }
         } catch (Throwable e) {
-            LOG.error().$("failed to open sidecar files").$((Throwable) e).$();
+            LOG.error().$("failed to open sidecar files").$(e).$();
             closeSidecarMems();
         } finally {
             Misc.free(infoMem);
@@ -359,7 +359,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 valueFileTxn = newValueFileTxn;
                 Misc.free(valueMem);
                 try (Path p = new Path().of(readerPartitionPath)) {
-                    ((MemoryCMR) valueMem).of(ff,
+                    valueMem.of(ff,
                             PostingIndexUtils.valueFileName(p, readerColumnName, valueFileTxn),
                             ff.getMapPageSize(), valueMemSize,
                             MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
@@ -379,6 +379,8 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
     public void updateKeyCount() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        long prevSeqStartA = Long.MIN_VALUE;
+        long prevSeqStartB = Long.MIN_VALUE;
         while (true) {
             Unsafe.getUnsafe().loadFence();
             long seqStartA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
@@ -436,6 +438,15 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     return;
                 }
             }
+
+            // If sequence starts haven't changed since the previous iteration,
+            // no writer is active and the corruption won't self-heal — stop spinning.
+            if (seqStartA == prevSeqStartA && seqStartB == prevSeqStartB) {
+                LOG.critical().$(INDEX_CORRUPT).$(" [both pages invalid, no active writer, updateKeyCount]").$();
+                return;
+            }
+            prevSeqStartA = seqStartA;
+            prevSeqStartB = seqStartB;
 
             if (clock.getTicks() > deadline) {
                 LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, updateKeyCount]").$();
@@ -498,7 +509,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             for (int g = 0; g < genCount; g++) {
                 int genKeyCount = genLookup.getGenKeyCount(g);
                 if (genKeyCount >= 0) {
-                    totalWritten += decodeDenseGenToAddr(g, genKeyCount, outputAddrs, totalWritten);
+                    totalWritten += decodeDenseGenToAddr(genKeyCount, outputAddrs, totalWritten);
                 } else {
                     totalWritten += decodeSparseGenToAddr(g, outputAddrs, totalWritten);
                 }
@@ -699,7 +710,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             for (int g = 0; g < genCount; g++) {
                 int gkc = genLookup.getGenKeyCount(g);
                 if (gkc >= 0) {
-                    int denseCount = getDenseGenCount(g, gkc);
+                    int denseCount = getDenseGenCount(gkc);
                     if (denseCount < 0) return -1; // var-only INCLUDE, count unknown
                     total += denseCount;
                 } else {
@@ -906,10 +917,6 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             return sidecarStrideKeyStart + sidecarOrdinal - 1;
         }
 
-        protected int sidecarValueIndex() {
-            return cachedSidecarIdx;
-        }
-
         private long computeSealedSidecarSize(MemoryMR mem, int keyCount) {
             if (keyCount <= 0 || mem == null || mem.size() < 4) {
                 return 0;
@@ -974,7 +981,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             return sparseOffsetsWorkspace;
         }
 
-        private int decodeDenseGenToAddr(int gen, int genKeyCount, long[] outputAddrs, int writeOffset) {
+        private int decodeDenseGenToAddr(int genKeyCount, long[] outputAddrs, int writeOffset) {
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
             int sc = PostingIndexUtils.strideCount(genKeyCount);
@@ -1110,7 +1117,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             return siSize + strideOff;
         }
 
-        private int getDenseGenCount(int gen, int genKeyCount) {
+        private int getDenseGenCount(int genKeyCount) {
             int memIdx = -1;
             for (int c = 0; c < coverCount; c++) {
                 if (sidecarMems[c] != null && sidecarMems[c].size() > 0
@@ -1234,7 +1241,6 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             int dims = ColumnType.decodeArrayDimensionality(columnType);
             short elemType = ColumnType.decodeArrayElementType(columnType);
             int elemSize = ColumnType.sizeOf(elemType);
-            int shapeBytes = dims * Integer.BYTES;
             int cardinality = 1;
             for (int d = 0; d < dims; d++) {
                 cardinality *= Unsafe.getUnsafe().getInt(dataAddr + (long) d * Integer.BYTES);
@@ -1380,7 +1386,6 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return fsstCachedTables[includeIdx];
             }
             long pos = blockBase + 4;
-            int tableLen = Unsafe.getUnsafe().getShort(mem.addressOf(pos)) & 0xFFFF;
             long tableAddr = mem.addressOf(pos + 2);
             FSST.SymbolTable table = fsstCachedTables[includeIdx];
             FSST.deserializeInto(tableAddr, table);
@@ -1389,12 +1394,6 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         }
     }
 
-    /**
-     * Reads header fields and gen dir entries from the best (highest valid sequence)
-     * metadata page. Validates the read with seq_start/seq_end -- if the page was
-     * mid-write, falls back to the other page. Snapshots gen dir into genLookup
-     * so no further reads from the key file pages are needed during cursor iteration.
-     */
     /**
      * Walks all strides in a dense generation sequentially and marks present keys.
      * Each stride is visited once, in order — optimal for sequential page access.
@@ -1456,6 +1455,8 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
     private void readIndexMetadataFromBestPage() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        long prevSeqStartA = Long.MIN_VALUE;
+        long prevSeqStartB = Long.MIN_VALUE;
         while (true) {
             Unsafe.getUnsafe().loadFence();
             long memSize = keyMem.size();
@@ -1496,6 +1497,15 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     return;
                 }
             }
+
+            // If sequence starts haven't changed since the previous iteration,
+            // no writer is active and the corruption won't self-heal — stop spinning.
+            if (seqStartA == prevSeqStartA && seqStartB == prevSeqStartB) {
+                LOG.critical().$(INDEX_CORRUPT).$(" [both pages invalid, no active writer]").$();
+                break;
+            }
+            prevSeqStartA = seqStartA;
+            prevSeqStartB = seqStartB;
 
             if (clock.getTicks() > deadline) {
                 LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms]").$();
