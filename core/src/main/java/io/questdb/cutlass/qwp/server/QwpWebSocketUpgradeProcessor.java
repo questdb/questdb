@@ -330,41 +330,35 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         int recvBufferSize = context.getRecvBufferSize();
 
         try {
-            // We register the connection with edge-trigger epoll. This makes it dangerous to stop reading
-            // while the socket buffer still has data. We must not re-arm the trigger until it's empty.
-            // A safe option for better fairness would be to temporarily exit this loop so other tasks
-            // get CPU time, but schedule to unconditionally re-enter it after a round.
-            while (true) {
-                int recvBufferLen = state.getRecvBufferLen();
-                if (recvBufferLen >= recvBufferSize) {
-                    // Buffer is full, but the parser still needs more data — the frame
-                    // payload exceeds recv buffer capacity. Disconnect to avoid spinning.
-                    LOG.error().$("WebSocket frame too large for recv buffer [fd=").$(context.getFd())
-                            .$(", bufferSize=").$(recvBufferSize).I$();
-                    throw ServerDisconnectException.INSTANCE;
-                }
-
-                int read = socket.recv(recvBuffer + recvBufferLen, recvBufferSize - recvBufferLen);
-                if (read < 0) {
-                    // Connection closed
-                    LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
-                    throw ServerDisconnectException.INSTANCE;
-                }
-
-                if (read == 0) {
-                    // No data available from kernel right now, hand back to dispatcher.
-                    throw PeerIsSlowToWriteException.INSTANCE;
-                }
-
-                recvBufferLen += read;
-                LOG.debug()
-                        .$("WebSocket recv [fd=").$(context.getFd())
-                        .$(", bytes=").$(read)
-                        .$(", total=").$(recvBufferLen)
-                        .I$();
-
-                processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
+            int recvBufferLen = state.getRecvBufferLen();
+            if (recvBufferLen >= recvBufferSize) {
+                // Buffer is full, but the parser still needs more data — the frame
+                // payload exceeds recv buffer capacity. Disconnect to avoid spinning.
+                LOG.error().$("WebSocket frame too large for recv buffer [fd=").$(context.getFd())
+                        .$(", bufferSize=").$(recvBufferSize).I$();
+                throw ServerDisconnectException.INSTANCE;
             }
+
+            int read = socket.recv(recvBuffer + recvBufferLen, recvBufferSize - recvBufferLen);
+            if (read < 0) {
+                // Connection closed
+                LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
+                throw ServerDisconnectException.INSTANCE;
+            }
+
+            if (read == 0) {
+                // No data available from kernel right now, hand back to dispatcher.
+                throw PeerIsSlowToWriteException.INSTANCE;
+            }
+
+            recvBufferLen += read;
+            LOG.debug()
+                    .$("WebSocket recv [fd=").$(context.getFd())
+                    .$(", bytes=").$(read)
+                    .$(", total=").$(recvBufferLen)
+                    .I$();
+
+            processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
 
         } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
             throw e;

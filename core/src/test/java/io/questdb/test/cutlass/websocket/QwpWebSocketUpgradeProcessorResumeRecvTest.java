@@ -650,11 +650,13 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             )) {
                 QwpProcessorState state = setupState(httpConfig, context);
 
+                // first PONG processed
+                processor.resumeRecv(context);
                 try {
                     processor.resumeRecv(context);
                     Assert.fail("Expected PeerIsSlowToWriteException");
                 } catch (PeerIsSlowToWriteException e) {
-                    // expected: first PONG processed, second partial → NEED_MORE,
+                    // expected: second PONG partial → NEED_MORE,
                     // memmove compacts 3 bytes to start, then recv returns 0
                 }
                 // 3 bytes of the second frame compacted at buffer start
@@ -664,6 +666,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 mockNf.wouldBlockAfter = Integer.MAX_VALUE;
                 mockNf.maxBytesPerRecv = Integer.MAX_VALUE;
 
+                processor.resumeRecv(context);
                 try {
                     processor.resumeRecv(context);
                     Assert.fail("Expected ServerDisconnectException");
@@ -704,8 +707,9 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             )) {
                 QwpProcessorState state = setupState(httpConfig, context);
 
-                // First call: partial frame → NEED_MORE → PeerIsSlowToWrite
+                processor.resumeRecv(context);
                 try {
+                    // Read partial frame → NEED_MORE → PeerIsSlowToWrite
                     processor.resumeRecv(context);
                     Assert.fail("Expected PeerIsSlowToWriteException");
                 } catch (PeerIsSlowToWriteException e) {
@@ -718,9 +722,10 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 mockNf.wouldBlockAfter = Integer.MAX_VALUE;
                 mockNf.maxBytesPerRecv = Integer.MAX_VALUE;
 
-                // Second call: remaining bytes arrive, PONG frame completes,
-                // then recv returns -1 (data exhausted) → disconnect
+                // remaining bytes arrive, PONG frame completes
+                processor.resumeRecv(context);
                 try {
+                    // recv returns -1 (data exhausted) → disconnect
                     processor.resumeRecv(context);
                     Assert.fail("Expected ServerDisconnectException");
                 } catch (ServerDisconnectException e) {
@@ -751,9 +756,10 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             )) {
                 setupState(httpConfig, context);
 
-                // handlePing catches the PeerDisconnectedException internally;
-                // recv loop continues, socket returns -1 → disconnect
+                // handlePing catches the PeerDisconnectedException internally
+                processor.resumeRecv(context);
                 try {
+                    // recv continues, socket returns -1 → disconnect
                     processor.resumeRecv(context);
                     Assert.fail("Expected ServerDisconnectException");
                 } catch (ServerDisconnectException e) {
@@ -785,8 +791,9 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 // Set send state to non-READY so pong is skipped
                 state.onAckBlocked(0);
 
-                // handlePing skips pong because buffer is busy;
-                // recv loop continues, socket returns -1 → disconnect
+                // handlePing skips pong because buffer is busy
+                processor.resumeRecv(context);
+                // recv continues, socket returns -1 → disconnect
                 try {
                     processor.resumeRecv(context);
                     Assert.fail("Expected ServerDisconnectException");
@@ -819,9 +826,10 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             )) {
                 setupState(httpConfig, context);
 
-                // PONG is logged and ignored; recv loop continues,
-                // socket returns -1 → disconnect
+                // PONG is logged and ignored
+                processor.resumeRecv(context);
                 try {
+                    // recv continues, socket returns -1 → disconnect
                     processor.resumeRecv(context);
                     Assert.fail("Expected ServerDisconnectException");
                 } catch (ServerDisconnectException e) {
