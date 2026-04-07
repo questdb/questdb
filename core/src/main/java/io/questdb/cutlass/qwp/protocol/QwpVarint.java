@@ -72,7 +72,24 @@ public final class QwpVarint {
         long result = 0;
         int shift = 0;
         int bytesRead = 0;
-        return decode0(address, limit, result, shift, bytesRead);
+        long address1 = address;
+        byte b;
+        do {
+            if (address1 >= limit) {
+                throw QwpParseException.incompleteVarint();
+            }
+            if (bytesRead >= MAX_VARINT_BYTES) {
+                throw QwpParseException.varintOverflow();
+            }
+            b = Unsafe.getUnsafe().getByte(address1++);
+            if (shift == 63 && (b & 0x7E) != 0) {
+                throw QwpParseException.varintOverflow();
+            }
+            result |= (long) (b & DATA_MASK) << shift;
+            shift += 7;
+            bytesRead++;
+        } while ((b & CONTINUATION_BIT) != 0);
+        return result;
     }
 
     /**
@@ -179,26 +196,6 @@ public final class QwpVarint {
         int bits = 64 - Long.numberOfLeadingZeros(value);
         // Each byte encodes 7 bits, round up
         return (bits + 6) / 7;
-    }
-
-    private static long decode0(long address, long limit, long result, int shift, int bytesRead) throws QwpParseException {
-        byte b;
-        do {
-            if (address >= limit) {
-                throw QwpParseException.incompleteVarint();
-            }
-            if (bytesRead >= MAX_VARINT_BYTES) {
-                throw QwpParseException.varintOverflow();
-            }
-            b = Unsafe.getUnsafe().getByte(address++);
-            if (shift == 63 && (b & 0x7E) != 0) {
-                throw QwpParseException.varintOverflow();
-            }
-            result |= (long) (b & DATA_MASK) << shift;
-            shift += 7;
-            bytesRead++;
-        } while ((b & CONTINUATION_BIT) != 0);
-        return result;
     }
 
     private static void decodeMultiByte(long address, long limit, DecodeResult result, byte firstByte) throws QwpParseException {
