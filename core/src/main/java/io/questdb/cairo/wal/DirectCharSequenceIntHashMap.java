@@ -128,8 +128,9 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         if ((long) currentOffset << 3 < kvCapacity) {
             final long oldCapacity = kvCapacity;
             // We only shrink the capacity by 2 to avoid unnecessary grow-back later
-            kvCapacity >>= 1;
-            kvAddress = Unsafe.realloc(kvAddress, oldCapacity, kvCapacity, MemoryTag.NATIVE_DEFAULT);
+            long newKvCapacity = kvCapacity >> 1;
+            kvAddress = Unsafe.realloc(kvAddress, oldCapacity, newKvCapacity, MemoryTag.NATIVE_DEFAULT);
+            kvCapacity = newKvCapacity;
         }
         free = mapCapacity;
         Vect.memset(address, capacity, 0);
@@ -294,16 +295,22 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      */
     public void rehash() {
         int size = mapCapacity - free;
-        mapCapacity = mapCapacity << 1;
-        free = mapCapacity - size;
+        int newMapCapacity = mapCapacity << 1;
+        int newFree = newMapCapacity - size;
 
-        final int len = Numbers.ceilPow2((int) (this.mapCapacity / loadFactor));
-        mask = len - 1;
+        final int len = Numbers.ceilPow2((int) (newMapCapacity / loadFactor));
+        int newMask = len - 1;
 
         long oldCapacity = capacity;
         long oldAddress = address;
-        capacity = (long) len << 3;
-        address = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
+        long newCapacity = (long) len << 3;
+        long newAddress = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_DEFAULT);
+
+        mapCapacity = newMapCapacity;
+        free = newFree;
+        mask = newMask;
+        capacity = newCapacity;
+        address = newAddress;
         Vect.memset(address, capacity, 0);
 
         for (int i = (int) (oldCapacity >> 3) - 1; i > -1; i--) {
@@ -412,8 +419,9 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         int requiredCapacity = ((key.length() << 1) + 11) & ~3;
         if (kvCapacity < ((long) currentOffset << 2) + requiredCapacity) {
             final long oldSize = kvCapacity;
-            kvCapacity = Numbers.ceilPow2(kvCapacity + (long) requiredCapacity);
-            kvAddress = Unsafe.realloc(kvAddress, oldSize, kvCapacity, MemoryTag.NATIVE_DEFAULT);
+            long newKvCapacity = Numbers.ceilPow2(kvCapacity + (long) requiredCapacity);
+            kvAddress = Unsafe.realloc(kvAddress, oldSize, newKvCapacity, MemoryTag.NATIVE_DEFAULT);
+            kvCapacity = newKvCapacity;
         }
         final long lo = kvAddress + ((long) currentOffset << 2);
         Unsafe.getUnsafe().putInt(lo, value);

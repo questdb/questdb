@@ -114,7 +114,12 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
             putAt0(index, key, value);
             size++;
             if (--free == 0) {
-                rehash(capacity() << 1);
+                try {
+                    rehash(capacity() << 1);
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }

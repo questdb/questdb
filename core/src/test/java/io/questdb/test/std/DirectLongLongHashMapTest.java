@@ -166,8 +166,7 @@ public class DirectLongLongHashMapTest {
     public void testCloseAfterRehashOom() throws Exception {
         assertMemoryLeak(() -> {
             // capacity = ceilPow2(4 / 0.5) = 8, free = 4
-            DirectLongLongHashMap map = new DirectLongLongHashMap(4, 0.5, Long.MIN_VALUE, Long.MIN_VALUE, MemoryTag.NATIVE_DEFAULT);
-            try {
+            try (DirectLongLongHashMap map = new DirectLongLongHashMap(4, 0.5, Long.MIN_VALUE, Long.MIN_VALUE, MemoryTag.NATIVE_DEFAULT)) {
                 // Insert 3 items, leaving free = 1.
                 for (int i = 0; i < 3; i++) {
                     map.put(i, i + 1);
@@ -188,10 +187,22 @@ public class DirectLongLongHashMapTest {
 
                 // Map must remain in consistent state: capacity and ptr unchanged.
                 Assert.assertEquals(capacityBeforeRehash, map.capacity());
+
+                // The entry that triggered rehash was written before rehash was called.
+                Assert.assertEquals(4, map.size());
+                for (int i = 0; i < 4; i++) {
+                    Assert.assertFalse(map.excludes(i));
+                    Assert.assertEquals(i + 1, map.get(i));
+                }
+
+                // After lifting OOM, the next insert retries rehash successfully.
+                map.put(4, 5);
+                Assert.assertTrue(map.capacity() > capacityBeforeRehash);
+                Assert.assertEquals(5, map.size());
+                Assert.assertEquals(5, map.get(4));
             } finally {
                 Unsafe.setRssMemLimit(0);
                 // close() must not crash
-                map.close();
             }
         });
     }
