@@ -233,6 +233,11 @@ impl<'a> ParquetMetaReader<'a> {
         self.footer.unused_bytes()
     }
 
+    /// Returns the raw file data slice.
+    pub fn data(&self) -> &'a [u8] {
+        self.data
+    }
+
     /// Returns the footer offset within this file.
     pub fn footer_offset(&self) -> u64 {
         self.footer_offset

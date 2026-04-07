@@ -3,7 +3,7 @@ use std::slice;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_metadata::reader::ParquetMetaReader;
-use crate::parquet_metadata::types::{ColumnFlags, StatFlags};
+use crate::parquet_metadata::types::{decode_stat_sizes, ColumnFlags, StatFlags};
 use crate::parquet_read::decode_column::{
     decode_column_chunk_filtered_with_params, decode_column_chunk_with_params,
     reconstruct_descriptor,
@@ -348,7 +348,7 @@ pub fn find_row_group_by_timestamp(
 /// Row group filter pushdown using `_pm` metadata for statistics and
 /// the parquet file for bloom filters.
 pub fn can_skip_row_group(
-    file_data: &[u8],
+    _file_data: &[u8],
     parquet_meta_reader: &ParquetMetaReader,
     row_group_index: usize,
     filters: &[ColumnFilterPacked],
@@ -437,13 +437,55 @@ pub fn can_skip_row_group(
                 || x == ColumnTypeTag::Decimal256 as i32
         );
 
-        let min_bytes: Option<&[u8]> = if stat_flags.has_min_stat() && stat_flags.is_min_inlined() {
-            let size =
-                crate::parquet_metadata::types::decode_stat_sizes(chunk.stat_sizes).0 as usize;
-            if size > 0 && size <= 8 {
+        // Read inline stats at the physical type width, not the narrowed QDB
+        // width. The _pm stores narrowed values (e.g., 1 byte for BYTE) but the
+        // pruning comparison expects physical type width (4 bytes for INT32).
+        let phys_size = match physical_type {
+            PhysicalType::Boolean => 1,
+            PhysicalType::Int32 | PhysicalType::Float => 4,
+            PhysicalType::Int64 | PhysicalType::Double => 8,
+            PhysicalType::Int96 => 0, // not inlined
+            PhysicalType::ByteArray => 0,
+            PhysicalType::FixedLenByteArray(len) => len,
+        };
+
+        let ool = rg_block.out_of_line_region();
+
+        // Inline size: for types with known physical width (Int32, Int64, etc.),
+        // use phys_size clamped to 8. For ByteArray (phys_size=0), use stat_sizes
+        // nibble since the value width varies (e.g., Symbol stores short strings inline).
+        let (min_stat_sz, max_stat_sz) = decode_stat_sizes(chunk.stat_sizes);
+        let min_inline_size = if phys_size > 0 {
+            phys_size.min(8)
+        } else {
+            min_stat_sz as usize
+        };
+        let max_inline_size = if phys_size > 0 {
+            phys_size.min(8)
+        } else {
+            max_stat_sz as usize
+        };
+
+        // Decode an OOL stat reference: `(offset << 32) | length`.
+        let decode_ool = |encoded: u64| -> Option<&[u8]> {
+            let ool_off = (encoded >> 32) as usize;
+            let ool_len = (encoded & 0xFFFF_FFFF) as usize;
+            if ool_len == 0 {
+                return None;
+            }
+            ool.get(ool_off..ool_off + ool_len)
+        };
+
+        let min_bytes: Option<&[u8]> = if stat_flags.has_min_stat() {
+            if stat_flags.is_min_inlined() && min_inline_size > 0 {
                 Some(unsafe {
-                    slice::from_raw_parts(&chunk.min_stat as *const u64 as *const u8, size)
+                    slice::from_raw_parts(
+                        &chunk.min_stat as *const u64 as *const u8,
+                        min_inline_size,
+                    )
                 })
+            } else if !stat_flags.is_min_inlined() {
+                decode_ool(chunk.min_stat)
             } else {
                 None
             }
@@ -451,13 +493,16 @@ pub fn can_skip_row_group(
             None
         };
 
-        let max_bytes: Option<&[u8]> = if stat_flags.has_max_stat() && stat_flags.is_max_inlined() {
-            let size =
-                crate::parquet_metadata::types::decode_stat_sizes(chunk.stat_sizes).1 as usize;
-            if size > 0 && size <= 8 {
+        let max_bytes: Option<&[u8]> = if stat_flags.has_max_stat() {
+            if stat_flags.is_max_inlined() && max_inline_size > 0 {
                 Some(unsafe {
-                    slice::from_raw_parts(&chunk.max_stat as *const u64 as *const u8, size)
+                    slice::from_raw_parts(
+                        &chunk.max_stat as *const u64 as *const u8,
+                        max_inline_size,
+                    )
                 })
+            } else if !stat_flags.is_max_inlined() {
+                decode_ool(chunk.max_stat)
             } else {
                 None
             }
@@ -467,23 +512,28 @@ pub fn can_skip_row_group(
 
         match op {
             FILTER_OP_EQ => {
-                let bloom_off = chunk.bloom_filter_off.byte_offset();
-                if bloom_off > 0 {
-                    let bitset =
-                        parquet2::bloom_filter::read_from_slice_at_offset(bloom_off, file_data)
-                            .unwrap_or(&[]);
-                    if !bitset.is_empty() {
-                        let all_absent = ParquetDecoder::all_values_absent_from_bloom(
-                            bitset,
-                            &physical_type,
-                            &filter_desc,
-                            has_nulls,
-                            is_decimal,
-                            qdb_column_type,
-                        )?;
-                        if all_absent {
-                            return Ok(true);
-                        }
+                // Bloom filter bitset stored in the _pm file as [i32 len][bitset].
+                let bloom_off = chunk.bloom_filter_off.byte_offset() as usize;
+                let bitset: &[u8] =
+                    if bloom_off > 0 && bloom_off + 4 <= parquet_meta_reader.data().len() {
+                        let bf_data = &parquet_meta_reader.data()[bloom_off..];
+                        let bf_len = i32::from_le_bytes(bf_data[..4].try_into().unwrap_or_default())
+                            as usize;
+                        bf_data.get(4..4 + bf_len).unwrap_or(&[])
+                    } else {
+                        &[]
+                    };
+                if bloom_off > 0 && !bitset.is_empty() {
+                    let all_absent = ParquetDecoder::all_values_absent_from_bloom(
+                        bitset,
+                        &physical_type,
+                        &filter_desc,
+                        has_nulls,
+                        is_decimal,
+                        qdb_column_type,
+                    )?;
+                    if all_absent {
+                        return Ok(true);
                     }
                 }
 
@@ -1210,5 +1260,76 @@ mod tests {
         let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0)?;
 
         Ok((parquet_buf, pm_bytes, footer_offset))
+    }
+
+    /// Physical type ordinal for FixedLenByteArray in the `_pm` format.
+    const PHYS_FLBA: u8 = 7;
+
+    /// Build a `_pm` file with one FLBA(16) UUID column and OOL stats.
+    fn build_uuid_pm(
+        row_groups: &[(u64, u64, [u8; 16], [u8; 16])],
+    ) -> ParquetResult<(Vec<u8>, u64)> {
+        let mut writer = ParquetMetaWriter::new();
+        writer
+            .designated_timestamp(-1)
+            .add_column(
+                "val",
+                0,
+                ColumnTypeTag::Uuid as i32,
+                ColumnFlags::new().with_repetition(FieldRepetition::Optional),
+                16, // fixed_byte_len for FLBA(16)
+                PHYS_FLBA,
+                0,
+                1, // max_def_level = 1 for optional
+            )
+            .parquet_footer(0, 0);
+
+        for &(num_rows, null_count, ref min, ref max) in row_groups {
+            let mut rg = RowGroupBlockBuilder::new(1);
+            rg.set_num_rows(num_rows);
+
+            let mut chunk = ColumnChunkRaw::zeroed();
+            chunk.codec = Codec::Uncompressed as u8;
+            chunk.num_values = num_rows;
+            chunk.null_count = null_count;
+            // OOL stats: is_min_inlined=false
+            chunk.stat_flags = StatFlags::new()
+                .with_min(false, true)
+                .with_max(false, true)
+                .with_null_count()
+                .0;
+            rg.set_column_chunk(0, chunk)?;
+            rg.add_out_of_line_stat(0, true, min)?;
+            rg.add_out_of_line_stat(0, false, max)?;
+
+            writer.add_row_group(rg);
+        }
+
+        writer.finish()
+    }
+
+    #[test]
+    fn skip_eq_outside_uuid_ool_stats() -> ParquetResult<()> {
+        // UUID range [0x11..11, 0x33..33], search for 0xFF..FF → outside range.
+        let min = [0x11u8; 16];
+        let max = [0x33u8; 16];
+        let (pm, fo) = build_uuid_pm(&[(100, 0, min, max)])?;
+        let reader = ParquetMetaReader::new(&pm, fo)?;
+
+        // Filter value: 0xFF..FF (16 bytes), outside the range.
+        let filter_value = [0xFFu8; 16];
+        let filter = make_filter(
+            0,
+            1,
+            FILTER_OP_EQ,
+            filter_value.as_ptr() as u64,
+            ColumnTypeTag::Uuid as i32,
+        );
+        let buf_end = unsafe { filter_value.as_ptr().add(16) } as u64;
+        assert!(
+            can_skip_row_group(&[], &reader, 0, &[filter], buf_end)?,
+            "should skip row group when filter value is outside OOL stat range"
+        );
+        Ok(())
     }
 }

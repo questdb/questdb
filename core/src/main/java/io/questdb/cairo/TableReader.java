@@ -1620,6 +1620,16 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
                 final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
 
+                // Refresh the format slot when the partition was rewritten
+                // (nameTxn changed). A CONVERT PARTITION TO PARQUET/NATIVE
+                // rewrites the partition dir, changing its nameTxn.
+                if (openPartitionNameTxn != txPartitionNameTxn) {
+                    openPartitionInfo.setQuick(
+                            offset + PARTITIONS_SLOT_OFFSET_FORMAT,
+                            txFile.isPartitionParquet(txPartitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE
+                    );
+                }
+
                 if (!forceTruncate) {
                     if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
                         // We used to skip reloading partition size if the row count is the same and name txn is the same.

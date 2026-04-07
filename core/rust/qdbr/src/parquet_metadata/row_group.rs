@@ -168,6 +168,10 @@ impl RowGroupBlockBuilder {
     /// stat field to point into this region.
     ///
     /// `is_min`: if true, patches `min_stat`; otherwise patches `max_stat`.
+    /// Appends an out-of-line stat value and records its location in the
+    /// column chunk. The `min_stat` / `max_stat` field is encoded as
+    /// `(offset << 32) | length` so the reader can recover both the
+    /// position and size of the OOL data, even for variable-length types.
     pub fn add_out_of_line_stat(
         &mut self,
         col_index: usize,
@@ -184,11 +188,13 @@ impl RowGroupBlockBuilder {
             )
         })?;
         let offset = self.out_of_line.len() as u64;
+        let data_len = data.len() as u64;
         self.out_of_line.extend_from_slice(data);
+        let encoded = (offset << 32) | (data_len & 0xFFFF_FFFF);
         if is_min {
-            chunk.min_stat = offset;
+            chunk.min_stat = encoded;
         } else {
-            chunk.max_stat = offset;
+            chunk.max_stat = encoded;
         }
         Ok(self)
     }
@@ -327,10 +333,15 @@ mod tests {
         let c = reader.column_chunk(0).unwrap();
 
         let ool = reader.out_of_line_region();
-        let min_off = c.min_stat as usize;
-        assert_eq!(&ool[min_off..min_off + 16], &min_data);
-        let max_off = c.max_stat as usize;
-        assert_eq!(&ool[max_off..max_off + 16], &max_data);
+        // OOL stats encode (offset << 32) | length.
+        let min_off = (c.min_stat >> 32) as usize;
+        let min_len = (c.min_stat & 0xFFFF_FFFF) as usize;
+        assert_eq!(min_len, 16);
+        assert_eq!(&ool[min_off..min_off + min_len], &min_data);
+        let max_off = (c.max_stat >> 32) as usize;
+        let max_len = (c.max_stat & 0xFFFF_FFFF) as usize;
+        assert_eq!(max_len, 16);
+        assert_eq!(&ool[max_off..max_off + max_len], &max_data);
     }
 
     #[test]
@@ -437,10 +448,12 @@ mod tests {
         let reader = RowGroupBlockReader::new(&buf[block_start..], 1).unwrap();
         let c = reader.column_chunk(0).unwrap();
 
-        // OOL stat still readable.
+        // OOL stat still readable. Encoding: (offset << 32) | length.
         let ool = reader.out_of_line_region();
-        let min_off = c.min_stat as usize;
-        assert_eq!(&ool[min_off..min_off + 13], &stat_data);
+        let min_off = (c.min_stat >> 32) as usize;
+        let min_len = (c.min_stat & 0xFFFF_FFFF) as usize;
+        assert_eq!(min_len, 13);
+        assert_eq!(&ool[min_off..min_off + min_len], &stat_data);
 
         // Bloom filter readable at absolute offset.
         let bf_abs = c.bloom_filter_off.byte_offset() as usize;

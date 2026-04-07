@@ -448,10 +448,17 @@ impl ParquetUpdater {
         self.reader.seek(SeekFrom::Start(rg_start))?;
         self.reader.read_exact(&mut self.copy_buffer)?;
 
+        // Extract bloom filter bitsets from the copy buffer before taking columns.
+        // The copy buffer contains data from rg_start..rg_end, which includes
+        // bloom filters. The bloom filter offset is absolute in the old file;
+        // subtract rg_start to get the offset within the copy buffer.
+        let bloom_bitsets = extract_bloom_bitsets_from_buffer(
+            &self.file_metadata.row_groups[rg_idx],
+            &self.copy_buffer,
+            rg_start,
+        );
+
         // Ensure the PAR1 file header is written before computing offsets.
-        // Without this, current_offset() returns 0, but write_raw_row_group()
-        // would then write the 4-byte PAR1 header first, making the actual data
-        // start at offset 4 while metadata offsets point to 0.
         self.parquet_file.ensure_started().map_err(|s| {
             ParquetError::with_descr(
                 ParquetErrorReason::Parquet2(s),
@@ -475,7 +482,7 @@ impl ParquetUpdater {
         let thrift_rg = build_raw_row_group(columns, row_count);
 
         self.parquet_file
-            .write_raw_row_group(&self.copy_buffer, thrift_rg)
+            .write_raw_row_group_with_bloom(&self.copy_buffer, thrift_rg, bloom_bitsets)
             .map_err(|s| {
                 ParquetError::with_descr(
                     ParquetErrorReason::Parquet2(s),
@@ -615,6 +622,13 @@ impl ParquetUpdater {
         self.reader.seek(SeekFrom::Start(rg_start))?;
         self.reader.read_exact(&mut self.copy_buffer)?;
 
+        // Extract bloom filter bitsets before taking columns.
+        let bloom_bitsets = extract_bloom_bitsets_from_buffer(
+            &self.file_metadata.row_groups[rg_idx],
+            &self.copy_buffer,
+            rg_start,
+        );
+
         self.parquet_file.ensure_started().map_err(|s| {
             ParquetError::with_descr(
                 ParquetErrorReason::Parquet2(s),
@@ -700,7 +714,7 @@ impl ParquetUpdater {
         self.copy_buffer.extend_from_slice(&null_bytes_buf);
 
         self.parquet_file
-            .write_raw_row_group(&self.copy_buffer, thrift_rg)
+            .write_raw_row_group_with_bloom(&self.copy_buffer, thrift_rg, bloom_bitsets)
             .map_err(|s| {
                 ParquetError::with_descr(
                     ParquetErrorReason::Parquet2(s),
@@ -950,6 +964,29 @@ impl ParquetUpdater {
             min_compression_ratio: self.min_compression_ratio,
         }
     }
+}
+
+/// Extracts bloom filter bitsets from a raw byte buffer that contains a copied
+/// row group's data. The buffer starts at `buf_file_offset` in the original file.
+/// Returns one `Option<Vec<u8>>` per column.
+fn extract_bloom_bitsets_from_buffer(
+    rg: &parquet2::metadata::RowGroupMetaData,
+    buffer: &[u8],
+    buf_file_offset: u64,
+) -> Vec<Option<Vec<u8>>> {
+    rg.columns()
+        .iter()
+        .map(|col_meta| {
+            let meta = col_meta.metadata();
+            let bf_offset = meta.bloom_filter_offset.filter(|&o| o > 0)?;
+            let rel_offset = (bf_offset as u64).checked_sub(buf_file_offset)? as usize;
+            let slice = buffer.get(rel_offset..)?;
+            parquet2::bloom_filter::read_from_slice_at_offset(0, slice)
+                .ok()
+                .filter(|bs| !bs.is_empty())
+                .map(|bs| bs.to_vec())
+        })
+        .collect()
 }
 
 /// Shifts all offset fields in a `ColumnChunk` by `offset_delta` and clears

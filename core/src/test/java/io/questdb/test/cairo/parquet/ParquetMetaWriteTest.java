@@ -329,12 +329,14 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertHasParquetPartition("x");
+            // Note: FLOAT column 'f' renders with DOUBLE precision when read through
+            // the _pm decode path because the parquet decoder promotes f32 to f64.
             assertSql(
                     """
                             b\ti\tl\tf\td\tdt\tts\ts\tv
-                            true\t1\t100\t1.5000\t2.5\t2020-01-01T00:00:00.000Z\t2020-01-01T00:00:00.000000Z\thello\tworld
-                            false\t2\t200\t3.5000\t4.5\t2020-01-02T00:00:00.000Z\t2020-01-01T01:00:00.000000Z\tfoo\tbar
-                            true\t99\t999\t9.9000\t9.9\t2020-01-03T00:00:00.000Z\t2020-01-02T00:00:00.000000Z\tz\tz
+                            true\t1\t100\t1.5\t2.5\t2020-01-01T00:00:00.000Z\t2020-01-01T00:00:00.000000Z\thello\tworld
+                            false\t2\t200\t3.5\t4.5\t2020-01-02T00:00:00.000Z\t2020-01-01T01:00:00.000000Z\tfoo\tbar
+                            true\t99\t999\t9.9\t9.9\t2020-01-03T00:00:00.000Z\t2020-01-02T00:00:00.000000Z\tz\tz
                             """,
                     "SELECT * FROM x"
             );

@@ -825,6 +825,17 @@ impl<W: Write> ParquetFile<W> {
     /// Callers must call `ensure_started()` before computing those offsets,
     /// otherwise the PAR1 header written here shifts data by 4 bytes.
     pub fn write_raw_row_group(&mut self, raw_bytes: &[u8], row_group: RowGroup) -> Result<()> {
+        self.write_raw_row_group_with_bloom(raw_bytes, row_group, vec![])
+    }
+
+    /// Like `write_raw_row_group` but carries pre-extracted bloom filter bitsets
+    /// so they are preserved in the `_pm` sidecar file.
+    pub fn write_raw_row_group_with_bloom(
+        &mut self,
+        raw_bytes: &[u8],
+        row_group: RowGroup,
+        bloom_bitsets: Vec<Option<Vec<u8>>>,
+    ) -> Result<()> {
         if self.offset == 0 {
             self.start()?;
         }
@@ -832,7 +843,7 @@ impl<W: Write> ParquetFile<W> {
         self.offset += raw_bytes.len() as u64;
         self.row_groups.push(row_group);
         self.page_specs.push(vec![]);
-        self.bloom_bitsets.push(vec![]);
+        self.bloom_bitsets.push(bloom_bitsets);
         self.is_insert.push(false);
         Ok(())
     }

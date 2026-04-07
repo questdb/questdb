@@ -37,7 +37,9 @@ use crate::parquet_read::decoders::int32::DayToMillisConverter;
 use crate::parquet_read::decoders::int96::Int96ToTimestampConverter;
 use parquet2::metadata::FileMetaData;
 use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType, TimeUnit};
-use parquet2::statistics::{BinaryStatistics, BooleanStatistics, PrimitiveStatistics, Statistics};
+use parquet2::statistics::{
+    BinaryStatistics, BooleanStatistics, FixedLenStatistics, PrimitiveStatistics, Statistics,
+};
 use qdb_core::col_type::ColumnTypeTag;
 
 /// Maps a parquet2 `PhysicalType` enum to its ordinal `u8` encoding.
@@ -385,8 +387,14 @@ fn extract_stat_values(stats: &dyn Statistics, physical_type: PhysicalType) -> R
             let max = s.max_value.map(|v| v.to_le_bytes().to_vec());
             (min, max, s.distinct_count)
         }
-        PhysicalType::ByteArray | PhysicalType::FixedLenByteArray(_) => {
+        PhysicalType::ByteArray => {
             let Some(s) = stats.as_any().downcast_ref::<BinaryStatistics>() else {
+                return none;
+            };
+            (s.min_value.clone(), s.max_value.clone(), s.distinct_count)
+        }
+        PhysicalType::FixedLenByteArray(_) => {
+            let Some(s) = stats.as_any().downcast_ref::<FixedLenStatistics>() else {
                 return none;
             };
             (s.min_value.clone(), s.max_value.clone(), s.distinct_count)
@@ -767,9 +775,24 @@ pub fn update_parquet_metadata(
         existing_fingerprints.push(fp);
     }
 
-    // If the new file has fewer row groups (compaction), fall back to full create.
-    // The incremental writer can only add/replace, not remove row groups.
-    if thrift_row_groups.len() < existing_rg_count {
+    // If any column_top in the existing header differs from the requested
+    // columns, fall back to full create. The incremental update path only
+    // appends row group blocks and a new footer; it cannot modify the header
+    // where column_tops are stored. After an O3 merge the caller zeroes all
+    // column_tops because merged row groups embed null sentinels in their
+    // page data. Stale non-zero column_tops cause the decoder to incorrectly
+    // skip columns that now contain actual data.
+    let column_tops_changed = columns.iter().enumerate().any(|(i, col)| {
+        existing_reader
+            .column_top(i)
+            .map(|existing_top| existing_top != col.top)
+            .unwrap_or(false)
+    });
+
+    // If the new file has fewer row groups (compaction) or column_tops
+    // changed, fall back to full create. The incremental writer can only
+    // add/replace row group blocks, not modify the header.
+    if thrift_row_groups.len() < existing_rg_count || column_tops_changed {
         let designated_ts = existing_reader
             .designated_timestamp()
             .map(|i| i as i32)
@@ -1570,7 +1593,7 @@ mod tests {
     fn extract_stat_values_fixed_len_byte_array() {
         use parquet2::schema::types::PrimitiveType;
         let pt = PrimitiveType::from_physical("x".to_string(), PhysicalType::FixedLenByteArray(16));
-        let stats = BinaryStatistics {
+        let stats = FixedLenStatistics {
             primitive_type: pt,
             null_count: None,
             distinct_count: None,
@@ -2482,7 +2505,10 @@ mod tests {
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
         };
 
-        let partition = Partition { table: "test_bloom".to_string(), columns: vec![col] };
+        let partition = Partition {
+            table: "test_bloom".to_string(),
+            columns: vec![col],
+        };
         let mut buf = Vec::new();
         let writer = ParquetWriter::new(&mut buf)
             .with_statistics(true)
@@ -2496,7 +2522,9 @@ mod tests {
             crate::parquet_write::schema::to_parquet_schema(&partition, false).unwrap();
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
-        let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions).unwrap();
+        let mut chunked = writer
+            .chunked_with_compressions(schema, encodings, compressions)
+            .unwrap();
         chunked.write_chunk(&partition).unwrap();
         chunked.finish(additional_meta).unwrap();
 
@@ -2569,5 +2597,161 @@ mod tests {
             bitset.iter().any(|&b| b != 0),
             "bloom filter bitset should contain set bits"
         );
+    }
+
+    #[test]
+    fn uuid_ool_stats_round_trip() {
+        // Write a parquet file with a UUID column + timestamp column.
+        let row_count = 10usize;
+        // UUID data: 16 bytes per value. [hi: u64, lo: u64] in LE.
+        let uuid_data: Vec<[u8; 16]> = (0..row_count)
+            .map(|i| {
+                let mut buf = [0u8; 16];
+                // Store as (hi=0, lo=i+1) — simple ascending UUIDs.
+                buf[0..8].copy_from_slice(&((i as u64 + 1) * 0x1111).to_le_bytes());
+                buf[8..16].copy_from_slice(&0u64.to_le_bytes());
+                buf
+            })
+            .collect();
+        let uuid_bytes = leak_bytes(unsafe {
+            std::slice::from_raw_parts(uuid_data.as_ptr() as *const u8, row_count * 16)
+        });
+
+        let ts_data: Vec<i64> = (0..row_count as i64).collect();
+        let ts_bytes = leak_bytes(unsafe {
+            std::slice::from_raw_parts(ts_data.as_ptr() as *const u8, ts_data.len() * 8)
+        });
+
+        let cols = vec![
+            Column {
+                name: "ts",
+                data_type: ColumnTypeTag::Timestamp.into_type(),
+                id: 0,
+                row_count,
+                primary_data: ts_bytes,
+                secondary_data: &[],
+                symbol_offsets: &[],
+                column_top: 0,
+                designated_timestamp: true,
+                not_null_hint: true,
+                designated_timestamp_ascending: true,
+                parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            },
+            Column {
+                name: "val",
+                data_type: ColumnTypeTag::Uuid.into_type(),
+                id: 1,
+                row_count,
+                primary_data: uuid_bytes,
+                secondary_data: &[],
+                symbol_offsets: &[],
+                column_top: 0,
+                designated_timestamp: false,
+                not_null_hint: false,
+                designated_timestamp_ascending: false,
+                parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            },
+        ];
+        let partition = Partition { table: "test".to_string(), columns: cols };
+        let mut buf = Vec::new();
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_version(Version::V1)
+            .with_row_group_size(Some(row_count))
+            .finish(partition)
+            .unwrap();
+
+        // Read parquet metadata.
+        let mut cursor = Cursor::new(&buf);
+        let metadata = read_metadata_with_size(&mut cursor, buf.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&buf);
+        let metadata2 = read_metadata_with_size(&mut cursor2, buf.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+
+        let col_infos: Vec<ParquetMetaColumnInfo> = schema_columns
+            .iter()
+            .enumerate()
+            .map(|(i, col_desc)| {
+                let field_info = col_desc.base_type.get_field_info();
+                let cm = qdb_meta.as_ref().and_then(|m| m.schema.get(i));
+                let col_type_code = cm.map(|c| c.column_type.code()).unwrap_or(-1);
+                let col_type_tag = cm.map(|c| c.column_type.tag());
+                let mut flags = ColumnFlags::new();
+                flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
+                ParquetMetaColumnInfo {
+                    name: &field_info.name,
+                    top: 0,
+                    col_type_code,
+                    col_type_tag,
+                    id: field_info.id.unwrap_or(-1),
+                    flags,
+                    fixed_byte_len: match col_desc.descriptor.primitive_type.physical_type {
+                        PhysicalType::FixedLenByteArray(len) => len as i32,
+                        _ => 0,
+                    },
+                    physical_type: physical_type_to_u8(
+                        col_desc.descriptor.primitive_type.physical_type,
+                    ),
+                    max_rep_level: col_desc.descriptor.max_rep_level as u8,
+                    max_def_level: col_desc.descriptor.max_def_level as u8,
+                }
+            })
+            .collect();
+
+        let (pm_bytes, _) = generate_parquet_metadata(
+            &col_infos,
+            schema_columns,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            0,
+        )
+        .unwrap();
+
+        // Read _pm and check UUID column stats.
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_bytes.len() as u64).unwrap();
+        assert_eq!(reader.column_count(), 2);
+        assert_eq!(reader.column_name(1).unwrap(), "val");
+
+        let rg = reader.row_group(0).unwrap();
+        let chunk = rg.column_chunk(1).unwrap(); // UUID column at index 1
+        let stat_flags = StatFlags(chunk.stat_flags);
+
+        let ool = rg.out_of_line_region();
+
+        assert!(
+            stat_flags.has_min_stat(),
+            "UUID column should have min stat"
+        );
+        assert!(
+            !stat_flags.is_min_inlined(),
+            "UUID stat should be OOL (not inlined)"
+        );
+        assert!(
+            stat_flags.has_max_stat(),
+            "UUID column should have max stat"
+        );
+        assert!(
+            !stat_flags.is_max_inlined(),
+            "UUID stat should be OOL (not inlined)"
+        );
+        assert!(!ool.is_empty(), "OOL region should contain stat data");
+
+        // Read OOL stat bytes. Encoding: (offset << 32) | length.
+        let min_off = (chunk.min_stat >> 32) as usize;
+        let min_len = (chunk.min_stat & 0xFFFF_FFFF) as usize;
+        let max_off = (chunk.max_stat >> 32) as usize;
+        let max_len = (chunk.max_stat & 0xFFFF_FFFF) as usize;
+        assert_eq!(min_len, 16, "UUID OOL min stat should be 16 bytes");
+        assert_eq!(max_len, 16, "UUID OOL max stat should be 16 bytes");
+        let min_bytes = &ool[min_off..min_off + min_len];
+        let max_bytes = &ool[max_off..max_off + max_len];
+        assert_ne!(min_bytes, max_bytes, "min and max OOL stats should differ");
     }
 }

@@ -1157,7 +1157,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                                     index\tname\treadOnly\tisParquet\tisNonEmpty\tminTimestamp\tmaxTimestamp
                                     0\t2024-06-10\tfalse\tfalse\tfalse\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z
                                     1\t2024-06-11\tfalse\tfalse\tfalse\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z
-                                    2\t2024-06-12\tfalse\ttrue\ttrue\t\t
+                                    2\t2024-06-12\tfalse\ttrue\ttrue\t2024-06-12T00:00:00.000000Z\t2024-06-12T00:00:02.000000Z
                                     3\t2024-06-15\tfalse\tfalse\tfalse\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z
                                     """,
                             timestampType.getTypeName()
