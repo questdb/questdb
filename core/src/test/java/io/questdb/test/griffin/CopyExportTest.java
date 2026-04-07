@@ -2067,11 +2067,10 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyVarcharInlinedTreatedAsNull() throws Exception {
-        // Bug: CopyExportRequestTask line 650 uses pageAddress==0 to detect
-        // column-top (all-null column).  For VARCHAR, short strings (<=9 bytes)
-        // are inlined in aux entries; the .d data file can be empty, making
-        // pageAddress 0.  The streaming writer then treats the entire column
-        // as null even though every row has a value.
+        // Regression: CopyExportRequestTask.writePageFrame used pageAddress==0 to detect a
+        // column-top (all-null column). For VARCHAR, short strings (<=9 bytes) are stored
+        // entirely inline inside aux entries, so the .d data file is empty and pageAddress
+        // is legitimately 0. The streaming writer would then materialise every row as NULL.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE vc_inl (
@@ -2080,7 +2079,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         vc VARCHAR
                     ) TIMESTAMP(ts) PARTITION BY DAY""");
 
-            // All values <=9 bytes ? inlined in aux entries ? .d file empty.
+            // All values <=9 bytes -> inlined in aux entries -> .d file empty.
             execute("""
                     INSERT INTO vc_inl VALUES
                         ('2024-01-01T00:00:00.000000Z', 1, 'alpha'),
