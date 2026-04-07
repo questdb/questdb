@@ -298,8 +298,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
             case TYPE_BYTE -> currentLong = Unsafe.getUnsafe().getByte(address);
             case TYPE_SHORT, TYPE_CHAR -> currentLong = Unsafe.getUnsafe().getShort(address);
             case TYPE_INT -> currentLong = Unsafe.getUnsafe().getInt(address);
-            case TYPE_LONG, TYPE_DATE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS ->
-                    currentLong = Unsafe.getUnsafe().getLong(address);
+            case TYPE_LONG, TYPE_DATE -> currentLong = Unsafe.getUnsafe().getLong(address);
             case TYPE_FLOAT -> currentDouble = Unsafe.getUnsafe().getFloat(address);
             case TYPE_DOUBLE -> currentDouble = Unsafe.getUnsafe().getDouble(address);
             case TYPE_UUID -> {

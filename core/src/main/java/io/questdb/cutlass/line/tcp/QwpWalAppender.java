@@ -210,9 +210,6 @@ public class QwpWalAppender implements QuietCloseable {
             case TYPE_UUID -> colTag == ColumnType.UUID;
             case TYPE_DATE -> colTag == ColumnType.DATE;
             case TYPE_LONG256 -> colTag == ColumnType.LONG256;
-            case TYPE_GEOHASH -> colTag == ColumnType.GEOBYTE || colTag == ColumnType.GEOSHORT
-                    || colTag == ColumnType.GEOINT || colTag == ColumnType.GEOLONG;
-            case TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> colTag == ColumnType.TIMESTAMP;
             default -> false;
         };
     }
