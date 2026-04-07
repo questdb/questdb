@@ -282,7 +282,12 @@ public class Unordered4Map implements Map, Reopenable {
             Vect.memcpy(destAddr, srcAddr, entrySize);
             size++;
             if (--free == 0) {
-                rehash();
+                try {
+                    rehash();
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -353,7 +358,12 @@ public class Unordered4Map implements Map, Reopenable {
     private Unordered4MapValue asNew(long startAddress, int key, long hashCode, Unordered4MapValue value) {
         Unsafe.getUnsafe().putInt(startAddress, key);
         if (--free == 0) {
-            rehash();
+            try {
+                rehash();
+            } catch (CairoException e) {
+                free = 1;
+                throw e;
+            }
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hashCode & mask);
             for (; ; ) {

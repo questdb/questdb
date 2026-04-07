@@ -327,7 +327,12 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             }
             size++;
             if (--free == 0) {
-                rehash();
+                try {
+                    rehash();
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -416,7 +421,12 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             Unsafe.getUnsafe().putLong(startAddress + 8, arenaPtrWithUnstableFlags);
         }
         if (--free == 0) {
-            rehash();
+            try {
+                rehash();
+            } catch (CairoException e) {
+                free = 1;
+                throw e;
+            }
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hash & mask);
             long ptr = keyPtrWithUnstableFlag & PTR_MASK;

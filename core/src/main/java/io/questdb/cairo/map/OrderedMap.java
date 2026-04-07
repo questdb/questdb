@@ -413,7 +413,12 @@ public class OrderedMap implements Map, Reopenable {
         Unsafe.getUnsafe().putInt(offsetAddr + 4, hashCodeLo);
         size++;
         if (--free == 0) {
-            rehash();
+            try {
+                rehash();
+            } catch (CairoException e) {
+                free = 1;
+                throw e;
+            }
         }
         return valueOf(keyWriter.startAddr, keyWriter.appendAddr, true, value);
     }
@@ -463,7 +468,12 @@ public class OrderedMap implements Map, Reopenable {
             kPos += alignedEntrySize;
             size++;
             if (--free == 0) {
-                rehash();
+                try {
+                    rehash();
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -513,7 +523,12 @@ public class OrderedMap implements Map, Reopenable {
             kPos = Bytes.align8b(kPos + entrySize);
             size++;
             if (--free == 0) {
-                rehash();
+                try {
+                    rehash();
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
