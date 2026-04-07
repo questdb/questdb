@@ -321,18 +321,16 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         writerField.set(tud, Proxy.newProxyInstance(
                 TableWriterAPI.class.getClassLoader(),
                 new Class[]{TableWriterAPI.class},
-                (proxy, method, args) -> {
-                    return switch (method.getName()) {
-                        case "getUncommittedRowCount" -> 1L;
-                        case "commit" -> {
-                            if (isTableDropped) {
-                                throw CairoException.tableDropped(tableToken);
-                            }
-                            throw CairoException.nonCritical().put("simulated commit failure");
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getUncommittedRowCount" -> 1L;
+                    case "commit" -> {
+                        if (isTableDropped) {
+                            throw CairoException.tableDropped(tableToken);
                         }
-                        case "close", "rollback" -> null;
-                        default -> throw new UnsupportedOperationException(method.getName());
-                    };
+                        throw CairoException.nonCritical().put("simulated commit failure");
+                    }
+                    case "close", "rollback" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName());
                 }
         ));
     }
