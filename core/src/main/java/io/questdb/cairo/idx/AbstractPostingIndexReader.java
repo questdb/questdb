@@ -1004,14 +1004,22 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 long strideDataStart = siSize + strideOff;
                 if (strideDataStart >= mem.size()) continue;
 
+                long keyOffsetsEnd = strideDataStart + (long) ks * Integer.BYTES;
+                if (keyOffsetsEnd > mem.size()) continue;
                 long keyOffsetsAddr = mem.addressOf(strideDataStart);
                 int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
-                long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Integer.BYTES + keyBlockOff);
+                long keyBlockFileOffset = keyOffsetsEnd + keyBlockOff;
+                if (keyBlockFileOffset < 0 || keyBlockFileOffset + Integer.BYTES > mem.size()) continue;
+                long keyBlockAddr = mem.addressOf(keyBlockFileOffset);
                 int kc = Unsafe.getUnsafe().getInt(keyBlockAddr);
-                if (kc == 0) continue;
+                if (kc <= 0) continue;
+                // Validate that the compressed block fits within the sidecar mapping.
+                // Conservative upper bound: 4-byte count header + kc values at full element size.
+                int elemSize = ColumnType.sizeOf(colType);
+                long maxBlockSize = Integer.BYTES + (long) kc * Math.max(elemSize, Long.BYTES);
+                if (keyBlockFileOffset + maxBlockSize > mem.size()) continue;
                 count = kc;
 
-                int elemSize = ColumnType.sizeOf(colType);
                 long outAddr = outputAddrs[c] + (long) writeOffset * elemSize;
                 ensureDecodeWorkspaceCapacity(kc);
 

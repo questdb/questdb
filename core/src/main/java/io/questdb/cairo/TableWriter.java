@@ -4568,8 +4568,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Creates index files for a column. This method uses primary column instance as a temporary tool to
      * append index data. Therefore, it must be called before the primary column is initialized.
      *
-     * @param columnName              column name
-     * @param plen                    path length. This is used to trim the shared path object to.
+     * @param columnName             column name
+     * @param columnNameTxn          column name txn
+     * @param indexValueBlockCapacity value block capacity for the index
+     * @param indexType              type of index to create
+     * @param plen                   path length. This is used to trim the shared path object to.
+     * @param force                  when true, recreates the index file even if it already exists
      */
     private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force) {
         try {
@@ -6305,9 +6309,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Checks whether a partition already has a fully-sealed posting index for the given column.
      *
-     * @param plen           path length. This is used to trim the shared path object to.
-     * @param columnName     column name
-     * @param columnNameTxn  column name txn
+     * @param plen          path length. This is used to trim the shared path object to.
+     * @param columnName    column name
+     * @param columnNameTxn column name txn
      * @return true if the posting index key file exists with a valid seqlock and genCount > 0
      */
     private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {

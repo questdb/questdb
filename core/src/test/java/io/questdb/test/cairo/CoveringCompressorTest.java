@@ -165,6 +165,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 for (int i = 0; i < count; i++) {
                     Unsafe.getUnsafe().putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
                 }
+                CoveringCompressor.compressInts(srcAddr, count, destAddr);
                 int[] output = new int[count];
                 CoveringCompressor.decompressInts(destAddr, output);
                 for (int i = 0; i < count; i++) {
