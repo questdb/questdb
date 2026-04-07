@@ -58,6 +58,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_INACTIVE_WRITER_TTL("cairo.inactive.writer.ttl"),
     CAIRO_RECENT_WRITE_TRACKER_CAPACITY("cairo.recent.write.tracker.capacity"),
     CAIRO_INDEX_VALUE_BLOCK_SIZE("cairo.index.value.block.size"),
+    CAIRO_JSON_UNNEST_MAX_VALUE_SIZE("cairo.json.unnest.max.value.size"),
     CAIRO_MAX_SWAP_FILE_COUNT("cairo.max.swap.file.count"),
     CAIRO_PARALLEL_INDEX_THRESHOLD("cairo.parallel.index.threshold"),
     CAIRO_READER_POOL_MAX_SEGMENTS("cairo.reader.pool.max.segments"),

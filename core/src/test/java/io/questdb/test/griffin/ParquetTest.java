@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.std.Rnd;
@@ -889,6 +890,49 @@ public class ParquetTest extends AbstractCairoTest {
 
             execute("alter table x alter column id add index;");
             assertSql(expected, query);
+        });
+    }
+
+    @Test
+    public void testIndexReloadAfterConvertToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    "INSERT INTO x VALUES" +
+                            "('k1', '2024-06-10T00:00:00.000000Z')," +
+                            "('k2', '2024-06-10T01:00:00.000000Z')," +
+                            "('k1', '2024-06-11T00:00:00.000000Z')," +
+                            "('k3', '2024-06-12T00:00:00.000000Z')," +
+                            "('k1', '2024-06-12T00:00:01.000000Z')"
+            );
+
+            final int idColumnIndex = 0;
+
+            // Open the reader and force bitmap index reader creation on native
+            // partitions by explicitly calling getBitmapIndexReader().
+            try (var reader = engine.getReader("x")) {
+                for (int i = 0; i < reader.getPartitionCount(); i++) {
+                    reader.openPartition(i);
+                    reader.getBitmapIndexReader(i, idColumnIndex, BitmapIndexReader.DIR_BACKWARD);
+                }
+            }
+
+            // Convert non-last partitions to parquet while the pool holds
+            // a reader with pre-existing bitmap index readers.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10', '2024-06-11'");
+
+            // Re-acquire the pooled reader. goActive() -> reload() detects the
+            // parquet conversion, closes partitions (but closeIndexReader() does
+            // not null bitmapIndexes entries), and later openPartition0() for
+            // parquet calls pathGenNativePartition() on a path already holding
+            // the parquet filename — producing a bogus native path.
+            final String expected = """
+                    id\tts
+                    k1\t2024-06-10T00:00:00.000000Z
+                    k1\t2024-06-11T00:00:00.000000Z
+                    k1\t2024-06-12T00:00:01.000000Z
+                    """;
+            assertSql(expected, "x WHERE id = 'k1'");
         });
     }
 

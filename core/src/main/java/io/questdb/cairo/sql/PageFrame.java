@@ -129,5 +129,4 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
-
 }

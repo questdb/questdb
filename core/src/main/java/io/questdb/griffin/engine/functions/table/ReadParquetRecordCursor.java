@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -52,7 +53,6 @@ import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
@@ -130,14 +130,14 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
      * Validates that metadata columns can be projected from parquet and optionally populates column mappings.
      *
      * @param columns       if not null, will be populated with (parquetIndex, parquetType) pairs
-     * @param columnIndexes if not null, will be populated with metadata column indexes
+     * @param columnMapping if not null, will be populated with (parquetIndex, writerIndex) pairs
      * @return true if projection is possible, false otherwise
      */
     public static boolean canProjectMetadata(
             RecordMetadata metadata,
             PartitionDecoder decoder,
             @Nullable DirectIntList columns,
-            @Nullable IntList columnIndexes
+            @Nullable ColumnMapping columnMapping
     ) {
         final PartitionDecoder.Metadata parquetMetadata = decoder.metadata();
 
@@ -179,8 +179,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                     columns.add(decodedType);
                 }
             }
-            if (columnIndexes != null) {
-                columnIndexes.add(parquetIndex);
+            if (columnMapping != null) {
+                final int columnId = parquetMetadata.getColumnId(parquetIndex);
+                columnMapping.addColumn(parquetIndex, columnId < 0 ? parquetIndex : columnId);
             }
         }
 
@@ -266,7 +267,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
             }
             isFilterListPrepared = filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    decoder.metadata(), pushdownFilterConditions, filterList, filterValues);
+                    decoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList, filterValues
+            );
             if (isFilterListPrepared) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }
