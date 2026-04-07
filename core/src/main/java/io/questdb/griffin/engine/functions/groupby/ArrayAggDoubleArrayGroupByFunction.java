@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -55,6 +56,10 @@ import org.jetbrains.annotations.NotNull;
  * A single LONG slot in the map value stores the buffer pointer (0 = null/empty group).
  */
 public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements GroupByFunction, UnaryFunction {
+    // Element count must fit in int when multiplied by Double.BYTES because
+    // BorrowedArray.of() takes valueSize as int. Clamp the configured max
+    // to keep narrowing casts in getArray() safe under all configurations.
+    private static final int BYTE_SAFE_ELEMENT_LIMIT = Integer.MAX_VALUE / Double.BYTES;
     private static final int CAPACITY_OFFSET = Integer.BYTES;
     private static final int HEADER_SIZE = 2 * Integer.BYTES;
     private static final int INITIAL_CAPACITY = 16;
@@ -69,7 +74,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
         this.arg = arg;
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         this.ordered = ordered;
-        this.maxArrayElementCount = maxArrayElementCount;
+        this.maxArrayElementCount = Math.min(maxArrayElementCount, BYTE_SAFE_ELEMENT_LIMIT);
     }
 
     @Override
@@ -156,7 +161,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
         if (count == 0) {
             return ArrayConstant.NULL;
         }
-        return borrowedArray.of(type, ptr, ptr + HEADER_SIZE, count * Double.BYTES);
+        return borrowedArray.of(type, ptr, ptr + HEADER_SIZE, (int) ((long) count * Double.BYTES));
     }
 
     @Override
@@ -212,19 +217,23 @@ public class ArrayAggDoubleArrayGroupByFunction extends ArrayFunction implements
         }
 
         long destPtr = destValue.getLong(valueIndex);
-        if (destPtr == 0) {
-            // Shallow pointer copy: the GroupBy framework guarantees that src map entries
-            // are not reused after merge, so transferring ownership of the buffer is safe.
-            // This avoids an unnecessary deep copy and is consistent with the pattern used
-            // by other GroupBy functions (e.g. FirstArrayGroupByFunction).
-            destValue.putLong(valueIndex, srcPtr);
+        if (destPtr == 0 || Unsafe.getUnsafe().getInt(destPtr) == 0) {
+            // Dest is empty - deep copy src into dest's allocator. We cannot
+            // shallow-copy srcPtr because src belongs to a worker's allocator
+            // arena that gets freed after the merge, which would dangle dest.
+            int newCapacity = Math.max(INITIAL_CAPACITY, Numbers.ceilPow2(srcCount));
+            if (newCapacity < srcCount) {
+                throw CairoException.nonCritical().put("array_agg: merged array exceeds maximum capacity");
+            }
+            checkCapacityLimit(srcCount);
+            long newPtr = allocator.malloc(HEADER_SIZE + (long) newCapacity * Double.BYTES);
+            Unsafe.getUnsafe().putInt(newPtr, srcCount);
+            Unsafe.getUnsafe().putInt(newPtr + CAPACITY_OFFSET, newCapacity);
+            Vect.memcpy(newPtr + HEADER_SIZE, srcPtr + HEADER_SIZE, (long) srcCount * Double.BYTES);
+            destValue.putLong(valueIndex, newPtr);
             return;
         }
         int destCount = Unsafe.getUnsafe().getInt(destPtr);
-        if (destCount == 0) {
-            destValue.putLong(valueIndex, srcPtr);
-            return;
-        }
 
         int destCapacity = Unsafe.getUnsafe().getInt(destPtr + CAPACITY_OFFSET);
         int newCount = destCount + srcCount;

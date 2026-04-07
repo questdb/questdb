@@ -100,9 +100,12 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                     expected.append(g).append("\t").append(expectedPerGroup[g]).append("\n");
                 }
 
-                assertSql(
-                        expected,
-                        "SELECT grp, array_agg(val) arr FROM t ORDER BY grp"
+                assertQueryNoLeakCheck(
+                        expected.toString(),
+                        "SELECT grp, array_agg(val) arr FROM t ORDER BY grp",
+                        null,
+                        true,
+                        true
                 );
             }
         });
@@ -139,9 +142,12 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                 execute(insert.toString());
                 expectedArray.append("]");
 
-                assertSql(
+                assertQueryNoLeakCheck(
                         "arr\n" + expectedArray + "\n",
-                        "SELECT array_agg(val) arr FROM t"
+                        "SELECT array_agg(val) arr FROM t",
+                        null,
+                        false,
+                        true
                 );
             }
         });
@@ -194,9 +200,12 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                     expected.append(g).append("\t").append(expectedCounts[g][0]).append("\n");
                 }
 
-                assertSql(
-                        expected,
-                        "SELECT grp, array_count(array_agg(arr)) cnt FROM t ORDER BY grp"
+                assertQueryNoLeakCheck(
+                        expected.toString(),
+                        "SELECT grp, array_count(array_agg(arr)) cnt FROM t ORDER BY grp",
+                        null,
+                        true,
+                        true
                 );
             }
         });
@@ -232,9 +241,12 @@ public class ArrayAggDoubleFuzzTest extends AbstractCairoTest {
                     expected.append(g).append("\t").append(rowsPerGroup).append("\n");
                 }
 
-                assertSql(
-                        expected,
-                        "SELECT grp, array_count(array_agg(val, false)) cnt FROM t ORDER BY grp"
+                assertQueryNoLeakCheck(
+                        expected.toString(),
+                        "SELECT grp, array_count(array_agg(val, false)) cnt FROM t ORDER BY grp",
+                        null,
+                        true,
+                        true
                 );
             }
         });
