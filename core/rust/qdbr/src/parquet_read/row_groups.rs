@@ -642,7 +642,9 @@ impl ParquetDecoder {
             varchar_slice_page_bufs.append(varchar_slice_dict_bufs);
             // Drain into the destination instead of replacing it: this preserves the hoisted
             // outer-vec capacity in the scratch field for the next column chunk.
-            column_chunk_bufs.page_buffers.append(varchar_slice_page_bufs);
+            column_chunk_bufs
+                .page_buffers
+                .append(varchar_slice_page_bufs);
         }
 
         column_chunk_bufs.refresh_ptrs();
@@ -806,7 +808,9 @@ impl ParquetDecoder {
             varchar_slice_page_bufs.append(varchar_slice_dict_bufs);
             // Drain into the destination instead of replacing it: this preserves the hoisted
             // outer-vec capacity in the scratch field for the next column chunk.
-            column_chunk_bufs.page_buffers.append(varchar_slice_page_bufs);
+            column_chunk_bufs
+                .page_buffers
+                .append(varchar_slice_page_bufs);
         }
 
         column_chunk_bufs.refresh_ptrs();
