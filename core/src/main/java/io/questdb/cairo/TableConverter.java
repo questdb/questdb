@@ -105,9 +105,12 @@ public class TableConverter {
                                 boolean isProtected = tableFlagResolver.isProtected(tableName);
                                 boolean isSystem = tableFlagResolver.isSystem(tableName);
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
-                                boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
-                                boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
-                                final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, isView, isMatView, walEnabled, isSystem, isProtected, isPublic);
+                                TableToken.Type type = isLiveViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.LIVE_VIEW
+                                        : isMatViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.MAT_VIEW
+                                        : isViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.VIEW
+                                        : TableToken.Type.TABLE;
+                                boolean isWal = walEnabled || type == TableToken.Type.VIEW || type == TableToken.Type.MAT_VIEW;
+                                final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, type, isWal, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);

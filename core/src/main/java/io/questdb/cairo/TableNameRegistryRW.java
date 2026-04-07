@@ -89,10 +89,11 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             boolean isSystem = tableFlagResolver.isSystem(tableName);
             boolean isPublic = tableFlagResolver.isPublic(tableName);
             String dbLogName = engine.getConfiguration().getDbLogName();
-            if (isLiveView) {
-                return new TableToken(tableName, dirName, dbLogName, tableId, TableToken.Type.LIVE_VIEW, false, isSystem, isProtected, isPublic);
-            }
-            return new TableToken(tableName, dirName, dbLogName, tableId, isView, isMatView, isWal, isSystem, isProtected, isPublic);
+            TableToken.Type type = isLiveView ? TableToken.Type.LIVE_VIEW
+                    : isMatView ? TableToken.Type.MAT_VIEW
+                    : isView ? TableToken.Type.VIEW
+                    : TableToken.Type.TABLE;
+            return new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
         }

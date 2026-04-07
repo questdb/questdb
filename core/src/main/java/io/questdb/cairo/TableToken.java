@@ -195,7 +195,7 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, dbLogName, tableId, isView(), isMatView(), isWal, isSystem, isProtected, isPublic);
+        return new TableToken(newName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
     }
 
     @Override

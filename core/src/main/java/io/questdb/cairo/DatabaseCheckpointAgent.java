@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewState;
@@ -402,6 +403,37 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     } else {
                                         LOG.info().$("skipping, view is concurrently dropped [view=").$(tableToken).I$();
                                     }
+                                    break;
+                                }
+
+                                if (tableToken.isLiveView()) {
+                                    // Live views have _meta and _lv files but no data.
+                                    // Their in-memory state is reconstructed from the base table on startup.
+                                    final Path auxPath = Path.PATH2.get();
+
+                                    // Copy _lv definition file.
+                                    auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                                    if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                        throw CairoException.critical(ff.errno()).put("could not copy live view definition file [view=").put(tableToken).put(']');
+                                    }
+
+                                    // Copy _meta file.
+                                    auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+                                    if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                        throw CairoException.critical(ff.errno()).put("could not copy live view metadata file [view=").put(tableToken).put(']');
+                                    }
+
+                                    // Generate _name file.
+                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(TableUtils.TABLE_NAME_FILE);
+                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                                    TableUtils.createTableNameFile(mem, tableToken.getTableName());
+                                    mem.close(false);
+
+                                    tableNameRegistryStore.logAddTable(tableToken);
+
+                                    LOG.info().$("live view included in the checkpoint [view=").$(tableToken).I$();
                                     break;
                                 }
 
