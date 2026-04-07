@@ -222,11 +222,11 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void clearColumnMapStructs();
 
-    void clearSharedRefs();
-
     void clearOrderBy();
 
     void clearSampleBy();
+
+    void clearSharedRefs();
 
     boolean containsJoin();
 
@@ -238,13 +238,13 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException;
 
-    void copySharedRefs(IQueryModel model);
-
     void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints);
 
     void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice);
 
     void copyOrderByDirectionAdvice(IntList orderByDirection);
+
+    void copySharedRefs(IQueryModel model);
 
     void copyUpdateTableMetadata(IQueryModel updateTableModel);
 
@@ -279,8 +279,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls();
 
     IntHashSet getDependencies();
-
-    ObjList<QueryModelWrapper> getSharedRefs();
 
     ObjList<ExpressionNode> getExpressionModels();
 
@@ -372,9 +370,9 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     int getRefCount(CharSequence alias);
 
-    // getQueryModel() is inherited from ExecutionModel with return type QueryModel
-
     ObjList<ViewDefinition> getReferencedViews();
+
+    // getQueryModel() is inherited from ExecutionModel with return type QueryModel
 
     ExpressionNode getSampleBy();
 
@@ -393,6 +391,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int getSelectModelType();
 
     int getSetOperationType();
+
+    ObjList<QueryModelWrapper> getSharedRefs();
 
     int getShowKind();
 
@@ -450,9 +450,9 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses();
 
-    boolean hasSharedRefs();
-
     boolean hasExplicitTimestamp();
+
+    boolean hasSharedRefs();
 
     boolean hasTimestampOffset();
 

@@ -6674,11 +6674,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean cached = true;
             if (primaryFactory == null) {
                 primaryFactory = generateQuery0Inner(delegate, executionContext, processJoins);
-                sharedFactoryCache.put(delegate, primaryFactory);
                 cached = false;
             }
             if (primaryFactory.supportsSharedCursors()) {
-                return new SharedRecordCursorFactory(primaryFactory, primaryFactory.getMetadata(), sid);
+                sharedFactoryCache.put(delegate, primaryFactory);
+                return new SharedRecordCursorFactory(primaryFactory, sid);
             }
             return cached ? generateQuery0Inner(delegate, executionContext, processJoins) : primaryFactory;
         }

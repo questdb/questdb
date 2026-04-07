@@ -181,11 +181,6 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void clearSharedRefs() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void clearOrderBy() {
         delegate.clearOrderBy();
     }
@@ -193,6 +188,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public void clearSampleBy() {
         delegate.clearSampleBy();
+    }
+
+    @Override
+    public void clearSharedRefs() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -221,11 +221,6 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void copySharedRefs(IQueryModel model) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints) {
         delegate.copyHints(hints);
     }
@@ -238,6 +233,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public void copyOrderByDirectionAdvice(IntList orderByDirection) {
         delegate.copyOrderByDirectionAdvice(orderByDirection);
+    }
+
+    @Override
+    public void copySharedRefs(IQueryModel model) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -327,11 +327,6 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public IntHashSet getDependencies() {
         return delegate.getDependencies();
-    }
-
-    @Override
-    public ObjList<QueryModelWrapper> getSharedRefs() {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -624,6 +619,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ObjList<QueryModelWrapper> getSharedRefs() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getShowKind() {
         return delegate.getShowKind();
     }
@@ -764,13 +764,13 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public boolean hasSharedRefs() {
-        return delegate.hasSharedRefs();
+    public boolean hasExplicitTimestamp() {
+        return delegate.hasExplicitTimestamp();
     }
 
     @Override
-    public boolean hasExplicitTimestamp() {
-        return delegate.hasExplicitTimestamp();
+    public boolean hasSharedRefs() {
+        return delegate.hasSharedRefs();
     }
 
     @Override

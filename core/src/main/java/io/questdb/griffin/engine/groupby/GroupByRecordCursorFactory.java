@@ -155,7 +155,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         if (shared == null) {
             assert sharedRecordFunctions != null;
             assert idx < sharedRecordFunctions.size();
-            shared = new GroupBySharedCursor(sharedRecordFunctions.getQuick(idx));
+            shared = new GroupBySharedCursor(cursor, sharedRecordFunctions.getQuick(idx));
             sharedCursors.extendAndSet(idx, shared);
         }
         shared.of(cursor.dataMap);
@@ -205,6 +205,56 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(base);
         Misc.free(cursor);
         Misc.clear(sharedCursors);
+    }
+
+    private static class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {
+        private final GroupByRecordCursor primaryCursor;
+        private MapRecordCursor cachedMapCursor;
+        private Map dataMap;
+
+        GroupBySharedCursor(GroupByRecordCursor cursor, ObjList<Function> functions) {
+            super(functions, true);
+            this.primaryCursor = cursor;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            buildMapConditionally();
+            baseCursor.calculateSize(circuitBreaker, counter);
+        }
+
+        @Override
+        public boolean hasNext() {
+            buildMapConditionally();
+            return super.hasNext();
+        }
+
+        @Override
+        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+            buildMapConditionally();
+            ((MapRecordCursor) baseCursor).longTopK(list, getFunctions().getQuick(columnIndex));
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        private void buildMapConditionally() {
+            if (baseCursor == null) {
+                primaryCursor.buildMapConditionally();
+                if (cachedMapCursor != null) {
+                    dataMap.initCursor(cachedMapCursor);
+                } else {
+                    cachedMapCursor = dataMap.newCursor();
+                }
+                of(cachedMapCursor);
+            }
+        }
+
+        void of(Map dataMap) {
+            this.dataMap = dataMap;
+        }
     }
 
     private class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
@@ -311,54 +361,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (!isDataMapBuilt) {
                 buildDataMap();
             }
-        }
-    }
-
-    private class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {
-        private MapRecordCursor cachedMapCursor;
-        private Map dataMap;
-
-        GroupBySharedCursor(ObjList<Function> functions) {
-            super(functions, true);
-        }
-
-        @Override
-        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            buildMapConditionally();
-            baseCursor.calculateSize(circuitBreaker, counter);
-        }
-
-        @Override
-        public boolean hasNext() {
-            buildMapConditionally();
-            return super.hasNext();
-        }
-
-        @Override
-        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
-            buildMapConditionally();
-            ((MapRecordCursor) baseCursor).longTopK(list, recordFunctions.getQuick(columnIndex));
-        }
-
-        @Override
-        public long preComputedStateSize() {
-            return 0;
-        }
-
-        private void buildMapConditionally() {
-            if (baseCursor == null) {
-                cursor.buildMapConditionally();
-                if (cachedMapCursor != null) {
-                    dataMap.initCursor(cachedMapCursor);
-                } else {
-                    cachedMapCursor = dataMap.newCursor();
-                }
-                of(cachedMapCursor);
-            }
-        }
-
-        void of(Map dataMap) {
-            this.dataMap = dataMap;
         }
     }
 }

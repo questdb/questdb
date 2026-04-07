@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -42,8 +41,8 @@ public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory primaryFactory;
     private final int sharedId;
 
-    public SharedRecordCursorFactory(RecordCursorFactory primaryFactory, RecordMetadata metadata, int sharedId) {
-        super(metadata);
+    public SharedRecordCursorFactory(RecordCursorFactory primaryFactory, int sharedId) {
+        super(primaryFactory.getMetadata());
         this.primaryFactory = primaryFactory;
         this.sharedId = sharedId;
     }

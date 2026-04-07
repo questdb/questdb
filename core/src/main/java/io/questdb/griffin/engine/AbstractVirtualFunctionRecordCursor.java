@@ -124,4 +124,8 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
             GroupByUtils.toTop(functions);
         }
     }
+
+    protected ObjList<Function> getFunctions() {
+        return functions;
+    }
 }

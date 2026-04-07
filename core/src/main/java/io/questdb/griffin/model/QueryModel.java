@@ -72,7 +72,6 @@ public class QueryModel implements IQueryModel {
     private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
-    private final ObjList<QueryModelWrapper> sharedRefs = new ObjList<>();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -103,6 +102,7 @@ public class QueryModel implements IQueryModel {
     private final ObjList<QueryColumn> pivotGroupByColumns = new ObjList<>();
     private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
+    private final ObjList<QueryModelWrapper> sharedRefs = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<QueryColumn> topDownColumns = new ObjList<>();
     private final LowerCaseCharSequenceHashSet topDownNameSet = new LowerCaseCharSequenceHashSet();
@@ -500,11 +500,6 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public void clearSharedRefs() {
-        sharedRefs.clear();
-    }
-
-    @Override
     public void clearOrderBy() {
         orderBy.clear();
         orderByDirection.clear();
@@ -519,6 +514,11 @@ public class QueryModel implements IQueryModel {
         sampleByOffset = null;
         sampleByTo = null;
         sampleByFrom = null;
+    }
+
+    @Override
+    public void clearSharedRefs() {
+        sharedRefs.clear();
     }
 
     @Override
@@ -608,17 +608,6 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public void copySharedRefs(IQueryModel model) {
-        sharedRefs.clear();
-        for (int i = 0, n = model.getSharedRefs().size(); i < n; i++) {
-            QueryModelWrapper wrapper = model.getSharedRefs().getQuick(i);
-            wrapper.setDelegate(this);
-        }
-        sharedRefs.addAll(model.getSharedRefs());
-        model.clearSharedRefs();
-    }
-
-    @Override
     public void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints) {
         // do not copy hints to self
         if (hintsMap != hints) {
@@ -636,6 +625,17 @@ public class QueryModel implements IQueryModel {
     public void copyOrderByDirectionAdvice(IntList orderByDirection) {
         this.orderByDirectionAdvice.clear();
         this.orderByDirectionAdvice.addAll(orderByDirection);
+    }
+
+    @Override
+    public void copySharedRefs(IQueryModel model) {
+        sharedRefs.clear();
+        for (int i = 0, n = model.getSharedRefs().size(); i < n; i++) {
+            QueryModelWrapper wrapper = model.getSharedRefs().getQuick(i);
+            wrapper.setDelegate(this);
+        }
+        sharedRefs.addAll(model.getSharedRefs());
+        model.clearSharedRefs();
     }
 
     @Override
@@ -730,11 +730,6 @@ public class QueryModel implements IQueryModel {
     @Override
     public IntHashSet getDependencies() {
         return dependencies;
-    }
-
-    @Override
-    public ObjList<QueryModelWrapper> getSharedRefs() {
-        return sharedRefs;
     }
 
     @Override
@@ -1040,6 +1035,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public ObjList<QueryModelWrapper> getSharedRefs() {
+        return sharedRefs;
+    }
+
+    @Override
     public int getShowKind() {
         return showKind;
     }
@@ -1193,13 +1193,13 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public boolean hasSharedRefs() {
-        return sharedRefs.size() > 0;
+    public boolean hasExplicitTimestamp() {
+        return timestamp != null && explicitTimestamp;
     }
 
     @Override
-    public boolean hasExplicitTimestamp() {
-        return timestamp != null && explicitTimestamp;
+    public boolean hasSharedRefs() {
+        return sharedRefs.size() > 0;
     }
 
     @Override
