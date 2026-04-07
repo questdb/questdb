@@ -177,6 +177,7 @@ public class QueryModel implements IQueryModel {
     private ExpressionNode sampleByUnit;
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
+    private int sharedRefByParentCount = 0;
     private int showKind = -1;
     private boolean skipped;
     private boolean standaloneUnnest;
@@ -487,6 +488,7 @@ public class QueryModel implements IQueryModel {
         correlatedDepths.clear();
         Misc.clearObjList(correlatedColumns);
         sharedRefs.clear();
+        sharedRefByParentCount = 0;
     }
 
     @Override
@@ -1032,6 +1034,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public int getSetOperationType() {
         return setOperationType;
+    }
+
+    @Override
+    public int getSharedRefCount() {
+        return sharedRefs.size() + sharedRefByParentCount;
     }
 
     @Override
@@ -1798,6 +1805,10 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setSetOperationType(int setOperationType) {
         this.setOperationType = setOperationType;
+    }
+
+    public void setSharedRefByParentCount(int sharedRefByParentCount) {
+        this.sharedRefByParentCount = sharedRefByParentCount;
     }
 
     @Override

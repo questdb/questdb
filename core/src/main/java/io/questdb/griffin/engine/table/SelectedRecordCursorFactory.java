@@ -148,6 +148,24 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (!crossedIndex) {
+            return base.getSharedCursor(executionContext, sharedId);
+        }
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        SelectedRecordCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            shared = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of(base.getSharedCursor(executionContext, sharedId));
+        return shared;
+    }
+
+    @Override
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
         if (baseCursor == null || !crossedIndex) {
@@ -199,34 +217,13 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public boolean supportsTimeFrameCursor() {
-        return base.supportsTimeFrameCursor();
-    }
-
-    @Override
-    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
-        if (!crossedIndex) {
-            return base.getSharedCursor(executionContext, sharedId);
-        }
-        if (sharedId == 0) {
-            return getCursor(executionContext);
-        }
-        if (sharedCursors == null) {
-            sharedCursors = new ObjList<>();
-        }
-        int idx = sharedId - 1;
-        SelectedRecordCursor shared = sharedCursors.getQuiet(idx);
-        if (shared == null) {
-            shared = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
-            sharedCursors.extendAndSet(idx, shared);
-        }
-        shared.of(base.getSharedCursor(executionContext, sharedId));
-        return shared;
-    }
-
-    @Override
     public boolean supportsSharedCursors() {
         return base.supportsSharedCursors();
+    }
+
+    @Override
+    public boolean supportsTimeFrameCursor() {
+        return base.supportsTimeFrameCursor();
     }
 
     @Override

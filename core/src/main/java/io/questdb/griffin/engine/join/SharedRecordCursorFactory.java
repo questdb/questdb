@@ -59,8 +59,7 @@ public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Shared");
-        sink.attr("sharedId").val(sharedId);
+        sink.type("(Shared)");
         sink.child(primaryFactory);
     }
 }

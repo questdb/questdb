@@ -39,11 +39,13 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Lightweight wrapper around a QueryModel that avoids deep-cloning and
- * owning complex member variables. Used by SharedRecordCursorFactory to
- * share a single QueryModel instance across multiple references.
- * The shareId identifies the shared group.
- * The optimizer skips wrapped models during optimization.
+ * Read-only, lightweight wrapper around a QueryModel that avoids deep-cloning
+ * and owning complex member variables. Used by SharedRecordCursorFactory to
+ * share a single QueryModel instance across multiple references. The shareId
+ * identifies the shared group. The optimizer skips wrapped models during
+ * optimization. Getter methods delegate to the underlying model; all mutation
+ * methods throw {@link UnsupportedOperationException} to prevent accidental
+ * modification of the shared delegate.
  */
 public class QueryModelWrapper implements IQueryModel {
     public static final WrapperFactory FACTORY = new WrapperFactory();
@@ -56,107 +58,107 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void addBottomUpColumn(QueryColumn column) throws SqlException {
-        delegate.addBottomUpColumn(column);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addBottomUpColumn(QueryColumn column, boolean allowDuplicates) throws SqlException {
-        delegate.addBottomUpColumn(column, allowDuplicates);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates) throws SqlException {
-        delegate.addBottomUpColumn(position, column, allowDuplicates);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates, CharSequence additionalMessage) throws SqlException {
-        delegate.addBottomUpColumn(position, column, allowDuplicates, additionalMessage);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addBottomUpColumnIfNotExists(QueryColumn column) {
-        delegate.addBottomUpColumnIfNotExists(column);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addDependency(int index) {
-        delegate.addDependency(index);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addExpressionModel(ExpressionNode node) {
-        delegate.addExpressionModel(node);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public boolean addField(QueryColumn column) {
-        return delegate.addField(column);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addGroupBy(ExpressionNode node) {
-        delegate.addGroupBy(node);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addHint(CharSequence key, CharSequence value) {
-        delegate.addHint(key, value);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addJoinColumn(ExpressionNode node) {
-        delegate.addJoinColumn(node);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addJoinModel(IQueryModel joinModel) {
-        delegate.addJoinModel(joinModel);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addLatestBy(ExpressionNode latestBy) {
-        delegate.addLatestBy(latestBy);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public boolean addModelAliasIndex(ExpressionNode node, int index) {
-        return delegate.addModelAliasIndex(node, index);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addOrderBy(ExpressionNode node, int direction) {
-        delegate.addOrderBy(node, direction);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addParsedWhereNode(ExpressionNode node, boolean innerPredicate) {
-        delegate.addParsedWhereNode(node, innerPredicate);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addPivotForColumn(PivotForColumn column) {
-        delegate.addPivotForColumn(column);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addPivotGroupByColumn(QueryColumn column) {
-        delegate.addPivotGroupByColumn(column);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addSampleByFill(ExpressionNode sampleByFill) {
-        delegate.addSampleByFill(sampleByFill);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addTopDownColumn(QueryColumn column, CharSequence alias) {
-        delegate.addTopDownColumn(column, alias);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void addUpdateTableColumnMetadata(int columnType, String columnName) {
-        delegate.addUpdateTableColumnMetadata(columnType, columnName);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -177,17 +179,17 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void clearColumnMapStructs() {
-        delegate.clearColumnMapStructs();
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void clearOrderBy() {
-        delegate.clearOrderBy();
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void clearSampleBy() {
-        delegate.clearSampleBy();
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -202,37 +204,37 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void copyBottomToTopColumns() {
-        delegate.copyBottomToTopColumns();
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void copyColumnsFrom(IQueryModel other, ObjectPool<QueryColumn> queryColumnPool, ObjectPool<ExpressionNode> expressionNodePool) {
-        delegate.copyColumnsFrom(other, queryColumnPool, expressionNodePool);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void copyDeclsFrom(IQueryModel model, boolean overrideDeclares) throws SqlException {
-        delegate.copyDeclsFrom(model, overrideDeclares);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException {
-        delegate.copyDeclsFrom(decls, overrideDeclares);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints) {
-        delegate.copyHints(hints);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {
-        delegate.copyOrderByAdvice(orderByAdvice);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void copyOrderByDirectionAdvice(IntList orderByDirection) {
-        delegate.copyOrderByDirectionAdvice(orderByDirection);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -242,7 +244,7 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void copyUpdateTableMetadata(IQueryModel updateTableModel) {
-        delegate.copyUpdateTableMetadata(updateTableModel);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -619,6 +621,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public int getSharedRefCount() {
+        return delegate.getSharedRefCount();
+    }
+
+    @Override
     public ObjList<QueryModelWrapper> getSharedRefs() {
         throw new UnsupportedOperationException();
     }
@@ -780,7 +787,7 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void incrementColumnRefCount(CharSequence alias, int refCount) {
-        delegate.incrementColumnRefCount(alias, refCount);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -885,42 +892,42 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void makeCorrelatedAtDepth(int depth, int flags) {
-        delegate.makeCorrelatedAtDepth(depth, flags);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void mergePartially(IQueryModel baseModel, ObjectPool<QueryColumn> queryColumnPool) {
-        delegate.mergePartially(baseModel, queryColumnPool);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void moveGroupByFrom(IQueryModel model) {
-        delegate.moveGroupByFrom(model);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void moveJoinAliasFrom(IQueryModel that) {
-        delegate.moveJoinAliasFrom(that);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void moveLimitFrom(IQueryModel baseModel) {
-        delegate.moveLimitFrom(baseModel);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void moveOrderByFrom(IQueryModel model) {
-        delegate.moveOrderByFrom(model);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void moveSampleByFrom(IQueryModel model) {
-        delegate.moveSampleByFrom(model);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public IntList nextOrderedJoinModels() {
-        return delegate.nextOrderedJoinModels();
+        throw new UnsupportedOperationException();
     }
 
     public QueryModelWrapper of(QueryModel delegate, int shareId) {
@@ -931,82 +938,82 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public ObjList<ExpressionNode> parseWhereClause() {
-        return delegate.parseWhereClause();
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void recordViews(LowerCaseCharSequenceObjHashMap<ViewDefinition> viewDefinitions) {
-        delegate.recordViews(viewDefinitions);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void recordViews(ObjList<ViewDefinition> viewDefinitions) {
-        delegate.recordViews(viewDefinitions);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void removeColumn(int columnIndex) {
-        delegate.removeColumn(columnIndex);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void removeDependency(int index) {
-        delegate.removeDependency(index);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void replaceColumn(int columnIndex, QueryColumn newColumn) {
-        delegate.replaceColumn(columnIndex, newColumn);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void replaceColumnNameMap(CharSequence alias, CharSequence oldToken, CharSequence newToken) {
-        delegate.replaceColumnNameMap(alias, oldToken, newToken);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void replaceJoinModel(int pos, IQueryModel model) {
-        delegate.replaceJoinModel(pos, model);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setAlias(ExpressionNode alias) {
-        delegate.setAlias(alias);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setAllowPropagationOfOrderByAdvice(boolean value) {
-        delegate.setAllowPropagationOfOrderByAdvice(value);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setArtificialStar(boolean artificialStar) {
-        delegate.setArtificialStar(artificialStar);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setAsOfJoinTolerance(ExpressionNode asOfJoinTolerance) {
-        delegate.setAsOfJoinTolerance(asOfJoinTolerance);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setBackupWhereClause(ExpressionNode backupWhereClause) {
-        delegate.setBackupWhereClause(backupWhereClause);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setCacheable(boolean b) {
-        delegate.setCacheable(b);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setConstWhereClause(ExpressionNode constWhereClause) {
-        delegate.setConstWhereClause(constWhereClause);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setContext(JoinContext context) {
-        delegate.setContext(context);
+        throw new UnsupportedOperationException();
     }
 
     public void setDelegate(QueryModel delegate) {
@@ -1015,272 +1022,272 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setDistinct(boolean distinct) {
-        delegate.setDistinct(distinct);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
-        delegate.setExplicitTimestamp(explicitTimestamp);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setFillFrom(ExpressionNode fillFrom) {
-        delegate.setFillFrom(fillFrom);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setFillStride(ExpressionNode fillStride) {
-        delegate.setFillStride(fillStride);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setFillTo(ExpressionNode fillTo) {
-        delegate.setFillTo(fillTo);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setFillValues(ObjList<ExpressionNode> fillValues) {
-        delegate.setFillValues(fillValues);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setForceBackwardScan(boolean forceBackwardScan) {
-        delegate.setForceBackwardScan(forceBackwardScan);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setIsCteModel(boolean isCteModel) {
-        delegate.setIsCteModel(isCteModel);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setIsUpdate(boolean isUpdate) {
-        delegate.setIsUpdate(isUpdate);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setJoinCriteria(ExpressionNode joinCriteria) {
-        delegate.setJoinCriteria(joinCriteria);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setJoinKeywordPosition(int position) {
-        delegate.setJoinKeywordPosition(position);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setJoinType(int joinType) {
-        delegate.setJoinType(joinType);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setLatestByType(int latestByType) {
-        delegate.setLatestByType(latestByType);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setLimit(ExpressionNode lo, ExpressionNode hi) {
-        delegate.setLimit(lo, hi);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setLimitAdvice(ExpressionNode lo, ExpressionNode hi) {
-        delegate.setLimitAdvice(lo, hi);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setLimitPosition(int limitPosition) {
-        delegate.setLimitPosition(limitPosition);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setMetadataVersion(long metadataVersion) {
-        delegate.setMetadataVersion(metadataVersion);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setModelPosition(int modelPosition) {
-        delegate.setModelPosition(modelPosition);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setModelType(int modelType) {
-        delegate.setModelType(modelType);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setNestedModel(IQueryModel nestedModel) {
-        delegate.setNestedModel(nestedModel);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery) {
-        delegate.setNestedModelIsSubQuery(nestedModelIsSubQuery);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setOrderByAdviceMnemonic(int orderByAdviceMnemonic) {
-        delegate.setOrderByAdviceMnemonic(orderByAdviceMnemonic);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setOrderByPosition(int orderByPosition) {
-        delegate.setOrderByPosition(orderByPosition);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setOrderDescendingByDesignatedTimestampOnly(boolean orderDescendingByDesignatedTimestampOnly) {
-        delegate.setOrderDescendingByDesignatedTimestampOnly(orderDescendingByDesignatedTimestampOnly);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setOrderedJoinModels(IntList that) {
-        delegate.setOrderedJoinModels(that);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setOriginatingViewNameExpr(ExpressionNode originatingViewNameExpr) {
-        delegate.setOriginatingViewNameExpr(originatingViewNameExpr);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
-        delegate.setOuterJoinExpressionClause(outerJoinExpressionClause);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setPivotGroupByColumnHasNoAlias(boolean pivotGroupByColumnHasNoAlias) {
-        delegate.setPivotGroupByColumnHasNoAlias(pivotGroupByColumnHasNoAlias);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setPostJoinWhereClause(ExpressionNode postJoinWhereClause) {
-        delegate.setPostJoinWhereClause(postJoinWhereClause);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSampleBy(ExpressionNode sampleBy) {
-        delegate.setSampleBy(sampleBy);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
-        delegate.setSampleBy(sampleBy, sampleByUnit);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSampleByFromTo(ExpressionNode from, ExpressionNode to) {
-        delegate.setSampleByFromTo(from, to);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSampleByOffset(ExpressionNode sampleByOffset) {
-        delegate.setSampleByOffset(sampleByOffset);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
-        delegate.setSampleByTimezoneName(sampleByTimezoneName);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSelectModelType(int selectModelType) {
-        delegate.setSelectModelType(selectModelType);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSelectTranslation(boolean isSelectTranslation) {
-        delegate.setSelectTranslation(isSelectTranslation);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSetOperationType(int setOperationType) {
-        delegate.setSetOperationType(setOperationType);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setShowKind(int showKind) {
-        delegate.setShowKind(showKind);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setSkipped(boolean skipped) {
-        delegate.setSkipped(skipped);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setStandaloneUnnest(boolean standaloneUnnest) {
-        delegate.setStandaloneUnnest(standaloneUnnest);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setTableId(int id) {
-        delegate.setTableId(id);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setTableNameExpr(ExpressionNode tableNameExpr) {
-        delegate.setTableNameExpr(tableNameExpr);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setTableNameFunction(RecordCursorFactory function) {
-        delegate.setTableNameFunction(function);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setTimestamp(ExpressionNode timestamp) {
-        delegate.setTimestamp(timestamp);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setTimestampColumnIndex(int index) {
-        delegate.setTimestampColumnIndex(index);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setTimestampOffsetAlias(CharSequence alias) {
-        delegate.setTimestampOffsetAlias(alias);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setTimestampOffsetUnit(char unit) {
-        delegate.setTimestampOffsetUnit(unit);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setTimestampOffsetValue(int value) {
-        delegate.setTimestampOffsetValue(value);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setTimestampSourceColumn(CharSequence col) {
-        delegate.setTimestampSourceColumn(col);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setUnionModel(IQueryModel unionModel) {
-        delegate.setUnionModel(unionModel);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setUnnestOrdinality(boolean unnestOrdinality) {
-        delegate.setUnnestOrdinality(unnestOrdinality);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setUpdateTableToken(TableToken tableName) {
-        delegate.setUpdateTableToken(tableName);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setViewNameExpr(ExpressionNode viewNameExpr) {
-        delegate.setViewNameExpr(viewNameExpr);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void setWhereClause(ExpressionNode whereClause) {
-        delegate.setWhereClause(whereClause);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -1315,7 +1322,7 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void updateColumnAliasIndexes() {
-        delegate.updateColumnAliasIndexes();
+        throw new UnsupportedOperationException();
     }
 
     @Override

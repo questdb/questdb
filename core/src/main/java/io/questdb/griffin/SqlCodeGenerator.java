@@ -6684,12 +6684,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
-            RecordCursorFactory cached = sharedFactoryCache.get(qm);
-            if (cached != null) {
-                return cached;
-            }
             RecordCursorFactory factory = generateQuery0Inner(model, executionContext, processJoins);
-            sharedFactoryCache.put(qm, factory);
+            if (factory.supportsSharedCursors()) {
+                sharedFactoryCache.put(qm, factory);
+            }
             return factory;
         }
 
@@ -7242,6 +7240,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (overrideTimestampRequired) {
                 executionContext.pushTimestampRequiredFlag(false);
             }
+            if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
+                IQueryModel nested = qm.getNestedModel();
+                if (nested instanceof QueryModel nestedQm) {
+                    nestedQm.setSharedRefByParentCount(model.getSharedRefs().size());
+                }
+            }
             factory = generateSubQuery(model, executionContext);
         } finally {
             if (overrideTimestampRequired) {
@@ -7678,8 +7682,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
             ObjList<ObjList<Function>> sharedOuterProjectionFunctions = null;
-            if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
-                final int dependentsCount = qm.getSharedRefs().size();
+            if (model instanceof QueryModel qm && qm.getSharedRefCount() > 0) {
+                final int dependentsCount = qm.getSharedRefCount();
                 sharedOuterProjectionFunctions = new ObjList<>(dependentsCount);
                 for (int d = 0; d < dependentsCount; d++) {
                     sharedOuterProjectionFunctions.add(new ObjList<>());

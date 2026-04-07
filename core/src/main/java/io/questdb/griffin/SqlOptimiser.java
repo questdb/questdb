@@ -4935,16 +4935,18 @@ public class SqlOptimiser implements Mutable {
 
                     // Detect if the parent's timestamp column is derived from a dateadd expression
                     // on the nested model's timestamp. This enables timestamp predicate pushdown with offset.
-                    if (nested != null && !parent.hasTimestampOffset()) {
+                    if (nested != null && nested.supportOptimise() && !parent.hasTimestampOffset()) {
                         detectTimestampOffset(parent, nested);
                     }
 
-                    if (nested != null && nested.getUnionModel() != null) {
+                    if (nested != null && nested.supportOptimise() && !nested.hasSharedRefs() && nested.getUnionModel() != null) {
                         // try pushing into each union branch; keep at parent only if some branch wasn't covered
                         if (!tryPushFilterIntoSetOperationBranches(node, parent, nested)) {
                             addWhereNode(parent, node);
                         }
                     } else if (nested == null
+                            || !nested.supportOptimise()
+                            || nested.hasSharedRefs()
                             || nested.getLatestBy().size() > 0
                             || nested.getLimitLo() != null
                             || nested.getLimitHi() != null
@@ -5814,6 +5816,10 @@ public class SqlOptimiser implements Mutable {
      * It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
      */
     private void propagateTopDownColumns0(IQueryModel model, boolean topLevel, @Nullable IQueryModel papaModel, boolean allowColumnsChange) {
+        if (!model.supportOptimise()) {
+            return;
+        }
+
         // copy columns to 'protect' column list that shouldn't be modified
         if (!allowColumnsChange && model.getBottomUpColumns().size() > 0) {
             model.copyBottomToTopColumns();

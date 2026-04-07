@@ -74,11 +74,72 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     (25.0, 0.2, '2024-01-01T00:00:01.000000Z')
                     """);
 
-            assertQueryNoLeakCheck(
+            assertQueryAndPlan(
                     """
                             category\tregion\ttotal\trate
                             A\tUS\t30.0\t0.1
                             A\tUS\t30.0\t0.2
+                            """,
+                    enableParallelGroupBy ? """
+                            Encode sort
+                              keys: [category, region, rate]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: sub.__qdb_outer_ref__0_total=o.total
+                                        Async Group By workers: 1
+                                          keys: [category,region]
+                                          values: [sum(amount)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: orders
+                                        Hash
+                                            SelectedRecord
+                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_total>=rates.min_amount
+                                                    Cross Join
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: rates
+                                                        GroupBy vectorized: false
+                                                          keys: [__qdb_outer_ref__0_total]
+                                                            SelectedRecord
+                                                                (Shared)
+                                                                    Async Group By workers: 1
+                                                                      keys: [category,region]
+                                                                      values: [sum(amount)]
+                                                                      filter: null
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: orders
+                            """ : """
+                            Encode sort
+                              keys: [category, region, rate]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: sub.__qdb_outer_ref__0_total=o.total
+                                        GroupBy vectorized: false
+                                          keys: [category,region]
+                                          values: [sum(amount)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: orders
+                                        Hash
+                                            SelectedRecord
+                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_total>=rates.min_amount
+                                                    Cross Join
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: rates
+                                                        GroupBy vectorized: false
+                                                          keys: [__qdb_outer_ref__0_total]
+                                                            SelectedRecord
+                                                                (Shared)
+                                                                    GroupBy vectorized: false
+                                                                      keys: [category,region]
+                                                                      values: [sum(amount)]
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: orders
                             """,
                     """
                             SELECT o.category, o.region, o.total, sub.rate
@@ -91,6 +152,55 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                 SELECT rate FROM rates WHERE min_amount <= o.total
                             ) sub
                             ORDER BY o.category, o.region, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testAsyncKeyedGroupByOuterSharded() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, "1");
+            execute("CREATE TABLE orders (id INT, region SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            StringBuilder sb = new StringBuilder("INSERT INTO orders VALUES ");
+            for (int hour = 0; hour < 4; hour++) {
+                for (int i = 0; i < 50; i++) {
+                    if (hour > 0 || i > 0) {
+                        sb.append(',');
+                    }
+                    sb.append("(").append(i).append(", 'R").append(i % 5).append("', ")
+                            .append(i * 10.0).append(", '2024-01-01T0").append(hour)
+                            .append(":00:0").append(i % 10).append(".000000Z')");
+                }
+            }
+            execute(sb.toString());
+            execute("""
+                    INSERT INTO rates VALUES
+                    (1000.0, 0.1, '2024-01-01T00:00:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            id	region	total	rate
+                            48	R3	1920.0	0.1
+                            49	R4	1960.0	0.1
+                            """,
+                    """
+                            SELECT o.id, o.region, o.total, sub.rate
+                            FROM (
+                                SELECT id, region, sum(amount) AS total
+                                FROM orders
+                                GROUP BY id, region
+                            ) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            WHERE o.total > 1900
+                            ORDER BY o.id
                             """,
                     null, true, true
             );
@@ -206,6 +316,33 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedGroupByOuterEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category\ttotal\trate
+                            """,
+                    """
+                            SELECT o.category, o.total, sub.rate
+                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testKeyedGroupByOuterLeftJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -238,6 +375,42 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             ORDER BY o.category, sub.rate
                             """,
                     null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testKeyedGroupByOuterNullAggregatedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', null, '2024-01-01T01:00:00.000000Z'),
+                    ('B', null, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (0.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (5.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category\ttotal\trate
+                            A\t10.0\t0.1
+                            A\t10.0\t0.2
+                            """,
+                    """
+                            SELECT o.category, o.total, sub.rate
+                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
             );
         });
     }
@@ -278,6 +451,48 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                 SELECT rate FROM rates WHERE min_len <= length(o.items)
                             ) sub
                             ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleLateralJoinsSharingOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (min_amount DOUBLE, discount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 20.0, '2024-01-01T01:00:00.000000Z'),
+                    ('B',  5.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO discounts VALUES
+                    (10.0, 0.05, '2024-01-01T00:00:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category\ttotal\trate\tdiscount
+                            A\t30.0\t0.1\t0.05
+                            """,
+                    """
+                            SELECT o.category, o.total, r.rate, d.discount
+                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) r
+                            JOIN LATERAL (
+                                SELECT discount FROM discounts WHERE min_amount <= o.total
+                            ) d
+                            ORDER BY o.category
                             """,
                     null, true, true
             );
@@ -465,6 +680,59 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedCursorCrossedColumnOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 20.0, '2024-01-01T01:00:00.000000Z'),
+                    ('B',  5.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (25.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            total\tcategory\trate
+                            30.0\tA\t0.1
+                            30.0\tA\t0.2
+                            """,
+                    """
+                            SELECT o.total, o.category, sub.rate
+                            FROM (select total,category  from (SELECT category, sum(amount) AS total FROM orders GROUP BY category)) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            total\tcategory\trate
+                            30.0\tA\t0.1
+                            30.0\tA\t0.2
+                            """,
+                    """
+                            SELECT o.total, o.category, sub.rate
+                            FROM (select total, category, category as category1  from (SELECT category, sum(amount) AS total FROM orders GROUP BY category)) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testSharedCursorLongTopK() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (category SYMBOL, id LONG, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -548,6 +816,103 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedCursorUnordered8Map() throws Exception {
+        Assume.assumeFalse(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id LONG, item STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 'apple', '2024-01-01T00:00:00.000000Z'),
+                    (1, 'avocado', '2024-01-01T01:00:00.000000Z'),
+                    (2, 'banana', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (5, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (10, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            String query = """
+                    SELECT o.id, o.items, sub.rate
+                    FROM (
+                        SELECT id, string_agg(item, ',') AS items
+                        FROM orders
+                        GROUP BY id
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_len <= length(o.items)
+                    ) sub
+                    ORDER BY o.id, sub.rate
+                    """;
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\titems\trate
+                            1\tapple,avocado\t0.1
+                            1\tapple,avocado\t0.2
+                            2\tbanana\t0.1
+                            """,
+                    query, null, true, true
+            );
+
+            execute("INSERT INTO orders VALUES (0, 'cherry', '2024-01-01T03:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            id\titems\trate
+                            0\tcherry\t0.1
+                            1\tapple,avocado\t0.1
+                            1\tapple,avocado\t0.2
+                            2\tbanana\t0.1
+                            """,
+                    query, null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testSharedCursorUnorderedVarcharMap() throws Exception {
+        Assume.assumeFalse(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (name VARCHAR, item STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('alice', 'apple', '2024-01-01T00:00:00.000000Z'),
+                    ('alice', 'avocado', '2024-01-01T01:00:00.000000Z'),
+                    ('bob', 'banana', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (5, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (10, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            name\titems\trate
+                            alice\tapple,avocado\t0.1
+                            alice\tapple,avocado\t0.2
+                            bob\tbanana\t0.1
+                            """,
+                    """
+                            SELECT o.name, o.items, sub.rate
+                            FROM (
+                                SELECT name, string_agg(item, ',') AS items
+                                FROM orders
+                                GROUP BY name
+                            ) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_len <= length(o.items)
+                            ) sub
+                            ORDER BY o.name, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testSharedStringAggVarchar() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
@@ -575,111 +940,6 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             ) sub
                             """,
                     null, false, true
-            );
-        });
-    }
-
-    @Test
-    public void testKeyedGroupByOuterEmptyTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO rates VALUES
-                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z')
-                    """);
-
-            assertQueryNoLeakCheck(
-                    """
-                            category\ttotal\trate
-                            """,
-                    """
-                            SELECT o.category, o.total, sub.rate
-                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """,
-                    null, true, true
-            );
-        });
-    }
-
-    @Test
-    public void testKeyedGroupByOuterNullAggregatedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
-                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
-                    ('A', null, '2024-01-01T01:00:00.000000Z'),
-                    ('B', null, '2024-01-01T02:00:00.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO rates VALUES
-                    (0.0, 0.1, '2024-01-01T00:00:00.000000Z'),
-                    (5.0, 0.2, '2024-01-01T00:00:01.000000Z')
-                    """);
-
-            assertQueryNoLeakCheck(
-                    """
-                            category\ttotal\trate
-                            A\t10.0\t0.1
-                            A\t10.0\t0.2
-                            """,
-                    """
-                            SELECT o.category, o.total, sub.rate
-                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) sub
-                            ORDER BY o.category, sub.rate
-                            """,
-                    null, true, true
-            );
-        });
-    }
-
-    @Test
-    public void testMultipleLateralJoinsSharingOuter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE discounts (min_amount DOUBLE, discount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
-                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
-                    ('A', 20.0, '2024-01-01T01:00:00.000000Z'),
-                    ('B',  5.0, '2024-01-01T02:00:00.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO rates VALUES
-                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO discounts VALUES
-                    (10.0, 0.05, '2024-01-01T00:00:00.000000Z')
-                    """);
-
-            assertQueryNoLeakCheck(
-                    """
-                            category\ttotal\trate\tdiscount
-                            A\t30.0\t0.1\t0.05
-                            """,
-                    """
-                            SELECT o.category, o.total, r.rate, d.discount
-                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_amount <= o.total
-                            ) r
-                            JOIN LATERAL (
-                                SELECT discount FROM discounts WHERE min_amount <= o.total
-                            ) d
-                            ORDER BY o.category
-                            """,
-                    null, true, true
             );
         });
     }

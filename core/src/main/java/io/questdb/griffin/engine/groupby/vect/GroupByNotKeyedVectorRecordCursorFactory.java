@@ -135,9 +135,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
     @Override
     public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
-        if (sharedId == 0) {
-            return getCursor(executionContext);
-        }
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
@@ -259,13 +256,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             buildFunctionsConditionally();
             isExhausted = true;
             return true;
-        }
-
-        void buildFunctionsConditionally() {
-            if (!areFunctionsBuilt) {
-                buildFunctions();
-                areFunctionsBuilt = true;
-            }
         }
 
         public GroupByNotKeyedVectorRecordCursor of(
@@ -426,6 +416,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                     .$(", reclaimed=").$(reclaimed)
                     .$(", queuedCount=").$(queuedCount)
                     .I$();
+        }
+
+        void buildFunctionsConditionally() {
+            if (!areFunctionsBuilt) {
+                buildFunctions();
+                areFunctionsBuilt = true;
+            }
         }
     }
 

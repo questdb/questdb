@@ -319,6 +319,8 @@ public class GroupByUtils {
                     // override function with column ref function
                     outerProjectionFunctions.set(i, columnRefFunc);
 
+                    // Currently unreachable: VirtualRecordCursorFactory does not support shared cursors currently.
+                    // This code becomes reachable if VirtualRecordCursorFactory gains supportsSharedCursors() support in the future.
                     if (extraOuterProjectionFunctions != null) {
                         for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
                             Function extraRef = createColumnFunction(null, functionKeyColumnIndex, func.getType(), -1);

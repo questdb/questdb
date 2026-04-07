@@ -107,7 +107,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
      */
     static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final IQueryModel model) {
         IQueryModel current = model;
-        while (current != null) {
+        while (current != null && current.supportOptimise()) {
             if (current.getUnionModel() != null) {
                 backupWhereClause(pool, current.getUnionModel());
             }
@@ -156,7 +156,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
      */
     static void restoreWhereClause(final ObjectPool<ExpressionNode> pool, final IQueryModel model) {
         IQueryModel current = model;
-        while (current != null) {
+        while (current != null && current.supportOptimise()) {
             if (current.getUnionModel() != null) {
                 restoreWhereClause(pool, current.getUnionModel());
             }
@@ -391,6 +391,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int getSelectModelType();
 
     int getSetOperationType();
+
+    int getSharedRefCount();
 
     ObjList<QueryModelWrapper> getSharedRefs();
 
