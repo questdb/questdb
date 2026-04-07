@@ -1974,6 +1974,61 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyStringInlinedTreatedAsNull() throws Exception {
+        // Defensive coverage for the var-size branch in CopyExportRequestTask.writePageFrame.
+        // ColumnType.isVarSize() also matches STRING, so this test ensures the var-size
+        // branch does not break STRING export when the column contains a mix of NULL and
+        // non-NULL values. STRING always writes a 4-byte length prefix per row to .d (even
+        // for NULLs), so STRING never has an empty .d the way an all-inlined VARCHAR does;
+        // this test still exercises the new branch end-to-end.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE str_inl (
+                        ts TIMESTAMP,
+                        id INT,
+                        s STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            execute("""
+                    INSERT INTO str_inl VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 'alpha'),
+                        ('2024-01-01T01:00:00.000000Z', 2, NULL),
+                        ('2024-01-01T02:00:00.000000Z', 3, 'bravo'),
+                        ('2024-01-01T03:00:00.000000Z', 4, 'longer string than nine bytes')""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM str_inl) TO 'str_inl_out' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "str_inl_out.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        ts\tid\ts
+                                        2024-01-01T00:00:00.000000Z\t1\talpha
+                                        2024-01-01T01:00:00.000000Z\t2\t
+                                        2024-01-01T02:00:00.000000Z\t3\tbravo
+                                        2024-01-01T03:00:00.000000Z\t4\tlonger string than nine bytes
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "str_inl_out.parquet') ORDER BY ts"
+                        );
+                        // Verify the NULL row is actually NULL, not an empty string.
+                        assertSql("count\n1\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "str_inl_out.parquet') WHERE s IS NULL"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyTableToParquetBasicSyntax() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test_table (x int, y long, z string)");
@@ -2066,6 +2121,118 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyVarcharInlinedHybridMaterializer() throws Exception {
+        // Regression: HybridColumnMaterializer.buildColumnDataFromPageFrame had the same
+        // pageAddress==0 bug as CopyExportRequestTask.writePageFrame for inlined VARCHAR
+        // pass-through columns. Adding a computed column to the SELECT introduces a
+        // VirtualRecordCursorFactory and routes COPY through the PAGE_FRAME_BACKED hybrid
+        // materializer; vc is the inlined-VARCHAR pass-through column under test.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_hyb (
+                        ts TIMESTAMP,
+                        id INT,
+                        vc VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            // All values <=9 bytes -> inlined in aux entries -> .d file empty.
+            execute("""
+                    INSERT INTO vc_hyb VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 'alpha'),
+                        ('2024-01-01T01:00:00.000000Z', 2, 'bravo'),
+                        ('2024-01-01T02:00:00.000000Z', 3, 'charlie')""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT ts, id + 10 AS id_plus, vc FROM vc_hyb) TO 'vc_hyb_out' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_hyb_out.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        ts\tid_plus\tvc
+                                        2024-01-01T00:00:00.000000Z\t11\talpha
+                                        2024-01-01T01:00:00.000000Z\t12\tbravo
+                                        2024-01-01T02:00:00.000000Z\t13\tcharlie
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_hyb_out.parquet') ORDER BY ts"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyVarcharInlinedMultiPartition() throws Exception {
+        // Regression: each partition has its own page-frame and aux-page address.
+        // Verifies that the inlined-VARCHAR colTop fix holds across multiple partitions
+        // emitted as separate parquet files.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_mp (
+                        ts TIMESTAMP,
+                        id INT,
+                        vc VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            // 6 rows across 3 partitions, all values <=9 bytes -> inlined.
+            execute("""
+                    INSERT INTO vc_mp VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 'alpha'),
+                        ('2024-01-01T12:00:00.000000Z', 2, 'bravo'),
+                        ('2024-01-02T00:00:00.000000Z', 3, 'charlie'),
+                        ('2024-01-02T12:00:00.000000Z', 4, 'delta'),
+                        ('2024-01-03T00:00:00.000000Z', 5, 'echo'),
+                        ('2024-01-03T12:00:00.000000Z', 6, 'foxtrot')""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY vc_mp TO 'vc_mp_out' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_mp_out" + File.separator + "\t3\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        ts\tid\tvc
+                                        2024-01-01T00:00:00.000000Z\t1\talpha
+                                        2024-01-01T12:00:00.000000Z\t2\tbravo
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mp_out" + File.separator + "2024-01-01.parquet') ORDER BY ts"
+                        );
+                        assertSql("""
+                                        ts\tid\tvc
+                                        2024-01-02T00:00:00.000000Z\t3\tcharlie
+                                        2024-01-02T12:00:00.000000Z\t4\tdelta
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mp_out" + File.separator + "2024-01-02.parquet') ORDER BY ts"
+                        );
+                        assertSql("""
+                                        ts\tid\tvc
+                                        2024-01-03T00:00:00.000000Z\t5\techo
+                                        2024-01-03T12:00:00.000000Z\t6\tfoxtrot
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mp_out" + File.separator + "2024-01-03.parquet') ORDER BY ts"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyVarcharInlinedTreatedAsNull() throws Exception {
         // Regression: CopyExportRequestTask.writePageFrame used pageAddress==0 to detect a
         // column-top (all-null column). For VARCHAR, short strings (<=9 bytes) are stored
@@ -2106,6 +2273,113 @@ public class CopyExportTest extends AbstractCairoTest {
                                         2024-01-01T02:00:00.000000Z\t3\tcharlie
                                         """,
                                 "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_inl_out.parquet') ORDER BY ts"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyVarcharInlinedWithNulls() throws Exception {
+        // Verifies the new aux-address colTop detector still reports actual NULLs as
+        // NULL while preserving inlined non-NULL rows in the same column. The .d file
+        // remains empty (every present value is <=9 bytes); only the aux entries
+        // distinguish NULL from non-NULL.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_inl_nulls (
+                        ts TIMESTAMP,
+                        id INT,
+                        vc VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            execute("""
+                    INSERT INTO vc_inl_nulls VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 'alpha'),
+                        ('2024-01-01T01:00:00.000000Z', 2, NULL),
+                        ('2024-01-01T02:00:00.000000Z', 3, 'bravo'),
+                        ('2024-01-01T03:00:00.000000Z', 4, NULL),
+                        ('2024-01-01T04:00:00.000000Z', 5, 'charlie')""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM vc_inl_nulls) TO 'vc_inl_nulls_out' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_inl_nulls_out.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        ts\tid\tvc
+                                        2024-01-01T00:00:00.000000Z\t1\talpha
+                                        2024-01-01T01:00:00.000000Z\t2\t
+                                        2024-01-01T02:00:00.000000Z\t3\tbravo
+                                        2024-01-01T03:00:00.000000Z\t4\t
+                                        2024-01-01T04:00:00.000000Z\t5\tcharlie
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_inl_nulls_out.parquet') ORDER BY ts"
+                        );
+                        // The two NULL rows must be encoded as NULL, not as empty strings.
+                        assertSql("count\n2\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "vc_inl_nulls_out.parquet') WHERE vc IS NULL"
+                        );
+                        assertSql("count\n3\n",
+                                "SELECT count(*) FROM read_parquet('" + exportRoot + File.separator + "vc_inl_nulls_out.parquet') WHERE vc IS NOT NULL"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyVarcharMixedInlinedAndSpilled() throws Exception {
+        // Mixed VARCHAR column: some values <=9 bytes (inlined in aux) and some >9 bytes
+        // (spilled to .d). Both data and aux addresses are non-zero, so the colTop heuristic
+        // must not flip rows to NULL regardless of which branch is taken. Guards against any
+        // future regression that swaps the var-size detector back to the data-page address.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_mixed (
+                        ts TIMESTAMP,
+                        id INT,
+                        vc VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            execute("""
+                    INSERT INTO vc_mixed VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 'short'),
+                        ('2024-01-01T01:00:00.000000Z', 2, 'this is definitely longer than nine bytes'),
+                        ('2024-01-01T02:00:00.000000Z', 3, 'tiny'),
+                        ('2024-01-01T03:00:00.000000Z', 4, 'another spilled value bigger than nine bytes')""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM vc_mixed) TO 'vc_mixed_out' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_mixed_out.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        ts\tid\tvc
+                                        2024-01-01T00:00:00.000000Z\t1\tshort
+                                        2024-01-01T01:00:00.000000Z\t2\tthis is definitely longer than nine bytes
+                                        2024-01-01T02:00:00.000000Z\t3\ttiny
+                                        2024-01-01T03:00:00.000000Z\t4\tanother spilled value bigger than nine bytes
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_mixed_out.parquet') ORDER BY ts"
                         );
                     });
 

@@ -413,14 +413,19 @@ impl ParquetDecoder {
             decompress_buffer,
             dict_decompress_buffer,
             varchar_slice_buf_pool,
+            varchar_slice_page_bufs_scratch: varchar_slice_page_bufs,
+            varchar_slice_dict_bufs_scratch: varchar_slice_dict_bufs,
             ..
         } = ctx;
 
         varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
         column_chunk_bufs.reset();
 
-        let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
-        let mut varchar_slice_dict_bufs: Vec<Vec<u8>> = Vec::new();
+        // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
+        // allocation per column chunk. Clear at the top in case a prior call returned
+        // early (the normal end-of-chunk path drains both via append).
+        varchar_slice_page_bufs.clear();
+        varchar_slice_dict_bufs.clear();
 
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
@@ -430,7 +435,7 @@ impl ParquetDecoder {
                     let page = if is_varchar_slice {
                         decompress_varchar_slice_dict(
                             dict_page,
-                            &mut varchar_slice_dict_bufs,
+                            varchar_slice_dict_bufs,
                             varchar_slice_buf_pool,
                         )?
                     } else {
@@ -470,7 +475,7 @@ impl ParquetDecoder {
                                 decompress_varchar_slice_data(
                                     &page,
                                     decompress_buffer,
-                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_page_bufs,
                                     varchar_slice_buf_pool,
                                 )?
                             } else {
@@ -504,7 +509,7 @@ impl ParquetDecoder {
                                 decompress_varchar_slice_data(
                                     &page,
                                     decompress_buffer,
-                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_page_bufs,
                                     varchar_slice_buf_pool,
                                 )?
                             } else {
@@ -544,7 +549,7 @@ impl ParquetDecoder {
                             decompress_varchar_slice_data(
                                 &page,
                                 decompress_buffer,
-                                &mut varchar_slice_page_bufs,
+                                varchar_slice_page_bufs,
                                 varchar_slice_buf_pool,
                             )?
                         } else {
@@ -634,8 +639,10 @@ impl ParquetDecoder {
             }
             // Move dict buffers in too — aux entries from RleDictVarcharSliceDecoder hold raw
             // pointers into them and require them to outlive the column chunk decode.
-            varchar_slice_page_bufs.append(&mut varchar_slice_dict_bufs);
-            column_chunk_bufs.page_buffers = varchar_slice_page_bufs;
+            varchar_slice_page_bufs.append(varchar_slice_dict_bufs);
+            // Drain into the destination instead of replacing it: this preserves the hoisted
+            // outer-vec capacity in the scratch field for the next column chunk.
+            column_chunk_bufs.page_buffers.append(varchar_slice_page_bufs);
         }
 
         column_chunk_bufs.refresh_ptrs();
@@ -684,14 +691,19 @@ impl ParquetDecoder {
             decompress_buffer,
             dict_decompress_buffer,
             varchar_slice_buf_pool,
+            varchar_slice_page_bufs_scratch: varchar_slice_page_bufs,
+            varchar_slice_dict_bufs_scratch: varchar_slice_dict_bufs,
             ..
         } = ctx;
 
         varchar_slice_buf_pool.append(&mut column_chunk_bufs.page_buffers);
         column_chunk_bufs.reset();
 
-        let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
-        let mut varchar_slice_dict_bufs: Vec<Vec<u8>> = Vec::new();
+        // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
+        // allocation per column chunk. Clear at the top in case a prior call returned
+        // early (the normal end-of-chunk path drains both via append).
+        varchar_slice_page_bufs.clear();
+        varchar_slice_dict_bufs.clear();
 
         for maybe_page in page_reader {
             let sliced_page = maybe_page?;
@@ -701,7 +713,7 @@ impl ParquetDecoder {
                     let page = if is_varchar_slice {
                         decompress_varchar_slice_dict(
                             dict_page,
-                            &mut varchar_slice_dict_bufs,
+                            varchar_slice_dict_bufs,
                             varchar_slice_buf_pool,
                         )?
                     } else {
@@ -718,7 +730,7 @@ impl ParquetDecoder {
                                 decompress_varchar_slice_data(
                                     &page,
                                     decompress_buffer,
-                                    &mut varchar_slice_page_bufs,
+                                    varchar_slice_page_bufs,
                                     varchar_slice_buf_pool,
                                 )?
                             } else {
@@ -750,7 +762,7 @@ impl ParquetDecoder {
                             decompress_varchar_slice_data(
                                 &page,
                                 decompress_buffer,
-                                &mut varchar_slice_page_bufs,
+                                varchar_slice_page_bufs,
                                 varchar_slice_buf_pool,
                             )?
                         } else {
@@ -791,8 +803,10 @@ impl ParquetDecoder {
             }
             // Move dict buffers in too — aux entries from RleDictVarcharSliceDecoder hold raw
             // pointers into them and require them to outlive the column chunk decode.
-            varchar_slice_page_bufs.append(&mut varchar_slice_dict_bufs);
-            column_chunk_bufs.page_buffers = varchar_slice_page_bufs;
+            varchar_slice_page_bufs.append(varchar_slice_dict_bufs);
+            // Drain into the destination instead of replacing it: this preserves the hoisted
+            // outer-vec capacity in the scratch field for the next column chunk.
+            column_chunk_bufs.page_buffers.append(varchar_slice_page_bufs);
         }
 
         column_chunk_bufs.refresh_ptrs();
