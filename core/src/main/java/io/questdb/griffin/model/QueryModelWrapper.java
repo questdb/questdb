@@ -39,9 +39,10 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Lightweight wrapper around a QueryModel that avoids deep-cloning.
- * Used by SharedRecordCursorFactory to share a single QueryModel instance
- * across multiple references. The shareId identifies the shared group.
+ * Lightweight wrapper around a QueryModel that avoids deep-cloning and
+ * owning complex member variables. Used by SharedRecordCursorFactory to
+ * share a single QueryModel instance across multiple references.
+ * The shareId identifies the shared group.
  * The optimizer skips wrapped models during optimization.
  */
 public class QueryModelWrapper implements IQueryModel {
@@ -180,7 +181,7 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void clearDependents() {
+    public void clearSharedRefs() {
         throw new UnsupportedOperationException();
     }
 
@@ -220,7 +221,7 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void copyDependents(IQueryModel model) {
+    public void copySharedRefs(IQueryModel model) {
         throw new UnsupportedOperationException();
     }
 
@@ -329,7 +330,7 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public ObjList<QueryModelWrapper> getDependents() {
+    public ObjList<QueryModelWrapper> getSharedRefs() {
         throw new UnsupportedOperationException();
     }
 
@@ -763,8 +764,8 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public boolean hasDependents() {
-        return delegate.hasDependents();
+    public boolean hasSharedRefs() {
+        return delegate.hasSharedRefs();
     }
 
     @Override

@@ -72,7 +72,7 @@ public class QueryModel implements IQueryModel {
     private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
-    private final ObjList<QueryModelWrapper> dependents = new ObjList<>();
+    private final ObjList<QueryModelWrapper> sharedRefs = new ObjList<>();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -347,7 +347,7 @@ public class QueryModel implements IQueryModel {
      */
     @Override
     public boolean allowsColumnsChange() {
-        if (hasDependents()) {
+        if (hasSharedRefs()) {
             return false;
         }
         IQueryModel union = this;
@@ -367,7 +367,7 @@ public class QueryModel implements IQueryModel {
      */
     @Override
     public boolean allowsNestedColumnsChange() {
-        return !nestedModel.hasDependents() && this.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT;
+        return !nestedModel.hasSharedRefs() && this.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT;
     }
 
     @Override
@@ -486,7 +486,7 @@ public class QueryModel implements IQueryModel {
         columnAliasRefCounts.clear();
         correlatedDepths.clear();
         Misc.clearObjList(correlatedColumns);
-        dependents.clear();
+        sharedRefs.clear();
     }
 
     @Override
@@ -500,8 +500,8 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public void clearDependents() {
-        dependents.clear();
+    public void clearSharedRefs() {
+        sharedRefs.clear();
     }
 
     @Override
@@ -608,14 +608,14 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public void copyDependents(IQueryModel model) {
-        dependents.clear();
-        for (int i = 0, n = model.getDependents().size(); i < n; i++) {
-            QueryModelWrapper wrapper = model.getDependents().getQuick(i);
+    public void copySharedRefs(IQueryModel model) {
+        sharedRefs.clear();
+        for (int i = 0, n = model.getSharedRefs().size(); i < n; i++) {
+            QueryModelWrapper wrapper = model.getSharedRefs().getQuick(i);
             wrapper.setDelegate(this);
         }
-        dependents.addAll(model.getDependents());
-        model.clearDependents();
+        sharedRefs.addAll(model.getSharedRefs());
+        model.clearSharedRefs();
     }
 
     @Override
@@ -733,8 +733,8 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public ObjList<QueryModelWrapper> getDependents() {
-        return dependents;
+    public ObjList<QueryModelWrapper> getSharedRefs() {
+        return sharedRefs;
     }
 
     @Override
@@ -1193,8 +1193,8 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public boolean hasDependents() {
-        return dependents.size() > 0;
+    public boolean hasSharedRefs() {
+        return sharedRefs.size() > 0;
     }
 
     @Override

@@ -1146,8 +1146,8 @@ class LateralJoinRewriter implements Mutable {
         } else if (outerJm.getNestedModel() != null) {
             QueryModel nestModel = (QueryModel) outerJm.getNestedModel();
             QueryModelWrapper wrapper = queryModelWrapperPool.next();
-            nestModel.getDependents().add(wrapper);
-            wrapper.of(nestModel, nestModel.getDependents().size());
+            nestModel.getSharedRefs().add(wrapper);
+            wrapper.of(nestModel, nestModel.getSharedRefs().size());
             outerRefBase.setNestedModel(wrapper);
             outerRefBase.setNestedModelIsSubQuery(outerJm.isNestedModelIsSubQuery());
         } else {
@@ -1176,8 +1176,8 @@ class LateralJoinRewriter implements Mutable {
             return delegate;
         }
         QueryModelWrapper wrapper = queryModelWrapperPool.next();
-        delegate.getDependents().add(wrapper);
-        wrapper.of(delegate, delegate.getDependents().size());
+        delegate.getSharedRefs().add(wrapper);
+        wrapper.of(delegate, delegate.getSharedRefs().size());
         return wrapper;
     }
 

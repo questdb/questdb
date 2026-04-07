@@ -484,7 +484,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
     private final PageFrameReduceTaskFactory reduceTaskFactory;
-    // Cache of factories generated for shared models (models with dependents).
+    // Cache of factories generated for shared models (models with shared refs).
     // Key: the delegate QueryModel; Value: the primary factory.
     // When a QueryModelWrapper is encountered, we look up its delegate here.
     private final ObjObjHashMap<QueryModel, RecordCursorFactory> sharedFactoryCache = new ObjObjHashMap<>();
@@ -6683,7 +6683,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return cached ? generateQuery0Inner(delegate, executionContext, processJoins) : primaryFactory;
         }
 
-        if (model instanceof QueryModel qm && qm.hasDependents()) {
+        if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
             RecordCursorFactory cached = sharedFactoryCache.get(qm);
             if (cached != null) {
                 return cached;
@@ -7678,8 +7678,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
             ObjList<ObjList<Function>> sharedOuterProjectionFunctions = null;
-            if (model instanceof QueryModel qm && qm.hasDependents()) {
-                final int dependentsCount = qm.getDependents().size();
+            if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
+                final int dependentsCount = qm.getSharedRefs().size();
                 sharedOuterProjectionFunctions = new ObjList<>(dependentsCount);
                 for (int d = 0; d < dependentsCount; d++) {
                     sharedOuterProjectionFunctions.add(new ObjList<>());

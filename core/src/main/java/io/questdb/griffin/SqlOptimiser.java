@@ -2016,7 +2016,7 @@ public class SqlOptimiser implements Mutable {
                         && nested != null
                         && nested.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE
                         && nested.getBottomUpColumns().size() <= model.getBottomUpColumns().size()
-                        && !nested.hasDependents()
+                        && !nested.hasSharedRefs()
         ) {
             IQueryModel nn = nested.getNestedModel();
             model.mergePartially(nested, queryColumnPool);
@@ -4843,7 +4843,7 @@ public class SqlOptimiser implements Mutable {
             ) {
                 model.setTimestamp(timestamp);
                 model.setExplicitTimestamp(nested.isExplicitTimestamp());
-                if (!nested.hasDependents()) {
+                if (!nested.hasSharedRefs()) {
                     nested.setTimestamp(null);
                     nested.setExplicitTimestamp(false);
                 }
@@ -5434,7 +5434,7 @@ public class SqlOptimiser implements Mutable {
                 break;
             default:
                 // sub-query ordering is not needed, but we'd like to propagate order by advice (if possible)
-                if (!model.hasDependents()) {
+                if (!model.hasSharedRefs()) {
                     model.getOrderBy().clear();
                 }
                 if (model.getSampleBy() != null) {
@@ -6137,7 +6137,7 @@ public class SqlOptimiser implements Mutable {
                         && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())) {
 
             IQueryModel target;
-            if (nested.hasDependents()) {
+            if (nested.hasSharedRefs()) {
                 // nested is shared — create new model referencing same table
                 target = queryModelPool.next();
                 target.setTableNameExpr(nested.getTableNameExpr());
@@ -7108,7 +7108,7 @@ public class SqlOptimiser implements Mutable {
 
             IQueryModel middle = queryModelPool.next();
             middle.setSelectModelType(IQueryModel.SELECT_MODEL_GROUP_BY);
-            if (nested.hasDependents()) {
+            if (nested.hasSharedRefs()) {
                 IQueryModel filterLayer = queryModelPool.next();
                 filterLayer.setNestedModel(nested);
                 filterLayer.setWhereClause(node);
@@ -7364,7 +7364,7 @@ public class SqlOptimiser implements Mutable {
                 model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
             }
 
-            if (nested.hasDependents()) {
+            if (nested.hasSharedRefs()) {
                 // nested is shared — create a new model with reversed ORDER BY
                 // referencing the same table, leave nested untouched
                 IQueryModel reversedNested = queryModelPool.next();
@@ -7675,7 +7675,7 @@ public class SqlOptimiser implements Mutable {
                 }
             }
 
-            if (base != model && base != limitModel && !base.hasDependents()) {
+            if (base != model && base != limitModel && !base.hasSharedRefs()) {
                 base.clearOrderBy();
             }
         }
@@ -9831,7 +9831,7 @@ public class SqlOptimiser implements Mutable {
                     newNested.addOrderBy(newTimestampNode, IQueryModel.ORDER_DIRECTION_DESCENDING);
                 }
                 newNested.setLimitAdvice(lowerLimitNode, null);
-                if (nested.hasDependents()) {
+                if (nested.hasSharedRefs()) {
                     newNested.setNestedModel(nested);
                 } else {
                     newNested.setTableNameExpr(nested.getTableNameExpr());
@@ -11105,12 +11105,9 @@ public class SqlOptimiser implements Mutable {
         return Long.MAX_VALUE;
     }
 
-    // When a model-replacing optimization step returns a new model that wraps
-    // the old one, any QueryModelWrapper dependents pointing at the old model
-    // must be migrated to point at the new model.
     static IQueryModel replaceAndTransferDependents(IQueryModel oldModel, IQueryModel newModel) {
-        if (newModel != oldModel && oldModel != null && oldModel.hasDependents()) {
-            newModel.copyDependents(oldModel);
+        if (newModel != oldModel && oldModel != null && oldModel.hasSharedRefs()) {
+            newModel.copySharedRefs(oldModel);
         }
         return newModel;
     }

@@ -222,7 +222,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void clearColumnMapStructs();
 
-    void clearDependents();
+    void clearSharedRefs();
 
     void clearOrderBy();
 
@@ -238,7 +238,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, boolean overrideDeclares) throws SqlException;
 
-    void copyDependents(IQueryModel model);
+    void copySharedRefs(IQueryModel model);
 
     void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints);
 
@@ -280,7 +280,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     IntHashSet getDependencies();
 
-    ObjList<QueryModelWrapper> getDependents();
+    ObjList<QueryModelWrapper> getSharedRefs();
 
     ObjList<ExpressionNode> getExpressionModels();
 
@@ -450,7 +450,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses();
 
-    boolean hasDependents();
+    boolean hasSharedRefs();
 
     boolean hasExplicitTimestamp();
 
