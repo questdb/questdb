@@ -35,21 +35,14 @@ import org.jetbrains.annotations.TestOnly;
  * Abstract base class for full partition frame cursors.
  */
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
-    /**
-     * The partition frame.
-     */
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
-    /**
-     * The partition high boundary.
-     */
+    // Partition high boundary.
     protected int partitionHi;
-    /**
-     * The current partition index.
-     */
+    // Current partition index.
     protected int partitionIndex;
-    /**
-     * The table reader.
-     */
+    // The scan high boundary. Defaults to partitionHi but can be narrowed
+    // by toPartition(int) to limit iteration to a single partition.
+    protected int partitionScanHi;
     protected TableReader reader;
 
     @Override
@@ -84,6 +77,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
      */
     public PartitionFrameCursor of(TableReader reader) {
         partitionHi = reader.getPartitionCount();
+        partitionScanHi = partitionHi;
         toTop();
         this.reader = reader;
         return this;
@@ -101,6 +95,12 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     @Override
     public long size() {
         return reader.size();
+    }
+
+    @Override
+    public void toPartition(int targetPartitionIndex) {
+        this.partitionIndex = targetPartitionIndex;
+        this.partitionScanHi = targetPartitionIndex + 1;
     }
 
     /**

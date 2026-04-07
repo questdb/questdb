@@ -2052,6 +2052,28 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     // as part of rolling to a new segment
                     if (uncommittedRows > 0) {
                         setColumnNull(columnType, columnIndex, segmentRowCount, configuration.getCommitMode());
+                        if (ColumnType.isSymbol(columnType)) {
+                            symbolMapNullFlagsChanged.set(columnIndex, true);
+                            symbolMapNullFlags.set(columnIndex, true);
+                            // Rewrite the WAL event if it was already written without the null flag.
+                            if (lastSegmentTxn >= 0) {
+                                lastSegmentTxn = events.rewriteLastDataRecord(
+                                        lastTxnType,
+                                        0,
+                                        WalWriter.this.segmentRowCount,
+                                        txnMinTimestamp,
+                                        txnMaxTimestamp,
+                                        txnOutOfOrder,
+                                        lastMatViewRefreshBaseTxn,
+                                        lastMatViewRefreshTimestamp,
+                                        lastMatViewPeriodHi,
+                                        lastReplaceRangeLowTs,
+                                        lastReplaceRangeHiTs,
+                                        lastDedupMode
+                                );
+                                events.sync();
+                            }
+                        }
                     }
 
                     if (securityContext != null) {

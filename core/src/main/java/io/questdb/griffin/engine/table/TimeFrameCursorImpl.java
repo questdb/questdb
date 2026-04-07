@@ -27,22 +27,26 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
-import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.BitSet;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -54,29 +58,46 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populatePartitionTimestamps;
 
 /**
- * Thread-unsafe time frame cursor.
+ * Thread-unsafe time frame cursor with lazy partition opening.
+ * <p>
+ * Pre-computes exact page frame boundaries from table metadata (column tops,
+ * row counts, partition formats) WITHOUT opening partitions. Column addresses
+ * are patched lazily per partition on first access via
+ * {@link #ensurePartitionOpened(int)}.
  * <p>
  * The only supported partition order is forward, i.e. navigation
  * should start with a {@link #next()} call.
  */
 public final class TimeFrameCursorImpl implements TimeFrameCursor {
+    private final IntList columnIndexes = new IntList();
+    private final LongList columnTops = new LongList();
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
     // Off-heap because it's per-frame and can be large unlike per-partition lists
     private final DirectIntList framePartitionIndexes;
-    private final LongList frameRowCounts = new LongList();
+    private final DirectLongList frameRowCounts;
     // Cache for frame timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...] - avoids re-reading on repeated open()
     private final DirectLongList frameTimestampCache;
     private final RecordMetadata metadata;
     private final LongList partitionCeilings = new LongList();
+    // Per-partition: first global frame index.
+    // Only populated in the non-eager (lazy) path. Not valid after
+    // buildFrameCacheEagerly(); safe to read only when partitionOpened is unset.
+    private final IntList partitionFirstFrame = new IntList();
+    private final BitSet partitionOpened = new BitSet();
     private final LongList partitionTimestamps = new LongList();
     private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
+    private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
     private int frameCount = 0;
-    private PageFrameCursor frameCursor;
+    private TablePageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
-    private TableReader reader;
+    private int pageFrameMaxRows;
+    private int pageFrameMinRows;
+    private int partitionCount;
+    private TableReader tableReader;
+    private int workerCount;
 
     public TimeFrameCursorImpl(
             @NotNull CairoConfiguration configuration,
@@ -87,6 +108,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             this.frameAddressCache = new PageFrameAddressCache();
             this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
             this.framePartitionIndexes = new DirectIntList(64, MemoryTag.NATIVE_DEFAULT, true);
+            this.frameRowCounts = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT, true);
             this.frameTimestampCache = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
         } catch (Throwable th) {
             close();
@@ -99,19 +121,21 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         Misc.free(frameMemoryPool);
         Misc.free(frameAddressCache);
         Misc.free(framePartitionIndexes);
+        Misc.free(frameRowCounts);
         Misc.free(frameTimestampCache);
         frameCursor = Misc.free(frameCursor);
     }
 
     @Override
     public BitmapIndexReader getIndexReaderForCurrentFrame(int logicalColumnIndex, int direction) {
-        int physicalColumnIndex = frameCursor.getColumnIndexes().getQuick(logicalColumnIndex);
+        int physicalColumnIndex = frameCursor.getColumnMapping().getColumnIndex(logicalColumnIndex);
         int frameIndex = timeFrame.getFrameIndex();
         if (frameIndex == -1) {
             return null;
         }
         int partitionIndex = framePartitionIndexes.get(frameIndex);
-        return reader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
+        assert partitionOpened.get(partitionIndex) : "partition " + partitionIndex + " not opened before getIndexReaderForCurrentFrame";
+        return tableReader.getBitmapIndexReader(partitionIndex, physicalColumnIndex, direction);
     }
 
     @Override
@@ -174,11 +198,24 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         return false;
     }
 
-    public TimeFrameCursor of(TablePageFrameCursor frameCursor) {
+    public TimeFrameCursor of(
+            TablePageFrameCursor frameCursor,
+            int pageFrameMinRows,
+            int pageFrameMaxRows,
+            int workerCount
+    ) {
         this.frameCursor = frameCursor;
-        frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
+        this.pageFrameMinRows = pageFrameMinRows;
+        this.pageFrameMaxRows = pageFrameMaxRows;
+        this.workerCount = workerCount;
+        final ColumnMapping mapping = frameCursor.getColumnMapping();
+        frameAddressCache.of(metadata, mapping, frameCursor.isExternal());
+        columnIndexes.clear();
+        for (int i = 0, n = mapping.getColumnCount(); i < n; i++) {
+            columnIndexes.add(mapping.getColumnIndex(i));
+        }
         frameMemoryPool.of(frameAddressCache);
-        reader = frameCursor.getTableReader();
+        tableReader = frameCursor.getTableReader();
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         populatePartitionTimestamps(frameCursor, partitionTimestamps, partitionCeilings);
@@ -193,7 +230,11 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         if (frameIndex < 0 || frameIndex >= frameCount) {
             throw CairoException.nonCritical().put("open call on uninitialized time frame");
         }
-        final long rowCount = frameRowCounts.getQuick(frameIndex);
+
+        final int partitionIndex = framePartitionIndexes.get(frameIndex);
+        ensurePartitionOpened(partitionIndex);
+
+        final long rowCount = frameRowCounts.get(frameIndex);
         if (rowCount > 0) {
             final int cacheOffset = frameIndex * 2;
             long timestampLo = frameTimestampCache.get(cacheOffset);
@@ -246,13 +287,18 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     @Override
     public void recordAt(Record record, long rowId) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), frameMemoryRecord);
+        final int frameIndex = Rows.toPartitionIndex(rowId);
+        final int partitionIndex = framePartitionIndexes.get(frameIndex);
+        ensurePartitionOpened(partitionIndex);
+        frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
     }
 
     @Override
     public void recordAt(Record record, int frameIndex, long rowIndex) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        final int partitionIndex = framePartitionIndexes.get(frameIndex);
+        ensurePartitionOpened(partitionIndex);
         frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
         frameMemoryRecord.setRowIndex(rowIndex);
     }
@@ -280,37 +326,210 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     public void toTop() {
         timeFrame.clear();
         if (!isFrameCacheBuilt) {
-            frameCount = 0;
+            // No need to reset frame lists here — buildFrameCache() resets
+            // all state unconditionally before populating the cache.
             frameCursor.toTop();
-            framePartitionIndexes.clear();
-            frameTimestampCache.clear();
-            frameRowCounts.clear();
         }
     }
 
-    private void buildFrameCache() {
-        // TODO(puzpuzpuz): building page frame cache assumes opening all partitions;
-        //                  we should open partitions lazily
-        if (!isFrameCacheBuilt) {
-            framePartitionIndexes.reopen();
-            PageFrame frame;
-            while ((frame = frameCursor.next()) != null) {
-                framePartitionIndexes.add(frame.getPartitionIndex());
-                frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
-                frameAddressCache.add(frameCount++, frame);
+    /**
+     * Pre-computes and adds uninitialized frame entries for a native partition.
+     * Replicates the column-top-aware splitting logic from
+     * FwdTableReaderPageFrameCursor#computeNativeFrame().
+     */
+    private void addNativePartitionFrames(
+            ColumnVersionReader columnVersionReader,
+            IntList columnIndexes,
+            int columnCount,
+            int partitionIndex,
+            long partitionTimestamp,
+            long partitionRowCount
+    ) {
+        FwdTableReaderPageFrameCursor.populateColumnTops(
+                columnTops,
+                tableReader,
+                columnVersionReader,
+                columnIndexes,
+                columnCount,
+                partitionTimestamp,
+                partitionRowCount
+        );
+
+        final long pageFrameRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
+                0,
+                partitionRowCount,
+                pageFrameMinRows,
+                pageFrameMaxRows,
+                workerCount
+        );
+
+        long lo = 0;
+        while (lo < partitionRowCount) {
+            long adjustedHi = Math.min(partitionRowCount, lo + pageFrameRowLimit);
+            // Shrink frame boundary at column top splits
+            for (int i = 0; i < columnCount; i++) {
+                long top = columnTops.getQuick(i);
+                if (top > lo && top < adjustedHi) {
+                    adjustedHi = top;
+                }
             }
-            isFrameCacheBuilt = true;
-            // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
-            // Note: setCapacity is safe to call on a closed list - it will allocate memory
-            final int cacheSize = 2 * frameCount;
-            if (cacheSize > 0) {
-                frameTimestampCache.setCapacity(cacheSize);
-                frameTimestampCache.clear();
-                for (int i = 0; i < cacheSize; i++) {
-                    frameTimestampCache.set(i, Numbers.LONG_NULL);
+            addUninitializedFrame(partitionIndex, lo, adjustedHi);
+            lo = adjustedHi;
+        }
+    }
+
+    /**
+     * Adds fully initialized frame entries for a partition that is already open
+     * in the table reader. Iterates the page frame cursor to get real column
+     * addresses directly. Marks the partition as opened so that
+     * {@link #ensurePartitionOpened(int)} becomes a no-op.
+     */
+    private void addOpenPartitionFrames(int partitionIndex) {
+        frameCursor.toPartition(partitionIndex);
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            frameAddressCache.add(frameCount, frame);
+            framePartitionIndexes.add(frame.getPartitionIndex());
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameCount++;
+        }
+        partitionOpened.set(partitionIndex);
+    }
+
+    /**
+     * Opens a parquet partition and adds fully initialized frame entries.
+     * <p>
+     * TODO(puzpuzpuz): read row group count from table metadata instead of opening the
+     *  parquet file. Once available, pre-compute uninitialized frames like native partitions.
+     */
+    private void addParquetPartitionFrames(int partitionIndex) {
+        tableReader.openPartition(partitionIndex);
+        addOpenPartitionFrames(partitionIndex);
+    }
+
+    /**
+     * Adds an uninitialized frame entry to the flat cache with zero column
+     * addresses. The frame structure (format, size, rowIdOffset) is correct;
+     * column addresses will be patched by {@link #ensurePartitionOpened(int)}.
+     */
+    private void addUninitializedFrame(int partitionIndex, long lo, long hi) {
+        frameAddressCache.add(frameCount, uninitializedFrame.of(partitionIndex, lo, hi, PartitionFormat.NATIVE));
+        framePartitionIndexes.add(partitionIndex);
+        frameRowCounts.add(hi - lo);
+        frameCount++;
+    }
+
+    /**
+     * Pre-computes page frame boundaries from table metadata without opening
+     * partitions. Populates the flat {@link PageFrameAddressCache} with
+     * uninitialized (zero-address) entries. Column addresses are patched
+     * later by {@link #ensurePartitionOpened(int)}.
+     */
+    private void buildFrameCache() {
+        if (isFrameCacheBuilt) {
+            return;
+        }
+
+        partitionCount = tableReader.getPartitionCount();
+
+        frameCount = 0;
+        framePartitionIndexes.reopen();
+        framePartitionIndexes.clear();
+        frameRowCounts.reopen();
+        frameRowCounts.clear();
+
+        if (frameCursor.hasIntervalFilter()) {
+            // Interval filtering makes frame counts unpredictable from metadata.
+            // Fall back to eager enumeration of all page frames.
+            buildFrameCacheEagerly();
+        } else {
+            final ColumnVersionReader columnVersionReader = tableReader.getColumnVersionReader();
+            final IntList columnIndexes = this.columnIndexes;
+            final int columnCount = columnIndexes.size();
+
+            partitionFirstFrame.setAll(partitionCount, 0);
+            partitionOpened.clear();
+
+            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                partitionFirstFrame.setQuick(partitionIndex, frameCount);
+
+                final long partitionRowCount = tableReader.getPartitionRowCountFromMetadata(partitionIndex);
+                if (partitionRowCount <= 0) {
+                    continue;
+                }
+
+                if (tableReader.getPartitionRowCount(partitionIndex) != -1) {
+                    // Partition is already open — iterate page frames eagerly
+                    addOpenPartitionFrames(partitionIndex);
+                } else {
+                    final byte format = tableReader.getPartitionFormatFromMetadata(partitionIndex);
+                    if (format == PartitionFormat.NATIVE) {
+                        addNativePartitionFrames(
+                                columnVersionReader,
+                                columnIndexes,
+                                columnCount,
+                                partitionIndex,
+                                tableReader.getPartitionTimestampByIndex(partitionIndex),
+                                partitionRowCount
+                        );
+                    } else {
+                        addParquetPartitionFrames(partitionIndex);
+                    }
                 }
             }
         }
+
+        isFrameCacheBuilt = true;
+
+        // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
+        final int cacheSize = 2 * frameCount;
+        if (cacheSize > 0) {
+            frameTimestampCache.setCapacity(cacheSize);
+            frameTimestampCache.clear();
+            for (int i = 0; i < cacheSize; i++) {
+                frameTimestampCache.set(i, Numbers.LONG_NULL);
+            }
+        }
+    }
+
+    /**
+     * Eagerly iterates all page frames and adds them with real column
+     * addresses. Used when the cursor has interval filtering.
+     */
+    private void buildFrameCacheEagerly() {
+        frameCursor.toTop();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            frameAddressCache.add(frameCount, frame);
+            framePartitionIndexes.add(frame.getPartitionIndex());
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameCount++;
+        }
+        // Mark all partitions as opened so ensurePartitionOpened is a no-op
+        for (int i = 0; i < partitionCount; i++) {
+            partitionOpened.set(i);
+        }
+    }
+
+    /**
+     * Opens a partition lazily if not already opened, patching the
+     * uninitialized cache entries with real column addresses.
+     */
+    private void ensurePartitionOpened(int partitionIndex) {
+        if (partitionOpened.get(partitionIndex)) {
+            return;
+        }
+
+        frameCursor.toPartition(partitionIndex);
+        int globalFrame = partitionFirstFrame.getQuick(partitionIndex);
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            frameAddressCache.updateAddresses(globalFrame, frame);
+            globalFrame++;
+        }
+        int expectedEnd = (partitionIndex + 1 < partitionCount) ? partitionFirstFrame.getQuick(partitionIndex + 1) : frameCount;
+        assert globalFrame == expectedEnd : "frame count mismatch for partition " + partitionIndex + ": expected " + expectedEnd + " but got " + globalFrame;
+        partitionOpened.set(partitionIndex);
     }
 
     // maxTimestampHi is used to handle split partitions correctly as ceil method
