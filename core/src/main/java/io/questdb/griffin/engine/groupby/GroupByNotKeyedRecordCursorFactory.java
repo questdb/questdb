@@ -84,7 +84,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 this.cursor = new GroupByNotKeyedRecordCursor(configuration, groupByFunctions, updater);
             }
         } catch (Throwable e) {
-            Misc.freeObjList(groupByFunctions);
+            close();
             throw e;
         }
     }
@@ -174,7 +174,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         Misc.free(base);
         Misc.free(cursor);
         GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
-
+        Misc.clear(sharedCursors);
     }
 
     private static class GroupByNotKeyedSharedCursor implements NoRandomAccessRecordCursor {

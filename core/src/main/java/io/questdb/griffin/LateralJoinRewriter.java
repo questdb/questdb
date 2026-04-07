@@ -524,9 +524,9 @@ class LateralJoinRewriter implements Mutable {
         IQueryModel origSubquery = outerRefJoinModel.getNestedModel();
         IQueryModel sharedDistinct = createSharedRef((QueryModel) origSubquery);
         IQueryModel renamingLayer = queryModelPool.next();
-        IQueryModel EmptyLayer = queryModelPool.next();
-        EmptyLayer.setNestedModel(sharedDistinct);
-        renamingLayer.setNestedModel(EmptyLayer);
+        IQueryModel emptyLayer = queryModelPool.next();
+        emptyLayer.setNestedModel(sharedDistinct);
+        renamingLayer.setNestedModel(emptyLayer);
 
         ObjList<QueryColumn> origCols = origSubquery.getBottomUpColumns();
         for (int oc = 0, ocn = origCols.size(); oc < ocn; oc++) {

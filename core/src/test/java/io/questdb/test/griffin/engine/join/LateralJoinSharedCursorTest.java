@@ -580,6 +580,111 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedGroupByOuterEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category\ttotal\trate
+                            """,
+                    """
+                            SELECT o.category, o.total, sub.rate
+                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testKeyedGroupByOuterNullAggregatedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', null, '2024-01-01T01:00:00.000000Z'),
+                    ('B', null, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (0.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (5.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category\ttotal\trate
+                            A\t10.0\t0.1
+                            A\t10.0\t0.2
+                            """,
+                    """
+                            SELECT o.category, o.total, sub.rate
+                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testMultipleLateralJoinsSharingOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (min_amount DOUBLE, discount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 20.0, '2024-01-01T01:00:00.000000Z'),
+                    ('B',  5.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO discounts VALUES
+                    (10.0, 0.05, '2024-01-01T00:00:00.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category\ttotal\trate\tdiscount
+                            A\t30.0\t0.1\t0.05
+                            """,
+                    """
+                            SELECT o.category, o.total, r.rate, d.discount
+                            FROM (SELECT category, sum(amount) AS total FROM orders GROUP BY category) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) r
+                            JOIN LATERAL (
+                                SELECT discount FROM discounts WHERE min_amount <= o.total
+                            ) d
+                            ORDER BY o.category
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testSharedStringDistinctAgg() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {

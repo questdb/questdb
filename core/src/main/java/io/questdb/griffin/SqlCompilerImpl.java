@@ -5155,7 +5155,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
-            ObjectPool<QueryModelWrapper> queryModelWrapperPoolPool,
+            ObjectPool<QueryModelWrapper> queryModelWrapperPool,
             PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
             FunctionParser functionParser,
             Path path
@@ -5167,7 +5167,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 windowExpressionPool,
                 queryColumnPool,
                 queryModelPool,
-                queryModelWrapperPoolPool,
+                queryModelWrapperPool,
                 postOrderTreeTraversalAlgo,
                 functionParser,
                 path
