@@ -276,6 +276,31 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeVarcharToDecimalWithInvalidValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', 'abc')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:03.000000Z', '12.34.56')", sqlExecutionContext);
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:04.000000Z', NULL)", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(18, 4)", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ts\tcol\n" +
+                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
+                    "2024-05-14T16:00:01.000000Z\t\n" +
+                    "2024-05-14T16:00:02.000000Z\t\n" +
+                    "2024-05-14T16:00:03.000000Z\t\n" +
+                    "2024-05-14T16:00:04.000000Z\t\n", "x");
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    @Test
     public void testChangeVarcharToDecimalWithNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
