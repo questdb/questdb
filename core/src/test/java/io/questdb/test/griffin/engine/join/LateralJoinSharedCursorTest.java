@@ -465,6 +465,89 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedCursorLongTopK() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, id LONG, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_id LONG, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('A', 1, 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 2, 20.0, '2024-01-01T01:00:00.000000Z'),
+                    ('B', 3,  5.0, '2024-01-01T02:00:00.000000Z'),
+                    ('B', 4,  3.0, '2024-01-01T03:00:00.000000Z'),
+                    ('C', 5, 50.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (1, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (3, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category\tmax_id\trate
+                            C\t5\t0.1
+                            C\t5\t0.2
+                            """,
+                    """
+                            SELECT o.category, o.max_id, sub.rate
+                            FROM (
+                                SELECT category, max(id) AS max_id
+                                FROM orders
+                                GROUP BY category
+                            ) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_id <= o.max_id
+                            ) sub
+                            ORDER BY o.max_id DESC
+                            LIMIT 2
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testSharedCursorSymbolTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, status SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('A', 'open', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 'open', 20.0, '2024-01-01T01:00:00.000000Z'),
+                    ('B', 'closed', 5.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (25.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            category\tstatus\ttotal\trate
+                            A\topen\t30.0\t0.1
+                            A\topen\t30.0\t0.2
+                            """,
+                    """
+                            SELECT o.category, o.status, o.total, sub.rate
+                            FROM (
+                                SELECT category, last(status) AS status, sum(amount) AS total
+                                FROM orders
+                                GROUP BY category
+                            ) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testSharedStringAggVarchar() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
