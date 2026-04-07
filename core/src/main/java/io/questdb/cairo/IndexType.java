@@ -45,6 +45,10 @@ public final class IndexType {
      */
     public static final byte POSTING = 2;
     /**
+     * Posting index with delta-only encoding (no Elias-Fano).
+     */
+    public static final byte POSTING_DELTA = 3;
+    /**
      * Bitmap index (original BitmapIndex for SYMBOL columns).
      */
     public static final byte BITMAP = 1;
@@ -63,6 +67,10 @@ public final class IndexType {
         return indexType != NONE;
     }
 
+    public static boolean isPosting(byte indexType) {
+        return indexType == POSTING || indexType == POSTING_DELTA;
+    }
+
     /**
      * Returns the name of the given index type.
      *
@@ -74,6 +82,7 @@ public final class IndexType {
             case NONE -> "NONE";
             case BITMAP -> "BITMAP";
             case POSTING -> "POSTING";
+            case POSTING_DELTA -> "POSTING DELTA";
             default -> "UNKNOWN(" + indexType + ")";
         };
     }

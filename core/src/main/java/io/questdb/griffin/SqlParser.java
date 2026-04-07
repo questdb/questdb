@@ -2041,6 +2041,16 @@ public class SqlParser {
             if (indexType == IndexType.NONE) {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
             }
+            if (indexType == IndexType.POSTING) {
+                tok = tok(lexer, "'capacity' or ')'");
+                if (SqlKeywords.isDeltaKeyword(tok)) {
+                    indexType = IndexType.POSTING_DELTA;
+                } else if (SqlKeywords.isEfKeyword(tok)) {
+                    // explicit EF — keep POSTING
+                } else {
+                    lexer.unparseLast();
+                }
+            }
             tok = tok(lexer, "'capacity' or ')'");
         }
         if (isCapacityKeyword(tok)) {
@@ -2084,6 +2094,16 @@ public class SqlParser {
             if (indexType == IndexType.NONE) {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
             }
+            if (indexType == IndexType.POSTING) {
+                tok = tok(lexer, ") | , expected");
+                if (SqlKeywords.isDeltaKeyword(tok)) {
+                    indexType = IndexType.POSTING_DELTA;
+                } else if (SqlKeywords.isEfKeyword(tok)) {
+                    // explicit EF — keep POSTING
+                } else {
+                    lexer.unparseLast();
+                }
+            }
 
             tok = tok(lexer, ") | , expected");
             if (isFieldTerm(tok) || isParquetKeyword(tok)) {
@@ -2092,7 +2112,7 @@ public class SqlParser {
             }
 
             if (SqlKeywords.isIncludeKeyword(tok)) {
-                if (indexType != IndexType.POSTING) {
+                if (!IndexType.isPosting(indexType)) {
                     throw SqlException.position(lexer.lastTokenPosition())
                             .put("INCLUDE is only supported for POSTING index type");
                 }

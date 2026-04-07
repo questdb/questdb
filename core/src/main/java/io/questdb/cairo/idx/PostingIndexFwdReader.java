@@ -117,6 +117,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long constantDeltaValue;
         private int currentBlock;
         private int currentGen;
+        private int efHighWordIdx;
+        private long efHighStart;
+        private int efL;
+        private long efLowMask;
+        private long efLowStart;
+        private int efNumHighWords;
+        private int efOutputCount;
+        private int efTotalCount;
         private long encodedAddr;
         private int encodedBlockCount;
         private long flatBaseValue;
@@ -124,6 +132,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long flatDataBase;
         private int flatRemaining;
         private int flatStartIdx;
+        private boolean isEFMode;
         private boolean isFlatMode;
         private int lookupEnd;
         private int lookupPos;
@@ -179,6 +188,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 // Decode next block in current generation
                 if (currentBlock < encodedBlockCount) {
                     decodeNextBlock();
+                    continue;
+                }
+
+                // EF mode: decode next chunk
+                if (isEFMode && efOutputCount < efTotalCount) {
+                    decodeNextEFChunk();
                     continue;
                 }
 
@@ -283,7 +298,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 }
 
                 loadSparseGenWithBinarySearch(currentGen);
-                if (totalValueCount > 0 || encodedBlockCount > 0 || isFlatMode) {
+                if (totalValueCount > 0 || encodedBlockCount > 0 || isFlatMode || isEFMode) {
                     return true;
                 }
                 currentGen++;
@@ -352,7 +367,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
                 // SBBF says "maybe" — fall back to binary search within this gen
                 loadSparseGenWithBinarySearch(currentGen);
-                if (totalValueCount > 0 || encodedBlockCount > 0 || isFlatMode) {
+                if (totalValueCount > 0 || encodedBlockCount > 0 || isFlatMode || isEFMode) {
                     return true;
                 }
                 // False positive — key not actually in this gen
@@ -367,6 +382,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
             this.constantDeltaRemaining = 0;
+            this.isEFMode = false;
+            this.efOutputCount = 0;
+            this.efTotalCount = 0;
         }
 
         private void decodeNextBlock() {
@@ -405,6 +423,26 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             blockBufferPos = 0;
             blockBufferEnd = count;
+        }
+
+        private void decodeNextEFChunk() {
+            while (efHighWordIdx < efNumHighWords && efOutputCount < efTotalCount) {
+                long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
+                if (word == 0) { efHighWordIdx++; continue; }
+                int bufPos = 0;
+                long base = (long) efHighWordIdx * 64 - efOutputCount;
+                while (word != 0 && efOutputCount < efTotalCount) {
+                    int trail = Long.numberOfTrailingZeros(word);
+                    long low = PostingIndexUtils.readBitsWord(efLowStart, (long) efOutputCount * efL, efL) & efLowMask;
+                    Unsafe.getUnsafe().putLong(blockBufferAddr + (long) bufPos * Long.BYTES, ((base + trail) << efL) | low);
+                    bufPos++; efOutputCount++; base--;
+                    word &= word - 1;
+                }
+                efHighWordIdx++;
+                blockBufferPos = 0; blockBufferEnd = bufPos;
+                return;
+            }
+            blockBufferPos = 0; blockBufferEnd = 0;
         }
 
         private void decodeNextFlatBatch() {
@@ -638,7 +676,24 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
 
             long pos = encodedAddr;
-            int blockCount = Unsafe.getUnsafe().getInt(pos);
+            int firstWord = Unsafe.getUnsafe().getInt(pos);
+            if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
+                pos += 4;
+                efTotalCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
+                efL = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
+                long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
+                efLowMask = (efL < 64) ? (1L << efL) - 1 : -1L;
+                efLowStart = pos;
+                int lowBytes = PostingIndexUtils.efLowBytesAligned(efTotalCount, efL);
+                efHighStart = pos + lowBytes;
+                efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
+                efHighWordIdx = 0; efOutputCount = 0;
+                isEFMode = true; encodedBlockCount = 0; isFlatMode = false;
+                blockBufferPos = 0; blockBufferEnd = 0; constantDeltaRemaining = 0;
+                return;
+            }
+            int blockCount = firstWord;
+            isEFMode = false;
             if (blockCount < 0 || blockCount > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
                 throw CairoException.critical(0).put("corrupt posting index: invalid block count [blockCount=")
                         .put(blockCount).put(", totalValues=").put(totalValueCount).put(']');

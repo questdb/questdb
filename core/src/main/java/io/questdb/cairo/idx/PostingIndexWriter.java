@@ -72,6 +72,7 @@ public class PostingIndexWriter implements IndexWriter {
     private final PostingIndexUtils.DecodeContext decodeCtx = new PostingIndexUtils.DecodeContext();
     private final PostingIndexUtils.EncodeContext encodeCtx = new PostingIndexUtils.EncodeContext();
     private final FilesFacade ff;
+    private final boolean isEliasFanoEnabled;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
     private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
     private final int[] strideBpKeySizes = new int[PostingIndexUtils.DENSE_STRIDE];
@@ -129,9 +130,14 @@ public class PostingIndexWriter implements IndexWriter {
     private long valueMemSize;
 
     public PostingIndexWriter(CairoConfiguration configuration) {
+        this(configuration, configuration.isPostingIndexEliasFanoEnabled());
+    }
+
+    public PostingIndexWriter(CairoConfiguration configuration, boolean isEliasFanoEnabled) {
         this.alignedBitWidthThreshold = configuration.getPostingIndexAlignedBitWidthThreshold();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+        this.isEliasFanoEnabled = isEliasFanoEnabled;
     }
 
     @TestOnly
@@ -1225,7 +1231,7 @@ public class PostingIndexWriter implements IndexWriter {
             if (count > 0) {
                 long keyAddr = mergedValuesAddr + keyOffsets[j] * Long.BYTES;
                 encodeCtx.ensureCapacity(count);
-                bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx);
+                bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, isEliasFanoEnabled);
             } else {
                 bpKeySizes[j] = 0;
             }
@@ -1505,7 +1511,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // No spill — encode directly from pending buffer
                 long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
                 encodeCtx.ensureCapacity(count);
-                bytesWritten = PostingIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx);
+                bytesWritten = PostingIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx, isEliasFanoEnabled);
 
                 if (pendingCount > 0) {
                     long lastVal = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) (pendingCount - 1) * Long.BYTES);
@@ -1539,7 +1545,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // Encode from the spill buffer (which now holds all values in order)
                 long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
                 encodeCtx.ensureCapacity(count);
-                bytesWritten = PostingIndexUtils.encodeKeyNative(spillAddr, count, destAddr, encodeCtx);
+                bytesWritten = PostingIndexUtils.encodeKeyNative(spillAddr, count, destAddr, encodeCtx, isEliasFanoEnabled);
 
                 long lastVal = Unsafe.getUnsafe().getLong(
                         spillAddr + (long) (count - 1) * Long.BYTES);
@@ -2354,7 +2360,7 @@ public class PostingIndexWriter implements IndexWriter {
                                     if (count > 0) {
                                         long keyAddr = allValuesAddr + keyOffsets[j] * Long.BYTES;
                                         encodeCtx.ensureCapacity(count);
-                                        bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx);
+                                        bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, isEliasFanoEnabled);
                                     } else {
                                         bpKeySizes[j] = 0;
                                     }

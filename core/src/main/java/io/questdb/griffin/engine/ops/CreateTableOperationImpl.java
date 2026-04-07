@@ -820,7 +820,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     indices[j] = metadata.getColumnIndexQuiet(coverNames.get(j));
                 }
                 if (autoIncludeTimestamp && timestampIndex >= 0
-                        && getIndexType(i) == IndexType.POSTING) {
+                        && IndexType.isPosting(getIndexType(i))) {
                     indices = maybeAppendTimestamp(indices, timestampIndex);
                 }
                 coveringColumnIndicesList.add(indices);
@@ -877,7 +877,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     indices[j] = idx;
                 }
                 if (autoIncludeTimestamp && timestampIndex >= 0
-                        && model.getIndexType() == IndexType.POSTING) {
+                        && IndexType.isPosting(model.getIndexType())) {
                     indices = maybeAppendTimestamp(indices, timestampIndex);
                 }
                 coveringColumnIndicesList.add(indices);

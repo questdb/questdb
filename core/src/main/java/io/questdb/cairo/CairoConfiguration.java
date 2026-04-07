@@ -496,6 +496,10 @@ public interface CairoConfiguration {
         return true;
     }
 
+    default boolean isPostingIndexEliasFanoEnabled() {
+        return true;
+    }
+
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();

@@ -4539,7 +4539,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .put(path.trimTo(srcDirLen))
                                 .put(']');
                     }
-                    if (indexType == IndexType.POSTING) {
+                    if (IndexType.isPosting(indexType)) {
                         linkPostingIndexAuxFiles(srcDirLen, dstDirLen, columnName, columnNameTxn);
                     }
                 }
@@ -6037,7 +6037,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             linkFile(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn), valueFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn));
             // Posting index seal creates a separate .pv.{valueFileTxn} file referenced
             // by VALUE_FILE_TXN in the .pk metadata. Link it alongside the base .pv.
-            if (indexType == IndexType.POSTING) {
+            if (IndexType.isPosting(indexType)) {
                 LPSZ pkFile = keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
                 long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(ff, pkFile);
                 if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {
@@ -6171,7 +6171,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // A partition is fully indexed when the .pk key file has a valid seqlock (seq_start == seq_end)
         // AND genCount > 0 (at least one generation was sealed). Partially-written files from a crash
         // will have genCount == 0 or a broken seqlock, so they are safely rebuilt.
-        if (indexType == IndexType.POSTING && isPostingIndexSealed(plen, columnName, columnNameTxn)) {
+        if (IndexType.isPosting(indexType) && isPostingIndexSealed(plen, columnName, columnNameTxn)) {
             path.trimTo(plen);
             LOG.info().$("skipping already-indexed partition [path=").$substr(pathRootSize, path).I$();
             return;
@@ -10363,7 +10363,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean hasPostingIndex = false;
         for (int i = 0; i < columnCount; i++) {
             if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
-                    && metadata.getColumnIndexType(i) == IndexType.POSTING) {
+                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
                 hasPostingIndex = true;
                 break;
             }
