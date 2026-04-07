@@ -249,14 +249,19 @@ public class QwpFixedWidthDecoderTest {
                     int colIdx = findColumnIndex(table, TYPE_DOUBLE);
                     Assert.assertNotEquals(-1, colIdx);
 
+                    Assert.assertTrue(table.hasNextRow());
                     table.nextRow();
                     Assert.assertTrue(Double.isNaN(table.getFixedWidthColumn(colIdx).getDouble()));
 
+                    Assert.assertTrue(table.hasNextRow());
                     table.nextRow();
                     Assert.assertEquals(Double.POSITIVE_INFINITY, table.getFixedWidthColumn(colIdx).getDouble(), 0.0);
 
+                    Assert.assertTrue(table.hasNextRow());
                     table.nextRow();
                     Assert.assertEquals(Double.NEGATIVE_INFINITY, table.getFixedWidthColumn(colIdx).getDouble(), 0.0);
+
+                    Assert.assertFalse(table.hasNextRow());
                 }
             }
         });
@@ -404,14 +409,19 @@ public class QwpFixedWidthDecoderTest {
                     int colIdx = findColumnIndex(table, TYPE_FLOAT);
                     Assert.assertNotEquals(-1, colIdx);
 
+                    Assert.assertTrue(table.hasNextRow());
                     table.nextRow();
                     Assert.assertTrue(Float.isNaN((float) table.getFixedWidthColumn(colIdx).getDouble()));
 
+                    Assert.assertTrue(table.hasNextRow());
                     table.nextRow();
                     Assert.assertEquals(Float.POSITIVE_INFINITY, (float) table.getFixedWidthColumn(colIdx).getDouble(), 0.0f);
 
+                    Assert.assertTrue(table.hasNextRow());
                     table.nextRow();
                     Assert.assertEquals(Float.NEGATIVE_INFINITY, (float) table.getFixedWidthColumn(colIdx).getDouble(), 0.0f);
+
+                    Assert.assertFalse(table.hasNextRow());
                 }
             }
         });

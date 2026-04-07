@@ -98,13 +98,14 @@ public class QwpArrayColumnCursorTest {
             QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
             cursor.of(addr, bufferSize, rowCount, TYPE_DOUBLE_ARRAY);
 
-            // Advance through all rows and verify the last one
+            // Advance through all rows and verify each one
             for (int i = 0; i < rowCount; i++) {
-                Assert.assertFalse(cursor.advanceRow());
+                Assert.assertFalse("Row " + i + " should not be null", cursor.advanceRow());
+                Assert.assertFalse(cursor.isNull());
+                Assert.assertEquals(1, cursor.getNDims());
+                Assert.assertEquals(1, cursor.getTotalElements());
+                Assert.assertEquals((double) i, Unsafe.getUnsafe().getDouble(cursor.getValuesAddress()), 0.0);
             }
-            Assert.assertFalse(cursor.isNull());
-            Assert.assertEquals(1, cursor.getNDims());
-            Assert.assertEquals(1, cursor.getTotalElements());
         } finally {
             Unsafe.free(addr, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
