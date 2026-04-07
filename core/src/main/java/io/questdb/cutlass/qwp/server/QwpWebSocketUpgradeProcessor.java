@@ -334,7 +334,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             while (true) {
                 int recvBufferLen = state.getRecvBufferLen();
                 if (recvBufferLen >= recvBufferSize) {
-                    // Buffer is full but the parser still needs more data — the frame
+                    // Buffer is full, but the parser still needs more data — the frame
                     // payload exceeds recv buffer capacity. Disconnect to avoid spinning.
                     LOG.error().$("WebSocket frame too large for recv buffer [fd=").$(context.getFd())
                             .$(", bufferSize=").$(recvBufferSize).I$();

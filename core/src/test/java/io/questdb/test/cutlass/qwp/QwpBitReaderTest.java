@@ -63,6 +63,28 @@ public class QwpBitReaderTest {
     }
 
     @Test
+    public void testPeekBitAtEnd() throws QwpParseException {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(addr, 16);
+            writer.writeBits(0xFF, 8);
+            writer.flush();
+
+            QwpBitReader reader = new QwpBitReader();
+            reader.reset(addr, writer.getPosition() - addr);
+
+            // Consume all 8 bits
+            reader.readBits(8);
+
+            // Peek should return -1 when all bits are consumed
+            Assert.assertEquals(-1, reader.peekBit());
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testRandomRoundTrip() throws QwpParseException {
         long addr = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -123,6 +145,93 @@ public class QwpBitReaderTest {
     }
 
     @Test
+    public void testReadBitsOverflow() {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(addr, 16);
+            writer.writeBits(0xFF, 8);
+            writer.flush();
+
+            QwpBitReader reader = new QwpBitReader();
+            reader.reset(addr, writer.getPosition() - addr);
+
+            try {
+                reader.readBits(16); // only 8 bits available
+                Assert.fail("Should have thrown QwpParseException");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.BIT_READ_OVERFLOW, e.getErrorCode());
+            }
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testReadBitsReturnsZeroForZeroBits() throws QwpParseException {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(addr, 16);
+            writer.writeBits(0xFF, 8);
+            writer.flush();
+
+            QwpBitReader reader = new QwpBitReader();
+            reader.reset(addr, writer.getPosition() - addr);
+
+            Assert.assertEquals(0, reader.readBits(0));
+            Assert.assertEquals(0, reader.readBits(-1));
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testReadBitsThrowsAbove64() throws QwpParseException {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(addr, 16);
+            writer.writeBits(0xFF, 8);
+            writer.flush();
+
+            QwpBitReader reader = new QwpBitReader();
+            reader.reset(addr, writer.getPosition() - addr);
+
+            boolean assertErrorThrown = false;
+            try {
+                reader.readBits(65);
+            } catch (AssertionError e) {
+                assertErrorThrown = true;
+            }
+            if (!assertErrorThrown) {
+                Assert.fail("Should have thrown AssertionError");
+            }
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testReadSigned64Bits() throws QwpParseException {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(addr, 16);
+            writer.writeSigned(-1L, 64);
+            writer.flush();
+
+            QwpBitReader reader = new QwpBitReader();
+            reader.reset(addr, writer.getPosition() - addr);
+
+            // numBits == 64 skips sign extension; the raw 64-bit value is returned
+            Assert.assertEquals(-1L, reader.readSigned(64));
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testRoundTripMixedBitWidths() throws QwpParseException {
         long addr = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -172,6 +281,81 @@ public class QwpBitReaderTest {
 
             // Should now read the second byte
             Assert.assertEquals(0xAB, reader.readBits(8));
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testSkipBitsFastPath() throws QwpParseException {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(addr, 16);
+            // Write pattern: 3 bits (101) + 3 bits to skip (010) + 4 bits (1100)
+            writer.writeBits(0b101, 3);
+            writer.writeBits(0b010, 3);
+            writer.writeBits(0b1100, 4);
+            writer.flush();
+
+            QwpBitReader reader = new QwpBitReader();
+            reader.reset(addr, writer.getPosition() - addr);
+
+            // Read first 3 bits to load bytes into the buffer
+            Assert.assertEquals(0b101, reader.readBits(3));
+
+            // Skip 3 bits (fast path: these are already in the buffer)
+            reader.skipBits(3);
+
+            // Verify we're at the right position by reading the next 4 bits
+            Assert.assertEquals(0b1100, reader.readBits(4));
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testSkipBitsOverflow() {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(addr, 16);
+            writer.writeBits(0xFF, 8);
+            writer.flush();
+
+            QwpBitReader reader = new QwpBitReader();
+            reader.reset(addr, writer.getPosition() - addr);
+
+            try {
+                reader.skipBits(16); // only 8 bits available
+                Assert.fail("Should have thrown QwpParseException");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.BIT_READ_OVERFLOW, e.getErrorCode());
+            }
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testSkipBitsWithRemainder() throws QwpParseException {
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpBitWriter writer = new QwpBitWriter();
+            writer.reset(addr, 16);
+            // Write 24 bits: 13 to skip, then 11 to read
+            writer.writeBits(0, 13);
+            writer.writeBits(0b10110100101, 11);
+            writer.flush();
+
+            QwpBitReader reader = new QwpBitReader();
+            reader.reset(addr, writer.getPosition() - addr);
+
+            // Skip 13 bits: bytesToSkip=1, remainingBits=5
+            reader.skipBits(13);
+
+            Assert.assertEquals(13, reader.getBitPosition());
+            Assert.assertEquals(0b10110100101, reader.readBits(11));
         } finally {
             Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
         }
