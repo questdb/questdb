@@ -78,11 +78,12 @@ The file has a header with column descriptors, row group blocks in the middle, a
                  |  parquet_footer_offset |
                  |  parquet_footer_length |
                  |  row_group_count       |
-                 |  footer_feature_flags  |
+                 |  unused_bytes          |
                  |  entry 0: offset ------+--> ROW GROUP BLOCK 0
                  |  entry 1: offset ------+--> ROW GROUP BLOCK 1
                  |  ...                   |
-                 |  FOOTER FEAT SECTIONS  |
+                 |  FOOTER FEATURE SECTIONS|
+                 |  (if any flags set)    |
                  |  CRC32                 |
                  |  FOOTER_LENGTH (4B)  --+--> footer start = file_size - 4 - FOOTER_LENGTH
   _txn field 3:  +========================+
@@ -119,33 +120,31 @@ The file has a header with column descriptors, row group blocks in the middle, a
 
 ### Feature flags
 
-Both the header and footer contain a `feature_flags` field (`u64`) that gates optional sections:
+The header contains a single `feature_flags` field (`u64`) that gates optional sections in **both** the header area (after name strings) and the footer area (after row group entries):
 
 - **Bits 0-31**: optional - reader ignores unknown bits silently.
 - **Bits 32-63**: required - reader rejects the file if unknown bits are set.
 
-Feature sections are written in ascending bit order after their respective fixed-format region (name strings for the header, row group entries for the footer). Each feature's section size is resolvable from the feature spec and file metadata (e.g., `column_count`), so readers navigate sections sequentially without an offset table.
+Each feature's spec defines whether it adds a header section, a footer section, or both, and a deterministic size formula based on file metadata (e.g., `column_count`, `row_group_count`) and values from previously-parsed sections. Sections are written in ascending bit order in their respective area. Readers navigate sections sequentially without an offset table.
 
-If a reader encounters an unknown optional bit that is set, it stops parsing further sections (it cannot compute the size to skip). The CRC is always locatable via `footer_length` from the trailer regardless of unknown content.
+If a reader encounters an unknown optional bit that is set, it stops parsing further sections in that area (it cannot compute the size to skip). The CRC is always locatable via `footer_length` from the trailer regardless of unknown content.
 
-#### Header feature flags
+A single feature can span multiple bits (e.g., a presence bit and a storage-mode bit). All bits of a feature are defined in the same spec, so a reader that understands the feature understands all of its bits together. A reader that doesn't know the lowest bit of the feature stops there and never reaches the dependent bits.
 
-| bit | name        | level | section size             | description                                   |
-| --- | ----------- | ----- | ------------------------ | --------------------------------------------- |
-| 0   | COLUMN_TOPS | file  | `column_count * 8` bytes | `[u64; column_count]` - column top per column |
+#### Defined feature flags
 
-When `COLUMN_TOPS` is set, the section contains one `u64` per column giving the row number where valid data begins (rows before that are null). When unset, all tops are 0. The section is only written when at least one column has a non-zero top.
+| bit | name        | header section            | footer section | description                                   |
+| --- | ----------- | ------------------------- | -------------- | --------------------------------------------- |
+| 0   | COLUMN_TOPS | `[u64; column_count]`     | none           | `column_top` per column (row where valid data starts) |
 
-#### Footer feature flags
-
-None defined yet. The `footer_feature_flags` field is reserved for future use (always 0).
+When `COLUMN_TOPS` is set, the header section contains one `u64` per column giving the row number where valid data begins (rows before that are null). When unset, all tops are 0. The section is only written when at least one column has a non-zero top.
 
 ### File header
 
 | offset | size | field                | type | description                                                             |
 | ------ | ---- | -------------------- | ---- | ----------------------------------------------------------------------- |
 | 0      | 4    | FILE_FORMAT_VERSION  | u32  |                                                                         |
-| 4      | 8    | FEATURE_FLAGS        | u64  | header feature flags                                                    |
+| 4      | 8    | FEATURE_FLAGS        | u64  | feature flags (gates sections in both header and footer)                |
 | 12     | 4    | DESIGNATED_TIMESTAMP | i32  | index of the designated timestamp in descriptors (or -1)                |
 | 16     | 4    | SORTING_COLUMN_COUNT | u32  |                                                                         |
 | 20     | 4    | COLUMN_COUNT         | u32  |                                                                         |
@@ -259,17 +258,16 @@ At the offset, a 4-byte `LENGTH` field gives the size of the bitset, followed by
 
 The `_pm` file size is stored in `_txn` field 3. The reader locates the footer by reading the 4-byte FOOTER_LENGTH trailer at the end of the file: `footer_offset = file_size - 4 - FOOTER_LENGTH`. This mirrors how parquet files store `footer_length + PAR1` at the end.
 
-The CRC is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENGTH - 4`. This handles unknown footer feature sections between the row group entries and CRC.
+The CRC is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENGTH - 4`. This handles unknown feature sections between the row group entries and CRC.
 
 | offset | size | field                 | type | description                                                                         |
 | ------ | ---- | --------------------- | ---- | ----------------------------------------------------------------------------------- |
 | 0      | 8    | PARQUET_FOOTER_OFFSET | u64  | byte offset in the parquet file where the parquet footer starts                     |
 | 8      | 4    | PARQUET_FOOTER_LENGTH | u32  | length of the parquet footer in bytes                                               |
 | 12     | 4    | ROW_GROUP_COUNT       | u32  |                                                                                     |
-| 16     | 8    | FOOTER_FEATURE_FLAGS  | u64  | footer feature flags                                                                |
-| 24     | 8    | UNUSED_BYTES          | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)  |
-| 32     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
-| ..     | ..   | FOOTER_FEAT_SECTIONS  |      | Feature sections in ascending bit order (if any footer flags set)                   |
+| 16     | 8    | UNUSED_BYTES          | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)  |
+| 24     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
+| ..     | ..   | FOOTER_FEAT_SECTIONS  |      | Feature sections in ascending bit order (if any header flags add footer sections)   |
 | ..     | 4    | CHECKSUM              | u32  | CRC32 from the start of the file to this field (exclusive)                          |
 | ..     | 4    | FOOTER_LENGTH         | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM |
 
@@ -294,7 +292,7 @@ Atomicity is provided by the `_txn` file. The `_pm` file size is stored in `_txn
 1. Read `_txn` via `safeReadTxn()` (spin-lock with version check).
 2. Memory-map the `_pm` file using the file size from `_txn` field 3.
 3. Read the 4-byte FOOTER_LENGTH trailer at the end of the file to locate the footer.
-4. Read the footer: PARQUET_FOOTER_OFFSET, PARQUET_FOOTER_LENGTH, ROW_GROUP_COUNT, FOOTER_FEATURE_FLAGS, and row group entries.
+4. Read the footer: PARQUET_FOOTER_OFFSET, PARQUET_FOOTER_LENGTH, ROW_GROUP_COUNT, UNUSED_BYTES, and row group entries.
 5. For metadata-only operations (timestamp stats), read directly from the `_pm` file.
 6. For data operations, derive the parquet file size from the footer (`PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8`) and memory-map `data.parquet`.
 

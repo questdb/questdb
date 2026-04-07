@@ -27,8 +27,8 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::types::{
-    BlockAlignedOffset, FooterFeatureFlags, BLOCK_ALIGNMENT_SHIFT, FOOTER_CHECKSUM_SIZE,
-    FOOTER_FIXED_SIZE, FOOTER_TRAILER_SIZE, ROW_GROUP_ENTRY_SIZE,
+    BlockAlignedOffset, BLOCK_ALIGNMENT_SHIFT, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE,
+    FOOTER_TRAILER_SIZE, ROW_GROUP_ENTRY_SIZE,
 };
 
 // ── On-disk footer fixed portion (24 bytes) ─────────────────────────────
@@ -39,7 +39,6 @@ pub struct FooterRaw {
     pub parquet_footer_offset: u64,
     pub parquet_footer_length: u32,
     pub row_group_count: u32,
-    pub footer_feature_flags: FooterFeatureFlags,
     pub unused_bytes: u64,
 }
 
@@ -47,14 +46,14 @@ pub struct FooterRaw {
 
 /// Reader over the footer of a `_pm` file.
 ///
-/// The footer starts at the offset stored in `_txn` and contains:
+/// The footer starts at the offset derived from the trailer and contains:
 /// PARQUET_FOOTER_OFFSET(u64), PARQUET_FOOTER_LENGTH(u32),
-/// ROW_GROUP_COUNT(u32), FOOTER_FEATURE_FLAGS(u64),
-/// ROW_GROUP_ENTRIES(4B each), [footer feature sections], CHECKSUM(u32).
+/// ROW_GROUP_COUNT(u32), UNUSED_BYTES(u64), ROW_GROUP_ENTRIES(4B each),
+/// [feature sections gated by header feature flags], CHECKSUM(u32).
 ///
 /// CRC is located via `footer_length` from the trailer: `CRC offset =
 /// footer_length - 4` relative to footer start. This handles unknown
-/// footer feature sections between the entries and CRC.
+/// feature sections between the entries and CRC.
 pub struct Footer<'a> {
     raw: FooterRaw,
     data: &'a [u8],
@@ -78,18 +77,8 @@ impl<'a> Footer<'a> {
             parquet_footer_offset: u64::from_le_bytes(data[0..8].try_into().unwrap()),
             parquet_footer_length: u32::from_le_bytes(data[8..12].try_into().unwrap()),
             row_group_count: u32::from_le_bytes(data[12..16].try_into().unwrap()),
-            footer_feature_flags: FooterFeatureFlags::from_le_bytes(
-                data[16..24].try_into().unwrap(),
-            ),
-            unused_bytes: u64::from_le_bytes(data[24..32].try_into().unwrap()),
+            unused_bytes: u64::from_le_bytes(data[16..24].try_into().unwrap()),
         };
-
-        let unknown_required = raw.footer_feature_flags.unknown_required(0);
-        if unknown_required != 0 {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::UnsupportedFeature { flags: unknown_required }
-            ));
-        }
 
         // Validate that the footer data is large enough for base entries + CRC.
         let min_size = Self::min_size(raw.row_group_count)?;
@@ -118,7 +107,7 @@ impl<'a> Footer<'a> {
     }
 
     /// Minimum byte size for the footer (fixed + base entries + CRC + trailer).
-    /// Does not account for footer feature sections.
+    /// Does not account for feature sections.
     pub fn min_size(row_group_count: u32) -> ParquetResult<usize> {
         Self::base_size_through_crc(row_group_count)?
             .checked_add(FOOTER_TRAILER_SIZE)
@@ -128,7 +117,7 @@ impl<'a> Footer<'a> {
     }
 
     /// Byte size from footer start through CRC (inclusive), for the base
-    /// footer without any footer feature sections.
+    /// footer without any feature sections.
     pub fn base_size_through_crc(row_group_count: u32) -> ParquetResult<usize> {
         let rg_entries = (row_group_count as usize)
             .checked_mul(ROW_GROUP_ENTRY_SIZE)
@@ -145,7 +134,7 @@ impl<'a> Footer<'a> {
 
     /// Byte offset of the CRC32 field relative to footer start.
     /// Uses `footer_length_through_crc` from the trailer, which handles
-    /// unknown footer feature sections between entries and CRC.
+    /// unknown feature sections between entries and CRC.
     pub fn crc_offset(&self) -> usize {
         self.footer_length_through_crc as usize - FOOTER_CHECKSUM_SIZE
     }
@@ -162,10 +151,6 @@ impl<'a> Footer<'a> {
 
     pub fn row_group_count(&self) -> u32 {
         self.raw.row_group_count
-    }
-
-    pub fn footer_feature_flags(&self) -> FooterFeatureFlags {
-        self.raw.footer_feature_flags
     }
 
     pub fn unused_bytes(&self) -> u64 {
@@ -255,7 +240,6 @@ impl FooterBuilder {
         buf.extend_from_slice(&self.parquet_footer_offset.to_le_bytes());
         buf.extend_from_slice(&self.parquet_footer_length.to_le_bytes());
         buf.extend_from_slice(&(self.row_group_offsets.len() as u32).to_le_bytes());
-        buf.extend_from_slice(&FooterFeatureFlags::new().0.to_le_bytes());
         buf.extend_from_slice(&self.unused_bytes.to_le_bytes());
 
         for &offset in &self.row_group_offsets {
@@ -289,7 +273,7 @@ mod tests {
         assert_eq!(footer.parquet_footer_offset(), 1024);
         assert_eq!(footer.parquet_footer_length(), 512);
         assert_eq!(footer.row_group_count(), 0);
-        assert_eq!(footer.footer_feature_flags(), FooterFeatureFlags::new());
+        assert_eq!(footer.unused_bytes(), 0);
         assert_eq!(footer.checksum().unwrap(), 0); // placeholder
     }
 
@@ -344,13 +328,13 @@ mod tests {
 
     #[test]
     fn footer_truncated_for_entries() {
-        // Create a footer with a valid header claiming 5 row groups but
-        // only provide enough bytes for the fixed header + checksum (no entries).
+        // Create a footer with a valid fixed portion claiming 5 row groups but
+        // only provide enough bytes for the fixed portion (no entries, no CRC).
         let mut buf = Vec::new();
         buf.extend_from_slice(&0u64.to_le_bytes()); // parquet_footer_offset
         buf.extend_from_slice(&0u32.to_le_bytes()); // parquet_footer_length
         buf.extend_from_slice(&5u32.to_le_bytes()); // row_group_count = 5
-        buf.extend_from_slice(&0u64.to_le_bytes()); // footer_feature_flags
+        buf.extend_from_slice(&0u64.to_le_bytes()); // unused_bytes
                                                     // Need 24 + 5*4 + 4 = 48 bytes, but only have 24.
         assert!(Footer::new(&buf, 24).is_err());
     }
@@ -374,34 +358,15 @@ mod tests {
     }
 
     #[test]
-    fn unknown_optional_footer_flags_ignored() {
-        let fb = FooterBuilder::new(0, 0);
+    fn unused_bytes_round_trip() {
+        let mut fb = FooterBuilder::new(100, 50);
+        fb.unused_bytes(8192);
+
         let mut buf = Vec::new();
         let start = fb.write_to(&mut buf);
 
-        // Set unknown optional flag bits in the footer.
-        let flags_offset = start + 16;
-        let flags = 0x0000_0000_FFFF_FFFEu64;
-        buf[flags_offset..flags_offset + 8].copy_from_slice(&flags.to_le_bytes());
-
         let footer_length = u32::from_le_bytes(buf[buf.len() - 4..].try_into().unwrap());
-        // Reader should accept (CRC located via footer_length, not computed).
         let footer = Footer::new(&buf[start..], footer_length).unwrap();
-        assert_eq!(footer.row_group_count(), 0);
-    }
-
-    #[test]
-    fn unknown_required_footer_flags_rejected() {
-        let fb = FooterBuilder::new(0, 0);
-        let mut buf = Vec::new();
-        let start = fb.write_to(&mut buf);
-
-        // Set an unknown required flag (bit 32).
-        let flags_offset = start + 16;
-        let flags = 1u64 << 32;
-        buf[flags_offset..flags_offset + 8].copy_from_slice(&flags.to_le_bytes());
-
-        let footer_length = u32::from_le_bytes(buf[buf.len() - 4..].try_into().unwrap());
-        assert!(Footer::new(&buf[start..], footer_length).is_err());
+        assert_eq!(footer.unused_bytes(), 8192);
     }
 }

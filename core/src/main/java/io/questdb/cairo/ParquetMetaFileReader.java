@@ -49,10 +49,9 @@ import io.questdb.std.Unsafe;
  *   [0]  PARQUET_FOOTER_OFFSET   u64
  *   [8]  PARQUET_FOOTER_LENGTH   u32
  *   [12] ROW_GROUP_COUNT         u32
- *   [16] FOOTER_FEATURE_FLAGS    u64
- *   [24] UNUSED_BYTES            u64
- *   [32..] row group entries (4B each, u32 block offset >> 3)
- *   [..]  footer feature sections (if any footer feature flags set)
+ *   [16] UNUSED_BYTES            u64
+ *   [24..] row group entries (4B each, u32 block offset >> 3)
+ *   [..]  feature sections (gated by header FEATURE_FLAGS)
  *   [..]  CRC32                  u32
  *   [..]  FOOTER_LENGTH          u32  (total bytes from footer start through CRC)
  * </pre>
@@ -76,8 +75,8 @@ public class ParquetMetaFileReader {
     private static final int FOOTER_PARQUET_FOOTER_OFFSET_OFF = 0;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
     private static final int FOOTER_ROW_GROUP_COUNT_OFF = 12;
-    private static final int FOOTER_FEATURE_FLAGS_OFF = 16;
-    private static final int FOOTER_FIXED_SIZE = 32;
+    private static final int FOOTER_UNUSED_BYTES_OFF = 16;
+    private static final int FOOTER_FIXED_SIZE = 24;
 
     // Footer trailer size (appended after CRC)
     private static final int FOOTER_TRAILER_SIZE = 4;
@@ -355,7 +354,7 @@ public class ParquetMetaFileReader {
      * Returns the accumulated dead bytes in the parquet file tracked by the _pm footer.
      */
     public long getUnusedBytes() {
-        return Unsafe.getUnsafe().getLong(footerAddr + 24);
+        return Unsafe.getUnsafe().getLong(footerAddr + FOOTER_UNUSED_BYTES_OFF);
     }
 
     /**

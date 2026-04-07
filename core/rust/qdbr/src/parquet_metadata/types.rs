@@ -46,8 +46,8 @@ pub const COLUMN_DESCRIPTOR_SIZE: usize = 32;
 pub const COLUMN_CHUNK_SIZE: usize = 64;
 
 /// Fixed portion of the footer (parquet_footer_offset(8) + parquet_footer_length(4)
-/// + row_group_count(4) + footer_feature_flags(8) + unused_bytes(8)).
-pub const FOOTER_FIXED_SIZE: usize = 32;
+/// + row_group_count(4) + unused_bytes(8)).
+pub const FOOTER_FIXED_SIZE: usize = 24;
 
 // ── Feature flags ─────────────────────────────────────────────────────
 
@@ -65,10 +65,12 @@ const fn unknown_required(raw: u64, known_required: u64) -> u64 {
 
 /// Feature flags stored in the file header.
 ///
+/// A single field gates feature sections in both the header (after name strings)
+/// and the footer (after row group entries). Each feature's spec defines whether
+/// it adds a header section, a footer section, or both.
+///
 /// Bits 0-31 are optional (reader ignores unknown bits).
 /// Bits 32-63 are required (reader rejects the file if unknown bits are set).
-///
-/// Header feature sections are immutable (written once with the header).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct HeaderFeatureFlags(pub u64);
 
@@ -90,33 +92,6 @@ impl HeaderFeatureFlags {
 
     pub const fn with_column_tops(self) -> Self {
         Self(self.0 | Self::COLUMN_TOPS_BIT)
-    }
-
-    /// Returns the unknown required bits given a mask of known required bits.
-    /// Non-zero means the reader must reject the file.
-    pub const fn unknown_required(self, known_required: u64) -> u64 {
-        unknown_required(self.0, known_required)
-    }
-}
-
-// ── FooterFeatureFlags ───────────────────────────────────────────────
-
-/// Feature flags stored in the footer.
-///
-/// Bits 0-31 are optional (reader ignores unknown bits).
-/// Bits 32-63 are required (reader rejects the file if unknown bits are set).
-///
-/// Footer feature sections are rewritten on each incremental update.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
-pub struct FooterFeatureFlags(pub u64);
-
-impl FooterFeatureFlags {
-    pub const fn new() -> Self {
-        Self(0)
-    }
-
-    pub const fn from_le_bytes(bytes: [u8; 8]) -> Self {
-        Self(u64::from_le_bytes(bytes))
     }
 
     /// Returns the unknown required bits given a mask of known required bits.
