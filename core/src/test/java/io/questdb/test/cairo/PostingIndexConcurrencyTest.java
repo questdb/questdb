@@ -71,7 +71,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
     }
 
     private void runConcurrentTest(String name, int numReaders, boolean useFwd, boolean useBwd) throws Exception {
-        final String dbRoot = configuration.getDbRoot().toString();
+        final String dbRoot = configuration.getDbRoot();
         final AtomicReference<Throwable> error = new AtomicReference<>();
         final AtomicInteger committed = new AtomicInteger(0);
         final CountDownLatch writerDone = new CountDownLatch(1);
