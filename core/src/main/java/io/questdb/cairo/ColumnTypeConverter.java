@@ -1112,10 +1112,10 @@ public class ColumnTypeConverter {
 
         long skipBytes = skipRows * srcColumnTypeSize;
         long mapBytes = rowCount * srcColumnTypeSize;
-        long srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
         StringSink sink = sinkUtf16TL.get();
+        long srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
 
         try {
             dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
@@ -1169,10 +1169,10 @@ public class ColumnTypeConverter {
 
         long skipBytes = skipRows * srcColumnTypeSize;
         long mapBytes = rowCount * srcColumnTypeSize;
-        long srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
         MemoryCMARW dstFixMem = dstFixMemTL.get();
         MemoryCMARW dstVarMem = dstVarMemTL.get();
         Utf8StringSink sink = sinkUtf8TL.get();
+        long srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
 
         try {
             dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
