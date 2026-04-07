@@ -218,9 +218,9 @@ public class ArrayAggDoubleGroupByFunction extends ArrayFunction implements Grou
             Unsafe.getUnsafe().putInt(destPtr + CAPACITY_OFFSET, newCapacity);
             destValue.putLong(valueIndex, destPtr);
         }
-        Unsafe.getUnsafe().copyMemory(
-                srcPtr + HEADER_SIZE,
+        Vect.memcpy(
                 destPtr + HEADER_SIZE + (long) destCount * Double.BYTES,
+                srcPtr + HEADER_SIZE,
                 (long) srcCount * Double.BYTES
         );
         Unsafe.getUnsafe().putInt(destPtr, newCount);
