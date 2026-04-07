@@ -228,6 +228,19 @@ public class TableToken implements Sinkable {
     }
 
     public enum Type {
-        TABLE, VIEW, MAT_VIEW, LIVE_VIEW
+        TABLE("table"),
+        VIEW("view"),
+        MAT_VIEW("materialized view"),
+        LIVE_VIEW("live view");
+
+        private final String keyword;
+
+        Type(String keyword) {
+            this.keyword = keyword;
+        }
+
+        public String keyword() {
+            return keyword;
+        }
     }
 }

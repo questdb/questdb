@@ -10,6 +10,78 @@ import org.junit.Test;
 public class LiveViewTest extends AbstractCairoTest {
 
     @Test
+    public void testCannotAlterLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertException(
+                "ALTER TABLE live_rn ADD COLUMN x INT",
+                12,
+                "cannot modify live view [view=live_rn]"
+        );
+    }
+
+    @Test
+    public void testCannotDropLiveViewAsTable() throws Exception {
+        createBaseTableAndLiveView();
+        assertException(
+                "DROP TABLE live_rn",
+                11,
+                "table name expected, got live view name: live_rn"
+        );
+    }
+
+    @Test
+    public void testCannotDropTableAsLiveView() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+        assertException(
+                "DROP LIVE VIEW trades",
+                15,
+                "live view name expected [name=trades]"
+        );
+    }
+
+    @Test
+    public void testCannotInsertIntoLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertException(
+                "INSERT INTO live_rn VALUES ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z', 1)",
+                12,
+                "cannot modify live view [view=live_rn]"
+        );
+    }
+
+    @Test
+    public void testCannotRenameLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertException(
+                "RENAME TABLE live_rn TO live_rn2",
+                13,
+                "cannot modify live view [view=live_rn]"
+        );
+    }
+
+    @Test
+    public void testCannotTruncateLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertException(
+                "TRUNCATE TABLE live_rn",
+                15,
+                "cannot modify live view [view=live_rn]"
+        );
+    }
+
+    @Test
+    public void testCannotUpdateLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertException(
+                "UPDATE live_rn SET price = 0",
+                0,
+                "cannot modify live view [view=live_rn]"
+        );
+    }
+
+    @Test
     public void testCreateAndDropLiveView() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -201,5 +273,14 @@ public class LiveViewTest extends AbstractCairoTest {
             //noinspection StatementWithEmptyBody
             while (job.run(0, Job.RUNNING_STATUS)) ;
         }
+    }
+
+    private void createBaseTableAndLiveView() throws SqlException {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+        execute("CREATE LIVE VIEW live_rn AS" +
+                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                " FROM trades");
     }
 }
