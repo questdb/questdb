@@ -287,6 +287,80 @@ fn test_multi_partition_duplicate_heavy() {
 }
 
 // ============================================================================
+// Minimal reproduction: 2 partitions, 1 value each (issue from #6809)
+// ============================================================================
+
+/// Count the number of DictPages and DataPages in the first column chunk.
+/// Returns (dict_page_count, data_page_count).
+fn count_pages_in_first_column(bytes: &[u8]) -> (usize, usize) {
+    use parquet2::page::CompressedPage;
+    use parquet2::read::{get_page_iterator, read_metadata};
+
+    let mut cursor = Cursor::new(bytes);
+    let metadata = read_metadata(&mut cursor).expect("read parquet metadata");
+    assert!(!metadata.row_groups.is_empty(), "no row groups");
+
+    let column_meta = &metadata.row_groups[0].columns()[0];
+    let iter =
+        get_page_iterator(column_meta, Cursor::new(bytes), None, vec![], 1024 * 1024)
+            .expect("page iterator");
+
+    let mut dict_count = 0usize;
+    let mut data_count = 0usize;
+    for page_result in iter {
+        match page_result.expect("page read") {
+            CompressedPage::Dict(_) => dict_count += 1,
+            CompressedPage::Data(_) => data_count += 1,
+        }
+    }
+    (dict_count, data_count)
+}
+
+#[test]
+fn test_two_partitions_one_value_each() {
+    // Minimal reproduction of the dictionary splitting bug: 2 partitions with a
+    // single VARCHAR value in each. Before the fix, this produced an invalid
+    // Parquet file with two DictPages per column chunk.
+    let (_o1, _a1, p1) = make_varchar_partition(&["aaa"], &[false]);
+    let (_o2, _a2, p2) = make_varchar_partition(&["bbb"], &[false]);
+
+    let bytes = write_multi_partition_parquet(&[&p1, &p2], Some(1_000_000), None);
+
+    // Data correctness.
+    let expected: Vec<Option<&str>> = vec![Some("aaa"), Some("bbb")];
+    assert_varchar_values(&bytes, &expected);
+
+    // Structural validity: exactly 1 DictPage per column chunk (Parquet spec).
+    let (dict_pages, data_pages) = count_pages_in_first_column(&bytes);
+    assert_eq!(
+        dict_pages, 1,
+        "Parquet spec requires at most 1 DictPage per column chunk, found {dict_pages}"
+    );
+    assert!(data_pages >= 1, "expected at least 1 DataPage");
+}
+
+#[test]
+fn test_two_partitions_one_value_each_same_value() {
+    // Same as above but both partitions contain the same string — the
+    // dictionary should deduplicate to a single entry.
+    let (_o1, _a1, p1) = make_varchar_partition(&["same"], &[false]);
+    let (_o2, _a2, p2) = make_varchar_partition(&["same"], &[false]);
+
+    let bytes = write_multi_partition_parquet(&[&p1, &p2], Some(1_000_000), None);
+
+    // Data correctness.
+    let expected: Vec<Option<&str>> = vec![Some("same"), Some("same")];
+    assert_varchar_values(&bytes, &expected);
+
+    // Structural validity: 1 DictPage, and it should have exactly 1 unique entry.
+    let (dict_pages, _) = count_pages_in_first_column(&bytes);
+    assert_eq!(
+        dict_pages, 1,
+        "Parquet spec requires at most 1 DictPage per column chunk, found {dict_pages}"
+    );
+}
+
+// ============================================================================
 // Dictionary size fallback tests
 // ============================================================================
 
