@@ -2153,7 +2153,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     assertTrue(ff.exists(PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)));
 
                     // Second writer: reopen without reinit, add more data (creates gen1)
-                    PostingIndexWriter writer2 = new PostingIndexWriter(configuration, true);
+                    PostingIndexWriter writer2 = new PostingIndexWriter(configuration);
                     writer2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
                     writer2.configureCovering(
                             new long[]{colAddr},
@@ -2475,7 +2475,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     }
 
                     // Second writer: touch only key 260 (stride 1) → stride 0 stays clean
-                    PostingIndexWriter writer2 = new PostingIndexWriter(configuration, true);
+                    PostingIndexWriter writer2 = new PostingIndexWriter(configuration);
                     writer2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
                     writer2.configureCovering(
                             new long[]{colAddr},
@@ -4365,7 +4365,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         writer.commit();
                     }
                     // Reopen, add 10 more rows (gen1 raw sidecar appended after seal's stride data)
-                    PostingIndexWriter w2 = new PostingIndexWriter(configuration, true);
+                    PostingIndexWriter w2 = new PostingIndexWriter(configuration);
                     w2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
                     w2.configureCovering(
                             new long[]{colAddr}, new long[]{0}, new int[]{3},

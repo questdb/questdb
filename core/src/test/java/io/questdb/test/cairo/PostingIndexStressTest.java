@@ -65,6 +65,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     private static final int TIER_PER_KEY = 1;
     private static final int TIER_SBBF = 2;
 
+
     // ===================================================================
     // Fuzz: randomized workloads verified against in-memory oracle
     // ===================================================================
@@ -326,7 +327,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             long rowId = 0;
 
             for (int cycle = 0; cycle < cycles; cycle++) {
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, true)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     if (cycle == 0) {
                         writer.of(path.trimTo(plen), "stress_cycle", COLUMN_NAME_TXN_NONE, true);
                     } else {
@@ -1210,7 +1211,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
 
             // Phase 5: reopen (triggers compact), verify
-            try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration, true)) {
+            try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration)) {
                 writer2.of(path.trimTo(plen), "compact_snap", COLUMN_NAME_TXN_NONE, false);
 
                 RowCursor cursor = writer2.getCursor(0);
@@ -1237,7 +1238,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
             for (int cycle = 0; cycle < cycles; cycle++) {
                 // Write phase
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, true)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     writer.of(path.trimTo(plen), "multi_compact", COLUMN_NAME_TXN_NONE, cycle == 0);
                     for (int batch = 0; batch < 2; batch++) {
                         for (int v = 0; v < BP_BATCH; v++) {
@@ -1670,7 +1671,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
             }
 
             // Phase 4: reopen (triggers compact), verify
-            try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration, true)) {
+            try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration)) {
                 writer2.of(path.trimTo(plen), "compact_overlap", COLUMN_NAME_TXN_NONE, false);
 
                 RowCursor cursor = writer2.getCursor(0);
@@ -2479,7 +2480,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
 
                 // Phase 4: open a fresh writer -- should recover from the valid page
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, true)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
                     // After seal+compact, genCount=1
                     Assert.assertEquals("writer genCount after recovery", 1, writer.getGenCount());
@@ -2591,7 +2592,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 }
 
                 // Open fresh writer -- should recover and be able to write more data
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, true)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
                     Assert.assertEquals("writer recovered with 1 sealed gen", 1, writer.getGenCount());
 
@@ -2831,7 +2832,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 String name = "dirty_shutdown";
 
                 // Phase 1: write 20 batches (creating 20 sparse gens)
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, true)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
                     for (int batch = 0; batch < 20; batch++) {
                         long base = (long) batch * BP_BATCH;
@@ -2846,7 +2847,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // close() called seal() + compact: genCount is now 1
 
                 // Phase 2: re-open the writer on the same files (init=false)
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, true)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
 
                     // After close+seal, genCount should be 1 (single sealed gen)

@@ -131,6 +131,10 @@ public class PostingIndexWriter implements IndexWriter {
     private int unpackBatchCapacity;
     private long valueMemSize;
 
+    public PostingIndexWriter(CairoConfiguration configuration) {
+        this(configuration, configuration.isPostingIndexEliasFanoEnabled());
+    }
+
     public PostingIndexWriter(CairoConfiguration configuration, boolean isEliasFanoEnabled) {
         this.alignedBitWidthThreshold = configuration.getPostingIndexAlignedBitWidthThreshold();
         this.configuration = configuration;
@@ -140,7 +144,7 @@ public class PostingIndexWriter implements IndexWriter {
 
     @TestOnly
     public PostingIndexWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn) {
-        this(configuration, true);
+        this(configuration);
         of(path, name, columnNameTxn, true);
     }
 

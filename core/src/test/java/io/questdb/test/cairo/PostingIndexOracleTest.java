@@ -465,7 +465,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
             // close() calls seal() again but genCount==1 so it's a no-op
 
             // Reopen — compaction should move gen 0 to offset 0
-            try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration, true)) {
+            try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration)) {
                 writer2.of(path.trimTo(plen), "bp_compact", COLUMN_NAME_TXN_NONE, false);
                 Assert.assertEquals(1, writer2.getGenCount());
 

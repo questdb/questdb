@@ -151,7 +151,7 @@ public final class IndexFactory {
     public static IndexWriter createWriter(byte indexType, CairoConfiguration configuration) {
         return switch (indexType) {
             case IndexType.BITMAP -> new BitmapIndexWriter(configuration);
-            case IndexType.POSTING -> new PostingIndexWriter(configuration, true);
+            case IndexType.POSTING -> new PostingIndexWriter(configuration);
             case IndexType.POSTING_DELTA -> new PostingIndexWriter(configuration, false);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create writer for index type NONE");
