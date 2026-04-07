@@ -63,6 +63,65 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_RANGE_COLUMN_TYPES;
     private static final ArrayColumnTypes BIVAR_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
+    // Naive sum-of-products formula, used by sliding-window (removable) frames.
+    static double computeCorr(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count) {
+        if (count <= 1) {
+            return Double.NaN;
+        }
+        double cXY = sumXY - sumX * sumY / count;
+        double cXX = sumXX - sumX * sumX / count;
+        double cYY = sumYY - sumY * sumY / count;
+        if (cXX < 0) {
+            cXX = 0;
+        }
+        if (cYY < 0) {
+            cYY = 0;
+        }
+        double denom = Math.sqrt(cXX * cYY);
+        return denom == 0.0 ? Double.NaN : cXY / denom;
+    }
+
+    // Welford's online algorithm result for correlation.
+    static double computeCorrWelford(double sumXY, double sumXX, double sumYY, long count) {
+        if (count <= 1) {
+            return Double.NaN;
+        }
+        if (sumXX < 0) {
+            sumXX = 0;
+        }
+        if (sumYY < 0) {
+            sumYY = 0;
+        }
+        double denom = Math.sqrt(sumXX * sumYY);
+        return denom == 0.0 ? Double.NaN : sumXY / denom;
+    }
+
+    // Naive sum-of-products formula for covariance, used by sliding-window (removable) frames.
+    static double computeCovar(double sumXY, double sumX, double sumY, long count, boolean isSample) {
+        long denom = isSample ? count - 1 : count;
+        if (denom <= 0) {
+            return Double.NaN;
+        }
+        return (sumXY - sumX * sumY / count) / denom;
+    }
+
+    // Welford's online algorithm result for covariance.
+    static double computeCovarWelford(double sumXY, long count, boolean isSample) {
+        long denom = isSample ? count - 1 : count;
+        if (denom <= 0) {
+            return Double.NaN;
+        }
+        return sumXY / denom;
+    }
+
+    private static double computeResultNaive(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count, boolean isCorrelation, boolean isSample) {
+        if (isCorrelation) {
+            return computeCorr(sumXY, sumXX, sumYY, sumX, sumY, count);
+        } else {
+            return computeCovar(sumXY, sumX, sumY, count, isSample);
+        }
+    }
+
     @Override
     public Function newInstance(
             int position,
@@ -320,65 +379,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    private static double computeResultNaive(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count, boolean isCorrelation, boolean isSample) {
-        if (isCorrelation) {
-            return computeCorr(sumXY, sumXX, sumYY, sumX, sumY, count);
-        } else {
-            return computeCovar(sumXY, sumX, sumY, count, isSample);
-        }
-    }
-
-    // Naive sum-of-products formula, used by sliding-window (removable) frames.
-    static double computeCorr(double sumXY, double sumXX, double sumYY, double sumX, double sumY, long count) {
-        if (count <= 1) {
-            return Double.NaN;
-        }
-        double cXY = sumXY - sumX * sumY / count;
-        double cXX = sumXX - sumX * sumX / count;
-        double cYY = sumYY - sumY * sumY / count;
-        if (cXX < 0) {
-            cXX = 0;
-        }
-        if (cYY < 0) {
-            cYY = 0;
-        }
-        double denom = Math.sqrt(cXX * cYY);
-        return denom == 0.0 ? Double.NaN : cXY / denom;
-    }
-
-    // Welford's online algorithm result for correlation.
-    static double computeCorrWelford(double sumXY, double sumXX, double sumYY, long count) {
-        if (count <= 1) {
-            return Double.NaN;
-        }
-        if (sumXX < 0) {
-            sumXX = 0;
-        }
-        if (sumYY < 0) {
-            sumYY = 0;
-        }
-        double denom = Math.sqrt(sumXX * sumYY);
-        return denom == 0.0 ? Double.NaN : sumXY / denom;
-    }
-
-    // Naive sum-of-products formula for covariance, used by sliding-window (removable) frames.
-    static double computeCovar(double sumXY, double sumX, double sumY, long count, boolean isSample) {
-        long denom = isSample ? count - 1 : count;
-        if (denom <= 0) {
-            return Double.NaN;
-        }
-        return (sumXY - sumX * sumY / count) / denom;
-    }
-
-    // Welford's online algorithm result for covariance.
-    static double computeCovarWelford(double sumXY, long count, boolean isSample) {
-        long denom = isSample ? count - 1 : count;
-        if (denom <= 0) {
-            return Double.NaN;
-        }
-        return sumXY / denom;
-    }
-
     protected abstract boolean isCorrelation();
 
     protected abstract boolean isSample();
@@ -443,11 +443,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sink.val(name);
             sink.val('(').val(argY).val(',').val(argX).val(')');
             sink.val(" over (rows between current row and current row)");
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
         }
     }
 
@@ -561,11 +556,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
         }
     }
 
@@ -1708,11 +1698,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
         }
     }
 

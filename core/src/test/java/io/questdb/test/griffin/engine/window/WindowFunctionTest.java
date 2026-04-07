@@ -10951,6 +10951,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStdDevResolvesToGroupByWithImplicitCast() throws Exception {
+        // Verifies FunctionParser +20 penalty for context-mismatched factories
+        // when implicit cast (LONG→DOUBLE) is needed
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1), (2, 1, 3), (3, 2, 10), (4, 2, 20)");
+
+            assertSql(
+                    """
+                            i\tsd
+                            1\t1.4142135623730951
+                            2\t7.0710678118654755
+                            """,
+                    "select i, stddev(j) sd from tab order by i"
+            );
+        });
+    }
+
+    @Test
     public void testVarPopCurrentRowSemantics() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
@@ -11059,6 +11078,91 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarPopOverWholeResultSet() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+                            "from (" +
+                            "select var_pop(j) over () vr, stddev_pop(j) over () sd from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testVarPopRejectsRangeOnNonDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, j double)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select var_pop(j) over (order by ts range between 1 microsecond preceding and current row) from nodts",
+                    -1,
+                    "RANGE is supported only for queries ordered by designated timestamp",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testVarSampOverWholeResultSet() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0), (2, 2.0), (3, null), (4, 4.0), (5, 5.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+                            "from (" +
+                            "select var_samp(j) over () vr, stddev_samp(j) over () sd from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testVarSampOverPartitionRunning() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1.0), (2, 1, 2.0), (3, 1, null), (4, 1, 4.0), (5, 2, 10.0), (6, 2, 14.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 12) max_diff " +
+                            "from (" +
+                            "select var_samp(j) over (partition by i order by ts) vr, stddev_samp(j) over (partition by i order by ts) sd from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testVarSampRejectsGroupsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select var_samp(j) over (order by ts groups between 1 preceding and current row) from tab",
+                    -1,
+                    "function not implemented for given window parameters",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
     public void testVarRejectsGroupsFrame() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j double) timestamp(ts)", timestampType.getTypeName());
@@ -11112,6 +11216,52 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row)::double / " +
                             "(count(case when x is not null and y is not null then 1 end) over (partition by i order by ts rows between 2 preceding and current row) - 1)) * " +
                             "covar_pop(y, x) over (partition by i order by ts rows between 2 preceding and current row) cv_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarSampOverWholeResultSet() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0), (4, 4.0, 8.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select covar_samp(y, x) over () cv, " +
+                            "(count(case when x is not null and y is not null then 1 end) over ()::double / " +
+                            "(count(case when x is not null and y is not null then 1 end) over () - 1)) * " +
+                            "covar_pop(y, x) over () cv_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testCovarSampRunningFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0), (4, 4.0, 8.0)");
+
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when cv is null and cv_ref is null then 0.0 when cv is null or cv_ref is null then 1.0 else abs(cv - cv_ref) end), 12) max_diff " +
+                            "from (" +
+                            "select covar_samp(y, x) over (order by ts) cv, " +
+                            "(count(case when x is not null and y is not null then 1 end) over (order by ts)::double / " +
+                            "(count(case when x is not null and y is not null then 1 end) over (order by ts) - 1)) * " +
+                            "covar_pop(y, x) over (order by ts) cv_ref " +
                             "from tab" +
                             ")"
             );
@@ -11563,6 +11713,156 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "select corr(y, x) over (order by ts range between 1 microsecond preceding and current row) from nodts",
+                    -1,
+                    "RANGE is supported only for queries ordered by designated timestamp",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCorrZeroVarianceReturnsNull() throws Exception {
+        // When all x values are identical, stddev(x) = 0 and corr must return NULL.
+        // Exercises the denom == 0.0 path in computeCorr / computeCorrWelford.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 5.0, 1.0), (2, 1, 5.0, 2.0), (3, 1, 5.0, 3.0), (4, 2, 1.0, 7.0), (5, 2, 2.0, 8.0)");
+
+            // partition 1: x is constant → corr = NULL; partition 2: x varies → corr is finite
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcr
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t2\t1.0
+                            1970-01-01T00:00:00.000005Z\t2\t1.0
+                            """),
+                    "select ts, i, corr(y, x) over (partition by i) cr from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // running frame (Welford path)
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select max(case when cr is null and cr_ref is null then 0.0 when cr is null or cr_ref is null then 1.0 else abs(cr - cr_ref) end) max_diff " +
+                            "from (" +
+                            "select " +
+                            "corr(y, x) over (partition by i order by ts) cr, " +
+                            "corr(y, x) over (partition by i) cr_ref " +
+                            "from tab WHERE i = 1" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testBivariateNullAndSingleValueSemantics() throws Exception {
+        // Tests NULL handling edge cases for covar_pop, covar_samp, and corr:
+        // - all-NULL partition (both args NULL)
+        // - asymmetric NULLs (no pair has both x and y finite)
+        // - single valid pair for covar_samp (should return NULL)
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, null, null), (2, 1, null, null), " +  // partition 1: all NULL
+                    "(3, 2, null, 1.0), (4, 2, 2.0, null), " +   // partition 2: asymmetric NULLs, no valid pair
+                    "(5, 3, 1.0, 2.0), " +                        // partition 3: single valid pair
+                    "(6, 4, 1.0, 2.0), (7, 4, 3.0, 6.0)");       // partition 4: two valid pairs
+
+            // covar_pop: all-NULL → NULL, no valid pair → NULL, single pair → 0.0, two pairs → finite
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcp
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t2\tnull
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t3\t0.0
+                            1970-01-01T00:00:00.000006Z\t4\t2.0
+                            1970-01-01T00:00:00.000007Z\t4\t2.0
+                            """),
+                    "select ts, i, covar_pop(y, x) over (partition by i) cp from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // covar_samp: single pair → NULL (n-1 = 0), two pairs → finite
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcs
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t2\tnull
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t3\tnull
+                            1970-01-01T00:00:00.000006Z\t4\t4.0
+                            1970-01-01T00:00:00.000007Z\t4\t4.0
+                            """),
+                    "select ts, i, covar_samp(y, x) over (partition by i) cs from tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // corr: single pair → NULL, two pairs → 1.0 (perfect linear)
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tcr
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\tnull
+                            1970-01-01T00:00:00.000003Z\t2\tnull
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t3\tnull
+                            1970-01-01T00:00:00.000006Z\t4\t1.0
+                            1970-01-01T00:00:00.000007Z\t4\t1.0
+                            """),
+                    "select ts, i, corr(y, x) over (partition by i) cr from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCovarPopOverEmptyOver() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1.0, 2.0), (2, 2.0, 4.0), (3, 3.0, 6.0)");
+
+            assertSql(
+                    replaceTimestampSuffix1("""
+                            ts\tcp\tcr
+                            1970-01-01T00:00:00.000001Z\t1.3333333333333333\t1.0
+                            1970-01-01T00:00:00.000002Z\t1.3333333333333333\t1.0
+                            1970-01-01T00:00:00.000003Z\t1.3333333333333333\t1.0
+                            """),
+                    "select ts, covar_pop(y, x) over () cp, corr(y, x) over () cr from tab"
+            );
+        });
+    }
+
+    @Test
+    public void testVarSampRejectsRangeOnNonDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, j double)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select var_samp(j) over (order by ts range between 1 microsecond preceding and current row) from nodts",
+                    -1,
+                    "RANGE is supported only for queries ordered by designated timestamp",
+                    sqlExecutionContext
+            );
+
+            assertExceptionNoLeakCheck(
+                    "select variance(j) over (order by ts range between 1 microsecond preceding and current row) from nodts",
                     -1,
                     "RANGE is supported only for queries ordered by designated timestamp",
                     sqlExecutionContext
