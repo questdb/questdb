@@ -276,6 +276,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
     private final int indexValueBlockSize;
+    private final int jsonUnnestMaxValueSize;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final String installRoot;
     private final long instanceHashHi;
@@ -1472,6 +1473,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inactiveViewWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_VIEW_WAL_INACTIVE_WRITER_TTL, 60_000);
             this.ttlUseWallClock = getBoolean(properties, env, PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, true);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
+            int jsonUnnestMaxValueSizeRaw = getInt(properties, env, PropertyKey.CAIRO_JSON_UNNEST_MAX_VALUE_SIZE, 4096);
+            if (jsonUnnestMaxValueSizeRaw < 1) {
+                log.info().$("invalid ").$(PropertyKey.CAIRO_JSON_UNNEST_MAX_VALUE_SIZE.getPropertyPath())
+                        .$(" value ").$(jsonUnnestMaxValueSizeRaw).$(", will use 1").$();
+                this.jsonUnnestMaxValueSize = 1;
+            } else {
+                this.jsonUnnestMaxValueSize = jsonUnnestMaxValueSizeRaw;
+            }
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
@@ -3617,6 +3626,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getInstallRoot() {
             return installRoot;
+        }
+
+        @Override
+        public int getJsonUnnestMaxValueSize() {
+            return jsonUnnestMaxValueSize;
         }
 
         @Override

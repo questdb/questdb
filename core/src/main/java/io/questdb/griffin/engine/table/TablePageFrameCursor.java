@@ -46,6 +46,10 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         }
     }
 
+    default boolean hasIntervalFilter() {
+        return false;
+    }
+
     TableReader getTableReader();
 
     @Override
@@ -53,7 +57,18 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         return false;
     }
 
-    TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) throws SqlException;
+    TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException;
+
+    /**
+     * Positions the cursor at the given partition. The next call to
+     * {@link #next()} will return the first page frame for this partition.
+     * Iteration is limited to this single partition.
+     *
+     * @param partitionIndex the target partition index
+     */
+    default void toPartition(int partitionIndex) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Enables or disables streaming mode for the underlying TableReader.

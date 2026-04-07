@@ -199,12 +199,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor, int pageFrameMinRows, int pageFrameMaxRows) throws SqlException {
+    public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) throws SqlException {
         this.partitionFrameCursor = partitionFrameCursor;
-        reader = partitionFrameCursor.getTableReader();
+        this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
-        this.pageFrameMinRows = pageFrameMinRows;
-        this.pageFrameMaxRows = pageFrameMaxRows;
+        this.pageFrameMinRows = executionContext.getPageFrameMinRows();
+        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -401,7 +401,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         while (targetGroup >= 0) {
             if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
-                    targetGroup, reenterParquetDecoder, filterList, filterBufEnd)) {
+                    targetGroup,
+                    reenterParquetDecoder,
+                    filterList,
+                    filterBufEnd
+            )) {
                 partitionHi = targetGroupStart;
                 if (partitionHi <= partitionLo) {
                     this.reenterPartitionFrame = false;
@@ -454,7 +458,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             assert reenterParquetDecoder != null;
             filterBufEnd = -1;
             if (filterList != null && ParquetRowGroupFilter.prepareFilterList(
-                    reenterParquetDecoder.metadata(), pushdownFilterConditions, filterList, filterValues)) {
+                    reenterParquetDecoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList,
+                    filterValues
+            )) {
                 filterBufEnd = filterValues.getAddress() + filterValues.getAppendOffset();
             }
             return computeParquetFrame(lo, hi);
