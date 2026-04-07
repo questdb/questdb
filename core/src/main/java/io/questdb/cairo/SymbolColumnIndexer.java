@@ -64,6 +64,13 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void clearCovering() {
+        if (writer instanceof PostingIndexWriter piw) {
+            piw.clearCovering();
+        }
+    }
+
+    @Override
     public void close() {
         releaseIndexWriter();
         if (buffer != 0) {
@@ -74,19 +81,36 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void discardAndClose() {
+        // Close without sealing — used when index is being dropped.
+        if (writer instanceof PostingIndexWriter piw) {
+            piw.clearCovering();
+            piw.discard();
+        } else {
+            Misc.free(writer);
+        }
+        if (buffer != 0) {
+            fd = -1;
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_INDEX_READER);
+            buffer = 0;
+        }
+    }
+
+    @Override
     public void configureCovering(
-            MemoryMA[] coveredColumnMems,
-            MemoryMA[] coveredColumnAuxMems,
+            String[] coveredColumnNames,
+            long[] coveredColumnNameTxns,
             long[] coveredColumnTops,
             int[] coveredColumnShifts,
             int[] coveredColumnIndices,
             int[] coveredColumnTypes,
-            int coverCount
+            int coverCount,
+            int timestampColumnIndex
     ) {
         if (writer instanceof PostingIndexWriter piw) {
             piw.configureCovering(
-                    coveredColumnMems, coveredColumnAuxMems, coveredColumnTops, coveredColumnShifts,
-                    coveredColumnIndices, coveredColumnTypes, coverCount);
+                    coveredColumnNames, coveredColumnNameTxns, coveredColumnTops, coveredColumnShifts,
+                    coveredColumnIndices, coveredColumnTypes, coverCount, timestampColumnIndex);
         }
     }
 
@@ -99,8 +123,8 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             int[] coveredColumnTypes,
             int coverCount
     ) {
-        if (writer instanceof PostingIndexWriter) {
-            ((PostingIndexWriter) writer).configureCovering(
+        if (writer instanceof PostingIndexWriter piw) {
+            piw.configureCovering(
                     coveredColumnAddrs, coveredColumnTops, coveredColumnShifts,
                     coveredColumnIndices, coveredColumnTypes, coverCount);
         }

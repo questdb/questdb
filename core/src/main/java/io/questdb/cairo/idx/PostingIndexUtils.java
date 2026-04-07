@@ -91,6 +91,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * firstValues[]        : blockCount × 8B  (first absolute value per block)
  * minDeltas[]          : blockCount × 8B  (FoR reference per block)
  * bitWidths[]          : blockCount × 1B
+ * packedOffsets[]      : blockCount × 4B  (byte offset from packed data start per block)
  * packedBlock[0..n-1]  : variable size bitpacked residuals
  * </pre>
  *
@@ -154,7 +155,7 @@ public final class PostingIndexUtils {
     public static final int COVER_INFO_MAGIC = 0x50434930; // "PCI0"
     public static final int DENSE_STRIDE = 256;
     public static final int MAX_COVER_COUNT = 4096; // corruption guard for readCoverCountFromInfoFile
-    public static final int PACKED_BATCH_SIZE = 256;
+    public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
 
     // Stride block mode constants — see class javadoc for when each mode wins
     public static final byte STRIDE_MODE_DELTA = 0;
@@ -205,10 +206,11 @@ public final class PostingIndexUtils {
     public static long computeMaxEncodedSize(int count) {
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
         // 4B blockCount + blockCount * (1B valueCount + 8B firstValue + 8B minDelta + 1B bitWidth)
+        // + packedOffsets only for multi-block (blockCount * 4B)
         // + (count - blockCount) * 8 bytes worst case packed data
-        // Each block's first value is in firstValues[], so total deltas = count - blockCount.
         long totalDeltas = count - blockCount;
-        return 4 + (long) blockCount * 18 + totalDeltas * 8;
+        long packedOffsetsSize = blockCount > 1 ? (long) blockCount * Integer.BYTES : 0;
+        return 4 + (long) blockCount * 18 + packedOffsetsSize + totalDeltas * 8;
     }
 
     /**
@@ -257,6 +259,11 @@ public final class PostingIndexUtils {
                 bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
             }
             pos += blockCount;
+
+            // Skip packedOffsets (only present for multi-block keys)
+            if (blockCount > 1) {
+                pos += (long) blockCount * Integer.BYTES;
+            }
 
             // Decode each block — only count-1 deltas are packed (first value is in firstValues[])
             int destIdx = 0;
@@ -341,6 +348,11 @@ public final class PostingIndexUtils {
         }
         pos += blockCount;
 
+        // Skip packedOffsets (only present for multi-block keys)
+        if (blockCount > 1) {
+            pos += (long) blockCount * Integer.BYTES;
+        }
+
         int destIdx = 0;
         for (int b = 0; b < blockCount; b++) {
             int count = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
@@ -409,6 +421,11 @@ public final class PostingIndexUtils {
             Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
         }
         pos += blockCount;
+
+        // Skip packedOffsets (only present for multi-block keys)
+        if (blockCount > 1) {
+            pos += (long) blockCount * Integer.BYTES;
+        }
 
         int destIdx = 0;
         for (int b = 0; b < blockCount; b++) {
@@ -548,8 +565,20 @@ public final class PostingIndexUtils {
         }
         pos += blockCount;
 
+        // packedOffsets[] (only for multi-block keys)
+        long packedOffsetsAddr = 0;
+        if (blockCount > 1) {
+            packedOffsetsAddr = pos;
+            pos += (long) blockCount * Integer.BYTES;
+        }
+
         // Packed blocks — only pack the numDeltas=blockSize-1 inter-value deltas
+        long packedDataStart = pos;
         for (int b = 0; b < blockCount; b++) {
+            if (packedOffsetsAddr != 0) {
+                Unsafe.getUnsafe().putInt(packedOffsetsAddr + (long) b * Integer.BYTES, (int) (pos - packedDataStart));
+            }
+
             int blockStart = b * BLOCK_CAPACITY;
             int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
             int blockSize = blockEnd - blockStart;
@@ -677,7 +706,15 @@ public final class PostingIndexUtils {
         }
         pos += blockCount;
 
+        // Packed data offsets: byte offset from packed data start to each block's packed data.
+        // Enables O(1) random access to any block without forward scanning.
+        long packedOffsetsAddr = pos;
+        pos += (long) blockCount * Integer.BYTES;
+
+        long packedDataStart = pos;
         for (int b = 0; b < blockCount; b++) {
+            Unsafe.getUnsafe().putInt(packedOffsetsAddr + (long) b * Integer.BYTES, (int) (pos - packedDataStart));
+
             int blockStart = b * BLOCK_CAPACITY;
             int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
             int blockSize = blockEnd - blockStart;
@@ -740,6 +777,7 @@ public final class PostingIndexUtils {
         int bitWidth = range == 0 ? 0 : BitpackUtils.bitsNeeded(range);
 
         // Write: blockCount(4B) + valueCount(1B) + firstValue(8B) + minDelta(8B) + bitWidth(1B) + packedData
+        // No packedOffsets for single-block keys — the offset is implicitly 0.
         long pos = destAddr;
         Unsafe.getUnsafe().putInt(pos, 1);
         pos += 4;

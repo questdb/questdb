@@ -468,10 +468,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         // Reusable workspace for computeSparseOffsets, avoids per-call heap allocation
         private int[] sparseOffsetsWorkspace;
         protected int decodeWorkspaceCapacity;
-        protected double[][] decodedDoubles;
-        protected int[][] decodedInts;
-        protected long[][] decodedLongs;
-        protected int decodedStride = -1;
+        // Per-column key block addresses for O(1) point access into compressed sidecar data.
+        // Set by cacheSidecarKeyAddrs(), used by getCoveredXxx() methods.
+        protected long[] keyBlockAddrs;
+        protected int cachedKeyBlockStride = -1;
         protected int denseVarKeyStartCount;
         protected long[] fsstCachedBlockBases;
         protected FSST.SymbolTable[] fsstCachedTables;
@@ -527,10 +527,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarByte(includeIdx);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return 0;
             }
-            return (byte) decodedInts[includeIdx][idx];
+            return CoveringCompressor.readByteAt(keyBlockAddrs[includeIdx], idx);
         }
 
         @Override
@@ -550,10 +550,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarDouble(includeIdx);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedDoubles == null || decodedDoubles[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Double.NaN;
             }
-            return decodedDoubles[includeIdx][idx];
+            return CoveringCompressor.readDoubleAt(keyBlockAddrs[includeIdx], idx);
         }
 
         @Override
@@ -562,10 +562,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarFloat(includeIdx);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Float.NaN;
             }
-            return Float.intBitsToFloat(decodedInts[includeIdx][idx]);
+            return CoveringCompressor.readFloatAt(keyBlockAddrs[includeIdx], idx);
         }
 
         @Override
@@ -574,10 +574,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarInt(includeIdx);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Integer.MIN_VALUE;
             }
-            return decodedInts[includeIdx][idx];
+            return CoveringCompressor.readIntAt(keyBlockAddrs[includeIdx], idx);
         }
 
         @Override
@@ -586,10 +586,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarLong(includeIdx);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Long.MIN_VALUE;
             }
-            return decodedLongs[includeIdx][idx];
+            return CoveringCompressor.readLongAt(keyBlockAddrs[includeIdx], idx);
         }
 
         @Override
@@ -598,10 +598,11 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarMultiLong(includeIdx, 16, 1);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Long.MIN_VALUE;
             }
-            return decodedLongs[includeIdx][idx * 2 + 1];
+            // UUID/DECIMAL128: raw 16 bytes per value, skip 4-byte count header
+            return Unsafe.getUnsafe().getLong(keyBlockAddrs[includeIdx] + 4 + (long) idx * 16 + 8);
         }
 
         @Override
@@ -610,10 +611,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarMultiLong(includeIdx, 16, 0);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Long.MIN_VALUE;
             }
-            return decodedLongs[includeIdx][idx * 2];
+            return Unsafe.getUnsafe().getLong(keyBlockAddrs[includeIdx] + 4 + (long) idx * 16);
         }
 
         @Override
@@ -622,10 +623,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarMultiLong(includeIdx, 32, 0);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Long.MIN_VALUE;
             }
-            return decodedLongs[includeIdx][idx * 4];
+            return Unsafe.getUnsafe().getLong(keyBlockAddrs[includeIdx] + 4 + (long) idx * 32);
         }
 
         @Override
@@ -634,10 +635,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarMultiLong(includeIdx, 32, 1);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Long.MIN_VALUE;
             }
-            return decodedLongs[includeIdx][idx * 4 + 1];
+            return Unsafe.getUnsafe().getLong(keyBlockAddrs[includeIdx] + 4 + (long) idx * 32 + 8);
         }
 
         @Override
@@ -646,10 +647,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarMultiLong(includeIdx, 32, 2);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Long.MIN_VALUE;
             }
-            return decodedLongs[includeIdx][idx * 4 + 2];
+            return Unsafe.getUnsafe().getLong(keyBlockAddrs[includeIdx] + 4 + (long) idx * 32 + 16);
         }
 
         @Override
@@ -658,10 +659,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarMultiLong(includeIdx, 32, 3);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedLongs == null || decodedLongs[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Long.MIN_VALUE;
             }
-            return decodedLongs[includeIdx][idx * 4 + 3];
+            return Unsafe.getUnsafe().getLong(keyBlockAddrs[includeIdx] + 4 + (long) idx * 32 + 24);
         }
 
         @Override
@@ -670,10 +671,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return getRawSidecarShort(includeIdx);
             }
             int idx = cachedSidecarIdx;
-            if (idx < 0 || decodedInts == null || decodedInts[includeIdx] == null) {
+            if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return 0;
             }
-            return (short) decodedInts[includeIdx][idx];
+            return CoveringCompressor.readShortAt(keyBlockAddrs[includeIdx], idx);
         }
 
         @Override
@@ -817,9 +818,17 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             }
         }
 
-        protected void decodeSidecarKey(int stride, int localKey) {
+        /**
+         * Cache per-column key block addresses for O(1) point access.
+         * Replaces decodeSidecarKey() — no bulk decompression, no heap allocation.
+         * The getCoveredXxx() methods decode individual values on demand.
+         */
+        protected void cacheSidecarKeyAddrs(int stride, int localKey) {
             if (sidecarMems == null || coverCount == 0 || sealedGenKeyCount <= 0) {
                 return;
+            }
+            if (stride == cachedKeyBlockStride) {
+                return; // already cached for this stride
             }
             int sc = PostingIndexUtils.strideCount(sealedGenKeyCount);
             if (stride >= sc) {
@@ -831,150 +840,47 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 return;
             }
 
-            if (decodedDoubles == null) {
-                decodedDoubles = new double[coverCount][];
-                decodedInts = new int[coverCount][];
-                decodedLongs = new long[coverCount][];
+            if (keyBlockAddrs == null || keyBlockAddrs.length < coverCount) {
+                keyBlockAddrs = new long[coverCount];
             }
 
             for (int c = 0; c < coverCount; c++) {
                 MemoryMR mem = sidecarMems[c];
                 if (mem == null) {
+                    keyBlockAddrs[c] = 0;
                     continue;
                 }
-                // Ensure the sidecar mapping covers the full file
                 mem.growToFileSize();
                 if (mem.size() == 0) {
+                    keyBlockAddrs[c] = 0;
                     continue;
                 }
-                // Get stride data offset from stride index
                 long strideIdxOffset = (long) stride * Integer.BYTES;
                 if (strideIdxOffset + Integer.BYTES > mem.size()) {
+                    keyBlockAddrs[c] = 0;
                     continue;
                 }
                 int strideOff = mem.getInt(strideIdxOffset);
                 long strideDataStart = siSize + strideOff;
                 if (strideDataStart >= mem.size()) {
+                    keyBlockAddrs[c] = 0;
                     continue;
                 }
-
-                // Per-key layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
                 long keyOffsetsEnd = strideDataStart + (long) ks * Integer.BYTES;
                 if (keyOffsetsEnd > mem.size()) {
+                    keyBlockAddrs[c] = 0;
                     continue;
                 }
                 long keyOffsetsAddr = mem.addressOf(strideDataStart);
                 int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
                 long keyBlockStart = keyOffsetsEnd + keyBlockOff;
                 if (keyBlockStart + 4 > mem.size()) {
+                    keyBlockAddrs[c] = 0;
                     continue;
                 }
-                long keyBlockAddr = mem.addressOf(keyBlockStart);
-                int count = Unsafe.getUnsafe().getInt(keyBlockAddr);
-                if (count == 0) {
-                    continue;
-                }
-                int colType = sidecarColumnTypes[c];
-
-                // Var-sized columns (VARCHAR, STRING) use offset-based format
-                // in the sidecar, not ALP compression. Skip ALP decoding —
-                // getCoveredVarcharA/getCoveredStrA reads directly from the
-                // sidecar memory using the stride's var-block position.
-                if (ColumnType.isVarSize(colType)) {
-                    continue;
-                }
-
-                switch (ColumnType.tagOf(colType)) {
-                    case ColumnType.DOUBLE: {
-                        if (decodedDoubles[c] == null || decodedDoubles[c].length < count) {
-                            decodedDoubles[c] = new double[count];
-                        }
-                        ensureDecodeWorkspaceCapacity(count);
-                        CoveringCompressor.decompressDoubles(keyBlockAddr, decodedDoubles[c], decodeWorkspaceAddr);
-                        break;
-                    }
-                    case ColumnType.LONG:
-                    case ColumnType.TIMESTAMP:
-                    case ColumnType.DATE:
-                    case ColumnType.GEOLONG:
-                    case ColumnType.DECIMAL64: {
-                        if (decodedLongs[c] == null || decodedLongs[c].length < count) {
-                            decodedLongs[c] = new long[count];
-                        }
-                        ensureDecodeWorkspaceCapacity(count);
-                        CoveringCompressor.decompressLongs(keyBlockAddr, decodedLongs[c], decodeWorkspaceAddr);
-                        break;
-                    }
-                    case ColumnType.INT:
-                    case ColumnType.IPv4:
-                    case ColumnType.FLOAT:
-                    case ColumnType.GEOINT:
-                    case ColumnType.SYMBOL:
-                    case ColumnType.DECIMAL32: {
-                        if (decodedInts[c] == null || decodedInts[c].length < count) {
-                            decodedInts[c] = new int[count];
-                        }
-                        ensureDecodeWorkspaceCapacity(count);
-                        CoveringCompressor.decompressInts(keyBlockAddr, decodedInts[c], decodeWorkspaceAddr);
-                        break;
-                    }
-                    case ColumnType.CHAR:
-                    case ColumnType.SHORT:
-                    case ColumnType.GEOSHORT:
-                    case ColumnType.DECIMAL16: {
-                        if (decodedInts[c] == null || decodedInts[c].length < count) {
-                            decodedInts[c] = new int[count];
-                        }
-                        long rawAddr = keyBlockAddr + 4; // skip count header
-                        for (int i = 0; i < count; i++) {
-                            decodedInts[c][i] = Unsafe.getUnsafe().getShort(rawAddr + (long) i * Short.BYTES);
-                        }
-                        break;
-                    }
-                    case ColumnType.BYTE:
-                    case ColumnType.BOOLEAN:
-                    case ColumnType.GEOBYTE:
-                    case ColumnType.DECIMAL8: {
-                        if (decodedInts[c] == null || decodedInts[c].length < count) {
-                            decodedInts[c] = new int[count];
-                        }
-                        long rawAddr = keyBlockAddr + 4; // skip count header
-                        for (int i = 0; i < count; i++) {
-                            decodedInts[c][i] = Unsafe.getUnsafe().getByte(rawAddr + i);
-                        }
-                        break;
-                    }
-                    case ColumnType.UUID:
-                    case ColumnType.DECIMAL128: {
-                        // 16 bytes per value — store as 2 longs per value
-                        int longCount = count * 2;
-                        if (decodedLongs[c] == null || decodedLongs[c].length < longCount) {
-                            decodedLongs[c] = new long[longCount];
-                        }
-                        long rawAddr = keyBlockAddr + 4; // skip count header
-                        for (int i = 0; i < longCount; i++) {
-                            decodedLongs[c][i] = Unsafe.getUnsafe().getLong(rawAddr + (long) i * Long.BYTES);
-                        }
-                        break;
-                    }
-                    case ColumnType.LONG256:
-                    case ColumnType.DECIMAL256: {
-                        // 32 bytes per value — store as 4 longs per value
-                        int longCount = count * 4;
-                        if (decodedLongs[c] == null || decodedLongs[c].length < longCount) {
-                            decodedLongs[c] = new long[longCount];
-                        }
-                        long rawAddr = keyBlockAddr + 4; // skip count header
-                        for (int i = 0; i < longCount; i++) {
-                            decodedLongs[c][i] = Unsafe.getUnsafe().getLong(rawAddr + (long) i * Long.BYTES);
-                        }
-                        break;
-                    }
-                    default:
-                        break;
-                }
+                keyBlockAddrs[c] = mem.addressOf(keyBlockStart);
             }
-            decodedStride = stride;
+            cachedKeyBlockStride = stride;
         }
 
         protected void ensureDecodeWorkspaceCapacity(int count) {
@@ -991,7 +897,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         protected void resetCoveringState() {
             this.sidecarOrdinal = 0;
             this.sidecarStrideKeyStart = 0;
-            this.decodedStride = -1;
+            this.cachedKeyBlockStride = -1;
             this.cachedSidecarIdx = 0;
             this.isCurrentGenDense = false;
         }
