@@ -122,7 +122,7 @@ public class IndexBuilder extends RebuildColumnBase {
     private void removeIndexFiles(FilesFacade ff, CharSequence columnName, long columnNameTxn) {
         final int plen = path.size();
         // Remove sealed .pv file if VALUE_FILE_TXN differs from columnNameTxn
-        if (indexType == IndexType.POSTING) {
+        if (IndexType.isPosting(indexType)) {
             long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
                     ff, PostingIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
             if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {

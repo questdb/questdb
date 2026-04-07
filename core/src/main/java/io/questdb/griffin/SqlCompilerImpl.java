@@ -1179,7 +1179,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         if (coveringColumnNames != null && coveringColumnNames.size() > 0
-                && indexType == IndexType.POSTING
+                && IndexType.isPosting(indexType)
                 && configuration.isPostingIndexAutoIncludeTimestamp()) {
             int tsIndex = metadata.getTimestampIndex();
             if (tsIndex >= 0) {

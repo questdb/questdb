@@ -427,7 +427,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         /**
          * Decodes the previous chunk of EF values by processing one 64-bit word
-         * of high bits in reverse. Bulk-unpacks low bits, then merges with high bits.
+         * of high bits in reverse. Single-pass: extracts low bits inline.
          */
         private void decodeNextEFChunkReverse() {
             while (efHighWordIdx >= 0) {
@@ -437,24 +437,14 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
                 int rankBefore = Unsafe.getUnsafe().getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
-                int chunkSize = Long.bitCount(word);
-
-                // Bulk-unpack low bits for this chunk
-                if (efL > 0) {
-                    BitpackUtils.unpackValuesFrom(efLowStart, rankBefore, chunkSize, efL, 0, blockBufferAddr);
-                } else {
-                    Unsafe.getUnsafe().setMemory(blockBufferAddr, (long) chunkSize * Long.BYTES, (byte) 0);
-                }
-
-                // Scan high bits and merge
                 int bufIdx = 0;
                 long w = word;
                 while (w != 0) {
                     int trail = Long.numberOfTrailingZeros(w);
                     int globalIdx = rankBefore + bufIdx;
                     long highValue = (long) efHighWordIdx * 64 + trail - globalIdx;
-                    long addr = blockBufferAddr + (long) bufIdx * Long.BYTES;
-                    Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) | (highValue << efL));
+                    long low = PostingIndexUtils.readBitsWord(efLowStart, (long) globalIdx * efL, efL) & efLowMask;
+                    Unsafe.getUnsafe().putLong(blockBufferAddr + (long) bufIdx * Long.BYTES, (highValue << efL) | low);
                     bufIdx++;
                     w &= w - 1;
                 }

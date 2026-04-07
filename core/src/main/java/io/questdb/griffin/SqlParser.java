@@ -2041,7 +2041,18 @@ public class SqlParser {
             if (indexType == IndexType.NONE) {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
             }
-            tok = tok(lexer, "'capacity' or ')'");
+            if (indexType == IndexType.POSTING) {
+                tok = tok(lexer, "'ef', 'delta', 'include', 'capacity' or ')'");
+                if (SqlKeywords.isDeltaKeyword(tok)) {
+                    indexType = IndexType.POSTING_DELTA;
+                    tok = tok(lexer, "'include', 'capacity' or ')'");
+                } else if (SqlKeywords.isEfKeyword(tok)) {
+                    tok = tok(lexer, "'include', 'capacity' or ')'");
+                }
+                // else: not a posting sub-type keyword, fall through to capacity/include check
+            } else {
+                tok = tok(lexer, "'capacity' or ')'");
+            }
         }
         if (isCapacityKeyword(tok)) {
             if (indexType != IndexType.BITMAP) {
@@ -2085,14 +2096,27 @@ public class SqlParser {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
             }
 
-            tok = tok(lexer, ") | , expected");
+            // Check for optional EF/DELTA qualifier after POSTING
+            if (indexType == IndexType.POSTING) {
+                tok = tok(lexer, ") | , expected");
+                if (SqlKeywords.isDeltaKeyword(tok)) {
+                    indexType = IndexType.POSTING_DELTA;
+                    tok = tok(lexer, ") | , expected");
+                } else if (SqlKeywords.isEfKeyword(tok)) {
+                    tok = tok(lexer, ") | , expected");
+                }
+                // else: not a posting sub-type, fall through with tok already read
+            } else {
+                tok = tok(lexer, ") | , expected");
+            }
+
             if (isFieldTerm(tok) || isParquetKeyword(tok)) {
                 model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
                 return tok;
             }
 
             if (SqlKeywords.isIncludeKeyword(tok)) {
-                if (indexType != IndexType.POSTING) {
+                if (!IndexType.isPosting(indexType)) {
                     throw SqlException.position(lexer.lastTokenPosition())
                             .put("INCLUDE is only supported for POSTING index type");
                 }

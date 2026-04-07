@@ -7536,7 +7536,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             TableRecordMetadata tableMeta = reader.getMetadata();
                             int colIdx = tableMeta.getColumnIndexQuiet(colName);
                             if (colIdx >= 0 && ColumnType.tagOf(tableMeta.getColumnType(colIdx)) == ColumnType.SYMBOL
-                                    && tableMeta.getColumnIndexType(colIdx) == IndexType.POSTING) {
+                                    && IndexType.isPosting(tableMeta.getColumnIndexType(colIdx))) {
 
                                 // Check if the WHERE clause is absent or contains only interval filters.
                                 // If there's a remaining filter (non-interval, non-key predicate), we can't

@@ -140,7 +140,7 @@ public final class PurgingOperator {
                                 if (indexType != IndexType.NONE) {
                                     // Remove sidecar files and sealed .pv BEFORE .pk deletion,
                                     // since removeSidecarAndSealedFiles reads VALUE_FILE_TXN from .pk.
-                                    if (indexType == IndexType.POSTING) {
+                                    if (IndexType.isPosting(indexType)) {
                                         long sealTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
                                                 ff, PostingIndexUtils.keyFileName(path.trimTo(pathPartitionLen), columnName, columnVersion));
                                         PostingIndexUtils.removeSidecarFiles(ff, path, pathPartitionLen, columnName, columnVersion);

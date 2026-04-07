@@ -41,13 +41,18 @@ public final class IndexType {
      */
     public static final byte NONE = 0;
     /**
-     * Posting index. Delta + FoR64 bitpacking with stride-indexed layout.
-     */
-    public static final byte POSTING = 2;
-    /**
      * Bitmap index (original BitmapIndex for SYMBOL columns).
      */
     public static final byte BITMAP = 1;
+    /**
+     * Posting index with Elias-Fano row ID encoding (default).
+     */
+    public static final byte POSTING = 2;
+    /**
+     * Posting index with legacy delta-FoR row ID encoding.
+     * Created via {@code INDEX TYPE POSTING DELTA}.
+     */
+    public static final byte POSTING_DELTA = 3;
 
     private IndexType() {
         // Utility class, no instances
@@ -64,6 +69,14 @@ public final class IndexType {
     }
 
     /**
+     * Returns true if the given index type is any posting index variant
+     * (POSTING or POSTING_DELTA).
+     */
+    public static boolean isPosting(byte indexType) {
+        return indexType == POSTING || indexType == POSTING_DELTA;
+    }
+
+    /**
      * Returns the name of the given index type.
      *
      * @param indexType the index type value
@@ -74,6 +87,7 @@ public final class IndexType {
             case NONE -> "NONE";
             case BITMAP -> "BITMAP";
             case POSTING -> "POSTING";
+            case POSTING_DELTA -> "POSTING DELTA";
             default -> "UNKNOWN(" + indexType + ")";
         };
     }

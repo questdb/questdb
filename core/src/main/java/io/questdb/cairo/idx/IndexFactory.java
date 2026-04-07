@@ -93,7 +93,7 @@ public final class IndexFactory {
     public static void initKeyMemory(byte indexType, MemoryMA keyMem, int blockCapacity) {
         switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
-            case IndexType.POSTING -> PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
+            case IndexType.POSTING, IndexType.POSTING_DELTA -> PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot initialize key memory for index type NONE");
             default -> throw CairoException.critical(0)
@@ -129,7 +129,7 @@ public final class IndexFactory {
             case IndexType.BITMAP -> direction == BitmapIndexReader.DIR_FORWARD
                     ? new BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
-            case IndexType.POSTING -> direction == BitmapIndexReader.DIR_FORWARD
+            case IndexType.POSTING, IndexType.POSTING_DELTA -> direction == BitmapIndexReader.DIR_FORWARD
                     ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.NONE -> throw CairoException.critical(0)
@@ -151,7 +151,8 @@ public final class IndexFactory {
     public static IndexWriter createWriter(byte indexType, CairoConfiguration configuration) {
         return switch (indexType) {
             case IndexType.BITMAP -> new BitmapIndexWriter(configuration);
-            case IndexType.POSTING -> new PostingIndexWriter(configuration);
+            case IndexType.POSTING -> new PostingIndexWriter(configuration, true);
+            case IndexType.POSTING_DELTA -> new PostingIndexWriter(configuration, false);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create writer for index type NONE");
             default -> throw CairoException.critical(0)

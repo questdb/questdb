@@ -156,7 +156,7 @@ public class ColumnPurgeOperator implements Closeable {
         if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
             // Remove sidecar files and sealed .pv BEFORE deleting .pk,
             // since removeSidecarFiles reads VALUE_FILE_TXN from the .pk file.
-            if (indexType == IndexType.POSTING) {
+            if (IndexType.isPosting(indexType)) {
                 removeSidecarFiles(columnName, columnVersion, pathTrimToPartition);
             }
             path.trimTo(pathTrimToPartition);
