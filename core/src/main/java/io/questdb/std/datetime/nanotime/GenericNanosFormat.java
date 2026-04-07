@@ -89,6 +89,14 @@ public class GenericNanosFormat extends AbstractDateFormat {
                     NanosFormatUtils.append00000000(sink, nanosOfSecond);
                     break;
 
+                case NanosFormatCompiler.OP_OPTIONAL_NANOS_GREEDY9:
+                    sink.putAscii('.');
+                    if (nanosOfSecond == -1) {
+                        nanosOfSecond = Nanos.getNanosOfSecond(nanos);
+                    }
+                    NanosFormatUtils.append00000000(sink, nanosOfSecond);
+                    break;
+
                 case NanosFormatCompiler.OP_MICROS_THREE_DIGITS:
                     if (micros == -1) {
                         micros = Nanos.getWallMicros(nanos);
@@ -450,6 +458,12 @@ public class GenericNanosFormat extends AbstractDateFormat {
 
                 case NanosFormatCompiler.OP_NANOS_GREEDY9:
                     l = Nanos.parseNanosAsMicrosGreedy(in, pos, hi);
+                    nanos = Numbers.decodeLowInt(l);
+                    pos += Numbers.decodeHighInt(l);
+                    break;
+
+                case NanosFormatCompiler.OP_OPTIONAL_NANOS_GREEDY9:
+                    l = NanosFormatUtils.parseOptionalNanosGreedy(in, pos, hi);
                     nanos = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;

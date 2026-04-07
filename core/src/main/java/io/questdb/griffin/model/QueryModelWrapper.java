@@ -688,6 +688,31 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ObjList<CharSequence> getUnnestColumnAliases() {
+        return delegate.getUnnestColumnAliases();
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getUnnestExpressions() {
+        return delegate.getUnnestExpressions();
+    }
+
+    @Override
+    public ObjList<ObjList<CharSequence>> getUnnestJsonColumnNames() {
+        return delegate.getUnnestJsonColumnNames();
+    }
+
+    @Override
+    public ObjList<IntList> getUnnestJsonColumnTypes() {
+        return delegate.getUnnestJsonColumnTypes();
+    }
+
+    @Override
+    public int getUnnestOutputColumnCount() {
+        return delegate.getUnnestOutputColumnCount();
+    }
+
+    @Override
     public ObjList<ExpressionNode> getUpdateExpressions() {
         return delegate.getUpdateExpressions();
     }
@@ -828,6 +853,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isStandaloneUnnest() {
+        return delegate.isStandaloneUnnest();
+    }
+
+    @Override
     public boolean isTemporalJoin() {
         return delegate.isTemporalJoin();
     }
@@ -835,6 +865,16 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean isTopDownNameMissing(CharSequence columnName) {
         return delegate.isTopDownNameMissing(columnName);
+    }
+
+    @Override
+    public boolean isUnnestJsonSource(int index) {
+        return delegate.isUnnestJsonSource(index);
+    }
+
+    @Override
+    public boolean isUnnestOrdinality() {
+        return delegate.isUnnestOrdinality();
     }
 
     @Override
@@ -1168,6 +1208,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setStandaloneUnnest(boolean standaloneUnnest) {
+        delegate.setStandaloneUnnest(standaloneUnnest);
+    }
+
+    @Override
     public void setTableId(int id) {
         delegate.setTableId(id);
     }
@@ -1215,6 +1260,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public void setUnionModel(IQueryModel unionModel) {
         delegate.setUnionModel(unionModel);
+    }
+
+    @Override
+    public void setUnnestOrdinality(boolean unnestOrdinality) {
+        delegate.setUnnestOrdinality(unnestOrdinality);
     }
 
     @Override

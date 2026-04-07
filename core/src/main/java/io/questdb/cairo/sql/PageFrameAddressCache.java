@@ -251,4 +251,26 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     public int toColumnOffset(int frameIndex) {
         return frameIndex * columnCount;
     }
+
+    /**
+     * Updates column addresses and parquet decoder for an existing frame entry.
+     * Called during lazy partition opening to patch zero-address skeleton entries
+     * with real mmap addresses. Does not change frame structure (size, format,
+     * rowIdOffset, parquet row group indices).
+     */
+    public void updateAddresses(int frameIndex, @Transient PageFrame frame) {
+        final int offset = frameIndex * columnCount;
+        if (frame.getFormat() == PartitionFormat.NATIVE) {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                pageAddresses.set(offset + columnIndex, frame.getPageAddress(columnIndex));
+                pageSizes.set(offset + columnIndex, frame.getPageSize(columnIndex));
+                if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
+                    auxPageAddresses.set(offset + columnIndex, frame.getAuxPageAddress(columnIndex));
+                    auxPageSizes.set(offset + columnIndex, frame.getAuxPageSize(columnIndex));
+                }
+            }
+        } else {
+            parquetPartitionDecoders.setQuick(frameIndex, frame.getParquetPartitionDecoder());
+        }
+    }
 }

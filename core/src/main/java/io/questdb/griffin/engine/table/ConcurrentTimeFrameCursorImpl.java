@@ -26,8 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.PageFrameAddressCache;
-import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -47,20 +45,33 @@ import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * Concurrent time frame cursor with lazy partition opening via shared
+ * {@link ConcurrentTimeFrameState}. Each time frame maps to a page frame.
+ * <p>
+ * Multiple instances of this cursor share the same {@link ConcurrentTimeFrameState}
+ * which handles synchronized lazy partition opening. Yet, a single instance
+ * must not be called by multiple threads concurrently.
+ * <p>
+ * Per-row operations are trivial (identical to the eager model):
+ * {@code recordAtRowIndex} is a single {@code record.setRowIndex(rowIndex)} call.
+ * <p>
+ * The only supported partition order is forward, i.e. navigation
+ * should start with a {@link #next()} call.
+ */
 public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameCursor {
     private final PageFrameMemoryPool frameMemoryPool;
-    // Cache for frame timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...] - avoids re-reading on repeated open()
+    // Cache for frame timestamps: [tsLo0, tsHi0, tsLo1, tsHi1, ...]
     private final DirectLongList frameTimestampCache;
     private final PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final TimeFrame timeFrame = new TimeFrame();
-    private int frameCount = 0;
     // Cursor's lifecycle is managed externally
-    private PageFrameCursor frameCursor;
-    // Off-heap because it's per-frame and can be large unlike per-partition lists
-    private DirectIntList framePartitionIndexes;
-    private LongList frameRowCounts;
-    private LongList partitionCeilings;
-    private LongList partitionTimestamps;
+    private TablePageFrameCursor frameCursor;
+    // Cached partition index confirmed open by this cursor instance, avoids
+    // redundant volatile reads in ensurePartitionOpened() for consecutive
+    // records from the same partition.
+    private int lastOpenedPartitionIndex = -1;
+    private ConcurrentTimeFrameState sharedState;
     // Timestamp column index in the address cache; may differ from the original metadata index
     // when the cache is populated with logically-remapped page frames (e.g. SelectedPageFrame).
     // Initialized from metadata in the constructor; may be overridden via of().
@@ -108,11 +119,14 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
 
     @Override
     public void jumpTo(int frameIndex) {
+        final int frameCount = sharedState.getFrameCount();
         if (frameIndex >= frameCount || frameIndex < 0) {
-            throw CairoException.nonCritical().put("frame index out of bounds. [frameIndex=").put(frameIndex)
+            throw CairoException.nonCritical().put("frame index out of bounds [frameIndex=").put(frameIndex)
                     .put(", frameCount=").put(frameCount).put(']');
         }
-
+        final DirectIntList framePartitionIndexes = sharedState.getFramePartitionIndexes();
+        final LongList partitionTimestamps = sharedState.getPartitionTimestamps();
+        final LongList partitionCeilings = sharedState.getPartitionCeilings();
         int partitionIndex = framePartitionIndexes.get(frameIndex);
         long timestampLo = partitionTimestamps.getQuick(partitionIndex);
         timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
@@ -126,7 +140,11 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public boolean next() {
         int frameIndex = timeFrame.getFrameIndex();
+        final int frameCount = sharedState.getFrameCount();
         if (++frameIndex < frameCount) {
+            final DirectIntList framePartitionIndexes = sharedState.getFramePartitionIndexes();
+            final LongList partitionTimestamps = sharedState.getPartitionTimestamps();
+            final LongList partitionCeilings = sharedState.getPartitionCeilings();
             int partitionIndex = framePartitionIndexes.get(frameIndex);
             long timestampLo = partitionTimestamps.getQuick(partitionIndex);
             timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
@@ -139,26 +157,17 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
 
     @Override
     public ConcurrentTimeFrameCursor of(
+            ConcurrentTimeFrameState sharedState,
             TablePageFrameCursor frameCursor,
-            PageFrameAddressCache frameAddressCache,
-            DirectIntList framePartitionIndexes,
-            LongList frameRowCounts,
-            LongList partitionTimestamps,
-            LongList partitionCeilings,
-            int frameCount,
             int timestampIndex
     ) {
+        this.sharedState = sharedState;
         this.frameCursor = frameCursor;
         this.timestampIndex = timestampIndex;
-        this.framePartitionIndexes = framePartitionIndexes;
-        this.frameRowCounts = frameRowCounts;
-        this.partitionTimestamps = partitionTimestamps;
-        this.partitionCeilings = partitionCeilings;
-        this.frameCount = frameCount;
-        frameMemoryPool.of(frameAddressCache);
+        frameMemoryPool.of(sharedState.getAddressCache());
         record.of(frameCursor);
         // Initialize timestamp cache (2 entries per frame: tsLo, tsHi)
-        // Note: setCapacity is safe to call on a closed list - it will allocate memory
+        final int frameCount = sharedState.getFrameCount();
         final int cacheSize = 2 * frameCount;
         if (cacheSize > 0) {
             frameTimestampCache.setCapacity(cacheSize);
@@ -174,10 +183,15 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public long open() {
         final int frameIndex = timeFrame.getFrameIndex();
+        final int frameCount = sharedState.getFrameCount();
         if (frameIndex < 0 || frameIndex >= frameCount) {
             throw CairoException.nonCritical().put("open call on uninitialized time frame");
         }
-        final long rowCount = frameRowCounts.getQuick(frameIndex);
+        // Ensure the partition is opened (column addresses patched)
+        final int partitionIndex = sharedState.getFramePartitionIndexes().get(frameIndex);
+        ensurePartitionOpened(partitionIndex);
+
+        final long rowCount = sharedState.getFrameRowCounts().get(frameIndex);
         if (rowCount > 0) {
             final int cacheOffset = frameIndex * 2;
             long timestampLo = frameTimestampCache.get(cacheOffset);
@@ -215,6 +229,9 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     public boolean prev() {
         int frameIndex = timeFrame.getFrameIndex();
         if (--frameIndex >= 0) {
+            final DirectIntList framePartitionIndexes = sharedState.getFramePartitionIndexes();
+            final LongList partitionTimestamps = sharedState.getPartitionTimestamps();
+            final LongList partitionCeilings = sharedState.getPartitionCeilings();
             int partitionIndex = framePartitionIndexes.get(frameIndex);
             long timestampLo = partitionTimestamps.getQuick(partitionIndex);
             timeFrame.ofEstimate(frameIndex, timestampLo, partitionCeilings.getQuick(partitionIndex));
@@ -227,13 +244,18 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
 
     @Override
     public void recordAt(Record record, long rowId) {
+        final int frameIndex = Rows.toPartitionIndex(rowId);
+        final int partitionIndex = sharedState.getFramePartitionIndexes().get(frameIndex);
+        ensurePartitionOpened(partitionIndex);
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), frameMemoryRecord);
+        frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
     }
 
     @Override
     public void recordAt(Record record, int frameIndex, long rowIndex) {
+        final int partitionIndex = sharedState.getFramePartitionIndexes().get(frameIndex);
+        ensurePartitionOpened(partitionIndex);
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(frameIndex, frameMemoryRecord);
         frameMemoryRecord.setRowIndex(rowIndex);
@@ -249,10 +271,10 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     public void seekEstimate(long timestamp) {
         TimeFrameCursor.findSeekEstimate(
                 timestamp,
-                frameCount,
-                framePartitionIndexes,
-                partitionCeilings,
-                partitionTimestamps,
+                sharedState.getFrameCount(),
+                sharedState.getFramePartitionIndexes(),
+                sharedState.getPartitionCeilings(),
+                sharedState.getPartitionTimestamps(),
                 timeFrame
         );
     }
@@ -260,5 +282,13 @@ public final class ConcurrentTimeFrameCursorImpl implements ConcurrentTimeFrameC
     @Override
     public void toTop() {
         timeFrame.clear();
+        lastOpenedPartitionIndex = -1;
+    }
+
+    private void ensurePartitionOpened(int partitionIndex) {
+        if (partitionIndex != lastOpenedPartitionIndex) {
+            sharedState.ensurePartitionOpened(partitionIndex);
+            lastOpenedPartitionIndex = partitionIndex;
+        }
     }
 }

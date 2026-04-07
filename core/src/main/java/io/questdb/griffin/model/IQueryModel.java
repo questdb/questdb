@@ -54,10 +54,11 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int JOIN_LATERAL_LEFT = 15;
     int JOIN_LEFT_OUTER = 2;
     int JOIN_LT = 6;
-    int JOIN_MAX = JOIN_LATERAL_CROSS;
     int JOIN_NONE = 0;
     int JOIN_RIGHT_OUTER = 9;
     int JOIN_SPLICE = 5;
+    int JOIN_UNNEST = 17;
+    int JOIN_MAX = JOIN_UNNEST;
     int JOIN_WINDOW = 7;
     int LATEST_BY_DEPRECATED = 1;
     int LATEST_BY_NEW = 2;
@@ -419,6 +420,16 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     IQueryModel getUnionModel();
 
+    ObjList<CharSequence> getUnnestColumnAliases();
+
+    ObjList<ExpressionNode> getUnnestExpressions();
+
+    ObjList<ObjList<CharSequence>> getUnnestJsonColumnNames();
+
+    ObjList<IntList> getUnnestJsonColumnTypes();
+
+    int getUnnestOutputColumnCount();
+
     ObjList<ExpressionNode> getUpdateExpressions();
 
     ObjList<CharSequence> getUpdateTableColumnNames();
@@ -475,9 +486,15 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isSkipped();
 
+    boolean isStandaloneUnnest();
+
     boolean isTemporalJoin();
 
     boolean isTopDownNameMissing(CharSequence columnName);
+
+    boolean isUnnestJsonSource(int index);
+
+    boolean isUnnestOrdinality();
 
     boolean isUpdate();
 
@@ -607,6 +624,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setSkipped(boolean skipped);
 
+    void setStandaloneUnnest(boolean standaloneUnnest);
+
     void setTableId(int id);
 
     void setTableNameExpr(ExpressionNode tableNameExpr);
@@ -626,6 +645,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setTimestampSourceColumn(CharSequence col);
 
     void setUnionModel(IQueryModel unionModel);
+
+    void setUnnestOrdinality(boolean unnestOrdinality);
 
     void setUpdateTableToken(TableToken tableName);
 

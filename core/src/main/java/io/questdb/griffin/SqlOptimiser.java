@@ -105,8 +105,7 @@ import static io.questdb.griffin.SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION;
 import static io.questdb.griffin.SqlCodeGenerator.joinsRequiringTimestamp;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.IQueryModel.isHorizonJoin;
-import static io.questdb.griffin.model.IQueryModel.isWindowJoin;
+import static io.questdb.griffin.model.IQueryModel.*;
 import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.Numbers.IPv4_NULL;
 
@@ -2600,7 +2599,19 @@ public class SqlOptimiser implements Mutable {
             );
         } else {
             ObjList<IQueryModel> models = baseModel.getJoinModels();
+            // For standalone UNNEST, skip the synthetic base model
+            // (long_sequence) so SELECT * only returns unnest columns.
+            boolean hasStandaloneUnnest = false;
+            for (int j = 1, z = models.size(); j < z; j++) {
+                if (models.getQuick(j).isStandaloneUnnest()) {
+                    hasStandaloneUnnest = true;
+                    break;
+                }
+            }
             for (int j = 0, z = models.size(); j < z; j++) {
+                if (j == 0 && hasStandaloneUnnest) {
+                    continue;
+                }
                 createSelectColumnsForWildcard0(
                         models.getQuick(j),
                         hasJoins,
@@ -3562,19 +3573,23 @@ public class SqlOptimiser implements Mutable {
 
         // we have plain tables and possibly joins
         // a deal with _this_ model first, it will always be the first element in the join model list
-        final ExpressionNode tableNameExpr = model.getTableNameExpr();
-        if (tableNameExpr != null || model.getSelectModelType() == IQueryModel.SELECT_MODEL_SHOW) {
-            if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
-                parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
-            } else {
-                openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
-            }
+        if (model.getJoinType() == JOIN_UNNEST) {
+            enumerateUnnestColumns(model);
         } else {
-            final IQueryModel nested = model.getNestedModel();
-            if (nested != null) {
-                enumerateTableColumns(nested, executionContext, sqlParserCallback);
-                if (model.isUpdate()) {
-                    model.copyUpdateTableMetadata(nested);
+            final ExpressionNode tableNameExpr = model.getTableNameExpr();
+            if (tableNameExpr != null || model.getSelectModelType() == IQueryModel.SELECT_MODEL_SHOW) {
+                if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
+                    parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
+                } else {
+                    openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
+                }
+            } else {
+                final IQueryModel nested = model.getNestedModel();
+                if (nested != null) {
+                    enumerateTableColumns(nested, executionContext, sqlParserCallback);
+                    if (model.isUpdate()) {
+                        model.copyUpdateTableMetadata(nested);
+                    }
                 }
             }
         }
@@ -3584,6 +3599,79 @@ public class SqlOptimiser implements Mutable {
 
         if (model.getUnionModel() != null) {
             enumerateTableColumns(model.getUnionModel(), executionContext, sqlParserCallback);
+        }
+    }
+
+    private void enumerateUnnestColumns(IQueryModel model) {
+        ObjList<ExpressionNode> unnestExprs = model.getUnnestExpressions();
+        ObjList<CharSequence> aliases = model.getUnnestColumnAliases();
+        int exprCount = unnestExprs.size();
+        int totalOutputCols = model.getUnnestOutputColumnCount();
+        int totalColumns = totalOutputCols + (model.isUnnestOrdinality() ? 1 : 0);
+
+        // aliasIdx tracks position across trailing column aliases,
+        // which apply sequentially across all output columns from all sources
+        int aliasIdx = 0;
+        for (int i = 0; i < exprCount; i++) {
+            if (model.isUnnestJsonSource(i)) {
+                // JSON source: one column per COLUMNS declaration
+                ObjList<CharSequence> jsonColNames =
+                        model.getUnnestJsonColumnNames().getQuick(i);
+                for (int j = 0, jn = jsonColNames.size(); j < jn; j++) {
+                    CharSequence columnName;
+                    if (aliasIdx < aliases.size()) {
+                        columnName = aliases.getQuick(aliasIdx);
+                    } else {
+                        columnName = jsonColNames.getQuick(j);
+                    }
+                    columnName = createColumnAlias(columnName, model, false);
+                    QueryColumn column = queryColumnPool.next().of(
+                            columnName,
+                            expressionNodePool.next().of(
+                                    LITERAL, columnName, 0, 0
+                            ),
+                            true
+                    );
+                    model.addField(column);
+                    aliasIdx++;
+                }
+            } else {
+                // Array source: one column
+                CharSequence columnName;
+                if (aliasIdx < aliases.size()) {
+                    columnName = aliases.getQuick(aliasIdx);
+                } else if (totalOutputCols == 1) {
+                    columnName = "value";
+                } else {
+                    columnName = "value" + (aliasIdx + 1);
+                }
+                columnName = createColumnAlias(columnName, model, false);
+                QueryColumn column = queryColumnPool.next().of(
+                        columnName,
+                        expressionNodePool.next().of(
+                                LITERAL, columnName, 0, 0
+                        ),
+                        true
+                );
+                model.addField(column);
+                aliasIdx++;
+            }
+        }
+
+        if (model.isUnnestOrdinality()) {
+            CharSequence ordColName;
+            if (aliases.size() == totalColumns) {
+                ordColName = aliases.getQuick(totalOutputCols);
+            } else {
+                ordColName = "ordinality";
+            }
+            ordColName = createColumnAlias(ordColName, model, false);
+            QueryColumn column = queryColumnPool.next().of(
+                    ordColName,
+                    expressionNodePool.next().of(LITERAL, ordColName, 0, 0),
+                    true
+            );
+            model.addField(column);
         }
     }
 
@@ -4113,6 +4201,7 @@ public class SqlOptimiser implements Mutable {
                 m.setJoinType(IQueryModel.JOIN_CROSS_FULL);
             } else if (m.getJoinType() != IQueryModel.JOIN_ASOF &&
                     m.getJoinType() != IQueryModel.JOIN_SPLICE &&
+                    m.getJoinType() != JOIN_UNNEST &&
                     (c == null || c.parents.size() == 0)
             ) {
                 m.setJoinType(IQueryModel.JOIN_CROSS);
@@ -5780,6 +5869,15 @@ public class SqlOptimiser implements Mutable {
             if (leftJoinWhere != null) {
                 emitLiteralsTopDown(leftJoinWhere, jm);
                 emitLiteralsTopDown(leftJoinWhere, model);
+            }
+
+            // UNNEST expressions reference columns from the base table (lateral binding).
+            // Propagate these references so the base table includes them in its projection.
+            if (jm.getJoinType() == JOIN_UNNEST) {
+                final ObjList<ExpressionNode> unnestExprs = jm.getUnnestExpressions();
+                for (int k = 0, z = unnestExprs.size(); k < z; k++) {
+                    emitLiteralsTopDown(unnestExprs.getQuick(k), model);
+                }
             }
 
             // process WINDOW JOIN dynamic bound expressions
@@ -11580,6 +11678,7 @@ public class SqlOptimiser implements Mutable {
         joinBarriers.add(IQueryModel.JOIN_LT);
         joinBarriers.add(IQueryModel.JOIN_WINDOW);
         joinBarriers.add(IQueryModel.JOIN_HORIZON);
+        joinBarriers.add(JOIN_UNNEST);
         joinBarriers.add(IQueryModel.JOIN_LATERAL_INNER);
         joinBarriers.add(IQueryModel.JOIN_LATERAL_LEFT);
         joinBarriers.add(IQueryModel.JOIN_LATERAL_CROSS);
