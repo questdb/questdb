@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,11 +28,33 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByFunction {
     public FirstNotNullTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
         super(arg, timestampType);
+    }
+
+    @Override
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
+        if (count > 0) {
+            final long hi = ptr + count * (long) Long.BYTES;
+            long offset = 0;
+            for (; ptr < hi; ptr += Long.BYTES) {
+                long value = Unsafe.getUnsafe().getLong(ptr);
+                if (value != Numbers.LONG_NULL) {
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putLong(valueIndex + 1, value);
+                    }
+                    break;
+                }
+                offset++;
+            }
+        }
     }
 
     @Override

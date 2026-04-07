@@ -1,7 +1,10 @@
+parameters:
+  shouldRun: true
 steps:
   - script: |
       python3 .github/prepare_rust_env.py --export-cargo-install-env --components rustfmt clippy --match core/rust/qdbr/rust-toolchain.toml
     displayName: "Ensure Rust is installed"
+    condition: ${{ parameters.shouldRun }}
     # Note, the `prepare_rust_env.py` script exports a number of variables.
   - task: Cache@2
     continueOnError: true
@@ -9,33 +12,110 @@ steps:
       key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)"'
       path: $(CARGO_HOME)/registry
     displayName: "Cache ~/.cargo/registry"
-  - script: |
-      cd core/rust/qdb-core
-      cargo test --all-targets --all-features --no-fail-fast --verbose
-    displayName: "qdb-core: cargo test"
-    # We run these as part of the other CI runs anyway through the rust-maven-plugin,
-    # but if the Rust tests fail it's easier to see the output here
-    # since it doesn't get buried thousands of lines deep in the Java test logs.
+    condition: ${{ parameters.shouldRun }}
   - script: |
       cd core/rust/qdb-core
       cargo clippy --all-targets --all-features -- -D warnings
     displayName: "qdb-core: cargo clippy"
+    condition: ${{ parameters.shouldRun }}
   - script: |
       cd core/rust/qdb-core
       cargo fmt --check
     displayName: "qdb-core: cargo fmt"
-  - script: |
-      cd core/rust/qdbr
-      cargo test --all-targets --all-features --no-fail-fast --verbose
-    displayName: "qdbr: cargo test"
-    # We run these as part of the other CI runs anyway through the rust-maven-plugin,
-    # but if the Rust tests fail it's easier to see the output here
-    # since it doesn't get buried thousands of lines deep in the Java test logs.
+    condition: ${{ parameters.shouldRun }}
   - script: |
       cd core/rust/qdbr
       cargo clippy --all-targets --all-features -- -D warnings
     displayName: "qdbr: cargo clippy"
+    condition: ${{ parameters.shouldRun }}
   - script: |
       cd core/rust/qdbr
       cargo fmt --check
     displayName: "qdbr: cargo fmt"
+    condition: ${{ parameters.shouldRun }}
+
+  # ── Rust coverage collection ──────────────────────────────────────────
+  # Run all Rust tests with coverage instrumentation and upload the raw
+  # profraw files. The CoverageReports stage merges them with Java runs.
+  - bash: |
+      set -eux
+      find . -name '*.profraw' -delete
+      rm -rf $(Build.SourcesDirectory)/rust-lint-profraw
+      mkdir -p $(Build.SourcesDirectory)/rust-lint-profraw
+      export RUSTFLAGS="-C instrument-coverage -D warnings"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdb-core-%m.profraw"
+      cd core/rust/qdb-core
+      cargo test --all-targets --no-fail-fast
+    displayName: "qdb-core: cargo test (coverage)"
+    condition: ${{ parameters.shouldRun }}
+
+  - bash: |
+      set -eux
+      export RUSTFLAGS="-C instrument-coverage -D warnings"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/qdbr-%m.profraw"
+      cd core/rust/qdbr
+      cargo test --all-targets --no-fail-fast
+    displayName: "qdbr: cargo test (coverage)"
+    condition: ${{ parameters.shouldRun }}
+
+  - bash: |
+      set -eux
+      export RUSTFLAGS="-C instrument-coverage -D warnings"
+      export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/parquet2-%m.profraw"
+      export PARQUET2_IGNORE_PYARROW_TESTS=1
+      git submodule update --init core/rust/qdbr/parquet2/testing/parquet-testing
+      cd core/rust/qdbr/parquet2
+      cargo test --all-targets --no-fail-fast
+    displayName: "parquet2: cargo test (coverage)"
+    condition: ${{ parameters.shouldRun }}
+
+  - template: install-llvm.yml
+    parameters:
+      shouldRun: ${{ parameters.shouldRun }}
+
+  - bash: |
+      set -eux
+      export PATH=$LLVM_TOOLS_PATH:$PATH
+      PROFRAW_DIR=$(Build.SourcesDirectory)/rust-lint-profraw
+      IGNORE_RE='(.cargo/registry|rustc/.*\.rs)'
+
+      # ── Helper: merge profraw → profdata → LCOV for a single crate ──
+      generate_lcov() {
+        local CRATE=$1 TARGET_DIR=$2
+        mapfile -t PROFRAW < <(find "$PROFRAW_DIR" -name "${CRATE}-*.profraw" | sort)
+        if [ ${#PROFRAW[@]} -eq 0 ]; then
+          echo "No $CRATE profraw files found, skipping"
+          return
+        fi
+        llvm-profdata merge -sparse -o "$PROFRAW_DIR/$CRATE.profdata" "${PROFRAW[@]}"
+
+        mapfile -d '' -t BINS < <(find "$TARGET_DIR/deps" -maxdepth 1 -type f -executable ! -name '*.so' ! -name '*.dylib' ! -name '*.dll' ! -name '*.d' -print0 | sort -z)
+        local OBJECT_ARGS=()
+        for bin in "${BINS[@]}"; do
+          OBJECT_ARGS+=(--object "$bin")
+        done
+
+        llvm-cov export \
+          --format=lcov \
+          --ignore-filename-regex="$IGNORE_RE" \
+          "${OBJECT_ARGS[@]}" \
+          --instr-profile="$PROFRAW_DIR/$CRATE.profdata" \
+          > "$PROFRAW_DIR/$CRATE.lcov"
+        echo "Generated $CRATE.lcov"
+      }
+
+      generate_lcov qdb-core core/rust/qdb-core/target/debug
+      generate_lcov qdbr     core/rust/qdbr/target/debug
+      generate_lcov parquet2 core/rust/qdbr/parquet2/target/debug
+
+      # Remove intermediate profraw files, keep profdata and lcov for upload.
+      rm -f "$PROFRAW_DIR"/*.profraw
+    displayName: "qdb-core/parquet2: create coverage reports (LCOV)"
+    condition: ${{ parameters.shouldRun }}
+
+  - task: PublishBuildArtifacts@1
+    displayName: "Upload Rust cargo test coverage (LCOV)"
+    condition: ${{ parameters.shouldRun }}
+    inputs:
+      pathToPublish: $(Build.SourcesDirectory)/rust-lint-profraw
+      artifactName: rust-llvm-coverage

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -71,11 +71,12 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             int sampleToFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
+        Map map = null;
         try {
             // sink will be storing record columns to map key
             final RecordSink mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter);
             // this is the map itself, which we must not forget to free when factory closes
-            final Map map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+            map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
             final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             cursor = new SampleByFillNoneRecordCursor(
                     configuration,
@@ -97,6 +98,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
                     sampleToFuncPos
             );
         } catch (Throwable th) {
+            Misc.free(map);
             close();
             throw th;
         }

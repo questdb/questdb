@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
@@ -134,6 +135,81 @@ import io.questdb.std.str.Utf8Sequence;
  * not allowed on the dimension with stride 1, in this special case it is fine.
  */
 public abstract class ArrayView implements QuietCloseable {
+
+    /**
+     * Computes row-major strides for the given shape and returns the flat cardinality
+     * (product of all dimensions).
+     * <p>
+     * For shape {@code {3, 4}}: strides = {@code {4, 1}}, returns 12.
+     * <p>
+     * Unlike {@link MutableArray#resetToDefaultStrides}, this is a pure function on
+     * plain arrays — no instance mutation.
+     *
+     * @param shape   dimension lengths (read)
+     * @param strides destination for computed strides (written, same length as shape)
+     * @return flat cardinality (product of all dimension lengths)
+     * @throws ArithmeticException if the product of dimensions overflows {@code int}
+     */
+    public static int computeRowMajorStrides(int[] shape, int[] strides) {
+        long stride = 1;
+        for (int d = shape.length - 1; d >= 0; d--) {
+            strides[d] = (int) stride;
+            stride *= shape[d];
+            if (stride > Integer.MAX_VALUE) {
+                throw CairoException.nonCritical().put("array cardinality overflow");
+            }
+        }
+        return (int) stride;
+    }
+
+    /**
+     * Converts multi-dimensional coordinates to a flat index using the given strides.
+     * Inverse of {@link #flatIndexToCoords}.
+     *
+     * @param coords  coordinate vector (same length as strides)
+     * @param strides row-major strides for the target shape
+     * @return flat index
+     */
+    public static int coordsToFlatIndex(int[] coords, int[] strides) {
+        int fi = 0;
+        for (int d = 0; d < coords.length; d++) {
+            fi += coords[d] * strides[d];
+        }
+        return fi;
+    }
+
+    /**
+     * Decomposes a flat index into multi-dimensional coordinates using the given strides.
+     * Inverse of {@link #coordsToFlatIndex}.
+     *
+     * @param flatIndex flat index to decompose
+     * @param strides   row-major strides for the shape
+     * @param coords    destination for computed coordinates (written, same length as strides)
+     */
+    public static void flatIndexToCoords(int flatIndex, int[] strides, int[] coords) {
+        int remaining = flatIndex;
+        for (int d = 0; d < strides.length; d++) {
+            coords[d] = remaining / strides[d];
+            remaining %= strides[d];
+        }
+    }
+
+    /**
+     * Increments coordinates in row-major order (rightmost dimension varies fastest).
+     *
+     * @param coords coordinate vector (modified in place)
+     * @param shape  the shape bounds for each dimension
+     * @return true if the increment produced a valid position, false if it wrapped past the origin
+     */
+    public static boolean incrementCoords(int[] coords, int[] shape) {
+        for (int d = shape.length - 1; d >= 0; d--) {
+            if (++coords[d] < shape[d]) {
+                return true;
+            }
+            coords[d] = 0;
+        }
+        return false;
+    }
 
     /**
      * Maximum size of any given dimension.

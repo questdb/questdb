@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class SequencerMetadataService implements MetadataServiceStub {
     private final SequencerMetadata metadata;
@@ -84,7 +85,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+    public boolean convertPartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
         return false;
     }
 
@@ -118,7 +119,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void removeColumn(@NotNull CharSequence columnName) {
+    public void removeColumn(@NotNull CharSequence columnName, SecurityContext securityContext) {
         metadata.removeColumn(columnName);
     }
 

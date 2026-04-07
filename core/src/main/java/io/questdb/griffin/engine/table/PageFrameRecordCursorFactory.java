@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -138,7 +138,12 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             if (timeFrameCursor == null) {
                 timeFrameCursor = new TimeFrameCursorImpl(configuration, getMetadata());
             }
-            return timeFrameCursor.of(pageFrameCursor);
+            return timeFrameCursor.of(
+                    pageFrameCursor,
+                    executionContext.getPageFrameMinRows(),
+                    executionContext.getPageFrameMaxRows(),
+                    1 // used for single-threaded exec plans
+            );
         }
         return null;
     }
@@ -202,29 +207,31 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     protected PageFrameCursor initBwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (bwdPageFrameCursor == null) {
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return bwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return bwdPageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     protected PageFrameCursor initFwdPageFrameCursor(
             PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
         if (fwdPageFrameCursor == null) {
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
                     columnSizeShifts,
+                    partitionFrameCursorFactory.getPushdownFilterConditions(),
                     executionContext.getSharedQueryWorkerCount()
             );
         }
-        return fwdPageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return fwdPageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     @Override

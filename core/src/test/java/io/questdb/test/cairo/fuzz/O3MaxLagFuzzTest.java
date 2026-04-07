@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -156,6 +156,8 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     rnd.nextDouble(),
                     0,
                     0.0,
+                    0.0,
+                    0.0,
                     Os.type == Os.WINDOWS ? 0 : 0.2, // insert only
                     0,
                     0.0,
@@ -164,7 +166,8 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     0.0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
-                    0
+                    0,
+                    0.0
             );
 
             try {

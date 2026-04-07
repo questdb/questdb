@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -128,17 +128,19 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
                         1 // used for single-threaded exec plans
                 );
             } else {
                 pageFrameCursor = new BwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
+                        partitionFrameCursorFactory.getPushdownFilterConditions(),
                         1 // used for single-threaded exec plans
                 );
             }
         }
-        return pageFrameCursor.of(partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return pageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     /**

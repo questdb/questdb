@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,10 +24,17 @@
 
 package io.questdb.test.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
+
+    @Override
+    public void setUp() {
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+        super.setUp();
+    }
 
     @Test
     public void testDelegateArray() throws Exception {

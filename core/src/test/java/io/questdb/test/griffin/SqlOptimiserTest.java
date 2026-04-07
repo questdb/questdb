@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -468,6 +468,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Async Group By workers: 1
+                              vectorized: true
                               values: [first(x)]
                               filter: null
                                 PageFrame
@@ -516,14 +517,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [c1]
-                                Materialize sort keys
-                                    VirtualRecord
-                                      functions: [a,b,memoize(a+b)]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                VirtualRecord
+                                  functions: [a,b,memoize(a+b)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                             """
             );
             assertSql(
@@ -540,7 +540,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query2,
                     """
                             SelectedRecord
-                                Sort light
+                                Encode sort light
                                   keys: [b1]
                                     VirtualRecord
                                       functions: [a_alias+1,a_alias+2,b1]
@@ -822,6 +822,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Async Group By workers: 1
+                              vectorized: true
                               values: [last(x)]
                               filter: null
                                 PageFrame
@@ -909,6 +910,74 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     Frame forward scan on: y
                             """
             );
+        });
+    }
+
+    @Test
+    public void testMoveClausesIncrementsPositionCounter() throws Exception {
+        // Regression test for a bug in SqlOptimiser.moveClauses() where the
+        // position counter 'p' was never incremented after matching a clause
+        // position. When swapJoinOrder0() called moveClauses() with multiple
+        // positions to steal, only the first clause was moved to the target
+        // context. The remaining clauses stayed in the source context, creating
+        // circular dependencies in the join graph and causing query compilation
+        // to fail.
+        //
+        // The query uses three comma-joined tables with WHERE conditions:
+        //   a.x = c.x AND b.y = c.y AND b.z = c.z
+        //
+        // After analyseEquals, model c gets all three clauses. During
+        // reorderTables, swapJoinOrder0 tries to steal the two clauses
+        // referencing table b (b.y=c.y and b.z=c.z) from model c. With the
+        // bug, only b.y=c.y is moved; b.z=c.z stays on c, creating a cycle
+        // between models b and c that makes topological sort fail.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab_a (x INT)");
+            execute("CREATE TABLE tab_b (y INT, z INT)");
+            execute("CREATE TABLE tab_c (x INT, y INT, z INT)");
+
+            execute("""
+                    INSERT INTO tab_a VALUES (1), (2), (3)
+                    """);
+            execute("""
+                    INSERT INTO tab_b VALUES (10, 100), (20, 200), (10, 200)
+                    """);
+            execute("""
+                    INSERT INTO tab_c VALUES (1, 10, 100), (2, 20, 200), (3, 10, 200), (1, 20, 200)
+                    """);
+
+            // Cross join with WHERE conditions -- triggers reorderTables and
+            // swapJoinOrder0 with multiple clausesToSteal entries.
+            String implicitJoinQuery = """
+                    SELECT tab_a.x, tab_b.y, tab_b.z, tab_c.x AS cx, tab_c.y AS cy, tab_c.z AS cz
+                    FROM tab_a
+                    CROSS JOIN tab_b
+                    CROSS JOIN tab_c
+                    WHERE tab_a.x = tab_c.x
+                      AND tab_b.y = tab_c.y
+                      AND tab_b.z = tab_c.z
+                    ORDER BY tab_a.x, tab_b.y, tab_b.z, tab_c.x
+                    """;
+
+            // Equivalent explicit join query for reference.
+            String explicitJoinQuery = """
+                    SELECT tab_a.x, tab_b.y, tab_b.z, tab_c.x AS cx, tab_c.y AS cy, tab_c.z AS cz
+                    FROM tab_a
+                    JOIN tab_c ON tab_a.x = tab_c.x
+                    JOIN tab_b ON tab_b.y = tab_c.y AND tab_b.z = tab_c.z
+                    ORDER BY tab_a.x, tab_b.y, tab_b.z, tab_c.x
+                    """;
+
+            String expected = """
+                    x\ty\tz\tcx\tcy\tcz
+                    1\t10\t100\t1\t10\t100
+                    1\t20\t200\t1\t20\t200
+                    2\t20\t200\t2\t20\t200
+                    3\t10\t200\t3\t10\t200
+                    """;
+
+            assertQueryNoLeakCheck(expected, explicitJoinQuery, null, true, false);
+            assertQueryNoLeakCheck(expected, implicitJoinQuery, null, true, false);
         });
     }
 
@@ -1068,7 +1137,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         from tab1 join tab2 on tab1.id = tab2.id
                                         order by a, b""",
                     """
-                            Sort
+                            Encode sort
                               keys: [a, b]
                                 SelectedRecord
                                     Hash Join Light
@@ -1189,7 +1258,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             limit 10""",
                     """
                             Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                Sort
+                                Encode sort
                                   keys: [a desc]
                                     SelectedRecord
                                         Hash Join Light
@@ -1232,7 +1301,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             SelectedRecord
                                 Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                    Sort
+                                    Encode sort
                                       keys: [a desc, ts]
                                         SelectedRecord
                                             Hash Join Light
@@ -1513,7 +1582,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [s, ts]
                                     SelectedRecord
                                         AsOf Join Fast
@@ -1554,7 +1623,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [ts, s]
                                     SelectedRecord
                                         AsOf Join Fast
@@ -1595,7 +1664,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [s, ts1]
                                     SelectedRecord
                                         AsOf Join Fast
@@ -1637,7 +1706,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [s1, ts1]
                                     SelectedRecord
                                         AsOf Join Fast
@@ -1678,7 +1747,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [s, ts]
                                     SelectedRecord
                                         AsOf Join Fast
@@ -1874,7 +1943,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [s, ts, ts1, s1]
                                     SelectedRecord
                                         Cross Join
@@ -2077,7 +2146,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [ts, s]
                                     SelectedRecord
                                         Cross Join
@@ -2179,7 +2248,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [ts, s1, s, ts1]
                                     SelectedRecord
                                         Cross Join
@@ -2282,11 +2351,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [s, ts1]
                                     SelectedRecord
                                         Lt Join Light
                                           condition: t2.s=t1.s
+                                          symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -2329,7 +2399,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Sort
+                                Encode sort
                                   keys: [s, ts, ts1]
                                     SelectedRecord
                                         Hash Join Light
@@ -2633,6 +2703,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Async Group By workers: 1
+                              vectorized: true
                               values: [first(x)]
                               filter: null
                                 PageFrame
@@ -2728,6 +2799,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     """
                             Async Group By workers: 1
+                              vectorized: true
                               values: [last(x)]
                               filter: null
                                 PageFrame
@@ -3423,7 +3495,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;",
                     """
-                            Sort light
+                            Encode sort light
                               keys: [timestamp, side desc]
                                 Sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side]
@@ -3463,7 +3535,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC LIMIT -3;",
                     """
-                            Sort light
+                            Encode sort light
                               keys: [timestamp, side]
                                 Sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side desc]
@@ -3500,7 +3572,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck("SELECT timestamp, side FROM tRaDEs ORDER BY tiMesTAmP ASC, sIDe DESC LIMIT -3;",
                     """
-                            Sort light
+                            Encode sort light
                               keys: [timestamp, side desc]
                                 Sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side]
@@ -3540,7 +3612,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;",
                     """
-                            Sort light
+                            Encode sort light
                               keys: [timestamp, side desc, symbol]
                                 Sort light lo: 3 partiallySorted: true
                                   keys: [timestamp desc, side, symbol desc]
@@ -3733,13 +3805,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "SELECT id0, id1, 2 - id0 + 1 id0_1, 2 / (id1 * 2) id1_1, count(*) AS c " +
                     "FROM x " +
                     "GROUP BY id0, id1, id0 / 42, 1 / (id1 * 42) " +
-                    "ORDER BY c DESC";
+                    "ORDER BY c DESC, id0 DESC";
 
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
-                              keys: [c desc]
+                            Encode sort light
+                              keys: [c desc, id0 desc]
                                 VirtualRecord
                                   functions: [id0,id1,2-id0+1,2/id1*2,c]
                                     Async Group By workers: 1
@@ -3799,7 +3871,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Row forward scan
                                         Frame forward scan on: x
                                     Hash
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [c desc]
                                             VirtualRecord
                                               functions: [id,id/2,c]
@@ -3858,7 +3930,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Row forward scan
                                         Frame forward scan on: x
                                     Hash
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [c desc]
                                             VirtualRecord
                                               functions: [id,id/2,id/2+1,c]
@@ -3902,7 +3974,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "(SELECT id id0, id * 2 id1, count(*) AS c " +
                     "FROM x " +
                     "GROUP BY id, id * 2 " +
-                    "ORDER BY c DESC);";
+                    "ORDER BY c DESC, id0);";
 
             assertPlanNoLeakCheck(
                     query,
@@ -3911,10 +3983,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 VirtualRecord
                                   functions: [1,2,1]
                                     long_sequence count: 1
-                                Radix sort light
-                                  keys: [c desc]
+                                Encode sort light
+                                  keys: [c desc, id0]
                                     VirtualRecord
-                                      functions: [id,id*2,c]
+                                      functions: [memoize(id),id*2,c]
                                         Async Group By workers: 1
                                           keys: [id]
                                           values: [count(*)]
@@ -3927,10 +3999,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQueryNoLeakCheck(
                     """
-                            id0\tid1\tc
-                            1\t2\t1
-                            2\t4\t1
-                            1\t2\t1
+                            id0	id1	c
+                            1	2	1
+                            1	2	1
+                            2	4	1
                             """,
                     query,
                     null,
@@ -4175,7 +4247,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(query, """
-                    Sort
+                    Encode sort
                       keys: [ts]
                         Fill Range
                           range: ('2017-12-20','2018-01-31')
@@ -4314,7 +4386,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(query, """
-                    Sort
+                    Encode sort
                       keys: [ts]
                         Fill Range
                           range: ('2017-12-20','2018-01-31')
@@ -4384,7 +4456,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "sample by 5d to '2018-01-31' fill(null)";
 
             assertPlanNoLeakCheck(query, """
-                    Sort
+                    Encode sort
                       keys: [ts]
                         Fill Range
                           range: (,'2018-01-31')
@@ -4420,7 +4492,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "sample by 5d from '2017-12-20' fill(null) ";
 
             assertPlanNoLeakCheck(query, """
-                    Sort
+                    Encode sort
                       keys: [ts]
                         Fill Range
                           range: ('2017-12-20',)
@@ -4462,7 +4534,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(exceptAllQuery, """
                     Except All
-                        Sort
+                        Encode sort
                           keys: [ts]
                             Fill Range
                               range: ('2017-12-20','2018-01-31')
@@ -4495,7 +4567,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(exceptQuery, """
                     Except
-                        Sort
+                        Encode sort
                           keys: [ts]
                             Fill Range
                               range: ('2017-12-20','2018-01-31')
@@ -4544,7 +4616,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(intersectAllQuery, """
                     Intersect All
-                        Sort
+                        Encode sort
                           keys: [ts]
                             Fill Range
                               range: ('2017-12-20','2018-01-31')
@@ -4588,7 +4660,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(intersectQuery, """
                     Intersect
-                        Sort
+                        Encode sort
                           keys: [ts]
                             Fill Range
                               range: ('2017-12-20','2018-01-31')
@@ -4647,7 +4719,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(query, """
-                    Sort
+                    Encode sort
                       keys: [ts]
                         Fill Range
                           range: ('2017-12-20','2018-01-31')
@@ -4698,7 +4770,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             SelectedRecord
                                 AsOf Join
-                                    Sort
+                                    Encode sort
                                       keys: [five_days]
                                         Fill Range
                                           range: ('2017-12-20','2018-01-31')
@@ -4712,7 +4784,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                     Row forward scan
                                                     Interval forward scan on: fromto
                                                       intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
-                                    Sort
+                                    Encode sort
                                       keys: [ten_days]
                                         Fill Range
                                           range: ('2017-12-20','2018-01-31')
@@ -4785,7 +4857,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(shouldSucceedParallel, """
-                    Sort
+                    Encode sort
                       keys: [ts]
                         Fill Range
                           range: ('2017-12-20',)
@@ -4835,7 +4907,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     unionAllQuery,
                     """
-                            Sort
+                            Encode sort
                               keys: [ts]
                                 Union All
                                     Fill Range
@@ -4896,7 +4968,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     unionQuery,
                     """
-                            Sort
+                            Encode sort
                               keys: [ts]
                                 Union
                                     Fill Range
@@ -4985,7 +5057,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -5000,7 +5072,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -5015,7 +5087,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m to '2019-01-01'",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -5030,7 +5102,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -5055,7 +5127,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort
+                            Encode sort
                               keys: [five_days]
                                 Fill Range
                                   range: ('2017-12-20','2018-01-31')
@@ -5109,7 +5181,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             AND (symbol LIKE ('BTC-USD'))\s
                             SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR""",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [timestamp]
                                 Async Group By workers: 1
                                   keys: [symbol,timestamp]
@@ -6064,11 +6136,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 q1,
                 """
                         Limit value: 40 skip-rows-max: 0 take-rows-max: 40
-                            Sort
+                            Encode sort
                               keys: [hostname, ts2]
                                 Window
                                   functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts2]
                                         Async JIT Filter workers: 1
                                           filter: ts2>=1970-01-01T00:00:00.000001Z
@@ -6100,7 +6172,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 """
                         Window
                           functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
-                            Radix sort light
+                            Encode sort light
                               keys: [ts2]
                                 Async JIT Filter workers: 1
                                   filter: ts2>=1970-01-01T00:00:00.000001Z
@@ -6131,7 +6203,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertPlanNoLeakCheck(
                 q3,
                 """
-                        Sort
+                        Encode sort
                           keys: [ts1 desc]
                             Limit value: 9223372036854775807L skip-rows: 0 take-rows: 10
                                 Window
@@ -6163,11 +6235,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertPlanNoLeakCheck(
                 q4,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [ts1 desc]
                             SelectedRecord
                                 Limit value: 9223372036854775807L skip-rows: 0 take-rows: 10
-                                    Sort
+                                    Encode sort
                                       keys: [ts2]
                                         Window
                                           functions: [first_value(usage_system) over (partition by [hostname])]
@@ -6202,11 +6274,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 q5,
                 """
                         Limit value: 40 skip-rows-max: 0 take-rows-max: 40
-                            Sort
+                            Encode sort
                               keys: [ts2, hostname]
                                 Window
                                   functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [ts2]
                                         Async JIT Filter workers: 1
                                           filter: ts2>=1970-01-01T00:00:00.000001Z

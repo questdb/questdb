@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -136,6 +136,171 @@ public class ArrayTest extends AbstractCairoTest {
                                     Frame forward scan on: tango
                             """
             );
+        });
+    }
+
+    @Test
+    public void testAccessConstantIndex1d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[10.0, 20, 30])");
+            execute("INSERT INTO tango VALUES (null)");
+            // constant positive indices on 1D column hit the fast path
+            assertSql("x\n10.0\nnull\n", "SELECT arr[1] x FROM tango");
+            assertSql("x\n20.0\nnull\n", "SELECT arr[2] x FROM tango");
+            assertSql("x\n30.0\nnull\n", "SELECT arr[3] x FROM tango");
+            // out of bounds
+            assertSql("x\nnull\nnull\n", "SELECT arr[4] x FROM tango");
+        });
+    }
+
+    @Test
+    public void testAccessConstantIndex2d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2, 3], [4.0, 5, 6]])");
+            execute("INSERT INTO tango VALUES (null)");
+            // constant positive indices on 2D column hit the fast path
+            assertSql("x\n2.0\nnull\n", "SELECT arr[1, 2] x FROM tango");
+            assertSql("x\n4.0\nnull\n", "SELECT arr[2, 1] x FROM tango");
+            assertSql("x\n6.0\nnull\n", "SELECT arr[2, 3] x FROM tango");
+            // out of bounds
+            assertSql("x\nnull\nnull\n", "SELECT arr[3, 1] x FROM tango");
+            assertSql("x\nnull\nnull\n", "SELECT arr[1, 4] x FROM tango");
+        });
+    }
+
+    @Test
+    public void testAccessConstantIndexMultiPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, arr1d DOUBLE[], arr2d DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tango VALUES
+                    ('2025-01-01', ARRAY[10.0, 20, 30], ARRAY[[1.0, 2], [3.0, 4]]),
+                    ('2025-01-01', null, null),
+                    ('2025-01-02', ARRAY[40.0, 50, 60], ARRAY[[5.0, 6], [7.0, 8]]),
+                    ('2025-01-02', ARRAY[70.0], ARRAY[[9.0]]),
+                    ('2025-01-03', ARRAY[], ARRAY[]),
+                    ('2025-01-03', ARRAY[80.0, 90], ARRAY[[10.0, 11], [12.0, 13]])
+                    """);
+            // 1D constant index across partitions
+            assertSql(
+                    """
+                            x
+                            10.0
+                            null
+                            40.0
+                            70.0
+                            null
+                            80.0
+                            """,
+                    "SELECT arr1d[1] x FROM tango"
+            );
+            assertSql(
+                    """
+                            x
+                            20.0
+                            null
+                            50.0
+                            null
+                            null
+                            90.0
+                            """,
+                    "SELECT arr1d[2] x FROM tango"
+            );
+            // 2D constant index across partitions
+            assertSql(
+                    """
+                            x
+                            2.0
+                            null
+                            6.0
+                            null
+                            null
+                            11.0
+                            """,
+                    "SELECT arr2d[1, 2] x FROM tango"
+            );
+            assertSql(
+                    """
+                            x
+                            3.0
+                            null
+                            7.0
+                            null
+                            null
+                            12.0
+                            """,
+                    "SELECT arr2d[2, 1] x FROM tango"
+            );
+        });
+    }
+
+    @Test
+    public void testAccessFirstElement1d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[10.0, 20, 30])");
+            execute("INSERT INTO tango VALUES (ARRAY[42.0])");
+            execute("INSERT INTO tango VALUES (null)");
+            // constant index 1 on 1D array hits the first-element fast path
+            assertSql("x\n10.0\n42.0\nnull\n", "SELECT arr[1] x FROM tango");
+            assertPlanNoLeakCheck(
+                    "SELECT arr[1] x FROM tango",
+                    """
+                            VirtualRecord
+                              functions: [arr[1]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testAccessFirstElement2d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2], [3.0, 4]])");
+            execute("INSERT INTO tango VALUES (null)");
+            // constant indices (1,1) on 2D array hits the first-element fast path
+            assertSql("x\n1.0\nnull\n", "SELECT arr[1, 1] x FROM tango");
+            assertSql("x\n1.0\nnull\n", "SELECT arr[1][1] x FROM tango");
+            assertPlanNoLeakCheck(
+                    "SELECT arr[1][1] x FROM tango",
+                    """
+                            VirtualRecord
+                              functions: [arr[1,1]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tango
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testAccessFirstElement3d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT " +
+                    "ARRAY[ [[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]] ] arr FROM long_sequence(1))");
+            // constant indices (1,1,1) on 3D array hits the first-element fast path
+            assertSql("x\n1.0\n", "SELECT arr[1, 1, 1] x FROM tango");
+            assertSql("x\n1.0\n", "SELECT arr[1][1][1] x FROM tango");
+            assertSql("x\n1.0\n", "SELECT arr[1][1, 1] x FROM tango");
+            assertSql("x\n1.0\n", "SELECT arr[1, 1][1] x FROM tango");
+        });
+    }
+
+    @Test
+    public void testAccessFirstElementEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[], arr2 DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (ARRAY[], ARRAY[])");
+            // first-element access on empty arrays returns null
+            assertSql("x\nnull\n", "SELECT arr[1] x FROM tango");
+            assertSql("x\nnull\n", "SELECT arr2[1, 1] x FROM tango");
         });
     }
 
@@ -560,7 +725,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, x, first(v) as v from test sample by 1s",
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,x]
@@ -590,7 +755,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t8
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -613,7 +778,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t6
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -636,7 +801,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t20
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -659,7 +824,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t41.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -684,7 +849,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t1320.0\t25.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,array_sum]
@@ -709,7 +874,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t510.0\t25.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts,dot_product]
@@ -732,7 +897,7 @@ public class ArrayTest extends AbstractCairoTest {
                             2025-06-27T00:00:00.000000Z\t1045.0
                             """,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
@@ -2351,11 +2516,9 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testRndArrayBadTypes() throws Exception {
-        assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("select rnd_double_array(1, 100.0, 10), rnd_varchar() from long_sequence(5);",
-                    27, "nanRate must be an integer"
-            );
-        });
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select rnd_double_array(1, 100.0, 10), rnd_varchar() from long_sequence(5);",
+                27, "nanRate must be an integer"
+        ));
     }
 
     @Test
@@ -2864,7 +3027,7 @@ public class ArrayTest extends AbstractCairoTest {
                     "SELECT arr[2,3-1:,2:] x FROM tango",
                     """
                             VirtualRecord
-                              functions: [arr[2,3-1:,2:]]
+                              functions: [arr[2,2:,2:]]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tango

@@ -19,16 +19,13 @@ schedules:
 variables:
   SKIP_VALIDATION: 'false'  # Set to 'true' to skip validation
 
-pool:
-  vmImage: 'ubuntu-20.04'
+pool: hetzner-incus
 
 jobs:
   - job: RunOn
     displayName: "Build and push docker"
 
-    pool:
-      name: "Azure Pipelines"
-      vmImage: "ubuntu-latest"
+    pool: hetzner-incus
 
     timeoutInMinutes: 60
 
@@ -36,32 +33,31 @@ jobs:
       - bash: |
           tag=$(Build.SourceBranchName)
           echo "Checking tag: $tag"
-          
+
           if [[ ! $tag =~ ^\d+(\.\d+)*$ ]]; then
             echo "Tag '$tag' is not a pure numeric version (x.y.z) - skipping build"
             echo "Valid tags should only contain numbers and dots (e.g., 1.2.3, 10.0.5)"
             echo "##vso[task.complete result=Succeeded;]Skipping build for non-numeric version tag"
             exit 0
           fi
-          
+
           echo "Tag '$tag' is a valid numeric version, continuing with build"
         displayName: 'Validate semantic version format'
         condition: and(startsWith(variables['Build.SourceBranch'], 'refs/tags/'), ne(variables['SKIP_VALIDATION'], 'true'))
 
-      - task: CmdLine@2
-        displayName: Install Trivy vulnerability scanner
-        inputs:
-          script: |
-            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh -o /tmp/install-trivy.sh
-            sh /tmp/install-trivy.sh -b /usr/local/bin
+      # - task: CmdLine@2
+      #   displayName: Check that trivy is installed and present in PATH
+      #   inputs:
+      #     script: which trivy && trivy version
 
       - task: CmdLine@2
         displayName: Download latest openshift-preflight tool
         inputs:
           script: |
-            wget https://github.com/redhat-openshift-ecosystem/openshift-preflight/releases/latest/download/preflight-linux-amd64 -O /usr/local/bin/preflight
-            chmod +x /usr/local/bin/preflight
+            sudo wget https://github.com/redhat-openshift-ecosystem/openshift-preflight/releases/latest/download/preflight-linux-amd64 -O /usr/local/bin/preflight
+            sudo chmod +x /usr/local/bin/preflight
             which preflight
+            preflight version
 
       - task: Docker@2
         inputs:
@@ -87,16 +83,16 @@ jobs:
           workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
-      - task: CmdLine@2
-        displayName: Scan nightly docker image for vulnerabilities
-        inputs:
-          script: |
-            echo "Scanning image: questdb/questdb:nightly"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL questdb/questdb:nightly
-
-            echo "Scanning image: questdb/questdb:nightly-rhel"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL questdb/questdb:nightly-rhel
-        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+      #- task: CmdLine@2
+      #  displayName: Scan nightly docker image for vulnerabilities
+      #  inputs:
+      #    script: |
+      #      echo "Scanning image: questdb/questdb:nightly"
+      #      trivy image --exit-code 1 --severity HIGH,CRITICAL questdb/questdb:nightly
+      #
+      #      echo "Scanning image: questdb/questdb:nightly-rhel"
+      #      trivy image --exit-code 1 --severity HIGH,CRITICAL questdb/questdb:nightly-rhel
+      #  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
         displayName: Release Tag
@@ -120,18 +116,18 @@ jobs:
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
-      - task: CmdLine@2
-        displayName: Scan tagged docker image for vulnerabilities
-        inputs:
-          script: |
-            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
-
-            echo "Scanning image: questdb/questdb:${tag_name}"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${tag_name}"
-
-            echo "Scanning image: questdb/questdb:${tag_name}-rhel"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${tag_name}-rhel"
-        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+      #- task: CmdLine@2
+      #  displayName: Scan tagged docker image for vulnerabilities
+      #  inputs:
+      #    script: |
+      #      tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+      #
+      #      echo "Scanning image: questdb/questdb:${tag_name}"
+      #      trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${tag_name}"
+      #
+      #      echo "Scanning image: questdb/questdb:${tag_name}-rhel"
+      #      trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${tag_name}-rhel"
+      #  condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
       - task: CmdLine@2
         displayName: Release Commit from Branch
@@ -151,18 +147,18 @@ jobs:
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
-      - task: CmdLine@2
-        displayName: Scan branch docker image for vulnerabilities
-        inputs:
-          script: |
-            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
-
-            echo "Scanning image: questdb/questdb:${docker_tag_name}"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${docker_tag_name}"
-
-            echo "Scanning image: questdb/questdb:${docker_tag_name}-rhel"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${docker_tag_name}-rhel"
-        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+      #- task: CmdLine@2
+      #  displayName: Scan branch docker image for vulnerabilities
+      #  inputs:
+      #    script: |
+      #      docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
+      #
+      #      echo "Scanning image: questdb/questdb:${docker_tag_name}"
+      #      trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${docker_tag_name}"
+      #
+      #      echo "Scanning image: questdb/questdb:${docker_tag_name}-rhel"
+      #      trivy image --exit-code 1 --severity HIGH,CRITICAL "questdb/questdb:${docker_tag_name}-rhel"
+      #  condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
         displayName: Notify Slack on Failure

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -424,6 +424,8 @@ public final class Vect {
             long tgtDataAddr,
             long tgtAuxAdd
     );
+
+    public static native void sortEncodedEntries(long addr, long count, int keyLongs, long parallelThreshold);
 
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -88,6 +88,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     public int getTimestampIndex() {
         return timestampIndex;
+    }
+
+    @Override
+    public boolean hasIntervalFilter() {
+        return true;
     }
 
     @Override

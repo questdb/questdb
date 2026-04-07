@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -116,6 +116,12 @@ pub struct MemTracking {
 
     /// Tracking non-rss memory, such as mmap.
     _non_rss_mem_used: AtomicUsize,
+}
+
+impl Default for MemTracking {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MemTracking {
@@ -350,6 +356,13 @@ pub type AcVec<T> = alloc_checked::vec::Vec<T, QdbAllocator>;
 pub struct TestAllocatorState {
     mem_tracking: Arc<MemTracking>,
     tagged_used: Arc<AtomicUsize>,
+}
+
+#[cfg(test)]
+impl Default for TestAllocatorState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -261,6 +261,7 @@ public class SqlKeywordsTest {
         specialCases.put("isComma", ",");
         specialCases.put("isRightParen", ")");
         specialCases.put("isCurrentTimestampKeyword", "current_timestamp");
+        specialCases.put("isBloomFilterColumnsKeyword", "bloom_filter_columns");
 
         excludedCases.add("isPublicKeyword");
     }

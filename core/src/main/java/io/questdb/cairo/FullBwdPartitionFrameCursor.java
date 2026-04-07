@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -65,6 +65,11 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public boolean supportsSizeCalculation() {
         return true;
+    }
+
+    @Override
+    public void toPartition(int targetPartitionIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

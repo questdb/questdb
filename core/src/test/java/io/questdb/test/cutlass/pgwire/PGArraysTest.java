@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -519,7 +519,7 @@ public class PGArraysTest extends BasePGTest {
                 statement.executeQuery("SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6, 7]] arr FROM long_sequence(1)");
                 fail("jagged array should not be allowed");
             } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "element counts in sub-arrays don't match");
+                TestUtils.assertContains(e.getMessage(), "array shapes don't match");
             }
 
             // explicit cast of a jagged array produces null

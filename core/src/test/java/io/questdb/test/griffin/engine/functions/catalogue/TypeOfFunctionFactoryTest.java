@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -86,6 +86,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
                     || i == ColumnType.PARAMETER
                     || i == ColumnType.ARRAY
                     || ColumnType.isDecimal(i)
+                    || i == ColumnType.VARCHAR_SLICE
             ) {
                 continue;
             }
