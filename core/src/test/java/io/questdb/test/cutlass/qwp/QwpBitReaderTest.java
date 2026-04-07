@@ -422,10 +422,6 @@ public class QwpBitReaderTest {
             }
         }
 
-        int getBitsInBuffer() {
-            return bitsInBuffer;
-        }
-
         long getPosition() {
             return currentAddress;
         }

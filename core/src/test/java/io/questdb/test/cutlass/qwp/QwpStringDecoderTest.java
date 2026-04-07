@@ -90,8 +90,8 @@ public class QwpStringDecoderTest {
     public void testDecodeUtf8MultiByte() throws Exception {
         assertRoundTrip(new String[]{
                 "A",           // 1 byte
-                "\u00e9",      // 2 bytes
-                "\u20ac",      // 3 bytes
+                "é",      // 2 bytes
+                "€",      // 3 bytes
                 "\uD834\uDD1E" // 4 bytes (musical G clef)
         }, null);
     }
@@ -99,7 +99,7 @@ public class QwpStringDecoderTest {
     @Test
     public void testDecodeUtf8Strings() throws Exception {
         assertRoundTrip(
-                new String[]{"Hello \u4e16\u754c", "\u041f\u0440\u0438\u0432\u0435\u0442 \u043c\u0438\u0440", "\u3053\u3093\u306b\u3061\u306f", "\uD83C\uDF89\uD83C\uDF8A"},
+                new String[]{"Hello 世界", "Привет мир", "こんにちは", "\uD83C\uDF89\uD83C\uDF8A"},
                 null
         );
     }
@@ -187,7 +187,7 @@ public class QwpStringDecoderTest {
     }
 
     @Test
-    public void testOffsetArrayFirstOffsetMustBeZero() throws QwpParseException {
+    public void testOffsetArrayFirstOffsetMustBeZero() {
         // no null bitmap + non-zero first offset
         int rowCount = 2;
         int offsetArraySize = (rowCount + 1) * 4;
@@ -246,12 +246,7 @@ public class QwpStringDecoderTest {
 
     @Test
     public void testStringMaxLength() throws Exception {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 10_000; i++) {
-            sb.append("x");
-        }
-        String longString = sb.toString();
-        assertRoundTrip(new String[]{longString}, null);
+        assertRoundTrip(new String[]{"x".repeat(10_000)}, null);
     }
 
     private static int findStringColumnIndex(QwpTableBlockCursor table) {

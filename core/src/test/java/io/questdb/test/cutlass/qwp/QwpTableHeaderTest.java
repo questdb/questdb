@@ -198,6 +198,23 @@ public class QwpTableHeaderTest {
     }
 
     @Test
+    public void testRowCountExceedsDefaultLimit() {
+        long rowCount = (long) QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE + 1;
+        byte[] buf = encodeTableHeader("test", rowCount, 5);
+
+        long address = copyToDirectMemory(buf);
+        try {
+            QwpTableHeader header = new QwpTableHeader();
+            header.parse(address, buf.length);
+            Assert.fail("Expected exception for row count exceeding default limit");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testRowCountExceedsIntMax() {
         // Row count just above Integer.MAX_VALUE must be rejected
         long rowCount = (long) Integer.MAX_VALUE + 1;
@@ -208,23 +225,6 @@ public class QwpTableHeaderTest {
             QwpTableHeader header = new QwpTableHeader();
             header.parse(address, buf.length);
             Assert.fail("Expected exception for row count exceeding int range");
-        } catch (QwpParseException e) {
-            Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
-        } finally {
-            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testRowCountExceedsDefaultLimit() {
-        long rowCount = (long) QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE + 1;
-        byte[] buf = encodeTableHeader("test", rowCount, 5);
-
-        long address = copyToDirectMemory(buf);
-        try {
-            QwpTableHeader header = new QwpTableHeader();
-            header.parse(address, buf.length);
-            Assert.fail("Expected exception for row count exceeding default limit");
         } catch (QwpParseException e) {
             Assert.assertEquals(QwpParseException.ErrorCode.ROW_COUNT_EXCEEDED, e.getErrorCode());
         } finally {
@@ -348,11 +348,7 @@ public class QwpTableHeaderTest {
     @Test
     public void testTableNameMaxLength() throws QwpParseException {
         // Create table name at max length
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < QwpConstants.MAX_TABLE_NAME_LENGTH; i++) {
-            sb.append('a');
-        }
-        String tableName = sb.toString();
+        String tableName = "a".repeat(QwpConstants.MAX_TABLE_NAME_LENGTH);
         byte[] buf = encodeTableHeader(tableName, 1, 1);
 
         long address = copyToDirectMemory(buf);
@@ -369,11 +365,7 @@ public class QwpTableHeaderTest {
     @Test
     public void testTableNameTooLong() {
         // Create table name exceeding max length
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < QwpConstants.MAX_TABLE_NAME_LENGTH + 1; i++) {
-            sb.append('a');
-        }
-        String tableName = sb.toString();
+        String tableName = "a".repeat(QwpConstants.MAX_TABLE_NAME_LENGTH + 1);
         byte[] buf = encodeTableHeader(tableName, 1, 1);
 
         long address = copyToDirectMemory(buf);

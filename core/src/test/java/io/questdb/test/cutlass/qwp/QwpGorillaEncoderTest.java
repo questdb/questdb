@@ -58,9 +58,7 @@ public class QwpGorillaEncoderTest {
 
     @Test
     public void testCalculateEncodedSizeEmpty() throws Exception {
-        assertMemoryLeak(() -> {
-            Assert.assertEquals(0, QwpGorillaEncoder.calculateEncodedSize(0, 0));
-        });
+        assertMemoryLeak(() -> Assert.assertEquals(0, QwpGorillaEncoder.calculateEncodedSize(0, 0)));
     }
 
     @Test
@@ -137,9 +135,7 @@ public class QwpGorillaEncoderTest {
 
     @Test
     public void testCanUseGorillaEmpty() throws Exception {
-        assertMemoryLeak(() -> {
-            Assert.assertTrue(QwpGorillaEncoder.canUseGorilla(0, 0));
-        });
+        assertMemoryLeak(() -> Assert.assertTrue(QwpGorillaEncoder.canUseGorilla(0, 0)));
     }
 
     @Test
@@ -671,9 +667,7 @@ public class QwpGorillaEncoderTest {
 
     @Test
     public void testGetBucketZero() throws Exception {
-        assertMemoryLeak(() -> {
-            Assert.assertEquals(0, QwpGorillaEncoder.getBucket(0));
-        });
+        assertMemoryLeak(() -> Assert.assertEquals(0, QwpGorillaEncoder.getBucket(0)));
     }
 
     /**

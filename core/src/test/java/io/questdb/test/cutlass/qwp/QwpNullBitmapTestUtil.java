@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -78,7 +78,7 @@ public final class QwpNullBitmapTestUtil {
         int bitIndex = rowIndex & 7;
         long addr = address + byteIndex;
         byte b = Unsafe.getUnsafe().getByte(addr);
-        b &= ~(1 << bitIndex);
+        b &= (byte) ~(1 << bitIndex);
         Unsafe.getUnsafe().putByte(addr, b);
     }
 
@@ -92,7 +92,7 @@ public final class QwpNullBitmapTestUtil {
     public static void clearNull(byte[] bitmap, int offset, int rowIndex) {
         int byteIndex = rowIndex >>> 3;
         int bitIndex = rowIndex & 7;
-        bitmap[offset + byteIndex] &= ~(1 << bitIndex);
+        bitmap[offset + byteIndex] &= (byte) ~(1 << bitIndex);
     }
 
     /**

@@ -99,8 +99,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
-            QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY);
-            try {
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE,
                         new Utf8String("clear_distress"),
@@ -117,8 +118,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 // clear() should catch the exception, enter the distressed
                 // code path, free the TUD, and clear the map.
                 cache.clear();
-            } finally {
-                cache.close();
             }
         });
     }
@@ -181,8 +180,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
-            QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY);
-            try {
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE,
                         new Utf8String("commit_drop"),
@@ -208,8 +208,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 } catch (Throwable t) {
                     throw new AssertionError("unexpected throwable", t);
                 }
-            } finally {
-                cache.close();
             }
         });
     }
@@ -222,8 +220,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
-            QwpTudCache cache = new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY);
-            try {
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE,
                         new Utf8String("commit_fail"),
@@ -248,8 +247,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 } catch (Throwable t) {
                     throw new AssertionError("unexpected throwable type", t);
                 }
-            } finally {
-                cache.close();
             }
         });
     }
@@ -325,20 +322,17 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 TableWriterAPI.class.getClassLoader(),
                 new Class[]{TableWriterAPI.class},
                 (proxy, method, args) -> {
-                    switch (method.getName()) {
-                        case "getUncommittedRowCount":
-                            return 1L;
-                        case "commit":
+                    return switch (method.getName()) {
+                        case "getUncommittedRowCount" -> 1L;
+                        case "commit" -> {
                             if (isTableDropped) {
                                 throw CairoException.tableDropped(tableToken);
                             }
                             throw CairoException.nonCritical().put("simulated commit failure");
-                        case "close":
-                        case "rollback":
-                            return null;
-                        default:
-                            throw new UnsupportedOperationException(method.getName());
-                    }
+                        }
+                        case "close", "rollback" -> null;
+                        default -> throw new UnsupportedOperationException(method.getName());
+                    };
                 }
         ));
     }

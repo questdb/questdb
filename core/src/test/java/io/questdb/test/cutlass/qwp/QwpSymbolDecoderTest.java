@@ -231,7 +231,7 @@ public class QwpSymbolDecoderTest {
             cursor.of(address, size, 1);
             Assert.fail("Expected QwpParseException");
         } catch (QwpParseException e) {
-            Assert.assertTrue(e.getMessage().length() > 0);
+            Assert.assertFalse(e.getMessage().isEmpty());
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
@@ -361,13 +361,13 @@ public class QwpSymbolDecoderTest {
             // Row 0: "a"
             cursor.advanceRow();
             Assert.assertFalse(cursor.isNull());
-            Assert.assertEquals("a", cursor.getSymbolCharSequence().toString());
+            Assert.assertEquals("a", cursor.getSymbolCharSequence());
             Assert.assertEquals(0, cursor.getSymbolIndex());
 
             // Row 1: "b"
             cursor.advanceRow();
             Assert.assertFalse(cursor.isNull());
-            Assert.assertEquals("b", cursor.getSymbolCharSequence().toString());
+            Assert.assertEquals("b", cursor.getSymbolCharSequence());
             Assert.assertEquals(1, cursor.getSymbolIndex());
         } catch (QwpParseException e) {
             Assert.fail("Unexpected parse exception: " + e.getMessage());
@@ -389,7 +389,7 @@ public class QwpSymbolDecoderTest {
 
     @Test
     public void testSymbolUtf8() throws Exception {
-        String[] values = {"\u65E5\u672C\u8A9E", "\u4E2D\u6587", "\uD55C\uAD6D\uC5B4", "\u0395\u03BB\u03BB\u03B7\u03BD\u03B9\u03BA\u03AC"};
+        String[] values = {"日本語", "中文", "한국어", "Ελληνικά"};
         assertRoundTrip(values, null);
     }
 
@@ -446,7 +446,7 @@ public class QwpSymbolDecoderTest {
                                     table.isColumnNull(colIdx));
                             QwpSymbolColumnCursor cursor = table.getSymbolColumn(colIdx);
                             Assert.assertEquals("Row " + i + " value mismatch",
-                                    values[i], cursor.getSymbolCharSequence().toString());
+                                    values[i], cursor.getSymbolCharSequence());
                         }
                     }
                     Assert.assertFalse(table.hasNextRow());

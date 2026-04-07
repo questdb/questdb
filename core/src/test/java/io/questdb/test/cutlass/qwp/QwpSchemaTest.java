@@ -112,15 +112,8 @@ public class QwpSchemaTest {
     @Test
     public void testColumnNameMaxLength() throws QwpParseException {
         // Create column name at max length
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < QwpConstants.MAX_COLUMN_NAME_LENGTH; i++) {
-            sb.append('x');
-        }
-        String longName = sb.toString();
-
-        QwpColumnDef[] columns = {
-                new QwpColumnDef(longName, QwpConstants.TYPE_STRING)
-        };
+        String longName = "x".repeat(QwpConstants.MAX_COLUMN_NAME_LENGTH);
+        QwpColumnDef[] columns = {new QwpColumnDef(longName, QwpConstants.TYPE_STRING)};
 
         QwpSchema original = QwpSchema.create(columns);
         byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
@@ -365,21 +358,6 @@ public class QwpSchemaTest {
     }
 
     @Test
-    public void testParseTypeCodeRoundTrip() throws QwpParseException {
-        QwpColumnDef[] columns = {
-                new QwpColumnDef("col", QwpConstants.TYPE_DOUBLE)
-        };
-
-        QwpSchema original = QwpSchema.create(columns);
-        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
-        original.encode(buf, 0, TEST_SCHEMA_ID);
-
-        QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 1);
-
-        Assert.assertEquals(QwpConstants.TYPE_DOUBLE, result.schema.getColumn(0).getTypeCode());
-    }
-
-    @Test
     public void testParseSingleColumn() throws QwpParseException {
         QwpColumnDef[] columns = {
                 new QwpColumnDef("value", QwpConstants.TYPE_LONG)
@@ -394,6 +372,21 @@ public class QwpSchemaTest {
         Assert.assertEquals(1, result.schema.getColumnCount());
         Assert.assertEquals("value", result.schema.getColumn(0).getName());
         Assert.assertEquals(QwpConstants.TYPE_LONG, result.schema.getColumn(0).getTypeCode());
+    }
+
+    @Test
+    public void testParseTypeCodeRoundTrip() throws QwpParseException {
+        QwpColumnDef[] columns = {
+                new QwpColumnDef("col", QwpConstants.TYPE_DOUBLE)
+        };
+
+        QwpSchema original = QwpSchema.create(columns);
+        byte[] buf = new byte[original.encodedSize(TEST_SCHEMA_ID)];
+        original.encode(buf, 0, TEST_SCHEMA_ID);
+
+        QwpSchema.ParseResult result = QwpSchema.parse(buf, 0, buf.length, 1);
+
+        Assert.assertEquals(QwpConstants.TYPE_DOUBLE, result.schema.getColumn(0).getTypeCode());
     }
 
     @Test

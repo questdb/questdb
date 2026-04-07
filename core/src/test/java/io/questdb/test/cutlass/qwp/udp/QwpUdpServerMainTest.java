@@ -86,6 +86,7 @@ public class QwpUdpServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testE2E_disabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            //noinspection EmptyTryBlock
             try (final TestServerMain ignored = startWithEnvVariables(
                     PropertyKey.QWP_UDP_ENABLED.getEnvVarName(), "false"
             )) {
@@ -167,6 +168,7 @@ public class QwpUdpServerMainTest extends AbstractBootstrapTest {
                     PropertyKey.QWP_UDP_UNICAST.getEnvVarName(), "true",
                     PropertyKey.CAIRO_WAL_ENABLED_DEFAULT.getEnvVarName(), "true"
             );
+            //noinspection TryFinallyCanBeTryWithResources We're timing server shutdown
             try {
                 try (QwpUdpSender sender = new QwpUdpSender(
                         NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, QWP_UDP_PORT, 0

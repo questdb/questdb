@@ -517,7 +517,9 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             int columnSkipFactor,
             int newColumnFactor,
             int nonAsciiValueFactor,
-            boolean diffCasesInColNames, boolean exerciseSymbols, boolean sendSymbolsWithSpace
+            boolean diffCasesInColNames,
+            boolean exerciseSymbols,
+            boolean sendSymbolsWithSpace
     ) {
         initFuzzParameters(-1, columnReorderingFactor, columnSkipFactor, newColumnFactor,
                 nonAsciiValueFactor, diffCasesInColNames, exerciseSymbols, sendSymbolsWithSpace, 0.05);
@@ -538,9 +540,14 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     }
 
     private void initFuzzParameters(
-            int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor,
-            int newColumnFactor, int nonAsciiValueFactor,
-            boolean diffCasesInColNames, boolean exerciseSymbols, boolean sendSymbolsWithSpace,
+            int duplicatesFactor,
+            int columnReorderingFactor,
+            int columnSkipFactor,
+            int newColumnFactor,
+            int nonAsciiValueFactor,
+            boolean diffCasesInColNames,
+            boolean exerciseSymbols,
+            boolean sendSymbolsWithSpace,
             double columnConvertProb
     ) {
         this.columnConvertProb = columnConvertProb;

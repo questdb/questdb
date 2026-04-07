@@ -62,6 +62,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
     private final int windowSize;
 
+    @SuppressWarnings("unused")
     public QwpWebSocketSenderReceiverTest(int windowSize) {
         this.windowSize = windowSize;
     }
@@ -1674,7 +1675,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             // Fresh async sender: autoFlushRows=1 so each row is enqueued
             // immediately, window=8. The sender doesn't know the server-side
             // schema of "ws_async_multi_err", so it cannot detect the type mismatch.
-            boolean errorCaught = false;
             try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
                     "localhost", port, false,
                     1,                              // autoFlushRows: every row
@@ -1708,7 +1708,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 sender.flush();
                 Assert.fail("Expected LineSenderException from bad batch");
             } catch (LineSenderException e) {
-                errorCaught = true;
                 Assert.assertTrue(
                         "Error message should indicate server error: " + e.getMessage(),
                         e.getMessage().contains("WRITE_ERROR")
@@ -1717,8 +1716,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                                 || e.getMessage().contains("failed")
                 );
             }
-            Assert.assertTrue("Error should have been caught", errorCaught);
-
             // The initial setup row (value=0) must be present
             assertSql(
                     "SELECT value FROM ws_async_multi_err WHERE value = 0",
@@ -2464,6 +2461,384 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     /**
+     * Two tables with different schemas flushed in a single message.
+     * Verifies that both tables are created with correct schemas and data.
+     */
+    @Test
+    public void testMultiTable_differentSchemas() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                sender.table("ws_mt_schema_a")
+                        .longColumn("id", 1)
+                        .stringColumn("name", "alice")
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                sender.table("ws_mt_schema_a")
+                        .longColumn("id", 2)
+                        .stringColumn("name", "bob")
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                sender.table("ws_mt_schema_b")
+                        .doubleColumn("price", 99.5)
+                        .boolColumn("active", true)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+
+            drainWalQueue();
+            drainWalQueue();
+            assertSql(
+                    "SELECT id, name FROM ws_mt_schema_a ORDER BY id",
+                    """
+                            id\tname
+                            1\talice
+                            2\tbob
+                            """
+            );
+            assertSql(
+                    "SELECT price, active FROM ws_mt_schema_b",
+                    """
+                            price\tactive
+                            99.5\ttrue
+                            """
+            );
+        });
+    }
+
+    /**
+     * Interleaved rows across multiple tables in a single flush.
+     * Rows for different tables are interleaved to verify the client
+     * correctly groups them by table in the multi-table message.
+     */
+    @Test
+    public void testMultiTable_interleavedRows() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                for (int i = 0; i < 100; i++) {
+                    sender.table("ws_mt_interleave_a")
+                            .longColumn("val", i)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    sender.table("ws_mt_interleave_b")
+                            .longColumn("val", i * 10)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    sender.table("ws_mt_interleave_c")
+                            .longColumn("val", i * 100)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            drainWalQueue();
+            drainWalQueue();
+            assertSql("SELECT count() FROM ws_mt_interleave_a", "count\n100\n");
+            assertSql("SELECT count() FROM ws_mt_interleave_b", "count\n100\n");
+            assertSql("SELECT count() FROM ws_mt_interleave_c", "count\n100\n");
+            assertSql("SELECT sum(val) FROM ws_mt_interleave_a", "sum\n4950\n");
+            assertSql("SELECT sum(val) FROM ws_mt_interleave_b", "sum\n49500\n");
+            assertSql("SELECT sum(val) FROM ws_mt_interleave_c", "sum\n495000\n");
+        });
+    }
+
+    /**
+     * Large number of rows across multiple tables in a single flush.
+     * Exercises multi-table encoding with significant payload sizes.
+     */
+    @Test
+    public void testMultiTable_largeRowCounts() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                for (int i = 0; i < 1000; i++) {
+                    sender.table("ws_mt_large_a")
+                            .longColumn("id", i)
+                            .doubleColumn("val", i * 1.5)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                    sender.table("ws_mt_large_b")
+                            .longColumn("id", i)
+                            .stringColumn("data", "row_" + i)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            drainWalQueue();
+            assertSql("SELECT count() FROM ws_mt_large_a", "count\n1000\n");
+            assertSql("SELECT count() FROM ws_mt_large_b", "count\n1000\n");
+            assertSql("SELECT sum(id) FROM ws_mt_large_a", "sum\n499500\n");
+            assertSql("SELECT sum(id) FROM ws_mt_large_b", "sum\n499500\n");
+        });
+    }
+
+    /**
+     * Many tables (10) in a single flush. Exercises the multi-table header
+     * with a larger table count.
+     */
+    @Test
+    public void testMultiTable_manyTables() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                for (int t = 0; t < 10; t++) {
+                    for (int r = 0; r < 20; r++) {
+                        sender.table("ws_mt_many_" + t)
+                                .longColumn("val", t * 100 + r)
+                                .at(1_000_000_000_000L + r, ChronoUnit.MICROS);
+                    }
+                }
+                sender.flush();
+            }
+
+            for (int i = 0; i < 10; i++) {
+                drainWalQueue();
+            }
+            for (int t = 0; t < 10; t++) {
+                assertSql(
+                        "SELECT count() FROM ws_mt_many_" + t,
+                        "count\n20\n"
+                );
+            }
+            // Verify a specific table's data
+            assertSql("SELECT min(val) FROM ws_mt_many_3", "min\n300\n");
+            assertSql("SELECT max(val) FROM ws_mt_many_3", "max\n319\n");
+        });
+    }
+
+    /**
+     * Multiple flushes with the same tables. The second flush should use
+     * schema references since the schema was sent in the first flush.
+     */
+    @Test
+    public void testMultiTable_multipleFlushesWithSchemaRef() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                // First flush: full schema sent
+                sender.table("ws_mt_schemaref_a")
+                        .longColumn("id", 1)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                sender.table("ws_mt_schemaref_b")
+                        .doubleColumn("price", 10.0)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Second flush: schema ref should be used for both tables
+                sender.table("ws_mt_schemaref_a")
+                        .longColumn("id", 2)
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                sender.table("ws_mt_schemaref_b")
+                        .doubleColumn("price", 20.0)
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Third flush: add a third table (full schema) alongside existing ones (schema ref)
+                sender.table("ws_mt_schemaref_a")
+                        .longColumn("id", 3)
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                sender.table("ws_mt_schemaref_b")
+                        .doubleColumn("price", 30.0)
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                sender.table("ws_mt_schemaref_c")
+                        .stringColumn("name", "new_table")
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            drainWalQueue();
+            drainWalQueue();
+            assertSql("SELECT count() FROM ws_mt_schemaref_a", "count\n3\n");
+            assertSql("SELECT sum(id) FROM ws_mt_schemaref_a", "sum\n6\n");
+            assertSql("SELECT count() FROM ws_mt_schemaref_b", "count\n3\n");
+            assertSql("SELECT sum(price) FROM ws_mt_schemaref_b", "sum\n60.0\n");
+            assertSql("SELECT count() FROM ws_mt_schemaref_c", "count\n1\n");
+        });
+    }
+
+    /**
+     * Multiple tables sharing symbols via the global symbol dictionary.
+     * All tables use the same symbol values; the delta dict is shared
+     * at the message level.
+     */
+    @Test
+    public void testMultiTable_sharedSymbols() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                sender.table("ws_mt_sym_trades")
+                        .symbol("ticker", "AAPL")
+                        .longColumn("qty", 100)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                sender.table("ws_mt_sym_trades")
+                        .symbol("ticker", "GOOG")
+                        .longColumn("qty", 200)
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                sender.table("ws_mt_sym_quotes")
+                        .symbol("ticker", "AAPL")
+                        .doubleColumn("bid", 150.0)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                sender.table("ws_mt_sym_quotes")
+                        .symbol("ticker", "MSFT")
+                        .doubleColumn("bid", 300.0)
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
+
+                sender.table("ws_mt_sym_meta")
+                        .symbol("ticker", "GOOG")
+                        .stringColumn("exchange", "NASDAQ")
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+
+            drainWalQueue();
+            drainWalQueue();
+            drainWalQueue();
+            assertSql("SELECT count() FROM ws_mt_sym_trades", "count\n2\n");
+            assertSql("SELECT count() FROM ws_mt_sym_quotes", "count\n2\n");
+            assertSql("SELECT count() FROM ws_mt_sym_meta", "count\n1\n");
+            assertSql(
+                    "SELECT ticker, qty FROM ws_mt_sym_trades ORDER BY ticker",
+                    """
+                            ticker\tqty
+                            AAPL\t100
+                            GOOG\t200
+                            """
+            );
+            assertSql(
+                    "SELECT ticker, bid FROM ws_mt_sym_quotes ORDER BY ticker",
+                    """
+                            ticker\tbid
+                            AAPL\t150.0
+                            MSFT\t300.0
+                            """
+            );
+        });
+    }
+
+    /**
+     * Symbols shared across tables with progressive accumulation over
+     * multiple flushes. Each flush adds new symbols to the global dictionary
+     * while reusing previously sent ones.
+     */
+    @Test
+    public void testMultiTable_sharedSymbolsProgressiveFlush() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                // Flush 1: introduce AAPL in both tables
+                sender.table("ws_mt_symprog_a")
+                        .symbol("sym", "AAPL")
+                        .longColumn("v", 1)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                sender.table("ws_mt_symprog_b")
+                        .symbol("sym", "AAPL")
+                        .longColumn("v", 10)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Flush 2: reuse AAPL (no delta), add GOOG (delta)
+                sender.table("ws_mt_symprog_a")
+                        .symbol("sym", "AAPL")
+                        .longColumn("v", 2)
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                sender.table("ws_mt_symprog_b")
+                        .symbol("sym", "GOOG")
+                        .longColumn("v", 20)
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Flush 3: reuse AAPL and GOOG, add MSFT
+                sender.table("ws_mt_symprog_a")
+                        .symbol("sym", "GOOG")
+                        .longColumn("v", 3)
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                sender.table("ws_mt_symprog_b")
+                        .symbol("sym", "MSFT")
+                        .longColumn("v", 30)
+                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            drainWalQueue();
+            assertSql("SELECT count() FROM ws_mt_symprog_a", "count\n3\n");
+            assertSql("SELECT count() FROM ws_mt_symprog_b", "count\n3\n");
+            assertSql(
+                    "SELECT sym, v FROM ws_mt_symprog_a ORDER BY v",
+                    """
+                            sym\tv
+                            AAPL\t1
+                            AAPL\t2
+                            GOOG\t3
+                            """
+            );
+            assertSql(
+                    "SELECT sym, v FROM ws_mt_symprog_b ORDER BY v",
+                    """
+                            sym\tv
+                            AAPL\t10
+                            GOOG\t20
+                            MSFT\t30
+                            """
+            );
+        });
+    }
+
+    /**
+     * Multiple tables with varied column types in a single flush.
+     * Each table uses a different mix of column types.
+     */
+    @Test
+    public void testMultiTable_variedColumnTypes() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                sender.table("ws_mt_types_longs")
+                        .longColumn("a", 1)
+                        .longColumn("b", 2)
+                        .longColumn("c", 3)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                sender.table("ws_mt_types_doubles")
+                        .doubleColumn("x", 1.1)
+                        .doubleColumn("y", 2.2)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                sender.table("ws_mt_types_strings")
+                        .stringColumn("msg", "hello")
+                        .stringColumn("tag", "world")
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                sender.table("ws_mt_types_bools")
+                        .boolColumn("flag", true)
+                        .longColumn("val", 42)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                sender.table("ws_mt_types_mixed")
+                        .symbol("sym", "X")
+                        .longColumn("num", 99)
+                        .doubleColumn("frac", 3.14)
+                        .stringColumn("label", "pi")
+                        .boolColumn("ok", false)
+                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
+
+                sender.flush();
+            }
+
+            for (int i = 0; i < 5; i++) {
+                drainWalQueue();
+            }
+            assertSql("SELECT a + b + c FROM ws_mt_types_longs", "column\n6\n");
+            assertSql("SELECT x, y FROM ws_mt_types_doubles", "x\ty\n1.1\t2.2\n");
+            assertSql("SELECT msg, tag FROM ws_mt_types_strings", "msg\ttag\nhello\tworld\n");
+            assertSql("SELECT flag, val FROM ws_mt_types_bools", "flag\tval\ntrue\t42\n");
+            assertSql(
+                    "SELECT sym, num, frac, label, ok FROM ws_mt_types_mixed",
+                    """
+                            sym\tnum\tfrac\tlabel\tok
+                            X\t99\t3.14\tpi\tfalse
+                            """
+            );
+        });
+    }
+
+    /**
      * Tests all narrowing paths together in a single table with multiple rows.
      */
     @Test
@@ -2856,40 +3231,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     /**
-     * Sends 5 batches with the same schema on a single connection. Batch 1 sends
-     * the full schema; batches 2-5 implicitly use schema reference mode (varint
-     * schemaId only) because the schema ID is already below maxSentSchemaId
-     * after the first successful ACK.
-     */
-    @Test
-    public void testSchemaReference_registryHitAfterMultipleBatches() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int batch = 0; batch < 5; batch++) {
-                    for (int i = 0; i < 10; i++) {
-                        sender.table("ws_schema_ref_hit")
-                                .symbol("tag", "batch" + batch)
-                                .longColumn("value", batch * 10 + i)
-                                .at(1_000_000_000_000L + batch * 100 + i, ChronoUnit.MICROS);
-                    }
-                    sender.flush();
-                }
-            }
-
-            drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM ws_schema_ref_hit",
-                    "count\n50\n"
-            );
-            // Verify all 5 batch tags landed
-            assertSql(
-                    "SELECT count_distinct(tag) FROM ws_schema_ref_hit",
-                    "count_distinct\n5\n"
-            );
-        });
-    }
-
-    /**
      * Opens two successive connections to the same server. Each connection
      * resets the client's maxSentSchemaId, so the second sender must
      * re-send the full schema (not a reference) on its first batch. This
@@ -2939,6 +3280,40 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql(
                     "SELECT count() FROM ws_schema_ref_reconn WHERE src = 'conn2'",
                     "count\n10\n"
+            );
+        });
+    }
+
+    /**
+     * Sends 5 batches with the same schema on a single connection. Batch 1 sends
+     * the full schema; batches 2-5 implicitly use schema reference mode (varint
+     * schemaId only) because the schema ID is already below maxSentSchemaId
+     * after the first successful ACK.
+     */
+    @Test
+    public void testSchemaReference_registryHitAfterMultipleBatches() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                for (int batch = 0; batch < 5; batch++) {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("ws_schema_ref_hit")
+                                .symbol("tag", "batch" + batch)
+                                .longColumn("value", batch * 10 + i)
+                                .at(1_000_000_000_000L + batch * 100 + i, ChronoUnit.MICROS);
+                    }
+                    sender.flush();
+                }
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT count() FROM ws_schema_ref_hit",
+                    "count\n50\n"
+            );
+            // Verify all 5 batch tags landed
+            assertSql(
+                    "SELECT count_distinct(tag) FROM ws_schema_ref_hit",
+                    "count_distinct\n5\n"
             );
         });
     }
@@ -3014,6 +3389,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             );
         });
     }
+    // These tests exercise the server-side symbol ID cache optimization
+    // which maps clientSymbolId → tableSymbolId to bypass string lookups.
 
     /**
      * Tests ingestion into a pre-created STAC-like quotes table with narrow column types:
@@ -3250,6 +3627,8 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql("SELECT count(distinct round) FROM ws_cache_many_rounds", "count_distinct\n10\n");
         });
     }
+    // These tests exercise various interleavings of server-side commits,
+    // WAL apply jobs, and sender batches.
 
     @Test
     public void testSymbolCache_fastPath_mixedNewAndCached() throws Exception {
@@ -3526,8 +3905,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql("SELECT count(distinct device) FROM ws_cache_fast_path", "count_distinct\n1\n");
         });
     }
-    // These tests exercise the server-side symbol ID cache optimization
-    // which maps clientSymbolId → tableSymbolId to bypass string lookups.
 
     @Test
     public void testSymbolCache_manyRepeatedSymbols() throws Exception {
@@ -3668,8 +4045,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql("SELECT count(distinct tag) FROM ws_reconnect_test", "count_distinct\n6\n");
         });
     }
-    // These tests exercise various interleavings of server-side commits,
-    // WAL apply jobs, and sender batches.
 
     @Test
     public void testSymbolDeduplication() throws Exception {
@@ -3780,6 +4155,11 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql("SELECT count(distinct type) FROM ws_drop_reconnect", "count_distinct\n4\n");
         });
     }
+    // These tests specifically exercise the cache hit (fast path) in writeSymbolWithCache().
+    // The fast path requires:
+    // 1. Symbols committed to table (WAL applied)
+    // 2. Cache populated via SymbolMapReader lookup (on first reuse after commit)
+    // 3. Same symbols used again on SAME connection (cache hit)
 
     @Test
     public void testSymbol_flushBetweenEachRow() throws Exception {
@@ -4097,11 +4477,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertSql("SELECT count(distinct status) FROM ws_same_conn_wal", "count_distinct\n4\n");
         });
     }
-    // These tests specifically exercise the cache hit (fast path) in writeSymbolWithCache().
-    // The fast path requires:
-    // 1. Symbols committed to table (WAL applied)
-    // 2. Cache populated via SymbolMapReader lookup (on first reuse after commit)
-    // 3. Same symbols used again on SAME connection (cache hit)
 
     @Test
     public void testSymbol_walApplyBetweenBatches() throws Exception {
@@ -4445,384 +4820,6 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertSql("SELECT count() FROM ws_test_zeros", "count\n1\n");
-        });
-    }
-
-    /**
-     * Two tables with different schemas flushed in a single message.
-     * Verifies that both tables are created with correct schemas and data.
-     */
-    @Test
-    public void testMultiTable_differentSchemas() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_mt_schema_a")
-                        .longColumn("id", 1)
-                        .stringColumn("name", "alice")
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.table("ws_mt_schema_a")
-                        .longColumn("id", 2)
-                        .stringColumn("name", "bob")
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-
-                sender.table("ws_mt_schema_b")
-                        .doubleColumn("price", 99.5)
-                        .boolColumn("active", true)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                sender.flush();
-            }
-
-            drainWalQueue();
-            drainWalQueue();
-            assertSql(
-                    "SELECT id, name FROM ws_mt_schema_a ORDER BY id",
-                    """
-                            id\tname
-                            1\talice
-                            2\tbob
-                            """
-            );
-            assertSql(
-                    "SELECT price, active FROM ws_mt_schema_b",
-                    """
-                            price\tactive
-                            99.5\ttrue
-                            """
-            );
-        });
-    }
-
-    /**
-     * Interleaved rows across multiple tables in a single flush.
-     * Rows for different tables are interleaved to verify the client
-     * correctly groups them by table in the multi-table message.
-     */
-    @Test
-    public void testMultiTable_interleavedRows() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 100; i++) {
-                    sender.table("ws_mt_interleave_a")
-                            .longColumn("val", i)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                    sender.table("ws_mt_interleave_b")
-                            .longColumn("val", i * 10)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                    sender.table("ws_mt_interleave_c")
-                            .longColumn("val", i * 100)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-            drainWalQueue();
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_mt_interleave_a", "count\n100\n");
-            assertSql("SELECT count() FROM ws_mt_interleave_b", "count\n100\n");
-            assertSql("SELECT count() FROM ws_mt_interleave_c", "count\n100\n");
-            assertSql("SELECT sum(val) FROM ws_mt_interleave_a", "sum\n4950\n");
-            assertSql("SELECT sum(val) FROM ws_mt_interleave_b", "sum\n49500\n");
-            assertSql("SELECT sum(val) FROM ws_mt_interleave_c", "sum\n495000\n");
-        });
-    }
-
-    /**
-     * Many tables (10) in a single flush. Exercises the multi-table header
-     * with a larger table count.
-     */
-    @Test
-    public void testMultiTable_manyTables() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int t = 0; t < 10; t++) {
-                    for (int r = 0; r < 20; r++) {
-                        sender.table("ws_mt_many_" + t)
-                                .longColumn("val", t * 100 + r)
-                                .at(1_000_000_000_000L + r, ChronoUnit.MICROS);
-                    }
-                }
-                sender.flush();
-            }
-
-            for (int i = 0; i < 10; i++) {
-                drainWalQueue();
-            }
-            for (int t = 0; t < 10; t++) {
-                assertSql(
-                        "SELECT count() FROM ws_mt_many_" + t,
-                        "count\n20\n"
-                );
-            }
-            // Verify a specific table's data
-            assertSql("SELECT min(val) FROM ws_mt_many_3", "min\n300\n");
-            assertSql("SELECT max(val) FROM ws_mt_many_3", "max\n319\n");
-        });
-    }
-
-    /**
-     * Multiple flushes with the same tables. The second flush should use
-     * schema references since the schema was sent in the first flush.
-     */
-    @Test
-    public void testMultiTable_multipleFlushesWithSchemaRef() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                // First flush: full schema sent
-                sender.table("ws_mt_schemaref_a")
-                        .longColumn("id", 1)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.table("ws_mt_schemaref_b")
-                        .doubleColumn("price", 10.0)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.flush();
-
-                // Second flush: schema ref should be used for both tables
-                sender.table("ws_mt_schemaref_a")
-                        .longColumn("id", 2)
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.table("ws_mt_schemaref_b")
-                        .doubleColumn("price", 20.0)
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.flush();
-
-                // Third flush: add a third table (full schema) alongside existing ones (schema ref)
-                sender.table("ws_mt_schemaref_a")
-                        .longColumn("id", 3)
-                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
-                sender.table("ws_mt_schemaref_b")
-                        .doubleColumn("price", 30.0)
-                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
-                sender.table("ws_mt_schemaref_c")
-                        .stringColumn("name", "new_table")
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            drainWalQueue();
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_mt_schemaref_a", "count\n3\n");
-            assertSql("SELECT sum(id) FROM ws_mt_schemaref_a", "sum\n6\n");
-            assertSql("SELECT count() FROM ws_mt_schemaref_b", "count\n3\n");
-            assertSql("SELECT sum(price) FROM ws_mt_schemaref_b", "sum\n60.0\n");
-            assertSql("SELECT count() FROM ws_mt_schemaref_c", "count\n1\n");
-        });
-    }
-
-    /**
-     * Multiple tables sharing symbols via the global symbol dictionary.
-     * All tables use the same symbol values; the delta dict is shared
-     * at the message level.
-     */
-    @Test
-    public void testMultiTable_sharedSymbols() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_mt_sym_trades")
-                        .symbol("ticker", "AAPL")
-                        .longColumn("qty", 100)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.table("ws_mt_sym_trades")
-                        .symbol("ticker", "GOOG")
-                        .longColumn("qty", 200)
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-
-                sender.table("ws_mt_sym_quotes")
-                        .symbol("ticker", "AAPL")
-                        .doubleColumn("bid", 150.0)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.table("ws_mt_sym_quotes")
-                        .symbol("ticker", "MSFT")
-                        .doubleColumn("bid", 300.0)
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-
-                sender.table("ws_mt_sym_meta")
-                        .symbol("ticker", "GOOG")
-                        .stringColumn("exchange", "NASDAQ")
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                sender.flush();
-            }
-
-            drainWalQueue();
-            drainWalQueue();
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_mt_sym_trades", "count\n2\n");
-            assertSql("SELECT count() FROM ws_mt_sym_quotes", "count\n2\n");
-            assertSql("SELECT count() FROM ws_mt_sym_meta", "count\n1\n");
-            assertSql(
-                    "SELECT ticker, qty FROM ws_mt_sym_trades ORDER BY ticker",
-                    """
-                            ticker\tqty
-                            AAPL\t100
-                            GOOG\t200
-                            """
-            );
-            assertSql(
-                    "SELECT ticker, bid FROM ws_mt_sym_quotes ORDER BY ticker",
-                    """
-                            ticker\tbid
-                            AAPL\t150.0
-                            MSFT\t300.0
-                            """
-            );
-        });
-    }
-
-    /**
-     * Symbols shared across tables with progressive accumulation over
-     * multiple flushes. Each flush adds new symbols to the global dictionary
-     * while reusing previously sent ones.
-     */
-    @Test
-    public void testMultiTable_sharedSymbolsProgressiveFlush() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                // Flush 1: introduce AAPL in both tables
-                sender.table("ws_mt_symprog_a")
-                        .symbol("sym", "AAPL")
-                        .longColumn("v", 1)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.table("ws_mt_symprog_b")
-                        .symbol("sym", "AAPL")
-                        .longColumn("v", 10)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.flush();
-
-                // Flush 2: reuse AAPL (no delta), add GOOG (delta)
-                sender.table("ws_mt_symprog_a")
-                        .symbol("sym", "AAPL")
-                        .longColumn("v", 2)
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.table("ws_mt_symprog_b")
-                        .symbol("sym", "GOOG")
-                        .longColumn("v", 20)
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.flush();
-
-                // Flush 3: reuse AAPL and GOOG, add MSFT
-                sender.table("ws_mt_symprog_a")
-                        .symbol("sym", "GOOG")
-                        .longColumn("v", 3)
-                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
-                sender.table("ws_mt_symprog_b")
-                        .symbol("sym", "MSFT")
-                        .longColumn("v", 30)
-                        .at(1_000_000_000_002L, ChronoUnit.MICROS);
-                sender.flush();
-            }
-
-            drainWalQueue();
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_mt_symprog_a", "count\n3\n");
-            assertSql("SELECT count() FROM ws_mt_symprog_b", "count\n3\n");
-            assertSql(
-                    "SELECT sym, v FROM ws_mt_symprog_a ORDER BY v",
-                    """
-                            sym\tv
-                            AAPL\t1
-                            AAPL\t2
-                            GOOG\t3
-                            """
-            );
-            assertSql(
-                    "SELECT sym, v FROM ws_mt_symprog_b ORDER BY v",
-                    """
-                            sym\tv
-                            AAPL\t10
-                            GOOG\t20
-                            MSFT\t30
-                            """
-            );
-        });
-    }
-
-    /**
-     * Multiple tables with varied column types in a single flush.
-     * Each table uses a different mix of column types.
-     */
-    @Test
-    public void testMultiTable_variedColumnTypes() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                sender.table("ws_mt_types_longs")
-                        .longColumn("a", 1)
-                        .longColumn("b", 2)
-                        .longColumn("c", 3)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                sender.table("ws_mt_types_doubles")
-                        .doubleColumn("x", 1.1)
-                        .doubleColumn("y", 2.2)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                sender.table("ws_mt_types_strings")
-                        .stringColumn("msg", "hello")
-                        .stringColumn("tag", "world")
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                sender.table("ws_mt_types_bools")
-                        .boolColumn("flag", true)
-                        .longColumn("val", 42)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                sender.table("ws_mt_types_mixed")
-                        .symbol("sym", "X")
-                        .longColumn("num", 99)
-                        .doubleColumn("frac", 3.14)
-                        .stringColumn("label", "pi")
-                        .boolColumn("ok", false)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-
-                sender.flush();
-            }
-
-            for (int i = 0; i < 5; i++) {
-                drainWalQueue();
-            }
-            assertSql("SELECT a + b + c FROM ws_mt_types_longs", "column\n6\n");
-            assertSql("SELECT x, y FROM ws_mt_types_doubles", "x\ty\n1.1\t2.2\n");
-            assertSql("SELECT msg, tag FROM ws_mt_types_strings", "msg\ttag\nhello\tworld\n");
-            assertSql("SELECT flag, val FROM ws_mt_types_bools", "flag\tval\ntrue\t42\n");
-            assertSql(
-                    "SELECT sym, num, frac, label, ok FROM ws_mt_types_mixed",
-                    """
-                            sym\tnum\tfrac\tlabel\tok
-                            X\t99\t3.14\tpi\tfalse
-                            """
-            );
-        });
-    }
-
-    /**
-     * Large number of rows across multiple tables in a single flush.
-     * Exercises multi-table encoding with significant payload sizes.
-     */
-    @Test
-    public void testMultiTable_largeRowCounts() throws Exception {
-        runInContext((port) -> {
-            try (QwpWebSocketSender sender = createSender(port)) {
-                for (int i = 0; i < 1000; i++) {
-                    sender.table("ws_mt_large_a")
-                            .longColumn("id", i)
-                            .doubleColumn("val", i * 1.5)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                    sender.table("ws_mt_large_b")
-                            .longColumn("id", i)
-                            .stringColumn("data", "row_" + i)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                }
-                sender.flush();
-            }
-
-            drainWalQueue();
-            drainWalQueue();
-            assertSql("SELECT count() FROM ws_mt_large_a", "count\n1000\n");
-            assertSql("SELECT count() FROM ws_mt_large_b", "count\n1000\n");
-            assertSql("SELECT sum(id) FROM ws_mt_large_a", "sum\n499500\n");
-            assertSql("SELECT sum(id) FROM ws_mt_large_b", "sum\n499500\n");
         });
     }
 

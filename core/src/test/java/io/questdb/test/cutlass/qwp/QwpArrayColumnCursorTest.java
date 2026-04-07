@@ -91,7 +91,7 @@ public class QwpArrayColumnCursorTest {
                 Unsafe.getUnsafe().putByte(p++, (byte) 1);   // nDims=1
                 Unsafe.getUnsafe().putInt(p, 1);              // dim[0]=1
                 p += 4;
-                Unsafe.getUnsafe().putDouble(p, (double) i);  // value
+                Unsafe.getUnsafe().putDouble(p, i);  // value
                 p += 8;
             }
 
@@ -170,7 +170,7 @@ public class QwpArrayColumnCursorTest {
             Unsafe.getUnsafe().putInt(p, 4);          // dim[2]=4
             p += 4;
             for (int i = 0; i < totalElements; i++) {
-                Unsafe.getUnsafe().putDouble(p, (double) i);
+                Unsafe.getUnsafe().putDouble(p, i);
                 p += 8;
             }
 

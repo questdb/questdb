@@ -504,23 +504,17 @@ public class QwpGeoHashDecoderTest {
 
     @Test
     public void testEncodeDecodeSingleNullRow() throws Exception {
-        assertMemoryLeak(() -> {
-            assertNullableEncoderRoundTrip(new long[]{0}, new boolean[]{true}, 5);
-        });
+        assertMemoryLeak(() -> assertNullableEncoderRoundTrip(new long[]{0}, new boolean[]{true}, 5));
     }
 
     @Test
     public void testEncodeDecodeSingleNullableRow() throws Exception {
-        assertMemoryLeak(() -> {
-            assertNullableEncoderRoundTrip(new long[]{0b10110}, new boolean[]{false}, 5);
-        });
+        assertMemoryLeak(() -> assertNullableEncoderRoundTrip(new long[]{0b10110}, new boolean[]{false}, 5));
     }
 
     @Test
     public void testEncodeDecodeSingleRow() throws Exception {
-        assertMemoryLeak(() -> {
-            assertEncoderRoundTrip(new long[]{0b10110}, 5);
-        });
+        assertMemoryLeak(() -> assertEncoderRoundTrip(new long[]{0b10110}, 5));
     }
 
     @Test
