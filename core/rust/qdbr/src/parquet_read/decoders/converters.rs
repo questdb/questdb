@@ -61,24 +61,6 @@ pub mod int32 {
 
     use super::*;
 
-    /// Converts integer values with a fixed decimal scale into `f64`.
-    pub struct Int32ToDoubleConverter {
-        ratio: f64,
-    }
-
-    impl Int32ToDoubleConverter {
-        pub fn new(ratio: usize) -> Self {
-            Self { ratio: 10f64.powi(ratio as i32) }
-        }
-    }
-
-    impl Converter<i32, f64> for Int32ToDoubleConverter {
-        #[inline]
-        fn convert(&self, input: i32) -> f64 {
-            (input as f64) / self.ratio
-        }
-    }
-
     /// Converts "days since epoch" values into milliseconds.
     #[derive(Default)]
     pub struct DayToMillisConverter;

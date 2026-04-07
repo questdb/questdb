@@ -13,11 +13,10 @@ use crate::parquet_read::decode::decimal::{
 use crate::parquet_read::decoders::int128::Int128ToUuidConverter;
 use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConverter};
 use crate::parquet_read::decoders::{
-    int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
-    BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder,
-    DeltaLAVarcharSliceDecoder, FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder,
-    RleBooleanDecoder, RleDictVarcharSliceDecoder, RleDictionaryDecoder,
-    RleLocalIsGlobalSymbolDictDecoder,
+    int32::DayToMillisConverter, BasePrimitiveDictDecoder, BaseVarDictDecoder,
+    ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder, DeltaLAVarcharSliceDecoder,
+    FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
+    RleDictVarcharSliceDecoder, RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
 };
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
@@ -776,52 +775,6 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 )?,
             )?;
             Ok(true)
-        }
-        (encoding, dict, ColumnTypeTag::Double) => {
-            let scale = match column_type.tag() {
-                ColumnTypeTag::Decimal8
-                | ColumnTypeTag::Decimal16
-                | ColumnTypeTag::Decimal32
-                | ColumnTypeTag::Decimal64
-                | ColumnTypeTag::Decimal128
-                | ColumnTypeTag::Decimal256 => column_type.decimal_scale() as usize,
-                _ => 0,
-            };
-
-            match (encoding, dict) {
-                (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
-                    let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
-                        dict_page,
-                        Int32ToDoubleConverter::new(scale),
-                    )?;
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
-                        page,
-                        mode,
-                        &mut RleDictionaryDecoder::try_new(
-                            values_buffer,
-                            dict_decoder,
-                            row_hi,
-                            nulls::DOUBLE,
-                            bufs,
-                        )?,
-                    )?;
-                    Ok(true)
-                }
-                (Encoding::Plain, _) => {
-                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
-                        page,
-                        mode,
-                        &mut PlainPrimitiveDecoder::new_with(
-                            values_buffer,
-                            bufs,
-                            nulls::DOUBLE,
-                            Int32ToDoubleConverter::new(scale),
-                        ),
-                    )?;
-                    Ok(true)
-                }
-                _ => Ok(false),
-            }
         }
         _ => Ok(false),
     }
