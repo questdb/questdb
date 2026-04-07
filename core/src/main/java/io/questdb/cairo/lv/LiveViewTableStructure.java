@@ -8,6 +8,10 @@ import io.questdb.cairo.TableStructure;
  * Adapts a live view's metadata to the {@link TableStructure} interface
  * so that the existing disk file creation infrastructure can write
  * {@code _meta} and {@code _txn} files.
+ * <p>
+ * Live views use {@code isWalEnabled()=true} and {@code partitionBy=NOT_APPLICABLE}
+ * (same as views and mat views) so that the table token gets persisted
+ * in the WAL table name registry store and survives restarts.
  */
 public class LiveViewTableStructure implements TableStructure {
     private final GenericRecordMetadata metadata;
@@ -50,7 +54,7 @@ public class LiveViewTableStructure implements TableStructure {
 
     @Override
     public int getPartitionBy() {
-        return PartitionBy.NONE;
+        return PartitionBy.NOT_APPLICABLE;
     }
 
     @Override
@@ -90,6 +94,6 @@ public class LiveViewTableStructure implements TableStructure {
 
     @Override
     public boolean isWalEnabled() {
-        return false;
+        return true;
     }
 }

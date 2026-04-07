@@ -536,6 +536,51 @@ public class CairoEngine implements Closeable, WriterSource {
                         rec.I$();
                     }
                 }
+                if (tableToken.isLiveView() && TableUtils.isLiveViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                    try {
+                        if (liveViewRegistry.getViewInstance(tableToken.getTableName()) == null) {
+                            final GenericRecordMetadata metadata;
+                            try (TableReaderMetadata readerMetadata = new TableReaderMetadata(configuration, tableToken)) {
+                                readerMetadata.loadMetadata();
+                                metadata = GenericRecordMetadata.copyOfNew(readerMetadata);
+                            }
+                            final TableToken baseTableToken = tableNameRegistry.getTableToken(
+                                    LiveViewDefinition.readBaseTableName(reader, path, pathLen, tableToken)
+                            );
+                            final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
+                            LiveViewDefinition definition = LiveViewDefinition.readFrom(
+                                    reader,
+                                    path,
+                                    pathLen,
+                                    tableToken,
+                                    baseTableToken,
+                                    metadata
+                            );
+                            LiveViewInstance instance = new LiveViewInstance(definition);
+                            if (!baseTableExists) {
+                                LOG.info().$("base table for live view does not exist [table=").$safe(definition.getBaseTableName())
+                                        .$(", view=").$(tableToken)
+                                        .I$();
+                                instance.invalidate("base table does not exist");
+                            } else if (!baseTableToken.isWal()) {
+                                LOG.info().$("base table for live view is not WAL table [table=").$safe(definition.getBaseTableName())
+                                        .$(", view=").$(tableToken)
+                                        .I$();
+                                instance.invalidate("base table is not WAL table");
+                            }
+                            liveViewRegistry.registerView(instance);
+                        }
+                    } catch (Throwable th) {
+                        final LogRecord rec = LOG.error().$("could not load live view [view=").$(tableToken);
+                        if (th instanceof CairoException ce) {
+                            rec.$(", msg=").$safe(ce.getFlyweightMessage())
+                                    .$(", errno=").$(ce.getErrno());
+                        } else {
+                            rec.$(", msg=").$safe(th.getMessage());
+                        }
+                        rec.I$();
+                    }
+                }
             }
         }
     }
@@ -1432,6 +1477,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
+        liveViewRegistry.invalidateViewsForBaseTable(baseTableToken.getTableName(), reason);
+    }
+
     public boolean isClosing() {
         return closing;
     }
@@ -1571,10 +1620,6 @@ public class CairoEngine implements Closeable, WriterSource {
             return true;
         }
         return false;
-    }
-
-    public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
-        liveViewRegistry.invalidateViewsForBaseTable(baseTableToken.getTableName(), reason);
     }
 
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {

@@ -11,6 +11,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.std.Chars;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class LiveViewDefinition {
     public static final String LIVE_VIEW_DEFINITION_FILE_NAME = "_lv";
@@ -52,12 +53,39 @@ public class LiveViewDefinition {
         writer.commit();
     }
 
+    /**
+     * Reads only the base table name from the {@code _lv} definition file.
+     * Used during startup to resolve the base table token before constructing
+     * the full {@link LiveViewDefinition}.
+     */
+    public static String readBaseTableName(
+            @NotNull BlockFileReader reader,
+            @NotNull Path path,
+            int rootLen,
+            @NotNull TableToken liveViewToken
+    ) {
+        path.trimTo(rootLen).concat(liveViewToken.getDirName()).concat(LIVE_VIEW_DEFINITION_FILE_NAME);
+        reader.of(path.$());
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        while (cursor.hasNext()) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() == LIVE_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
+                long offset = 0;
+                CharSequence viewSqlCs = block.getStr(offset);
+                offset += Vm.getStorageLength(viewSqlCs);
+                return Chars.toString(block.getStr(offset));
+            }
+        }
+        throw CairoException.critical(0)
+                .put("cannot read live view definition, block not found [path=").put(path).put(']');
+    }
+
     public static LiveViewDefinition readFrom(
             @NotNull BlockFileReader reader,
             @NotNull Path path,
             int rootLen,
             @NotNull TableToken liveViewToken,
-            @NotNull TableToken baseTableToken,
+            @Nullable TableToken baseTableToken,
             @NotNull GenericRecordMetadata metadata
     ) {
         path.trimTo(rootLen).concat(liveViewToken.getDirName()).concat(LIVE_VIEW_DEFINITION_FILE_NAME);

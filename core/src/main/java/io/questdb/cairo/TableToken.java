@@ -228,15 +228,25 @@ public class TableToken implements Sinkable {
     }
 
     public enum Type {
-        TABLE("table"),
-        VIEW("view"),
-        MAT_VIEW("materialized view"),
-        LIVE_VIEW("live view");
+        TABLE("table", false),
+        VIEW("view", true),
+        MAT_VIEW("materialized view", true),
+        LIVE_VIEW("live view", true);
 
+        private final boolean isImplicitlyWal;
         private final String keyword;
 
-        Type(String keyword) {
+        Type(String keyword, boolean isImplicitlyWal) {
             this.keyword = keyword;
+            this.isImplicitlyWal = isImplicitlyWal;
+        }
+
+        /**
+         * Returns true for table types that are always treated as WAL
+         * in the table name registry, regardless of the stored WAL flag.
+         */
+        public boolean isImplicitlyWal() {
+            return isImplicitlyWal;
         }
 
         public String keyword() {

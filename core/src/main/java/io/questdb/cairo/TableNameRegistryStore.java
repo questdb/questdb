@@ -356,12 +356,12 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                     && TableUtils.exists(ff, path, configuration.getDbRoot(), dirNameSink) == TableUtils.TABLE_EXISTS
                     ) {
                         int tableId;
-                        boolean isWal;
+                        boolean isWalTable;
                         String tableName;
 
                         try {
                             tableId = readTableId(path, dirName, ff);
-                            isWal = tableId < 0;
+                            isWalTable = tableId < 0;
                             tableId = Math.abs(tableId);
                             tableName = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), plimit, tableNameRoMemory, ff);
                         } catch (CairoException e) {
@@ -388,9 +388,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                     : isMatViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.MAT_VIEW
                                     : isViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.VIEW
                                     : TableToken.Type.TABLE;
-                            boolean isWal2 = isWal || type == TableToken.Type.VIEW || type == TableToken.Type.MAT_VIEW;
+                            boolean isWal = isWalTable || type.isImplicitlyWal();
                             String dbLogName = configuration.getDbLogName();
-                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal2, isSystem, isProtected, isPublic);
+                            TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -488,7 +488,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         boolean isSystem = tableFlagResolver.isSystem(tableName);
                         boolean isPublic = tableFlagResolver.isPublic(tableName);
                         TableToken.Type type = tableTypeOf(tableType);
-                        boolean isWal = tableType == TABLE_TYPE_WAL || type == TableToken.Type.VIEW || type == TableToken.Type.MAT_VIEW;
+                        boolean isWal = tableType == TABLE_TYPE_WAL || type.isImplicitlyWal();
                         String dbLogName = configuration.getDbLogName();
                         token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
                     }
@@ -517,7 +517,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     boolean isSystem = tableFlagResolver.isSystem(tableName);
                     boolean isPublic = tableFlagResolver.isPublic(tableName);
                     TableToken.Type type = tableTypeOf(tableType);
-                    boolean isWal = tableType == TABLE_TYPE_WAL || type == TableToken.Type.VIEW || type == TableToken.Type.MAT_VIEW;
+                    boolean isWal = tableType == TABLE_TYPE_WAL || type.isImplicitlyWal();
                     String dbLogName = configuration.getDbLogName();
                     final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
                     tableNameToTableTokenMap.put(tableName, token);

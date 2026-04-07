@@ -84,11 +84,35 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotGetReaderForLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        TableToken token = engine.getTableTokenIfExists("live_rn");
+        Assert.assertNotNull(token);
+        Assert.assertTrue(token.isLiveView());
+        try {
+            engine.getReader(token);
+            Assert.fail("expected CairoException");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getMessage().contains("cannot get a reader for view"));
+        }
+    }
+
+    @Test
     public void testCannotInsertIntoLiveView() throws Exception {
         createBaseTableAndLiveView();
         assertException(
                 "INSERT INTO live_rn VALUES ('AAPL', 100.0, '2024-01-01T00:00:00.000000Z', 1)",
                 12,
+                "cannot modify live view [view=live_rn]"
+        );
+    }
+
+    @Test
+    public void testCannotReindexLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertException(
+                "REINDEX TABLE live_rn COLUMN symbol LOCK EXCLUSIVE",
+                14,
                 "cannot modify live view [view=live_rn]"
         );
     }
@@ -114,16 +138,6 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCannotReindexLiveView() throws Exception {
-        createBaseTableAndLiveView();
-        assertException(
-                "REINDEX TABLE live_rn COLUMN symbol LOCK EXCLUSIVE",
-                14,
-                "cannot modify live view [view=live_rn]"
-        );
-    }
-
-    @Test
     public void testCannotUpdateLiveView() throws Exception {
         createBaseTableAndLiveView();
         assertException(
@@ -141,20 +155,6 @@ public class LiveViewTest extends AbstractCairoTest {
                 13,
                 "cannot modify live view [view=live_rn]"
         );
-    }
-
-    @Test
-    public void testCannotGetReaderForLiveView() throws Exception {
-        createBaseTableAndLiveView();
-        TableToken token = engine.getTableTokenIfExists("live_rn");
-        Assert.assertNotNull(token);
-        Assert.assertTrue(token.isLiveView());
-        try {
-            engine.getReader(token);
-            Assert.fail("expected CairoException");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("cannot get a reader for view"));
-        }
     }
 
     @Test
@@ -340,6 +340,72 @@ public class LiveViewTest extends AbstractCairoTest {
                 true,
                 true
         );
+
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testLiveViewSurvivesRestart() throws Exception {
+        createBaseTableAndLiveView();
+
+        // insert data and refresh before restart
+        execute("INSERT INTO trades VALUES" +
+                " ('AAPL', 150.0, '2024-01-01T00:00:00.000000Z')," +
+                " ('GOOG', 2800.0, '2024-01-01T00:00:01.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // simulate restart: clear in-memory registry, reload from disk
+        engine.getLiveViewRegistry().clear();
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("live_rn"));
+
+        engine.reloadTableNames();
+        engine.buildViewGraphs();
+
+        // verify live view was rebuilt from disk
+        Assert.assertTrue(engine.getLiveViewRegistry().hasView("live_rn"));
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+        Assert.assertFalse(instance.isInvalid());
+
+        // InMemoryTable is empty after restart; insert new data to trigger refresh
+        execute("INSERT INTO trades VALUES ('MSFT', 400.0, '2024-01-01T00:00:02.000000Z')");
+        drainWalQueue();
+        drainLiveViewQueue();
+
+        // full recompute includes both pre- and post-restart data
+        assertQueryNoLeakCheck(
+                "symbol\tprice\tts\trn\n" +
+                        "AAPL\t150.0\t2024-01-01T00:00:00.000000Z\t1\n" +
+                        "GOOG\t2800.0\t2024-01-01T00:00:01.000000Z\t1\n" +
+                        "MSFT\t400.0\t2024-01-01T00:00:02.000000Z\t1\n",
+                "SELECT * FROM live_rn",
+                null,
+                "ts",
+                true,
+                true
+        );
+
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testLiveViewSurvivesRestartWithDroppedBaseTable() throws Exception {
+        createBaseTableAndLiveView();
+
+        // drop the base table
+        execute("DROP TABLE trades");
+        drainWalQueue();
+
+        // simulate restart
+        engine.getLiveViewRegistry().clear();
+        engine.reloadTableNames();
+        engine.buildViewGraphs();
+
+        // live view should be loaded but invalidated
+        Assert.assertTrue(engine.getLiveViewRegistry().hasView("live_rn"));
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+        Assert.assertTrue(instance.isInvalid());
+        Assert.assertEquals("base table does not exist", instance.getInvalidationReason());
 
         execute("DROP LIVE VIEW live_rn");
     }
