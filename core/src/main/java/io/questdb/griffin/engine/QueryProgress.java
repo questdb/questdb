@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
@@ -55,7 +56,6 @@ import io.questdb.metrics.QueryTrace;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -465,8 +465,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
-        public IntList getColumnIndexes() {
-            return baseCursor.getColumnIndexes();
+        public ColumnMapping getColumnMapping() {
+            return baseCursor.getColumnMapping();
         }
 
         @Override

@@ -1816,6 +1816,25 @@ fn build_cases() -> Vec<BenchCase> {
         }
     }
 
+    // String — RLE dictionary
+    for &card in &DICT_CARDINALITIES {
+        for &null_pct in null_pcts(true) {
+            let values: Vec<Vec<u8>> = (0..card).map(|i| format!("str{i}").into_bytes()).collect();
+            let column_type = ColumnType::new(ColumnTypeTag::String, 0);
+            let primitive_type = primitive_type_for(column_type);
+            let (page, dict) =
+                build_var_rle_dict_pages(&values, null_pct, ROW_COUNT, primitive_type);
+            cases.push(build_case(
+                format!("string_dict_c{card}_n{null_pct}"),
+                page,
+                Some(dict),
+                column_type,
+                None,
+                ROW_COUNT,
+            ));
+        }
+    }
+
     for &encoding in &LEN_ENCODINGS {
         let enc = enc_label(encoding);
         for &str_len in &[2usize, 200] {

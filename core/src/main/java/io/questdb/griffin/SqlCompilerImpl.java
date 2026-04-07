@@ -109,6 +109,7 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -212,6 +213,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
     private final ObjList<CharSequence> views = new ObjList<>();
+    private final ObjectPool<WindowExpression> windowExpressionPool;
     protected CharSequence sqlText;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
@@ -235,6 +237,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
             this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
+            this.windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
             this.compiledQuery = new CompiledQueryImpl(engine);
             this.characterStore = new CharacterStore(
                     configuration.getSqlCharacterStoreCapacity(),
@@ -259,6 +262,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     configuration,
                     characterStore,
                     sqlNodePool,
+                    windowExpressionPool,
                     queryColumnPool,
                     queryModelPool,
                     postOrderTreeTraversalAlgo,
@@ -271,6 +275,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     configuration,
                     characterStore,
                     sqlNodePool,
+                    windowExpressionPool,
                     queryColumnPool,
                     queryModelPool,
                     postOrderTreeTraversalAlgo
@@ -5573,6 +5578,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> sqlNodePool,
+            ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
@@ -5583,6 +5589,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 configuration,
                 characterStore,
                 sqlNodePool,
+                windowExpressionPool,
                 queryColumnPool,
                 queryModelPool,
                 postOrderTreeTraversalAlgo,

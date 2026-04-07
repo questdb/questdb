@@ -63,6 +63,17 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAllowUnnest() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE PAYLOAD TRANSFORM unnest_transform INTO target AS " +
+                    "SELECT now() AS ts, 'sym' AS sym, value AS price FROM UNNEST(ARRAY[1.0, 2.0, 3.0])");
+            drainWalQueue();
+            Assert.assertTrue(engine.getPayloadTransformStore().hasTransform(sqlExecutionContext, "unnest_transform"));
+        });
+    }
+
+    @Test
     public void testAllowPureExpressions() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");

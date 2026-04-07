@@ -1266,6 +1266,7 @@ dependencies = [
  "nonmax",
  "num-traits",
  "parquet",
+ "parquet-format-safe",
  "parquet2",
  "qdb-core",
  "rand",

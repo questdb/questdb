@@ -171,6 +171,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
+    private final LateralJoinRewriter lateralJoinRewriter;
     private final LiteralCheckingVisitor literalCheckingVisitor = new LiteralCheckingVisitor();
     private final LiteralCollector literalCollector = new LiteralCollector();
     private final IntHashSet literalCollectorAIndexes = new IntHashSet();
@@ -230,6 +231,7 @@ public class SqlOptimiser implements Mutable {
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
+            ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo traversalAlgo,
@@ -246,6 +248,24 @@ public class SqlOptimiser implements Mutable {
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
+        this.lateralJoinRewriter = new LateralJoinRewriter(
+                characterStore,
+                expressionNodePool,
+                queryColumnPool,
+                queryModelPool,
+                windowExpressionPool,
+                sqlNodeStack,
+                sqlNodeStack2,
+                functionParser,
+                tempExprs,
+                groupByNodes,
+                orderByAdvice,
+                tempIntList,
+                tempAliasRewriteMap,
+                groupByAliases,
+                literalCollectorBNames,
+                trivialExpressionCandidates
+        );
         initialiseOperatorExpressions();
     }
 
@@ -343,6 +363,7 @@ public class SqlOptimiser implements Mutable {
         pivotAliasSequenceMap.clear();
         tmpStringSink.clear();
         clearWindowFunctionHashMap();
+        lateralJoinRewriter.clear();
     }
 
     public void clearForUnionModelInJoin() {
@@ -781,7 +802,7 @@ public class SqlOptimiser implements Mutable {
                 // insert column at this position, this column must reference our timestamp, that
                 // comes out of the group-by result set, but with user-provided aliases.
                 if (column.getAst().type == LITERAL) {
-                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias));
+                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias, column.isIncludeIntoWildcard()));
                 } else {
                     model.addBottomUpColumnIfNotExists(column);
                 }
@@ -819,7 +840,8 @@ public class SqlOptimiser implements Mutable {
                                 base.token.subSequence(dot + 1, base.token.length()),
                                 base.precedence,
                                 base.position
-                        )
+                        ),
+                        column.isIncludeIntoWildcard()
                 );
             }
         }
@@ -968,12 +990,14 @@ public class SqlOptimiser implements Mutable {
         // it should translate to:
         // select a, x from (select a, b+c x from (select a,b,c ...))
         final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias());
+        // outer column's should use innerColumn alias
+        final QueryColumn outerColumn = nextColumn(qc.getAlias(), innerColumn.getAlias());
 
         // pull literals only into a translating model
         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false, false, false);
         groupByModel.addBottomUpColumn(innerColumn);
         windowModel.addBottomUpColumn(innerColumn);
-        outerVirtualModel.addBottomUpColumn(innerColumn);
+        outerVirtualModel.addBottomUpColumn(outerColumn);
         distinctModel.addBottomUpColumn(innerColumn);
     }
 
@@ -1572,6 +1596,40 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void applyLateralCountCoalesce(
+            QueryModel outputModel,
+            ObjList<CharSequence> countCols,
+            QueryModel translatingModel
+    ) {
+        ObjList<QueryColumn> cols = outputModel.getBottomUpColumns();
+        for (int j = 0, m = countCols.size(); j < m; j++) {
+            CharSequence countCol = countCols.getQuick(j);
+            CharSequence resolvedAlias = translatingModel.getColumnNameToAliasMap().get(countCol);
+            if (resolvedAlias == null) {
+                resolvedAlias = countCol;
+            }
+            for (int i = 0, n = cols.size(); i < n; i++) {
+                QueryColumn pc = cols.getQuick(i);
+                ExpressionNode ast = pc.getAst();
+                if (ast == null || ast.type != ExpressionNode.LITERAL) {
+                    continue;
+                }
+                if (Chars.equalsIgnoreCase(ast.token, resolvedAlias)) {
+                    ExpressionNode coalesce = expressionNodePool.next().of(
+                            ExpressionNode.FUNCTION, "coalesce", 0, ast.position
+                    );
+                    coalesce.paramCount = 2;
+                    coalesce.rhs = expressionNodePool.next().of(
+                            ExpressionNode.CONSTANT, "0", 0, ast.position
+                    );
+                    coalesce.lhs = ast;
+                    pc.of(pc.getAlias(), coalesce);
+                    break;
+                }
+            }
+        }
+    }
+
     private void assignFilters(QueryModel parent) throws SqlException {
         tablesSoFar.clear();
         postFilterRemoved.clear();
@@ -1755,51 +1813,6 @@ public class SqlOptimiser implements Mutable {
                         // Skip window functions - they have windowContext set even if function name is also aggregate
                         if (arg.type == FUNCTION && arg.windowExpression == null
                                 && functionParser.getFunctionFactoryCache().isGroupBy(arg.token)) {
-                            return true;
-                        }
-                        sqlNodeStack.push(arg);
-                    }
-                }
-                if (!sqlNodeStack.isEmpty()) {
-                    node = sqlNodeStack.poll();
-                } else {
-                    node = null;
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean checkForChildWindowFunctions(ExpressionNode node) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.windowExpression != null) {
-                return true;
-            }
-            if (node.paramCount < 3) {
-                if (node.rhs != null) {
-                    if (node.rhs.windowExpression != null) {
-                        return true;
-                    }
-                    sqlNodeStack.push(node.rhs);
-                }
-
-                if (node.lhs != null) {
-                    if (node.lhs.windowExpression != null) {
-                        return true;
-                    }
-                    node = node.lhs;
-                } else if (!sqlNodeStack.isEmpty()) {
-                    node = sqlNodeStack.poll();
-                } else {
-                    node = null;
-                }
-            } else {
-                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
-                for (int i = 0, k = node.paramCount; i < k; i++) {
-                    ExpressionNode arg = node.args.getQuick(i);
-                    if (arg != null) {
-                        if (arg.windowExpression != null) {
                             return true;
                         }
                         sqlNodeStack.push(arg);
@@ -2443,13 +2456,14 @@ public class SqlOptimiser implements Mutable {
     // add the existing group by column to outer and distinct models
     private boolean createSelectColumn(
             CharSequence alias,
+            boolean includeIntoWildcard,
             CharSequence columnName,
             QueryModel groupByModel,
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
         QueryColumn groupByColumn = groupByModel.getAliasToColumnMap().get(columnName);
-        QueryColumn outerColumn = nextColumn(alias, groupByColumn.getAlias());
+        QueryColumn outerColumn = nextColumn(alias, groupByColumn.getAlias(), includeIntoWildcard);
         outerColumn = ensureAliasUniqueness(outerModel, outerColumn);
         outerModel.addBottomUpColumn(outerColumn);
 
@@ -2471,6 +2485,7 @@ public class SqlOptimiser implements Mutable {
             CharSequence columnName,
             ExpressionNode columnAst,
             boolean isGroupBy,
+            boolean includeIntoWildcard,
             QueryModel baseModel,
             QueryModel translatingModel,
             QueryModel innerVirtualModel,
@@ -2491,12 +2506,12 @@ public class SqlOptimiser implements Mutable {
             if (isGroupBy && groupByColumnName != null) {
                 // there is already a key referencing the column in the group-by model;
                 // to minimize the number of group-by keys, we simply refer to the key in the outer models
-                translatedColumn = nextColumn(columnName, groupByColumnName);
+                translatedColumn = nextColumn(columnName, groupByColumnName, includeIntoWildcard);
             } else {
                 // no key in the group-by model;
                 // create an alias and add it to the inner models
                 final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
-                translatedColumn = nextColumn(innerAlias, translatedColumnName);
+                translatedColumn = nextColumn(innerAlias, translatedColumnName, includeIntoWildcard);
                 innerVirtualModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
                 groupByModel.addBottomUpColumn(translatedColumn);
                 windowModel.addBottomUpColumn(translatedColumn);
@@ -2517,19 +2532,20 @@ public class SqlOptimiser implements Mutable {
                 innerAlias = createColumnAlias(columnName, translatingModel);
             }
             addColumnToTranslatingModel(
-                    queryColumnPool.next().of(innerAlias, columnAst),
+                    queryColumnPool.next().of(innerAlias, columnAst, includeIntoWildcard),
                     translatingModel,
                     innerVirtualModel,
                     baseModel
             );
 
             // create column that references inner alias we just created
-            final QueryColumn translatedColumn = nextColumn(innerAlias, columnAst.position);
+            final QueryColumn translatedColumn = nextColumn(innerAlias, includeIntoWildcard, columnAst.position);
             innerVirtualModel.addBottomUpColumn(translatedColumn);
             groupByModel.addBottomUpColumn(translatedColumn);
             windowModel.addBottomUpColumn(translatedColumn);
 
             // expose the column in the outer models
+            translatedColumn.setIncludeIntoWildcard(includeIntoWildcard);
             outerVirtualModel.addBottomUpColumn(translatedColumn);
             if (distinctModel != null) {
                 distinctModel.addBottomUpColumn(translatedColumn);
@@ -2572,7 +2588,19 @@ public class SqlOptimiser implements Mutable {
             );
         } else {
             ObjList<QueryModel> models = baseModel.getJoinModels();
+            // For standalone UNNEST, skip the synthetic base model
+            // (long_sequence) so SELECT * only returns unnest columns.
+            boolean hasStandaloneUnnest = false;
+            for (int j = 1, z = models.size(); j < z; j++) {
+                if (models.getQuick(j).isStandaloneUnnest()) {
+                    hasStandaloneUnnest = true;
+                    break;
+                }
+            }
             for (int j = 0, z = models.size(); j < z; j++) {
+                if (j == 0 && hasStandaloneUnnest) {
+                    continue;
+                }
                 createSelectColumnsForWildcard0(
                         models.getQuick(j),
                         hasJoins,
@@ -2621,6 +2649,7 @@ public class SqlOptimiser implements Mutable {
                         name,
                         nextLiteral(token, wildcardPosition),
                         isGroupBy,
+                        true, // already filtered by isIncludeIntoWildcard() check above
                         null, // do not validate
                         translatingModel,
                         innerModel,
@@ -3038,8 +3067,10 @@ public class SqlOptimiser implements Mutable {
                 // Column not yet referenced by inner model - validate and add it
                 validateWindowColumnReference(node, n.token, translatingModel, innerVirtualModel, baseModel);
                 CharSequence alias = createColumnAlias(n.token, innerVirtualModel);
-                innerVirtualModel.addBottomUpColumn(queryColumnPool.next().of(alias, n));
+                QueryColumn column = queryColumnPool.next().of(alias, n);
+                innerVirtualModel.addBottomUpColumn(column);
                 if (alias != n.token) {
+                    translatingModel.addBottomUpColumnIfNotExists(column);
                     return nextLiteral(alias);
                 } else {
                     return n;
@@ -3527,19 +3558,23 @@ public class SqlOptimiser implements Mutable {
 
         // we have plain tables and possibly joins
         // a deal with _this_ model first, it will always be the first element in the join model list
-        final ExpressionNode tableNameExpr = model.getTableNameExpr();
-        if (tableNameExpr != null || model.getSelectModelType() == SELECT_MODEL_SHOW) {
-            if (model.getSelectModelType() == SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
-                parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
-            } else {
-                openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
-            }
+        if (model.getJoinType() == JOIN_UNNEST) {
+            enumerateUnnestColumns(model);
         } else {
-            final QueryModel nested = model.getNestedModel();
-            if (nested != null) {
-                enumerateTableColumns(nested, executionContext, sqlParserCallback);
-                if (model.isUpdate()) {
-                    model.copyUpdateTableMetadata(nested);
+            final ExpressionNode tableNameExpr = model.getTableNameExpr();
+            if (tableNameExpr != null || model.getSelectModelType() == SELECT_MODEL_SHOW) {
+                if (model.getSelectModelType() == SELECT_MODEL_SHOW || (tableNameExpr != null && tableNameExpr.type == FUNCTION)) {
+                    parseFunctionAndEnumerateColumns(model, executionContext, sqlParserCallback);
+                } else {
+                    openReaderAndEnumerateColumns(executionContext, model, sqlParserCallback);
+                }
+            } else {
+                final QueryModel nested = model.getNestedModel();
+                if (nested != null) {
+                    enumerateTableColumns(nested, executionContext, sqlParserCallback);
+                    if (model.isUpdate()) {
+                        model.copyUpdateTableMetadata(nested);
+                    }
                 }
             }
         }
@@ -3549,6 +3584,79 @@ public class SqlOptimiser implements Mutable {
 
         if (model.getUnionModel() != null) {
             enumerateTableColumns(model.getUnionModel(), executionContext, sqlParserCallback);
+        }
+    }
+
+    private void enumerateUnnestColumns(QueryModel model) {
+        ObjList<ExpressionNode> unnestExprs = model.getUnnestExpressions();
+        ObjList<CharSequence> aliases = model.getUnnestColumnAliases();
+        int exprCount = unnestExprs.size();
+        int totalOutputCols = model.getUnnestOutputColumnCount();
+        int totalColumns = totalOutputCols + (model.isUnnestOrdinality() ? 1 : 0);
+
+        // aliasIdx tracks position across trailing column aliases,
+        // which apply sequentially across all output columns from all sources
+        int aliasIdx = 0;
+        for (int i = 0; i < exprCount; i++) {
+            if (model.isUnnestJsonSource(i)) {
+                // JSON source: one column per COLUMNS declaration
+                ObjList<CharSequence> jsonColNames =
+                        model.getUnnestJsonColumnNames().getQuick(i);
+                for (int j = 0, jn = jsonColNames.size(); j < jn; j++) {
+                    CharSequence columnName;
+                    if (aliasIdx < aliases.size()) {
+                        columnName = aliases.getQuick(aliasIdx);
+                    } else {
+                        columnName = jsonColNames.getQuick(j);
+                    }
+                    columnName = createColumnAlias(columnName, model, false);
+                    QueryColumn column = queryColumnPool.next().of(
+                            columnName,
+                            expressionNodePool.next().of(
+                                    LITERAL, columnName, 0, 0
+                            ),
+                            true
+                    );
+                    model.addField(column);
+                    aliasIdx++;
+                }
+            } else {
+                // Array source: one column
+                CharSequence columnName;
+                if (aliasIdx < aliases.size()) {
+                    columnName = aliases.getQuick(aliasIdx);
+                } else if (totalOutputCols == 1) {
+                    columnName = "value";
+                } else {
+                    columnName = "value" + (aliasIdx + 1);
+                }
+                columnName = createColumnAlias(columnName, model, false);
+                QueryColumn column = queryColumnPool.next().of(
+                        columnName,
+                        expressionNodePool.next().of(
+                                LITERAL, columnName, 0, 0
+                        ),
+                        true
+                );
+                model.addField(column);
+                aliasIdx++;
+            }
+        }
+
+        if (model.isUnnestOrdinality()) {
+            CharSequence ordColName;
+            if (aliases.size() == totalColumns) {
+                ordColName = aliases.getQuick(totalOutputCols);
+            } else {
+                ordColName = "ordinality";
+            }
+            ordColName = createColumnAlias(ordColName, model, false);
+            QueryColumn column = queryColumnPool.next().of(
+                    ordColName,
+                    expressionNodePool.next().of(LITERAL, ordColName, 0, 0),
+                    true
+            );
+            model.addField(column);
         }
     }
 
@@ -3610,10 +3718,10 @@ public class SqlOptimiser implements Mutable {
         // Check if arguments contain nested window functions
         boolean hasNestedWindows = false;
         if (ast.paramCount < 3) {
-            hasNestedWindows = checkForChildWindowFunctions(ast.lhs) || checkForChildWindowFunctions(ast.rhs);
+            hasNestedWindows = checkForChildWindowFunctions(sqlNodeStack, ast.lhs) || checkForChildWindowFunctions(sqlNodeStack, ast.rhs);
         } else {
             for (int i = 0, k = ast.paramCount; i < k && !hasNestedWindows; i++) {
-                hasNestedWindows = checkForChildWindowFunctions(ast.args.getQuick(i));
+                hasNestedWindows = checkForChildWindowFunctions(sqlNodeStack, ast.args.getQuick(i));
             }
         }
 
@@ -4075,6 +4183,7 @@ public class SqlOptimiser implements Mutable {
                 m.setJoinType(JOIN_CROSS_FULL);
             } else if (m.getJoinType() != JOIN_ASOF &&
                     m.getJoinType() != JOIN_SPLICE &&
+                    m.getJoinType() != JOIN_UNNEST &&
                     (c == null || c.parents.size() == 0)
             ) {
                 m.setJoinType(JOIN_CROSS);
@@ -4885,15 +4994,19 @@ public class SqlOptimiser implements Mutable {
     }
 
     private QueryColumn nextColumn(CharSequence name) {
-        return nextColumn(name, 0);
+        return nextColumn(name, true, 0);
     }
 
-    private QueryColumn nextColumn(CharSequence name, int position) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name, position);
+    private QueryColumn nextColumn(CharSequence name, boolean includeIntoWildcard, int position) {
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name, includeIntoWildcard, position);
     }
 
     private QueryColumn nextColumn(CharSequence alias, CharSequence column) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, 0);
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, true, 0);
+    }
+
+    private QueryColumn nextColumn(CharSequence alias, CharSequence column, boolean includeIntoWildcard) {
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, includeIntoWildcard, 0);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -5684,8 +5797,14 @@ public class SqlOptimiser implements Mutable {
                     emitLiteralsTopDown(jc.aNodes.getQuick(k), model);
                     emitLiteralsTopDown(jc.bNodes.getQuick(k), model);
 
-                    emitLiteralsTopDown(jc.aNodes.getQuick(k), jm);
-                    emitLiteralsTopDown(jc.bNodes.getQuick(k), jm);
+                    // Use vanilla column names (without table alias prefix) when
+                    // emitting to the join model. The expression nodes carry the
+                    // outer query's table aliases (e.g. "v2.max") which cannot be
+                    // resolved within the join model's own scope (e.g. v2 internally
+                    // uses aliases like "v1", "t0"). Using the plain column name
+                    // allows the column to be found in the join model's alias map.
+                    addTopDownColumn(jc.aNames.getQuick(k), jm);
+                    addTopDownColumn(jc.bNames.getQuick(k), jm);
 
                     if (papaModel != null) {
                         emitLiteralsTopDown(jc.aNodes.getQuick(k), papaModel);
@@ -5705,6 +5824,15 @@ public class SqlOptimiser implements Mutable {
             if (leftJoinWhere != null) {
                 emitLiteralsTopDown(leftJoinWhere, jm);
                 emitLiteralsTopDown(leftJoinWhere, model);
+            }
+
+            // UNNEST expressions reference columns from the base table (lateral binding).
+            // Propagate these references so the base table includes them in its projection.
+            if (jm.getJoinType() == JOIN_UNNEST) {
+                final ObjList<ExpressionNode> unnestExprs = jm.getUnnestExpressions();
+                for (int k = 0, z = unnestExprs.size(); k < z; k++) {
+                    emitLiteralsTopDown(unnestExprs.getQuick(k), model);
+                }
             }
 
             // process WINDOW JOIN dynamic bound expressions
@@ -6439,6 +6567,9 @@ public class SqlOptimiser implements Mutable {
             registerWindowFunction(wc, hash);
             // Emit literals referenced by the window column to inner models
             emitLiterals(node, translatingModel, innerVirtualModel, baseModel, true, true, false);
+            // Emit partition-by and order-by columns of the window spec
+            replaceLiteralList(innerVirtualModel, translatingModel, baseModel, wc.getPartitionBy());
+            replaceLiteralList(innerVirtualModel, translatingModel, baseModel, wc.getOrderBy());
             return nextLiteral(alias);
         }
         return node;
@@ -7945,7 +8076,7 @@ public class SqlOptimiser implements Mutable {
                     // need to avoid alias conflicts.
 
                     timestampAlias = createColumnAlias(timestampColumn, model);
-                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias, timestamp.position));
+                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias, true, timestamp.position));
 
                     timestampOnly = false;
                     needRemoveColumns++;
@@ -8307,7 +8438,7 @@ public class SqlOptimiser implements Mutable {
             QueryColumn ref;
             if (existingAlias != null) {
                 // Duplicate found - create reference to existing window column
-                ref = nextColumn(qc.getAlias(), existingAlias);
+                ref = nextColumn(qc.getAlias(), existingAlias, qc.isIncludeIntoWildcard());
             } else {
                 // Not a duplicate - add to window model and register in hash map
                 windowModel.addBottomUpColumn(qc);
@@ -8333,7 +8464,7 @@ public class SqlOptimiser implements Mutable {
             if (useOuterModel) {
                 CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, ast);
                 if (matchingCol != null) {
-                    QueryColumn ref = nextColumn(qc.getAlias(), matchingCol);
+                    QueryColumn ref = nextColumn(qc.getAlias(), matchingCol, qc.isIncludeIntoWildcard());
                     ref = ensureAliasUniqueness(outerVirtualModel, ref);
                     outerVirtualModel.addBottomUpColumn(ref);
                     distinctModel.addBottomUpColumn(ref);
@@ -8483,7 +8614,7 @@ public class SqlOptimiser implements Mutable {
         // Window functions need to be extracted to windowModel before processing aggregates.
         // However, if the expression ALSO contains aggregate functions (like sum() OVER (...)),
         // let the aggregate handling take precedence - it may optimize to GROUP BY.
-        if (checkForChildWindowFunctions(qc.getAst()) && !checkForChildAggregates(qc.getAst())) {
+        if (checkForChildWindowFunctions(sqlNodeStack, qc.getAst()) && !checkForChildAggregates(qc.getAst())) {
             emitWindowFunctions(
                     qc.getAst(),
                     windowModel,
@@ -8979,6 +9110,7 @@ public class SqlOptimiser implements Mutable {
 
                             boolean sameAlias = createSelectColumn(
                                     qc.getAlias(),
+                                    qc.isIncludeIntoWildcard(),
                                     groupByAliases.get(matchingColIdx),
                                     groupByModel,
                                     outerVirtualModel,
@@ -9026,6 +9158,7 @@ public class SqlOptimiser implements Mutable {
                                         qc.getAlias(),
                                         qc.getAst(),
                                         (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0,
+                                        qc.isIncludeIntoWildcard(),
                                         baseModel,
                                         translatingModel0,
                                         innerVirtualModel,
@@ -9133,6 +9266,7 @@ public class SqlOptimiser implements Mutable {
 
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
                     replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
+                    rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                     int innerColumnsPost = innerVirtualModel.getBottomUpColumns().size();
                     forceTranslatingModel |= innerColumnsPre != innerColumnsPost;
                 }
@@ -9275,6 +9409,13 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
             }
+        }
+
+        ObjList<CharSequence> lateralCountCols = model.getLateralCountColumns();
+        if (lateralCountCols.size() > 0) {
+            applyLateralCountCoalesce(outerVirtualModel, lateralCountCols, translatingModel);
+            rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
+            lateralCountCols.clear();
         }
 
         QueryModel root;
@@ -9927,6 +10068,67 @@ public class SqlOptimiser implements Mutable {
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
     }
 
+    /**
+     * Tries to evaluate the expression as a non-negative long constant.
+     * Returns -1 if the expression contains column references (dynamic bound).
+     * Returns {@link Long#MAX_VALUE} if expr is null.
+     */
+    private long tryEvalNonNegativeLongConstant(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (expr != null) {
+            // Walk the expression tree iteratively to detect column references.
+            // If found, the expression is dynamic — return -1 without parsing.
+            // This avoids a catch-all SqlException that would mask real parse errors.
+            sqlNodeStack.clear();
+            ExpressionNode node = expr;
+            while (node != null || !sqlNodeStack.isEmpty()) {
+                if (node != null) {
+                    if (node.type == LITERAL) {
+                        return -1;
+                    }
+                    if (node.paramCount < 3) {
+                        if (node.rhs != null) {
+                            sqlNodeStack.push(node.rhs);
+                        }
+                        node = node.lhs;
+                    } else {
+                        for (int i = 0, n = node.paramCount; i < n; i++) {
+                            sqlNodeStack.push(node.args.getQuick(i));
+                        }
+                        node = null;
+                    }
+                    continue;
+                }
+                node = sqlNodeStack.poll();
+            }
+
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            if (!func.isConstant()) {
+                Misc.free(func);
+                return -1;
+            }
+
+            try {
+                long value;
+                if (!(func instanceof CharConstant)) {
+                    value = func.getLong(null);
+                } else {
+                    long tmp = (byte) (func.getChar(null) - '0');
+                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
+                }
+
+                if (value < 0) {
+                    throw SqlException.$(expr.position, "non-negative integer expression expected");
+                }
+                return value;
+            } catch (UnsupportedOperationException | ImplicitCastException e) {
+                throw SqlException.$(expr.position, "integer expression expected");
+            } finally {
+                Misc.free(func);
+            }
+        }
+        return Long.MAX_VALUE;
+    }
+
     private boolean tryPushFilterIntoSetOperationBranches(ExpressionNode node, QueryModel parent, QueryModel nested) throws SqlException {
         // Only push filters on the designated timestamp into union branches.
         // Timestamp filters enable partition pruning — the only high-value optimization here.
@@ -10337,7 +10539,7 @@ public class SqlOptimiser implements Mutable {
         ObjList<ExpressionNode> partitionBy = windowExpr.getPartitionBy();
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             ExpressionNode node = partitionBy.getQuick(i);
-            if (checkForChildWindowFunctions(node)) {
+            if (checkForChildWindowFunctions(sqlNodeStack, node)) {
                 throw SqlException.$(node.position, "window function is not allowed in PARTITION BY clause");
             }
         }
@@ -10346,7 +10548,7 @@ public class SqlOptimiser implements Mutable {
         ObjList<ExpressionNode> orderBy = windowExpr.getOrderBy();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
             ExpressionNode node = orderBy.getQuick(i);
-            if (checkForChildWindowFunctions(node)) {
+            if (checkForChildWindowFunctions(sqlNodeStack, node)) {
                 throw SqlException.$(node.position, "window function is not allowed in ORDER BY clause of window specification");
             }
         }
@@ -10569,6 +10771,9 @@ public class SqlOptimiser implements Mutable {
         }
 
         validateWindowJoins(model.getNestedModel(), sqlExecutionContext, recursionLevel + 1);
+        for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
+            validateWindowJoins(model.getJoinModels().get(i).getNestedModel(), sqlExecutionContext, recursionLevel + 1);
+        }
         validateWindowJoins(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
     }
 
@@ -10671,6 +10876,51 @@ public class SqlOptimiser implements Mutable {
         return outerModel;
     }
 
+    static boolean checkForChildWindowFunctions(ArrayDeque<ExpressionNode> sqlNodeStack, ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.windowExpression != null) {
+                return true;
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    if (node.rhs.windowExpression != null) {
+                        return true;
+                    }
+                    sqlNodeStack.push(node.rhs);
+                }
+
+                if (node.lhs != null) {
+                    if (node.lhs.windowExpression != null) {
+                        return true;
+                    }
+                    node = node.lhs;
+                } else if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            } else {
+                // for nodes with paramCount >= 3, arguments are stored in args list (e.g., CASE expressions)
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        if (arg.windowExpression != null) {
+                            return true;
+                        }
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                if (!sqlNodeStack.isEmpty()) {
+                    node = sqlNodeStack.poll();
+                } else {
+                    node = null;
+                }
+            }
+        }
+        return false;
+    }
+
     static long evalNonNegativeLongConstantOrDie(FunctionParser functionParser, ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
             // Unlike tryEvalNonNegativeLongConstant, we don't catch SqlException here.
@@ -10679,67 +10929,6 @@ public class SqlOptimiser implements Mutable {
             if (!func.isConstant()) {
                 Misc.free(func);
                 throw SqlException.$(expr.position, "constant expression expected");
-            }
-
-            try {
-                long value;
-                if (!(func instanceof CharConstant)) {
-                    value = func.getLong(null);
-                } else {
-                    long tmp = (byte) (func.getChar(null) - '0');
-                    value = tmp > -1 && tmp < 10 ? tmp : Numbers.LONG_NULL;
-                }
-
-                if (value < 0) {
-                    throw SqlException.$(expr.position, "non-negative integer expression expected");
-                }
-                return value;
-            } catch (UnsupportedOperationException | ImplicitCastException e) {
-                throw SqlException.$(expr.position, "integer expression expected");
-            } finally {
-                Misc.free(func);
-            }
-        }
-        return Long.MAX_VALUE;
-    }
-
-    /**
-     * Tries to evaluate the expression as a non-negative long constant.
-     * Returns -1 if the expression contains column references (dynamic bound).
-     * Returns {@link Long#MAX_VALUE} if expr is null.
-     */
-    private long tryEvalNonNegativeLongConstant(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expr != null) {
-            // Walk the expression tree iteratively to detect column references.
-            // If found, the expression is dynamic — return -1 without parsing.
-            // This avoids a catch-all SqlException that would mask real parse errors.
-            sqlNodeStack.clear();
-            ExpressionNode node = expr;
-            while (node != null || !sqlNodeStack.isEmpty()) {
-                if (node != null) {
-                    if (node.type == LITERAL) {
-                        return -1;
-                    }
-                    if (node.paramCount < 3) {
-                        if (node.rhs != null) {
-                            sqlNodeStack.push(node.rhs);
-                        }
-                        node = node.lhs;
-                    } else {
-                        for (int i = 0, n = node.paramCount; i < n; i++) {
-                            sqlNodeStack.push(node.args.getQuick(i));
-                        }
-                        node = null;
-                    }
-                    continue;
-                }
-                node = sqlNodeStack.poll();
-            }
-
-            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            if (!func.isConstant()) {
-                Misc.free(func);
-                return -1;
             }
 
             try {
@@ -10962,7 +11151,6 @@ public class SqlOptimiser implements Mutable {
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());
-            rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);
@@ -10971,6 +11159,8 @@ public class SqlOptimiser implements Mutable {
             validateNoWindowFunctionsInWhereClauses(rewrittenModel);
             resolveWindowInheritance(rewrittenModel);
             resolveNamedWindows(rewrittenModel);
+            lateralJoinRewriter.rewrite(rewrittenModel);
+            rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
@@ -11323,6 +11513,10 @@ public class SqlOptimiser implements Mutable {
         joinBarriers.add(JOIN_LT);
         joinBarriers.add(JOIN_WINDOW);
         joinBarriers.add(JOIN_HORIZON);
+        joinBarriers.add(JOIN_UNNEST);
+        joinBarriers.add(JOIN_LATERAL_INNER);
+        joinBarriers.add(JOIN_LATERAL_LEFT);
+        joinBarriers.add(JOIN_LATERAL_CROSS);
 
         joinFilterBarriers = new IntHashSet();
         joinFilterBarriers.add(JOIN_WINDOW);

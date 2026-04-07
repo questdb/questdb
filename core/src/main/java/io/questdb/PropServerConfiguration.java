@@ -276,6 +276,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveWalWriterTTL;
     private final long inactiveWriterTTL;
     private final int indexValueBlockSize;
+    private final int jsonUnnestMaxValueSize;
     private final InputFormatConfiguration inputFormatConfiguration;
     private final String installRoot;
     private final long instanceHashHi;
@@ -706,9 +707,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgSelectCacheEnabled;
     private int pgSelectCacheRowCount;
     private int pgSendBufferSize;
-    private int pgUpdateCacheBlockCount;
-    private boolean pgUpdateCacheEnabled;
-    private int pgUpdateCacheRowCount;
     private String pgUsername;
     private int[] pgWorkerAffinity;
     private int pgWorkerCount;
@@ -1420,9 +1418,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
-                this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
-                this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 4);
-                this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 4);
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
@@ -1484,6 +1479,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inactiveViewWalWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_VIEW_WAL_INACTIVE_WRITER_TTL, 60_000);
             this.ttlUseWallClock = getBoolean(properties, env, PropertyKey.CAIRO_TTL_USE_WALL_CLOCK, true);
             this.indexValueBlockSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_INDEX_VALUE_BLOCK_SIZE, 256));
+            int jsonUnnestMaxValueSizeRaw = getInt(properties, env, PropertyKey.CAIRO_JSON_UNNEST_MAX_VALUE_SIZE, 4096);
+            if (jsonUnnestMaxValueSizeRaw < 1) {
+                log.info().$("invalid ").$(PropertyKey.CAIRO_JSON_UNNEST_MAX_VALUE_SIZE.getPropertyPath())
+                        .$(" value ").$(jsonUnnestMaxValueSizeRaw).$(", will use 1").$();
+                this.jsonUnnestMaxValueSize = 1;
+            } else {
+                this.jsonUnnestMaxValueSize = jsonUnnestMaxValueSizeRaw;
+            }
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
@@ -3071,6 +3074,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL);
             registerDeprecated(PropertyKey.CAIRO_SYMBOL_TABLE_APPEND_PAGE_SIZE);
             registerDeprecated(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED);
+            registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ENABLED);
+            registerDeprecated(PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT);
+            registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ROW_COUNT);
         }
 
         public ValidationResult validate(Properties properties) {
@@ -3626,6 +3632,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getInstallRoot() {
             return installRoot;
+        }
+
+        @Override
+        public int getJsonUnnestMaxValueSize() {
+            return jsonUnnestMaxValueSize;
         }
 
         @Override
@@ -6265,16 +6276,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getUpdateCacheBlockCount() {
-            return pgUpdateCacheBlockCount;
-        }
-
-        @Override
-        public int getUpdateCacheRowCount() {
-            return pgUpdateCacheRowCount;
-        }
-
-        @Override
         public int[] getWorkerAffinity() {
             return pgWorkerAffinity;
         }
@@ -6317,11 +6318,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSelectCacheEnabled() {
             return pgSelectCacheEnabled;
-        }
-
-        @Override
-        public boolean isUpdateCacheEnabled() {
-            return pgUpdateCacheEnabled;
         }
 
         @Override
