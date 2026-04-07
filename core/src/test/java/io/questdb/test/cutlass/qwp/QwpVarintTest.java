@@ -164,6 +164,50 @@ public class QwpVarintTest {
     }
 
     @Test
+    public void testDecodeResultFromDirectMemory_fastPath() throws QwpParseException {
+        // Test the fast-path (single-byte, values 0-127) in decode(long, long, DecodeResult)
+        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
+
+            // Value 0
+            Unsafe.getUnsafe().putByte(addr, (byte) 0x00);
+            QwpVarint.decode(addr, addr + 1, result);
+            Assert.assertEquals(0, result.value);
+            Assert.assertEquals(1, result.bytesRead);
+
+            // Value 1
+            Unsafe.getUnsafe().putByte(addr, (byte) 0x01);
+            QwpVarint.decode(addr, addr + 1, result);
+            Assert.assertEquals(1, result.value);
+            Assert.assertEquals(1, result.bytesRead);
+
+            // Value 127 (max single-byte)
+            Unsafe.getUnsafe().putByte(addr, (byte) 0x7F);
+            QwpVarint.decode(addr, addr + 1, result);
+            Assert.assertEquals(127, result.value);
+            Assert.assertEquals(1, result.bytesRead);
+
+            // Value 128 (min two-byte, exercises decodeMultiByte)
+            long endAddr = QwpVarint.encode(addr, 128);
+            QwpVarint.decode(addr, endAddr, result);
+            Assert.assertEquals(128, result.value);
+            Assert.assertEquals(2, result.bytesRead);
+
+            // Consistency: decode(long, long) and decode(long, long, DecodeResult) agree
+            long[] values = {0, 1, 42, 127, 128, 255, 16_383, 16_384, 999_999};
+            for (long value : values) {
+                endAddr = QwpVarint.encode(addr, value);
+                long direct = QwpVarint.decode(addr, endAddr);
+                QwpVarint.decode(addr, endAddr, result);
+                Assert.assertEquals("Mismatch for value " + value, direct, result.value);
+            }
+        } finally {
+            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testDecodeResultReuse() throws QwpParseException {
         byte[] buf = new byte[10];
         QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
@@ -324,50 +368,6 @@ public class QwpVarintTest {
         byte[] buf = new byte[10];
         int actualLen = QwpVarint.encode(buf, 0, Long.MAX_VALUE);
         Assert.assertEquals(actualLen, QwpVarint.encodedLength(Long.MAX_VALUE));
-    }
-
-    @Test
-    public void testDecodeResultFromDirectMemory_fastPath() throws QwpParseException {
-        // Test the fast-path (single-byte, values 0-127) in decode(long, long, DecodeResult)
-        long addr = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
-        try {
-            QwpVarint.DecodeResult result = new QwpVarint.DecodeResult();
-
-            // Value 0
-            Unsafe.getUnsafe().putByte(addr, (byte) 0x00);
-            QwpVarint.decode(addr, addr + 1, result);
-            Assert.assertEquals(0, result.value);
-            Assert.assertEquals(1, result.bytesRead);
-
-            // Value 1
-            Unsafe.getUnsafe().putByte(addr, (byte) 0x01);
-            QwpVarint.decode(addr, addr + 1, result);
-            Assert.assertEquals(1, result.value);
-            Assert.assertEquals(1, result.bytesRead);
-
-            // Value 127 (max single-byte)
-            Unsafe.getUnsafe().putByte(addr, (byte) 0x7F);
-            QwpVarint.decode(addr, addr + 1, result);
-            Assert.assertEquals(127, result.value);
-            Assert.assertEquals(1, result.bytesRead);
-
-            // Value 128 (min two-byte, exercises decodeMultiByte)
-            long endAddr = QwpVarint.encode(addr, 128);
-            QwpVarint.decode(addr, endAddr, result);
-            Assert.assertEquals(128, result.value);
-            Assert.assertEquals(2, result.bytesRead);
-
-            // Consistency: decode(long, long) and decode(long, long, DecodeResult) agree
-            long[] values = {0, 1, 42, 127, 128, 255, 16_383, 16_384, 999_999};
-            for (long value : values) {
-                endAddr = QwpVarint.encode(addr, value);
-                long direct = QwpVarint.decode(addr, endAddr);
-                QwpVarint.decode(addr, endAddr, result);
-                Assert.assertEquals("Mismatch for value " + value, direct, result.value);
-            }
-        } finally {
-            Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
-        }
     }
 
     @Test
