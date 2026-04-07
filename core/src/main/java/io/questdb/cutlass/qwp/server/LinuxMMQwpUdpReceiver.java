@@ -82,21 +82,13 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
 
             if (totalCount >= commitRate) {
                 totalCount = 0;
-                try {
-                    tudCache.commitAll();
-                } catch (Throwable t) {
-                    LOG.error().$("commit error: ").$(t.getMessage()).$();
-                }
+                tudCache.commitAllBestEffort();
                 committed = true;
                 break;
             }
         }
         if (!committed && ran) {
-            try {
-                tudCache.commitAll();
-            } catch (Throwable t) {
-                LOG.error().$("commit error: ").$(t.getMessage()).$();
-            }
+            tudCache.commitAllBestEffort();
         }
         return ran;
     }

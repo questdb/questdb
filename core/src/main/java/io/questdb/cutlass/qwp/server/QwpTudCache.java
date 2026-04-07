@@ -139,6 +139,11 @@ public class QwpTudCache implements QuietCloseable {
         symbolCachePool = Misc.free(symbolCachePool);
     }
 
+    /**
+     * Commits all cached tables. Aborts on the first non-dropped-table commit
+     * failure, leaving the remaining tables uncommitted. Suitable for callers
+     * that propagate the error to the client (e.g. HTTP/WebSocket).
+     */
     public void commitAll() throws Throwable {
         boolean droppedTableFound;
         do {
@@ -157,6 +162,44 @@ public class QwpTudCache implements QuietCloseable {
                     } else {
                         tud.setIsDropped();
                     }
+                }
+
+                if (tud.isDropped()) {
+                    tableUpdateDetails.remove(tableName);
+                    Misc.free(tud);
+                    droppedTableFound = true;
+                    break;
+                }
+            }
+        } while (droppedTableFound);
+    }
+
+    /**
+     * Commits all cached tables, continuing past per-table failures so that
+     * one table's error does not prevent the remaining tables from being
+     * committed. Errors are logged. Suitable for fire-and-forget callers
+     * (e.g. UDP receivers) where there is no client to report the error to.
+     */
+    public void commitAllBestEffort() {
+        boolean droppedTableFound;
+        do {
+            droppedTableFound = false;
+            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
+                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+                try {
+                    if (!tud.isDropped()) {
+                        tud.commit(false);
+                    }
+                } catch (CommitFailedException e) {
+                    if (e.isTableDropped()) {
+                        tud.setIsDropped();
+                    } else {
+                        LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
+                    }
+                } catch (Throwable t) {
+                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
                 }
 
                 if (tud.isDropped()) {

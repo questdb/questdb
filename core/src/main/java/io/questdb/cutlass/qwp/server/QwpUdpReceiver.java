@@ -202,11 +202,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
             fd = -1;
 
-            try {
-                tudCache.commitAll();
-            } catch (Throwable t) {
-                LOG.error().$("final commit error: ").$(t.getMessage()).$();
-            }
+            tudCache.commitAllBestEffort();
             Misc.free(tudCache);
             Misc.free(walAppender);
             Unsafe.free(buf, bufLen, MemoryTag.NATIVE_ILP_RSS);
@@ -257,21 +253,13 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             totalCount++;
             if (totalCount >= commitRate) {
                 totalCount = 0;
-                try {
-                    tudCache.commitAll();
-                } catch (Throwable t) {
-                    LOG.error().$("commit error: ").$(t.getMessage()).$();
-                }
+                tudCache.commitAllBestEffort();
                 committed = true;
                 break;
             }
         }
         if (!committed && ran) {
-            try {
-                tudCache.commitAll();
-            } catch (Throwable t) {
-                LOG.error().$("commit error: ").$(t.getMessage()).$();
-            }
+            tudCache.commitAllBestEffort();
         }
         return ran;
     }
