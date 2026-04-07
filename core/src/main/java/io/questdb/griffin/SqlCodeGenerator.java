@@ -3617,7 +3617,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterA,
                     null,
                     validateSampleByFillType,
-                    parentModel.getColumns()
+                    parentModel.getColumns(),
+                    null
             );
 
             // Check if parallel execution is supported
@@ -4849,7 +4850,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         listColumnFilterA,
                                         null,
                                         validateSampleByFillType,
-                                        isLastWindowJoin ? columns : aggregateCols
+                                        isLastWindowJoin ? columns : aggregateCols,
+                                        null
                                 );
 
                                 if (!isLastWindowJoin) {
@@ -5955,7 +5957,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterA,
                     null,
                     validateSampleByFillType,
-                    parentModel.getColumns()
+                    parentModel.getColumns(),
+                    null
             );
 
             ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(tempInnerProjectionFunctions, projectionFunctionFlags);
@@ -6876,7 +6879,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         listColumnFilterA,
                         sampleByFill,
                         validateSampleByFillType,
-                        model.getColumns()
+                        model.getColumns(),
+                        null
                 );
 
                 return new SampleByInterpolateRecordCursorFactory(
@@ -6933,7 +6937,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterA,
                     sampleByFill,
                     validateSampleByFillType,
-                    model.getColumns()
+                    model.getColumns(),
+                    null
             );
 
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
@@ -7650,6 +7655,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
+            ObjList<ObjList<Function>> sharedOuterProjectionFunctions = null;
+            if (model instanceof QueryModel qm && qm.hasDependents()) {
+                final int dependentsCount = qm.getDependents().size();
+                sharedOuterProjectionFunctions = new ObjList<>(dependentsCount);
+                for (int d = 0; d < dependentsCount; d++) {
+                    sharedOuterProjectionFunctions.add(new ObjList<>());
+                }
+            }
+
             GroupByUtils.assembleGroupByFunctions(
                     functionParser,
                     sqlNodeStack,
@@ -7670,7 +7684,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterA,
                     null,
                     validateSampleByFillType,
-                    model.getColumns()
+                    model.getColumns(),
+                    sharedOuterProjectionFunctions
             );
 
             // Check if we have a non-keyed query with all early exit aggregate functions (e.g. count_distinct(symbol))
@@ -7754,7 +7769,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         filterExpr,
                                         factory.getMetadata()
                                 ),
-                                executionContext.getSharedQueryWorkerCount()
+                                executionContext.getSharedQueryWorkerCount(),
+                                sharedOuterProjectionFunctions
                         );
                     }
 
@@ -7807,7 +7823,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             filterExpr,
                                             factory.getMetadata()
                                     ),
-                                    executionContext.getSharedQueryWorkerCount()
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    sharedOuterProjectionFunctions
                             ),
                             executionContext
                     );
@@ -7822,7 +7839,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factory,
                         outerProjectionMetadata,
                         groupByFunctions,
-                        valueTypes.getColumnCount()
+                        valueTypes.getColumnCount(),
+                        sharedOuterProjectionFunctions
                 );
             }
 
@@ -7840,7 +7858,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             outerProjectionMetadata,
                             groupByFunctions,
                             keyFunctions,
-                            new ObjList<>(tempOuterProjectionFunctions)
+                            new ObjList<>(tempOuterProjectionFunctions),
+                            sharedOuterProjectionFunctions
                     ),
                     executionContext
             );

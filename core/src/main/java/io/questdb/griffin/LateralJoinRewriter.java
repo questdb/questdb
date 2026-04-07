@@ -91,7 +91,6 @@ class LateralJoinRewriter implements Mutable {
     private final ObjectPool<WindowExpression> windowExpressionPool;
     private boolean hasCorrelation;
     private int outerRefId;
-    private int wrapperShareId;
 
     LateralJoinRewriter(
             CharacterStore characterStore,
@@ -139,7 +138,6 @@ class LateralJoinRewriter implements Mutable {
         nonCorrelatedPreds.clear();
         hasCorrelation = false;
         outerRefId = 0;
-        wrapperShareId = 0;
         sharedModels.clear();
     }
 
@@ -1153,8 +1151,8 @@ class LateralJoinRewriter implements Mutable {
         } else if (outerJm.getNestedModel() != null) {
             QueryModel nestModel = (QueryModel) outerJm.getNestedModel();
             QueryModelWrapper wrapper = queryModelWrapperPool.next();
-            wrapper.of(nestModel, wrapperShareId++);
             nestModel.getDependents().add(wrapper);
+            wrapper.of(nestModel, nestModel.getDependents().size());
             outerRefBase.setNestedModel(wrapper);
             outerRefBase.setNestedModelIsSubQuery(outerJm.isNestedModelIsSubQuery());
         } else {
@@ -1183,8 +1181,8 @@ class LateralJoinRewriter implements Mutable {
             return delegate;
         }
         QueryModelWrapper wrapper = queryModelWrapperPool.next();
-        wrapper.of(delegate, wrapperShareId++);
         delegate.getDependents().add(wrapper);
+        wrapper.of(delegate, delegate.getDependents().size());
         return wrapper;
     }
 

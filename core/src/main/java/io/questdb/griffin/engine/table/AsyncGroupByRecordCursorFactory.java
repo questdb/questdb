@@ -76,6 +76,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final AsyncGroupByRecordCursor cursor;
     private final UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
     private final ObjList<Function> recordFunctions; // includes groupByFunctions
+    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final int workerCount;
     private ObjList<AsyncGroupBySharedCursor> sharedCursors;
 
@@ -100,12 +101,14 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable Function filter,
             @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
-            int workerCount
+            int workerCount,
+            @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
         super(groupByMetadata);
         try {
             this.base = base;
             this.recordFunctions = recordFunctions;
+            this.sharedRecordFunctions = sharedRecordFunctions;
             AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
                     configuration,
@@ -170,7 +173,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         int idx = sharedId - 1;
         AsyncGroupBySharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
-            shared = new AsyncGroupBySharedCursor(recordFunctions);
+            assert sharedRecordFunctions != null;
+            assert idx < sharedRecordFunctions.size();
+            shared = new AsyncGroupBySharedCursor(sharedRecordFunctions.getQuick(idx));
             sharedCursors.extendAndSet(idx, shared);
         }
         shared.of(cursor);
@@ -472,6 +477,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(cursor);
         Misc.free(frameSequence);
         Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
+        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
         Misc.clear(sharedCursors);
     }
 }

@@ -79,6 +79,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     private final ObjList<VectorAggregateFunction> vafList;
     private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
+    private ObjList<NotKeyedVectorSharedCursor> sharedCursors;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
             CairoEngine engine,
@@ -133,8 +134,31 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (sharedId == 0) {
+            return getCursor(executionContext);
+        }
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        NotKeyedVectorSharedCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            shared = new NotKeyedVectorSharedCursor();
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of();
+        return shared;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public boolean supportsSharedCursors() {
+        return true;
     }
 
     @Override
@@ -232,12 +256,16 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             if (isExhausted) {
                 return false;
             }
+            buildFunctionsConditionally();
+            isExhausted = true;
+            return true;
+        }
+
+        void buildFunctionsConditionally() {
             if (!areFunctionsBuilt) {
                 buildFunctions();
                 areFunctionsBuilt = true;
             }
-            isExhausted = true;
-            return true;
         }
 
         public GroupByNotKeyedVectorRecordCursor of(
@@ -398,6 +426,61 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                     .$(", reclaimed=").$(reclaimed)
                     .$(", queuedCount=").$(queuedCount)
                     .I$();
+        }
+    }
+
+    private class NotKeyedVectorSharedCursor implements NoRandomAccessRecordCursor {
+        private final Record record;
+        private boolean isExhausted;
+
+        NotKeyedVectorSharedCursor() {
+            this.record = new VirtualRecordNoRowid(vafList);
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (!isExhausted) {
+                counter.inc();
+                isExhausted = true;
+            }
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (isExhausted) {
+                return false;
+            }
+            cursor.buildFunctionsConditionally();
+            isExhausted = true;
+            return true;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public long size() {
+            return 1;
+        }
+
+        @Override
+        public void toTop() {
+            isExhausted = false;
+        }
+
+        void of() {
+            isExhausted = false;
         }
     }
 }

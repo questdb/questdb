@@ -53,6 +53,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -62,6 +63,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
     private final ObjList<Function> recordFunctions;
+    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private ObjList<GroupBySharedCursor> sharedCursors;
 
     public GroupByRecordCursorFactory(
@@ -74,7 +76,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> keyFunctions,
-            ObjList<Function> recordFunctions
+            ObjList<Function> recordFunctions,
+            @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
         super(groupByMetadata);
         try {
@@ -82,6 +85,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.groupByFunctions = groupByFunctions;
             this.keyFunctions = keyFunctions;
             this.recordFunctions = recordFunctions;
+            this.sharedRecordFunctions = sharedRecordFunctions;
             // sink will be storing record columns to map key
             this.mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter, keyFunctions, null);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
@@ -89,6 +93,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         } catch (Throwable e) {
             close();
             throw e;
+        }
+    }
+
+    public static void freeSharedRecordFunctions(@Nullable ObjList<ObjList<Function>> sharedRecordFunctions) {
+        if (sharedRecordFunctions != null) {
+            for (int i = 0, n = sharedRecordFunctions.size(); i < n; i++) {
+                Misc.freeObjListAndClear(sharedRecordFunctions.getQuick(i));
+            }
         }
     }
 
@@ -141,8 +153,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         int idx = sharedId - 1;
         GroupBySharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
-            // todo need a different recordFunctions
-            shared = new GroupBySharedCursor(recordFunctions);
+            assert sharedRecordFunctions != null;
+            assert idx < sharedRecordFunctions.size();
+            shared = new GroupBySharedCursor(sharedRecordFunctions.getQuick(idx));
             sharedCursors.extendAndSet(idx, shared);
         }
         shared.of(cursor.dataMap);
@@ -188,6 +201,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     protected void _close() {
         Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
         Misc.freeObjList(keyFunctions);
+        freeSharedRecordFunctions(sharedRecordFunctions);
         Misc.free(base);
         Misc.free(cursor);
         Misc.clear(sharedCursors);
@@ -301,8 +315,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {
-        private Map dataMap;
         private MapRecordCursor cachedMapCursor;
+        private Map dataMap;
 
         GroupBySharedCursor(ObjList<Function> functions) {
             super(functions, true);

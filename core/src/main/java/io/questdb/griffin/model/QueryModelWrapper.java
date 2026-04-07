@@ -1157,10 +1157,6 @@ public class QueryModelWrapper implements IQueryModel {
         delegate.setSetOperationType(setOperationType);
     }
 
-    public void setShareId(int shareId) {
-        this.shareId = shareId;
-    }
-
     @Override
     public void setShowKind(int showKind) {
         delegate.setShowKind(showKind);
