@@ -92,6 +92,11 @@ public class DirectCharSequenceIntHashMapTest {
                 for (int i = 0; i < 16; i++) {
                     Assert.assertEquals(i, map.get("key" + i));
                 }
+
+                // After lifting OOM, the next insert retries rehash successfully.
+                map.put("key16", 16);
+                Assert.assertEquals(17, map.size());
+                Assert.assertEquals(16, map.get("key16"));
             } finally {
                 Unsafe.setRssMemLimit(0);
             }

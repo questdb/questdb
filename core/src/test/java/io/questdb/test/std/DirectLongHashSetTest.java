@@ -24,10 +24,13 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -35,6 +38,8 @@ import org.junit.Test;
 
 import java.util.HashSet;
 import java.util.Set;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class DirectLongHashSetTest {
     private static final Log LOG = LogFactory.getLog(DirectLongHashSetTest.class);
@@ -71,6 +76,46 @@ public class DirectLongHashSetTest {
             Assert.assertFalse(set.add(0));
             Assert.assertEquals(1, set.size());
         }
+    }
+
+    @Test
+    public void testCloseAfterRehashOom() throws Exception {
+        assertMemoryLeak(() -> {
+            // capacity = 16 (MIN_CAPACITY), loadFactor = 0.4, free = 6
+            try (DirectLongHashSet set = new DirectLongHashSet(4, 0.4, MemoryTag.NATIVE_DEFAULT)) {
+                // Insert 5 items (non-zero to use addNonZero path), leaving free = 1.
+                for (int i = 1; i <= 5; i++) {
+                    Assert.assertTrue(set.add(i));
+                }
+                int capacityBeforeRehash = set.capacity();
+
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                try {
+                    // 6th insert decrements free to 0 and triggers rehash.
+                    set.add(6);
+                    Assert.fail("Expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isOutOfMemory());
+                } finally {
+                    Unsafe.setRssMemLimit(0);
+                }
+
+                // All entries (including the one that triggered rehash) must be accessible.
+                Assert.assertEquals(capacityBeforeRehash, set.capacity());
+                Assert.assertEquals(6, set.size());
+                for (int i = 1; i <= 6; i++) {
+                    Assert.assertTrue(set.contains(i));
+                }
+
+                // After lifting OOM, the next insert retries rehash successfully.
+                set.add(7);
+                Assert.assertTrue(set.capacity() > capacityBeforeRehash);
+                Assert.assertEquals(7, set.size());
+                Assert.assertTrue(set.contains(7));
+            } finally {
+                Unsafe.setRssMemLimit(0);
+            }
+        });
     }
 
     @Test
