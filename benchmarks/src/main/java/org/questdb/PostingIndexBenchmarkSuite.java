@@ -29,6 +29,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Level;
@@ -51,7 +52,11 @@ import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -98,111 +103,34 @@ public class PostingIndexBenchmarkSuite {
     // Summary: structured output for feedback/iteration cycles
     // ==================================================================================
 
-    private static void printSummary(Collection<RunResult> results) {
-        // Index results by benchmark name and params
-        Map<String, Double> scores = new LinkedHashMap<>();
-        for (RunResult rr : results) {
-            String label = rr.getParams().getBenchmark().replace("org.questdb.PostingIndexBenchmarkSuite.", "");
-            Map<String, String> params = rr.getParams().getParamsKeys().stream()
-                    .collect(LinkedHashMap::new, (m, k) -> m.put(k, rr.getParams().getParam(k)), Map::putAll);
-            String key = label + params.values().stream()
-                    .filter(v -> !"N/A".equals(v))
-                    .reduce("", (a, v) -> a + "/" + v);
-            scores.put(key, rr.getPrimaryResult().getScore());
-        }
-
-        out.println();
-        out.println("╔══════════════════════════════════════════════════════════════════════════════════╗");
-        out.println("║                     POSTING INDEX BENCHMARK SUMMARY                             ║");
-        out.println("╚══════════════════════════════════════════════════════════════════════════════════╝");
-
-        // --- Decode ---
-        out.println();
-        out.println("── Decode Throughput (ops/s, higher=better) ──────────────────────────────────────");
-        out.printf("  %-8s", "batch");
-        for (String bw : new String[]{"1", "8", "12", "16", "20", "32"}) out.printf(" %12s", bw + "-bit");
-        out.println();
-        for (String batch : new String[]{"64", "256", "1024"}) {
-            out.printf("  %-8s", batch);
-            for (String bw : new String[]{"1", "8", "12", "16", "20", "32"}) {
-                Double v = scores.get("decode/" + batch + "/" + bw);
-                out.printf(" %,12.0f", v != null ? v : 0);
-            }
-            out.println();
-        }
-
-        // --- Index Comparison ---
-        out.println();
-        out.println("── Index Comparison: Posting vs Legacy (ops/s, higher=better) ────────────────────");
-        String[] scenarios = {"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"};
-        for (String bench : new String[]{"indexPointRead", "indexScanRead", "indexRangeRead"}) {
-            out.printf("  %s:%n", bench);
-            out.printf("  %-6s %10s %10s %8s%n", "", "LEGACY", "POSTING", "ratio");
-            for (String s : scenarios) {
-                Double leg = scores.get(bench + "/LEGACY/" + s);
-                Double post = scores.get(bench + "/POSTING/" + s);
-                if (leg != null && post != null) {
-                    String ratio = String.format("%.2fx", post / leg);
-                    String marker = post < leg ? " ◄" : "";
-                    out.printf("  %-6s %,10.0f %,10.0f %8s%s%n", s, leg, post, ratio, marker);
+    /**
+     * Per-commit write profiling: measures incremental add+commit cost (market data pattern).
+     */
+    @Benchmark
+    public void commitProfile(CommitState s) {
+        // Each invocation does one full write cycle: 56 commits of 512 keys × 128 values
+        String dir = System.getProperty("java.io.tmpdir") + File.separator + "suite_commit_" + System.nanoTime();
+        new File(dir).mkdirs();
+        try {
+            initPosting(s.config, dir);
+            try (Path path = new Path().of(dir)) {
+                PostingIndexWriter writer = new PostingIndexWriter(s.config);
+                writer.of(path, "test", COL_TXN, false);
+                int rowId = 0;
+                for (int c = 0; c < CommitState.COMMITS; c++) {
+                    for (int k = 0; k < CommitState.KEYS; k++) {
+                        for (int v = 0; v < CommitState.VALUES_PER_COMMIT; v++) {
+                            writer.add(k, rowId++);
+                        }
+                    }
+                    writer.setMaxValue(rowId - 1);
+                    writer.commit();
                 }
+                writer.close(); // seal
             }
-            out.println();
+        } finally {
+            deleteDir(dir);
         }
-
-        // --- Sidecar ---
-        out.println("── Sidecar Compression (ops/s, higher=better) ────────────────────────────────────");
-        out.printf("  %-8s %10s %10s %8s%n", "type", "baseline", "covering", "ratio");
-        for (String t : new String[]{"DOUBLE", "FLOAT", "LONG", "INT"}) {
-            Double base = scores.get("sidecarRead/" + t + "/baseline");
-            Double cov = scores.get("sidecarRead/" + t + "/covering");
-            if (base != null && cov != null) {
-                out.printf("  %-8s %,10.0f %,10.0f %7.2fx%n", t, base, cov, cov / base);
-            }
-        }
-
-        // --- SQL Queries ---
-        out.println();
-        out.println("── SQL Queries (ops/s, higher=better) ────────────────────────────────────────────");
-        String[][] sqlGroups = {
-                {"Point lookup", "covering_where", "non_covering_where"},
-                {"Aggregation", "covering_agg", "covering_sum", "covering_count"},
-                {"Filter", "residual_filter", "non_covering_filter", "no_index_filter"},
-                {"Filter IN-list", "residual_filter_in", "non_covering_filter_in"},
-                {"VARCHAR/FSST", "varchar_fsst", "varchar_non_covering", "varchar_in_covering"},
-                {"O3", "o3_covering", "o3_non_covering", "o3_distinct"},
-                {"Misc", "latest_on", "in_list", "wide_table"},
-                {"Bulk throughput", "bulk_covering", "bulk_non_covering"},
-        };
-        for (String[] group : sqlGroups) {
-            out.printf("  %s:%n", group[0]);
-            for (int i = 1; i < group.length; i++) {
-                Double v = scores.get("sqlQuery/" + group[i]);
-                if (v != null) {
-                    out.printf("    %-28s %,12.0f ops/s%n", group[i], v);
-                }
-            }
-        }
-
-        // --- Write ---
-        out.println();
-        out.println("── Write Overhead (ops/s, higher=better) ─────────────────────────────────────────");
-        for (String cfg : new String[]{"no_index", "bitmap", "posting", "posting_covering", "posting_varchar"}) {
-            Double v = scores.get("writeInsert/" + cfg);
-            if (v != null) {
-                out.printf("  %-22s %,10.1f ops/s%n", cfg, v);
-            }
-        }
-
-        // --- Commit ---
-        Double commit = scores.get("commitProfile");
-        if (commit != null) {
-            out.println();
-            out.printf("── Commit Profile (512 keys × 56 commits × 128 v/commit + seal) ──────────────────%n");
-            out.printf("  %-22s %,10.1f ops/s  (%.1f ms/cycle)%n", "full write+seal cycle", commit, 1000.0 / commit);
-        }
-
-        out.println();
     }
 
     // ==================================================================================
@@ -335,43 +263,15 @@ public class PostingIndexBenchmarkSuite {
         s.engine.execute("DROP TABLE wbench", s.ctx);
     }
 
-    /** Per-commit write profiling: measures incremental add+commit cost (market data pattern). */
-    @Benchmark
-    public void commitProfile(CommitState s) {
-        // Each invocation does one full write cycle: 56 commits of 512 keys × 128 values
-        String dir = System.getProperty("java.io.tmpdir") + File.separator + "suite_commit_" + System.nanoTime();
-        new File(dir).mkdirs();
-        try {
-            initPosting(s.config, dir);
-            try (Path path = new Path().of(dir)) {
-                PostingIndexWriter writer = new PostingIndexWriter(s.config);
-                writer.of(path, "test", COL_TXN, false);
-                int rowId = 0;
-                for (int c = 0; c < CommitState.COMMITS; c++) {
-                    for (int k = 0; k < CommitState.KEYS; k++) {
-                        for (int v = 0; v < CommitState.VALUES_PER_COMMIT; v++) {
-                            writer.add(k, rowId++);
-                        }
-                    }
-                    writer.setMaxValue(rowId - 1);
-                    writer.commit();
-                }
-                writer.close(); // seal
-            }
-        } finally {
-            deleteDir(dir);
-        }
-    }
-
-    // ==================================================================================
-    // Section 3: Covering Sidecar Compression
-    // ==================================================================================
-
     private static int[] buildRoundRobin(int totalRows, int keyCount) {
         int[] a = new int[totalRows];
         for (int i = 0; i < totalRows; i++) a[i] = i % keyCount;
         return a;
     }
+
+    // ==================================================================================
+    // Section 3: Covering Sidecar Compression
+    // ==================================================================================
 
     private static int[] buildShuffled(int totalRows, int keyCount) {
         int[] a = new int[totalRows];
@@ -385,10 +285,6 @@ public class PostingIndexBenchmarkSuite {
         }
         return a;
     }
-
-    // ==================================================================================
-    // Section 4: SQL Covering Queries
-    // ==================================================================================
 
     private static int[] buildZipfian(int totalRows, int keyCount) {
         double[] cdf = new double[keyCount];
@@ -408,6 +304,10 @@ public class PostingIndexBenchmarkSuite {
         return a;
     }
 
+    // ==================================================================================
+    // Section 4: SQL Covering Queries
+    // ==================================================================================
+
     private static void deleteDir(String path) {
         File dir = new File(path);
         if (dir.exists()) {
@@ -417,21 +317,17 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
-    // ==================================================================================
-    // Section 5: Write Overhead
-    // ==================================================================================
-
     private static void deleteDirRecursive(File dir) {
         try {
             Files.walkFileTree(dir.toPath(), new SimpleFileVisitor<>() {
                 @Override
-                public FileVisitResult postVisitDirectory(java.nio.file.Path d, IOException e) throws IOException {
+                public @NotNull FileVisitResult postVisitDirectory(java.nio.file.@NotNull Path d, IOException e) throws IOException {
                     Files.delete(d);
                     return FileVisitResult.CONTINUE;
                 }
 
                 @Override
-                public FileVisitResult visitFile(java.nio.file.Path file, BasicFileAttributes a) throws IOException {
+                public @NotNull FileVisitResult visitFile(java.nio.file.@NotNull Path file, @NotNull BasicFileAttributes a) throws IOException {
                     Files.delete(file);
                     return FileVisitResult.CONTINUE;
                 }
@@ -439,6 +335,10 @@ public class PostingIndexBenchmarkSuite {
         } catch (IOException ignored) {
         }
     }
+
+    // ==================================================================================
+    // Section 5: Write Overhead
+    // ==================================================================================
 
     private static long doCovBaselineRead(CairoConfiguration config, String dir, int[] keys,
                                           long colAddr, CoverType ct) {
@@ -461,10 +361,6 @@ public class PostingIndexBenchmarkSuite {
         }
         return sum;
     }
-
-    // ==================================================================================
-    // Shared utilities
-    // ==================================================================================
 
     private static long doCovCoveringRead(CairoConfiguration config, String dir, int[] keys, CoverType ct) {
         long sum = 0;
@@ -491,6 +387,10 @@ public class PostingIndexBenchmarkSuite {
         return sum;
     }
 
+    // ==================================================================================
+    // Shared utilities
+    // ==================================================================================
+
     private static long getDirectorySize(String path) {
         File dir = new File(path);
         long size = 0;
@@ -515,6 +415,113 @@ public class PostingIndexBenchmarkSuite {
         return posting
                 ? new PostingIndexFwdReader(config, path, "test", COL_TXN, -1, 0)
                 : new BitmapIndexFwdReader(config, path, "test", COL_TXN, -1, 0);
+    }
+
+    private static void printSummary(Collection<RunResult> results) {
+        // Index results by benchmark name and params
+        Map<String, Double> scores = new LinkedHashMap<>();
+        for (RunResult rr : results) {
+            String label = rr.getParams().getBenchmark().replace("org.questdb.PostingIndexBenchmarkSuite.", "");
+            Map<String, String> params = rr.getParams().getParamsKeys().stream()
+                    .collect(LinkedHashMap::new, (m, k) -> m.put(k, rr.getParams().getParam(k)), Map::putAll);
+            String key = label + params.values().stream()
+                    .filter(v -> !"N/A".equals(v))
+                    .reduce("", (a, v) -> a + "/" + v);
+            scores.put(key, rr.getPrimaryResult().getScore());
+        }
+
+        out.println();
+        out.println("╔══════════════════════════════════════════════════════════════════════════════════╗");
+        out.println("║                     POSTING INDEX BENCHMARK SUMMARY                             ║");
+        out.println("╚══════════════════════════════════════════════════════════════════════════════════╝");
+
+        // --- Decode ---
+        out.println();
+        out.println("── Decode Throughput (ops/s, higher=better) ──────────────────────────────────────");
+        out.printf("  %-8s", "batch");
+        for (String bw : new String[]{"1", "8", "12", "16", "20", "32"}) out.printf(" %12s", bw + "-bit");
+        out.println();
+        for (String batch : new String[]{"64", "256", "1024"}) {
+            out.printf("  %-8s", batch);
+            for (String bw : new String[]{"1", "8", "12", "16", "20", "32"}) {
+                Double v = scores.get("decode/" + batch + "/" + bw);
+                out.printf(" %,12.0f", v != null ? v : 0);
+            }
+            out.println();
+        }
+
+        // --- Index Comparison ---
+        out.println();
+        out.println("── Index Comparison: Posting vs Legacy (ops/s, higher=better) ────────────────────");
+        String[] scenarios = {"S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"};
+        for (String bench : new String[]{"indexPointRead", "indexScanRead", "indexRangeRead"}) {
+            out.printf("  %s:%n", bench);
+            out.printf("  %-6s %10s %10s %8s%n", "", "LEGACY", "POSTING", "ratio");
+            for (String s : scenarios) {
+                Double leg = scores.get(bench + "/LEGACY/" + s);
+                Double post = scores.get(bench + "/POSTING/" + s);
+                if (leg != null && post != null) {
+                    String ratio = String.format("%.2fx", post / leg);
+                    String marker = post < leg ? " ◄" : "";
+                    out.printf("  %-6s %,10.0f %,10.0f %8s%s%n", s, leg, post, ratio, marker);
+                }
+            }
+            out.println();
+        }
+
+        // --- Sidecar ---
+        out.println("── Sidecar Compression (ops/s, higher=better) ────────────────────────────────────");
+        out.printf("  %-8s %10s %10s %8s%n", "type", "baseline", "covering", "ratio");
+        for (String t : new String[]{"DOUBLE", "FLOAT", "LONG", "INT"}) {
+            Double base = scores.get("sidecarRead/" + t + "/baseline");
+            Double cov = scores.get("sidecarRead/" + t + "/covering");
+            if (base != null && cov != null) {
+                out.printf("  %-8s %,10.0f %,10.0f %7.2fx%n", t, base, cov, cov / base);
+            }
+        }
+
+        // --- SQL Queries ---
+        out.println();
+        out.println("── SQL Queries (ops/s, higher=better) ────────────────────────────────────────────");
+        String[][] sqlGroups = {
+                {"Point lookup", "covering_where", "non_covering_where"},
+                {"Aggregation", "covering_agg", "covering_sum", "covering_count"},
+                {"Filter", "residual_filter", "non_covering_filter", "no_index_filter"},
+                {"Filter IN-list", "residual_filter_in", "non_covering_filter_in"},
+                {"VARCHAR/FSST", "varchar_fsst", "varchar_non_covering", "varchar_in_covering"},
+                {"O3", "o3_covering", "o3_non_covering", "o3_distinct"},
+                {"Misc", "latest_on", "in_list", "wide_table"},
+                {"Bulk throughput", "bulk_covering", "bulk_non_covering"},
+        };
+        for (String[] group : sqlGroups) {
+            out.printf("  %s:%n", group[0]);
+            for (int i = 1; i < group.length; i++) {
+                Double v = scores.get("sqlQuery/" + group[i]);
+                if (v != null) {
+                    out.printf("    %-28s %,12.0f ops/s%n", group[i], v);
+                }
+            }
+        }
+
+        // --- Write ---
+        out.println();
+        out.println("── Write Overhead (ops/s, higher=better) ─────────────────────────────────────────");
+        for (String cfg : new String[]{"no_index", "bitmap", "posting", "posting_covering", "posting_varchar"}) {
+            Double v = scores.get("writeInsert/" + cfg);
+            if (v != null) {
+                out.printf("  %-22s %,10.1f ops/s%n", cfg, v);
+            }
+        }
+
+        // --- Commit ---
+        Double commit = scores.get("commitProfile");
+        if (commit != null) {
+            out.println();
+            out.printf("── Commit Profile (512 keys × 56 commits × 128 v/commit + seal) ──────────────────%n");
+            out.printf("  %-22s %,10.1f ops/s  (%.1f ms/cycle)%n", "full write+seal cycle", commit, 1000.0 / commit);
+        }
+
+        out.println();
     }
 
     private static String resolveKey(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String table) throws Exception {
@@ -700,6 +707,28 @@ public class PostingIndexBenchmarkSuite {
     // Page fault analysis helpers
     // ==================================================================================
 
+    /**
+     * State for per-commit write profiling (market data pattern from IndexScenarioBenchmark).
+     * 512 keys, 56 commits, 128 values per key per commit = 3.67M rows.
+     * Measures the full add→commit→seal cycle cost.
+     */
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class CommitState {
+        static final int COMMITS = 56;
+        static final int KEYS = 512;
+        static final int VALUES_PER_COMMIT = 128;
+
+        CairoConfiguration config;
+
+        @Setup(Level.Trial)
+        public void setup() {
+            String tmpDir = System.getProperty("java.io.tmpdir");
+            config = new DefaultCairoConfiguration(tmpDir);
+        }
+    }
+
     @State(Scope.Benchmark)
     @BenchmarkMode(Mode.AverageTime)
     @OutputTimeUnit(TimeUnit.NANOSECONDS)
@@ -783,8 +812,6 @@ public class PostingIndexBenchmarkSuite {
                 }
                 case "S3" -> { // streaming handled inline
                     keyCount = 10_000;
-                    commitInterval = -1;
-                    keys = null;
                     setupStreaming();
                     return;
                 }
@@ -1140,11 +1167,13 @@ public class PostingIndexBenchmarkSuite {
                 case "non_covering_filter" -> "SELECT price FROM bench_nc WHERE sym = '" + ncKey + "' AND price > 500";
                 case "no_index_filter" -> "SELECT price FROM bench_noidx WHERE sym = '" + niKey + "' AND price > 500";
                 case "residual_filter_in" -> "SELECT price FROM bench WHERE sym IN (" + tenKeys + ") AND price > 500";
-                case "non_covering_filter_in" -> "SELECT price FROM bench_nc WHERE sym IN (" + tenNcKeys + ") AND price > 500";
+                case "non_covering_filter_in" ->
+                        "SELECT price FROM bench_nc WHERE sym IN (" + tenNcKeys + ") AND price > 500";
                 // VARCHAR/FSST variants
                 case "varchar_fsst" -> "SELECT name, price FROM vchar WHERE sym = '" + vcharKey + "'";
                 case "varchar_non_covering" -> "SELECT ts, name, price FROM vchar WHERE sym = '" + vcharKey + "'";
-                case "varchar_in_covering" -> "SELECT name, price FROM vchar WHERE sym IN (" + resolveNKeys(compiler, ctx, "vchar", 5) + ")";
+                case "varchar_in_covering" ->
+                        "SELECT name, price FROM vchar WHERE sym IN (" + resolveNKeys(compiler, ctx, "vchar", 5) + ")";
                 // Wide table, O3, non-covering baseline
                 case "wide_table" -> "SELECT c1, c2 FROM wide WHERE sym = '" + wideKey + "'";
                 case "o3_covering" -> "SELECT price FROM o3bench WHERE sym = '" + o3Key + "'";
@@ -1220,28 +1249,6 @@ public class PostingIndexBenchmarkSuite {
             Misc.free(compiler);
             Misc.free(engine);
             deleteDirRecursive(tmpDir.toFile());
-        }
-    }
-
-    /**
-     * State for per-commit write profiling (market data pattern from IndexScenarioBenchmark).
-     * 512 keys, 56 commits, 128 values per key per commit = 3.67M rows.
-     * Measures the full add→commit→seal cycle cost.
-     */
-    @State(Scope.Benchmark)
-    @BenchmarkMode(Mode.SingleShotTime)
-    @OutputTimeUnit(TimeUnit.MILLISECONDS)
-    public static class CommitState {
-        static final int COMMITS = 56;
-        static final int KEYS = 512;
-        static final int VALUES_PER_COMMIT = 128;
-
-        CairoConfiguration config;
-
-        @Setup(Level.Trial)
-        public void setup() {
-            String tmpDir = System.getProperty("java.io.tmpdir");
-            config = new DefaultCairoConfiguration(tmpDir);
         }
     }
 }

@@ -48,6 +48,19 @@ public interface BitmapIndexReader extends Closeable {
     default void close() {
     }
 
+    /**
+     * Bulk-marks all keys present in this partition into the bit set.
+     * Walks dense generation strides sequentially (one pass, optimal page access).
+     * Returns the number of newly found keys.
+     * For bitmap indexes this is a no-op returning -1 (caller uses getCursor fallback).
+     *
+     * @param foundKeys bit set indexed by index key (0 = NULL, 1..N = symbol keys)
+     * @return number of keys newly marked as found, or -1 if not supported
+     */
+    default int collectDistinctKeys(io.questdb.std.BitSet foundKeys) {
+        return -1;
+    }
+
     long getColumnTop();
 
     long getColumnTxn();
@@ -95,17 +108,4 @@ public interface BitmapIndexReader extends Closeable {
     );
 
     void reloadConditionally();
-
-    /**
-     * Bulk-marks all keys present in this partition into the bit set.
-     * Walks dense generation strides sequentially (one pass, optimal page access).
-     * Returns the number of newly found keys.
-     * For bitmap indexes this is a no-op returning -1 (caller uses getCursor fallback).
-     *
-     * @param foundKeys   bit set indexed by index key (0 = NULL, 1..N = symbol keys)
-     * @return number of keys newly marked as found, or -1 if not supported
-     */
-    default int collectDistinctKeys(io.questdb.std.BitSet foundKeys) {
-        return -1;
-    }
 }

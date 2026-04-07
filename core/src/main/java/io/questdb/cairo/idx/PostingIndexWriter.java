@@ -39,18 +39,18 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Numbers;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
-import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.idx.PostingIndexUtils.*;
 
@@ -61,71 +61,69 @@ import static io.questdb.cairo.idx.PostingIndexUtils.*;
  * No symbol table needed — encoding is purely arithmetic.
  */
 public class PostingIndexWriter implements IndexWriter {
+    // Minimum raw data size to attempt FSST compression (below this, overhead > savings)
+    private static final int FSST_MIN_RAW_SIZE = 4096;
     private static final int INITIAL_KEY_CAPACITY = 64;
-    private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
     private static final Log LOG = LogFactory.getLog(PostingIndexWriter.class);
-
+    private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
+    private static final int PENDING_SLOT_CAPACITY = 8;
     private final double alignedBitWidthThreshold;
     private final CairoConfiguration configuration;
-    private final MemoryMARW keyMem = Vm.getCMARWInstance();
-    private final MemoryMARW valueMem = Vm.getCMARWInstance();
-    private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
-
     private final PostingIndexUtils.DecodeContext decodeCtx = new PostingIndexUtils.DecodeContext();
     private final PostingIndexUtils.EncodeContext encodeCtx = new PostingIndexUtils.EncodeContext();
     private final FilesFacade ff;
+    private final MemoryMARW keyMem = Vm.getCMARWInstance();
+    private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
     private final int[] strideBpKeySizes = new int[PostingIndexUtils.DENSE_STRIDE];
     private final int[] strideKeyCounts = new int[PostingIndexUtils.DENSE_STRIDE];
     private final long[] strideKeyOffsets = new long[PostingIndexUtils.DENSE_STRIDE];
-
-    private static final int PENDING_SLOT_CAPACITY = 8;
+    private final MemoryMARW valueMem = Vm.getCMARWInstance();
     private int activeKeyCount;
     private int[] activeKeyIds = new int[INITIAL_KEY_CAPACITY];
     private long activePageOffset;
     private int blockCapacity;
     private long columnNameTxn;
-    private long sidecarTxn; // txn for sidecar file naming (.pk's txn, before VALUE_FILE_TXN override)
-    private boolean hasSealBumpedTxn;
-    private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     private int coverCount;
-    // O3 addr-based covering: caller-provided native memory addresses
-    private long[] coveredColumnAddrs;
-    // Name-based covering: writer opens its own RO mmaps from file paths.
-    // coveredPartitionPath is the partition directory at configureCovering time,
-    // which may differ from the writer's current partitionPath.
-    private String coveredPartitionPath;
-    private String[] coveredColumnNames;
-    private long[] coveredColumnNameTxns;
+    private long[] coveredAuxReadAddrs;
+    private long[] coveredAuxReadSizes;
     // RO mmaps owned by the writer (opened from coveredColumnNames + partitionPath).
     // size > 0 means writer-owned; size == 0 means addr-based (O3, not owned).
     private long[] coveredColReadAddrs;
     private long[] coveredColReadSizes;
-    private long[] coveredAuxReadAddrs;
-    private long[] coveredAuxReadSizes;
+    // O3 addr-based covering: caller-provided native memory addresses
+    private long[] coveredColumnAddrs;
     private int[] coveredColumnIndices;
+    private long[] coveredColumnNameTxns;
+    private String[] coveredColumnNames;
     private int[] coveredColumnShifts;
     private long[] coveredColumnTops;
     private int[] coveredColumnTypes;
-    private int timestampColumnIndex = -1;
+    // Name-based covering: writer opens its own RO mmaps from file paths.
+    // coveredPartitionPath is the partition directory at configureCovering time,
+    // which may differ from the writer's current partitionPath.
+    private String coveredPartitionPath;
     private long flushHeaderBuf;
     private int flushHeaderBufCapacity;
     private int genCount;
     private boolean hasPendingData;
     private boolean hasSpillData;
+    private String indexName;
     private int keyCapacity;
     private int keyCount;
-    private String indexName;
     private long packedResidualsAddr;
     private int packedResidualsCapacity;
     private String partitionPath;
     private long pendingCountsAddr;
     private long pendingValuesAddr;
-    private MemoryMARW[] sidecarMems;
+    private MemoryMARW sealTarget; // points to sealValueMem during seal, valueMem during flush
     private MemoryMARW sidecarInfoMem;
+    private MemoryMARW[] sidecarMems;
+    private long sidecarTxn; // txn for sidecar file naming (.pk's txn, before VALUE_FILE_TXN override)
     private int spillArraysCapacity;
     private long spillKeyAddrsAddr;
     private long spillKeyCapacitiesAddr;
     private long spillKeyCountsAddr;
+    private int timestampColumnIndex = -1;
     private long unpackBatchAddr;
     private int unpackBatchCapacity;
     private long valueMemSize;
@@ -172,17 +170,6 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 1L);
 
         // Page B stays zeroed (seq=0), so Page A is the valid page.
-    }
-
-    static int maybeAlignBitWidth(int bitWidth, double threshold) {
-        if (bitWidth <= 0 || bitWidth > 32) return bitWidth;
-        int aligned;
-        if (bitWidth <= 8) aligned = 8;
-        else if (bitWidth <= 16) aligned = 16;
-        else aligned = 32;
-        if (aligned == bitWidth) return bitWidth;
-        double overhead = (double) (aligned - bitWidth) / bitWidth;
-        return overhead <= threshold ? aligned : bitWidth;
     }
 
     @Override
@@ -236,6 +223,20 @@ public class PostingIndexWriter implements IndexWriter {
             keyCount = key + 1;
         }
         hasPendingData = true;
+    }
+
+    @Override
+    public void clear() {
+        close();
+    }
+
+    public void clearCovering() {
+        unmapCoveredColumnReads();
+        this.coveredColumnAddrs = null;
+        this.coveredPartitionPath = null;
+        this.coveredColumnNames = null;
+        this.coveredColumnNameTxns = null;
+        this.coverCount = 0;
     }
 
     @Override
@@ -294,8 +295,37 @@ public class PostingIndexWriter implements IndexWriter {
                     hasPendingData = false;
                     activeKeyCount = 0;
                     coverCount = 0;
-                    hasSealBumpedTxn = false;
                     sealTarget = null;
+                }
+            }
+        }
+    }
+
+    @Override
+    public void closeNoTruncate() {
+        try {
+            seal();
+            compactValueFile();
+        } finally {
+            try {
+                if (keyMem.isOpen()) {
+                    keyMem.close(false);
+                }
+            } finally {
+                try {
+                    Misc.free(sealValueMem);
+                    if (valueMem.isOpen()) {
+                        valueMem.close(false);
+                    }
+                } finally {
+                    closeSidecarMems();
+                    freeNativeBuffers();
+                    keyCount = 0;
+                    valueMemSize = 0;
+                    genCount = 0;
+                    hasPendingData = false;
+                    activeKeyCount = 0;
+                    coverCount = 0;
                 }
             }
         }
@@ -307,49 +337,6 @@ public class PostingIndexWriter implements IndexWriter {
         if (configuration.getCommitMode() != CommitMode.NOSYNC) {
             sync(configuration.getCommitMode() == CommitMode.ASYNC);
         }
-    }
-
-    /**
-     * Close all resources without sealing. Used when the index is being dropped —
-     * sealing would create new files that become orphaned.
-     */
-    public void discard() {
-        try {
-            if (keyMem.isOpen()) {
-                try {
-                    keyMem.setSize(KEY_FILE_RESERVED);
-                } finally {
-                    Misc.free(keyMem);
-                }
-            }
-        } finally {
-            try {
-                Misc.free(sealValueMem);
-                if (valueMem.isOpen()) {
-                    valueMem.close(false, (byte) 0);
-                }
-            } finally {
-                closeSidecarMems();
-                freeNativeBuffers();
-                keyCount = 0;
-                valueMemSize = 0;
-                genCount = 0;
-                hasPendingData = false;
-                activeKeyCount = 0;
-                coverCount = 0;
-                hasSealBumpedTxn = false;
-                sealTarget = null;
-            }
-        }
-    }
-
-    public void clearCovering() {
-        unmapCoveredColumnReads();
-        this.coveredColumnAddrs = null;
-        this.coveredPartitionPath = null;
-        this.coveredColumnNames = null;
-        this.coveredColumnNameTxns = null;
-        this.coverCount = 0;
     }
 
     /**
@@ -406,1662 +393,40 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Seal the index: decode all generations, merge, re-encode into a single generation.
-     * Uses incremental seal (dirty-stride) when gen 0 is dense and remaining gens are sparse.
+     * Close all resources without sealing. Used when the index is being dropped —
+     * sealing would create new files that become orphaned.
      */
-    /**
-     * Rebuilds covering sidecar files for an already-sealed posting index.
-     * Called after O3 merge, which rebuilds the posting index but doesn't
-     * write sidecar files (the O3 pool writer has no covering configuration).
-     */
-    public void rebuildSidecars() {
-        if (coverCount <= 0 || genCount == 0 || keyCount == 0) {
-            return;
-        }
-        // Open sidecar files and seal to write sidecar data.
-        // This handles both sparse gens (after O3 commit) and dense gens
-        // (after a prior seal without covering configuration).
-        if (sidecarMems != null) {
-            closeSidecarMems();
-        }
-        if (partitionPath != null) {
-            try (Path p = new Path().of(partitionPath)) {
-                openSidecarFiles(p, indexName, sidecarTxn);
-            }
-        }
-        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
-        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-        if (gen0KeyCount >= 0) {
-            // Already dense — just rewrite sidecars
-            sealFull();
-        } else {
-            // Sparse — full seal converts to dense + writes sidecars
-            seal();
-        }
-    }
-
-    public void seal() {
-        if (!keyMem.isOpen()) {
-            return;
-        }
-        flushAllPending();
-
-        if (genCount == 0 || keyCount == 0) {
-            return;
-        }
-
-        // Single sparse generation: seal to convert to stride-indexed dense format
-        // (enables flat mode compression which can be significantly smaller)
-        if (genCount == 1) {
-            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
-            int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            if (gen0KeyCount >= 0) {
-                // Already dense — nothing to do (sidecar files from previous seal are valid)
-                return;
-            }
-        }
-
-        // Buffer old sidecar data from disk before openSidecarFiles truncates them.
-        // Needed for incremental seal to copy clean stride sidecar blocks.
-        long[] savedSidecarBufs = null;
-        long[] savedSidecarSizes = null;
-        if (coverCount > 0 && partitionPath != null) {
-            try (Path p = new Path().of(partitionPath)) {
-                int pp = p.size();
-                savedSidecarBufs = new long[coverCount];
-                savedSidecarSizes = new long[coverCount];
-                for (int c = 0; c < coverCount; c++) {
-                    LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, sidecarTxn, c);
-                    if (ff.exists(pcFile)) {
-                        long fileLen = ff.length(pcFile);
-                        if (fileLen > 0) {
-                            long fd = ff.openRO(pcFile);
-                            if (fd >= 0) {
-                                try {
-                                    long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-                                    if (mapped > 0) {
-                                        try {
-                                            savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
-                                            savedSidecarSizes[c] = fileLen;
-                                            Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
-                                        } finally {
-                                            ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
-                                        }
-                                    }
-                                } finally {
-                                    ff.close(fd);
-                                }
-                            }
-                        }
-                    }
-                    p.trimTo(pp);
-                }
-            }
-            if (sidecarMems != null) {
-                closeSidecarMems();
-            }
-        }
-
+    public void discard() {
         try {
-            // Open sidecar files (truncates to 0 and starts fresh)
-            if (coverCount > 0 && sidecarMems == null && partitionPath != null) {
-                try (Path p = new Path().of(partitionPath)) {
-                    openSidecarFiles(p, indexName, sidecarTxn);
-                }
-            }
-
-            if (genCount == 1) {
-                sealFull();
-                return;
-            }
-
-            // Check if incremental seal is possible:
-            // gen 0 must be dense, and all subsequent gens must be sparse
-            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
-            int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            boolean isIncrementalCandidate = gen0KeyCount >= 0;
-
-            if (isIncrementalCandidate) {
-                for (int g = 1; g < genCount; g++) {
-                    long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-                    int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-                    if (gkc >= 0) {
-                        isIncrementalCandidate = false;
-                        break;
-                    }
-                }
-            }
-
-            if (isIncrementalCandidate && gen0KeyCount == keyCount) {
-                sealIncremental(savedSidecarBufs, savedSidecarSizes);
-                savedSidecarBufs = null; // ownership transferred
-            } else {
-                sealFull();
-            }
-        } finally {
-            if (savedSidecarBufs != null) {
-                for (int c = 0; c < savedSidecarBufs.length; c++) {
-                    if (savedSidecarBufs[c] != 0) {
-                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Incremental seal: only re-encode dirty strides (those touched by sparse gens 1..N).
-     * Clean strides are copied verbatim from the existing dense gen 0.
-     */
-    private void sealIncremental(long[] savedSidecarBufs, long[] savedSidecarSizes) {
-        int sc = PostingIndexUtils.strideCount(keyCount);
-        long dirtyStridesAddr = Unsafe.malloc(sc, MemoryTag.NATIVE_INDEX_READER);
-        int dirtyCount;
-        try {
-            Unsafe.getUnsafe().setMemory(dirtyStridesAddr, sc, (byte) 0);
-            dirtyCount = 0;
-            for (int g = 1; g < genCount; g++) {
-                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-                int activeKeyCount = -genKeyCount;
-                long genAddr = valueMem.addressOf(genFileOffset);
-
-                for (int i = 0; i < activeKeyCount; i++) {
-                    int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
-                    int stride = key / PostingIndexUtils.DENSE_STRIDE;
-                    if (stride < sc && Unsafe.getUnsafe().getByte(dirtyStridesAddr + stride) == 0) {
-                        Unsafe.getUnsafe().putByte(dirtyStridesAddr + stride, (byte) 1);
-                        dirtyCount++;
-                    }
-                }
-            }
-        } catch (Throwable t) {
-            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
-            throw t;
-        }
-
-        // If all strides are dirty, fall back to full seal (no savings).
-        // Free savedSidecarBufs since sealFull rebuilds sidecars from scratch.
-        if (dirtyCount == sc) {
-            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
-            if (savedSidecarBufs != null) {
-                for (int c = 0; c < savedSidecarBufs.length; c++) {
-                    if (savedSidecarBufs[c] != 0) {
-                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
-                        savedSidecarBufs[c] = 0;
-                    }
-                }
-            }
-            sealFull();
-            return;
-        }
-
-        // Read gen 0 metadata — do NOT cache gen0Addr here because valueMem
-        // may be remapped (mremap) when the seal loop extends it to write
-        // new stride data. Use gen0FileOffset and recompute the address each
-        // time it's needed.
-        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
-        long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-        long gen0DataSize = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_SIZE);
-        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-        int gen0SiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
-
-        // Allocate output buffers — initialize to 0 so the finally block
-        // can conditionally free only those that were successfully allocated.
-        int siSize = PostingIndexUtils.strideIndexSize(keyCount);
-        int maxPerKey = estimateMaxPerKey(valueMem.addressOf(gen0FileOffset), gen0KeyCount, gen0SiSize);
-        // Scan sparse gens for actual max per-key count — the spill mechanism
-        // can produce counts >> BLOCK_CAPACITY, so BLOCK_CAPACITY * genCount
-        // is not a safe upper bound.
-        int sparseMaxPerKey = 0;
-        for (int g = 1; g < genCount; g++) {
-            long gDirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-            long gFileOffset = keyMem.getLong(gDirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            long gDataSize = keyMem.getLong(gDirOffset + GEN_DIR_OFFSET_SIZE);
-            int gKeyCount = keyMem.getInt(gDirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            if (gKeyCount >= 0 || gDataSize == 0) continue; // dense or empty
-            int activeKeys = -gKeyCount;
-            valueMem.extend(gFileOffset + gDataSize);
-            long gAddr = valueMem.addressOf(gFileOffset);
-            long countsBase = gAddr + (long) activeKeys * Integer.BYTES;
-            for (int i = 0; i < activeKeys; i++) {
-                int c = Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
-                if (c > sparseMaxPerKey) sparseMaxPerKey = c;
-            }
-        }
-        int maxMergedPerKey = maxPerKey + sparseMaxPerKey * (genCount - 1);
-        long perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(Math.max(maxMergedPerKey, PostingIndexUtils.BLOCK_CAPACITY));
-        long maxBPStrideDataSize = PostingIndexUtils.DENSE_STRIDE * perKeyBufSize;
-        int maxHeaderSize = Math.max(
-                PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE),
-                PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE)
-        );
-        long maxPerStride = (long) PostingIndexUtils.DENSE_STRIDE * maxMergedPerKey;
-        long mergedValuesSize = Math.max(maxPerStride, 1024) * Long.BYTES;
-        long copyBufSize = gen0DataSize;
-        long copyBufAllocSize = copyBufSize > 0 ? copyBufSize : 1;
-        int[] bpKeySizes = strideBpKeySizes;
-
-        long strideIndexBuf = 0;
-        long bpTrialBuf = 0;
-        long localHeaderBuf = 0;
-        long mergedValuesAddr = 0;
-        long copyBuf = 0;
-        long[] incrSidecarSiBufs = null;
-        long incrSidecarBuf = 0;
-        long incrSidecarBufSize = 0;
-        long[] oldSidecarBufs = null;
-        long[] oldSidecarSizes = null;
-
-        try {
-            strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
-            bpTrialBuf = Unsafe.malloc(maxBPStrideDataSize, MemoryTag.NATIVE_INDEX_READER);
-            localHeaderBuf = Unsafe.malloc(maxHeaderSize, MemoryTag.NATIVE_INDEX_READER);
-            mergedValuesAddr = Unsafe.malloc(mergedValuesSize, MemoryTag.NATIVE_INDEX_READER);
-            copyBuf = Unsafe.malloc(copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
-
-            // Pre-allocate seal-path arrays to avoid per-stride allocations
-            int preAllocPerKey = maxMergedPerKey;
-            if (preAllocPerKey > unpackBatchCapacity) {
-                if (unpackBatchAddr != 0) {
-                    Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                unpackBatchCapacity = preAllocPerKey;
-                unpackBatchAddr = Unsafe.malloc((long) preAllocPerKey * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-            int preAllocPerStride = (int) Math.min(maxPerStride, Integer.MAX_VALUE);
-            if (preAllocPerStride > packedResidualsCapacity) {
-                if (packedResidualsAddr != 0) {
-                    Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                packedResidualsCapacity = preAllocPerStride;
-                packedResidualsAddr = Unsafe.malloc((long) preAllocPerStride * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-
-            // Write sealed data to a NEW value file — the old .pv is untouched
-            // so concurrent readers keep their valid mmap.
-            long newTxn = Math.max(1, columnNameTxn + 1);
-            openSealValueFile(newTxn);
-            long sealOffset = 0;
-            sealValueMem.jumpTo(0);
-            // Reserve stride index
-            for (int i = 0; i < siSize; i += Integer.BYTES) {
-                sealValueMem.putInt(0);
-            }
-
-            // Sidecar: use saved old data (buffered in seal() before truncation)
-            if (coverCount > 0 && sidecarMems != null) {
-                incrSidecarSiBufs = new long[coverCount];
-                oldSidecarBufs = savedSidecarBufs;
-                oldSidecarSizes = savedSidecarSizes;
-                for (int c = 0; c < coverCount; c++) {
-                    sidecarMems[c].jumpTo(0);
-                    sidecarMems[c].truncate();
-                    incrSidecarSiBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
-                    for (int i = 0; i < siSize; i += Integer.BYTES) {
-                        sidecarMems[c].putInt(0);
-                    }
-                }
-            }
-
-            for (int s = 0; s < sc; s++) {
-                int strideOff = (int) (sealValueMem.getAppendOffset() - sealOffset - siSize);
-                Unsafe.getUnsafe().putInt(strideIndexBuf + (long) s * Integer.BYTES, strideOff);
-
-                // Recompute gen0Addr each iteration because valueMem writes
-                // (putBlockOfBytes, putInt, etc.) can trigger mremap which
-                // moves the mapping, invalidating cached native addresses.
-                long gen0Addr = valueMem.addressOf(gen0FileOffset);
-
-                if (Unsafe.getUnsafe().getByte(dirtyStridesAddr + s) == 0) {
-                    // Clean stride: copy verbatim from gen 0
-                    copyStrideFromGen0(gen0Addr, gen0KeyCount, gen0SiSize, s, copyBuf, copyBufSize);
-                    // Sidecar: copy old stride block verbatim
-                    if (incrSidecarSiBufs != null && oldSidecarBufs != null) {
-                        int oldSiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
-                        for (int c = 0; c < coverCount; c++) {
-                            Unsafe.getUnsafe().putInt(
-                                    incrSidecarSiBufs[c] + (long) s * Integer.BYTES,
-                                    (int) (sidecarMems[c].getAppendOffset() - siSize));
-                            if (oldSidecarBufs[c] != 0 && oldSidecarSizes[c] > oldSiSize) {
-                                // Read old stride data range from old stride index
-                                int oldStrideOff = Unsafe.getUnsafe().getInt(oldSidecarBufs[c] + (long) s * Integer.BYTES);
-                                int nextStrideOff;
-                                if (s + 1 < sc) {
-                                    nextStrideOff = Unsafe.getUnsafe().getInt(oldSidecarBufs[c] + (long) (s + 1) * Integer.BYTES);
-                                } else {
-                                    nextStrideOff = (int) (oldSidecarSizes[c] - oldSiSize);
-                                }
-                                int strideDataSize = nextStrideOff - oldStrideOff;
-                                if (strideDataSize > 0) {
-                                    long oldStrideDataAddr = oldSidecarBufs[c] + oldSiSize + oldStrideOff;
-                                    sidecarMems[c].putBlockOfBytes(oldStrideDataAddr, strideDataSize);
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Dirty stride: decode from gen 0 + sparse gens, merge, re-encode
-                    int ks = PostingIndexUtils.keysInStride(keyCount, s);
-                    encodeDirtyStride(s, ks, gen0Addr, gen0KeyCount, gen0SiSize,
-                            bpTrialBuf, localHeaderBuf, bpKeySizes, mergedValuesAddr);
-
-                    // Write sidecar data for dirty stride
-                    if (incrSidecarSiBufs != null) {
-                        int totalStrideVals = 0;
-                        for (int j = 0; j < ks; j++) {
-                            totalStrideVals += strideKeyCounts[j];
-                        }
-                        if (totalStrideVals > 0) {
-                            long neededBuf = (long) totalStrideVals * Long.BYTES;
-                            if (neededBuf > incrSidecarBufSize) {
-                                if (incrSidecarBuf != 0) {
-                                    Unsafe.free(incrSidecarBuf, incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                                }
-                                incrSidecarBufSize = neededBuf;
-                                incrSidecarBuf = Unsafe.malloc(incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                            }
-                            for (int c = 0; c < coverCount; c++) {
-                                Unsafe.getUnsafe().putInt(
-                                        incrSidecarSiBufs[c] + (long) s * Integer.BYTES,
-                                        (int) (sidecarMems[c].getAppendOffset() - siSize));
-                            }
-                            writeSidecarStrideData(ks, strideKeyCounts, strideKeyOffsets,
-                                    mergedValuesAddr, incrSidecarBuf, incrSidecarBufSize);
-                        } else {
-                            for (int c = 0; c < coverCount; c++) {
-                                Unsafe.getUnsafe().putInt(
-                                        incrSidecarSiBufs[c] + (long) s * Integer.BYTES,
-                                        (int) (sidecarMems[c].getAppendOffset() - siSize));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Sentinel
-            int totalStrideBlocksSize = (int) (sealValueMem.getAppendOffset() - sealOffset - siSize);
-            Unsafe.getUnsafe().putInt(strideIndexBuf + (long) sc * Integer.BYTES, totalStrideBlocksSize);
-
-            // Copy stride index
-            long strideIndexAddr = sealValueMem.addressOf(sealOffset);
-            Unsafe.getUnsafe().copyMemory(strideIndexBuf, strideIndexAddr, siSize);
-
-            valueMemSize = sealValueMem.getAppendOffset();
-
-            // Finalize sidecar stride indices for incremental seal
-            if (incrSidecarSiBufs != null) {
-                for (int c = 0; c < coverCount; c++) {
-                    Unsafe.getUnsafe().putInt(
-                            incrSidecarSiBufs[c] + (long) sc * Integer.BYTES,
-                            (int) (sidecarMems[c].getAppendOffset() - siSize));
-                    long sidecarIdxAddr = sidecarMems[c].addressOf(0);
-                    Unsafe.getUnsafe().copyMemory(incrSidecarSiBufs[c], sidecarIdxAddr, siSize);
-                }
-            }
-
-            genCount = 1;
-            // Sync sealed file, switch writer to it, then publish metadata.
-            // columnNameTxn must be set BEFORE writeMetadataPage so the
-            // VALUE_FILE_TXN field in the metadata page reflects the new file.
-            sealValueMem.sync(false);
-            switchToSealedValueFile(newTxn);
-            Unsafe.getUnsafe().storeFence();
-            writeMetadataPage(genCount,
-                    keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
-                    0, sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
-        } finally {
-            if (copyBuf != 0) {
-                Unsafe.free(copyBuf, copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
-            }
-            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
-            if (strideIndexBuf != 0) {
-                Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (bpTrialBuf != 0) {
-                Unsafe.free(bpTrialBuf, maxBPStrideDataSize, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (localHeaderBuf != 0) {
-                Unsafe.free(localHeaderBuf, maxHeaderSize, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (mergedValuesAddr != 0) {
-                Unsafe.free(mergedValuesAddr, mergedValuesSize, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (incrSidecarBuf != 0) {
-                Unsafe.free(incrSidecarBuf, incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (incrSidecarSiBufs != null) {
-                for (int c = 0; c < coverCount; c++) {
-                    if (incrSidecarSiBufs[c] != 0) {
-                        Unsafe.free(incrSidecarSiBufs[c], siSize, MemoryTag.NATIVE_INDEX_READER);
-                    }
-                }
-            }
-            if (oldSidecarBufs != null) {
-                for (int c = 0; c < coverCount; c++) {
-                    if (oldSidecarBufs[c] != 0) {
-                        Unsafe.free(oldSidecarBufs[c], oldSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
-                    }
-                }
-            }
-        }
-    }
-
-    private int estimateMaxPerKey(long gen0Addr, int gen0KeyCount, int gen0SiSize) {
-        int max = 0;
-        int sc = PostingIndexUtils.strideCount(gen0KeyCount);
-        for (int s = 0; s < sc; s++) {
-            int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) s * Integer.BYTES);
-            long strideAddr = gen0Addr + gen0SiSize + strideOff;
-            int ks = PostingIndexUtils.keysInStride(gen0KeyCount, s);
-            byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
-                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-                for (int j = 0; j < ks; j++) {
-                    int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
-                            - Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
-                    if (count > max) max = count;
-                }
-            } else {
-                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-                for (int j = 0; j < ks; j++) {
-                    int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
-                    if (count > max) max = count;
-                }
-            }
-        }
-        return max;
-    }
-
-    private void copyStrideFromGen0(long gen0Addr, int gen0KeyCount, int gen0SiSize, int stride,
-                                     long copyBuf, long copyBufSize) {
-        // If this stride existed in gen 0, copy it; otherwise write empty
-        if (stride >= PostingIndexUtils.strideCount(gen0KeyCount)) {
-            // Stride didn't exist in gen 0 — write empty delta stride
-            int ks = PostingIndexUtils.keysInStride(keyCount, stride);
-            int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-            long headerFilePos = sealTarget.getAppendOffset();
-            for (int i = 0; i < deltaHeaderSize; i += Integer.BYTES) {
-                sealTarget.putInt(0);
-            }
-            // Zero header = delta mode, all counts 0, all offsets 0
-            long headerAddr = sealTarget.addressOf(headerFilePos);
-            Unsafe.getUnsafe().setMemory(headerAddr, deltaHeaderSize, (byte) 0);
-            return;
-        }
-
-        int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) stride * Integer.BYTES);
-        int nextStrideOff;
-        if (stride + 1 < PostingIndexUtils.strideCount(gen0KeyCount)) {
-            nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) (stride + 1) * Integer.BYTES);
-        } else {
-            // Last stride — get sentinel
-            nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) PostingIndexUtils.strideCount(gen0KeyCount) * Integer.BYTES);
-        }
-        int strideSize = nextStrideOff - strideOff;
-        if (strideSize <= 0) {
-            return;
-        }
-
-        long srcAddr = gen0Addr + gen0SiSize + strideOff;
-        // Copy via temp buffer because srcAddr may point into valueMem's mapping.
-        if (strideSize <= copyBufSize) {
-            Unsafe.getUnsafe().copyMemory(srcAddr, copyBuf, strideSize);
-            sealTarget.putBlockOfBytes(copyBuf, strideSize);
-        } else {
-            long tmpBuf = Unsafe.malloc(strideSize, MemoryTag.NATIVE_INDEX_READER);
-            try {
-                Unsafe.getUnsafe().copyMemory(srcAddr, tmpBuf, strideSize);
-                sealTarget.putBlockOfBytes(tmpBuf, strideSize);
-            } finally {
-                Unsafe.free(tmpBuf, strideSize, MemoryTag.NATIVE_INDEX_READER);
-            }
-        }
-    }
-
-    private void encodeDirtyStride(int s, int ks, long gen0Addr, int gen0KeyCount, int gen0SiSize,
-                                    long bpTrialBuf, long localHeaderBuf,
-                                    int[] bpKeySizes, long mergedValuesAddr) {
-        // For each key in this stride, decode from gen 0 + all sparse gens, merge.
-        // Store all merged values contiguously in mergedValuesAddr with per-key offsets
-        // so writePackedStride can read from the pre-merged buffer without re-merging.
-        int[] keyCounts = strideKeyCounts;
-        long[] keyOffsets = strideKeyOffsets;
-
-        // Merge all keys' values contiguously into mergedValuesAddr
-        long cumOffset = 0;
-        for (int j = 0; j < ks; j++) {
-            int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-            keyOffsets[j] = cumOffset;
-            int mergedCount = mergeKeyValues(key, gen0Addr, gen0KeyCount, gen0SiSize,
-                    mergedValuesAddr + (long) cumOffset * Long.BYTES);
-            keyCounts[j] = mergedCount;
-            cumOffset += mergedCount;
-        }
-
-        // Trial delta encode from the pre-merged buffer (encode directly from native memory)
-        int bpDataTotal = 0;
-        for (int j = 0; j < ks; j++) {
-            int count = keyCounts[j];
-            if (count > 0) {
-                long keyAddr = mergedValuesAddr + (long) keyOffsets[j] * Long.BYTES;
-                encodeCtx.ensureCapacity(count);
-                bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx);
-            } else {
-                bpKeySizes[j] = 0;
-            }
-            bpDataTotal += bpKeySizes[j];
-        }
-
-        // Compute per-stride base value (min across all values in stride)
-        int totalStrideValues = (int) cumOffset;
-        long strideMinValue = Long.MAX_VALUE;
-        long strideMaxValue = Long.MIN_VALUE;
-        for (int i = 0; i < totalStrideValues; i++) {
-            long val = Unsafe.getUnsafe().getLong(mergedValuesAddr + (long) i * Long.BYTES);
-            if (val < strideMinValue) strideMinValue = val;
-            if (val > strideMaxValue) strideMaxValue = val;
-        }
-        if (totalStrideValues == 0) {
-            strideMinValue = 0;
-            strideMaxValue = 0;
-        }
-        long strideRange = strideMaxValue - strideMinValue;
-        int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
-        int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
-
-        // Compute sizes for all three options: delta, flat-natural, flat-aligned
-        int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-        int deltaSize = deltaHeaderSize + bpDataTotal;
-
-        int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-        int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-        int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
-
-        // Choose: prefer aligned flat (AVX2-friendly) if it still beats delta,
-        // otherwise natural flat if it beats delta, otherwise delta.
-        int localBitWidth;
-        int flatDataSize;
-        int flatSize;
-        if (alignedBitWidth != naturalBitWidth) {
-            int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
-            int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
-            if (alignedFlatSize < deltaSize) {
-                // Aligned flat beats delta — use it for AVX2 decode
-                localBitWidth = alignedBitWidth;
-                flatDataSize = alignedFlatDataSize;
-                flatSize = alignedFlatSize;
-            } else if (naturalFlatSize < deltaSize) {
-                // Aligned too big, but natural flat still beats delta
-                localBitWidth = naturalBitWidth;
-                flatDataSize = naturalFlatDataSize;
-                flatSize = naturalFlatSize;
-            } else {
-                localBitWidth = naturalBitWidth;
-                flatDataSize = naturalFlatDataSize;
-                flatSize = naturalFlatSize;
-            }
-        } else {
-            localBitWidth = naturalBitWidth;
-            flatDataSize = naturalFlatDataSize;
-            flatSize = naturalFlatSize;
-        }
-
-        boolean useFlat = flatSize < deltaSize;
-
-        LOG.debug().$("stride mode [s=").$(s)
-                .$(", deltaSize=").$(deltaSize)
-                .$(", flatSize=").$(flatSize)
-                .$(", natBW=").$(naturalBitWidth)
-                .$(", alnBW=").$(localBitWidth)
-                .$(", totalVals=").$(totalStrideValues)
-                .$(", useFlat=").$(useFlat)
-                .$(']').$();
-
-        if (useFlat) {
-            writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue, flatHeaderSize, flatDataSize,
-                    localHeaderBuf, mergedValuesAddr);
-        } else {
-            writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes, bpDataTotal, localHeaderBuf);
-        }
-    }
-
-    private int mergeKeyValues(int key, long gen0Addr, int gen0KeyCount, int gen0SiSize, long destAddr) {
-        int totalCount = 0;
-
-        // Decode from gen 0 (dense)
-        if (key < gen0KeyCount) {
-            int stride = key / PostingIndexUtils.DENSE_STRIDE;
-            int localKey = key % PostingIndexUtils.DENSE_STRIDE;
-            int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) stride * Integer.BYTES);
-            long strideAddr = gen0Addr + gen0SiSize + strideOff;
-            int ks = PostingIndexUtils.keysInStride(gen0KeyCount, stride);
-            byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-
-            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
-                int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
-                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-                int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
-                int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startIdx;
-                if (count > 0) {
-                    int flatHdrSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-                    long flatDataAddr = strideAddr + flatHdrSize;
-                    if (count > unpackBatchCapacity) {
-                        int newCap = Math.max(count, unpackBatchCapacity * 2);
-                        if (unpackBatchAddr != 0) {
-                            Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                        }
-                        unpackBatchCapacity = newCap;
-                        unpackBatchAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    }
-                    BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, unpackBatchAddr);
-                    for (int i = 0; i < count; i++) {
-                        Unsafe.getUnsafe().putLong(destAddr + (long) totalCount * Long.BYTES,
-                                Unsafe.getUnsafe().getLong(unpackBatchAddr + (long) i * Long.BYTES));
-                        totalCount++;
-                    }
-                }
-            } else {
-                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-                int count = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
-                if (count > 0) {
-                    long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
-                    int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
-                    int deltaHdrSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-                    long encodedAddr = strideAddr + deltaHdrSize + dataOffset;
-                    PostingIndexUtils.decodeKeyToNative(encodedAddr, count, destAddr + (long) totalCount * Long.BYTES, decodeCtx);
-                    totalCount += count;
-                }
-            }
-        }
-
-        // Decode from sparse gens 1..N
-        for (int g = 1; g < genCount; g++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
-            long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-            int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            int activeKeyCount = -genKeyCount;
-            long genAddr = valueMem.addressOf(genFileOffset);
-
-            int idx = PostingIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
-            if (idx < 0) continue;
-
-            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
-            long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
-            long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
-            int count = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
-            if (count == 0) continue;
-
-            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
-            long encodedAddr = genAddr + headerSize + dataOffset;
-            PostingIndexUtils.decodeKeyToNative(encodedAddr, count, destAddr + (long) totalCount * Long.BYTES, decodeCtx);
-            totalCount += count;
-        }
-
-        return totalCount;
-    }
-
-    private void writePackedStride(int ks, int[] keyCounts, long[] keyOffsets,
-                                    int localBitWidth, long strideMinValue, int flatHeaderSize, int flatDataSize,
-                                    long localHeaderBuf, long mergedValuesAddr) {
-        long headerFilePos = sealTarget.getAppendOffset();
-        for (int i = 0; i < flatHeaderSize; i += Integer.BYTES) {
-            sealTarget.putInt(0);
-        }
-
-        Unsafe.getUnsafe().setMemory(localHeaderBuf, flatHeaderSize, (byte) 0);
-        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_FLAT);
-        Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) localBitWidth);
-        Unsafe.getUnsafe().putLong(localHeaderBuf + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET, strideMinValue);
-        int cumCount = 0;
-        for (int j = 0; j <= ks; j++) {
-            Unsafe.getUnsafe().putInt(
-                    localHeaderBuf + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET + (long) j * Integer.BYTES,
-                    cumCount);
-            if (j < ks) {
-                cumCount += keyCounts[j];
-            }
-        }
-
-        long packedBuf = Unsafe.malloc(flatDataSize > 0 ? flatDataSize : 1, MemoryTag.NATIVE_INDEX_READER);
-        try {
-            if (flatDataSize > 0) {
-                Unsafe.getUnsafe().setMemory(packedBuf, flatDataSize, (byte) 0);
-            }
-            // Collect all residuals contiguously, then batch-pack
-            int totalValues = 0;
-            for (int j = 0; j < ks; j++) {
-                totalValues += keyCounts[j];
-            }
-            if (totalValues > 0 && localBitWidth > 0) {
-                if (totalValues > packedResidualsCapacity) {
-                    int newCap = Math.max(totalValues, packedResidualsCapacity * 2);
-                    if (packedResidualsAddr != 0) {
-                        Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    }
-                    packedResidualsCapacity = newCap;
-                    packedResidualsAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                int idx = 0;
-                for (int j = 0; j < ks; j++) {
-                    int count = keyCounts[j];
-                    long keyAddr = mergedValuesAddr + keyOffsets[j] * Long.BYTES;
-                    for (int i = 0; i < count; i++) {
-                        Unsafe.getUnsafe().putLong(packedResidualsAddr + (long) idx * Long.BYTES,
-                                Unsafe.getUnsafe().getLong(keyAddr + (long) i * Long.BYTES) - strideMinValue);
-                        idx++;
-                    }
-                }
-                BitpackUtils.packValues(packedResidualsAddr, totalValues, 0, localBitWidth, packedBuf);
-            }
-
-            sealTarget.putBlockOfBytes(packedBuf, flatDataSize);
-        } finally {
-            Unsafe.free(packedBuf, flatDataSize > 0 ? flatDataSize : 1, MemoryTag.NATIVE_INDEX_READER);
-        }
-
-        long headerAddr = sealTarget.addressOf(headerFilePos);
-        Unsafe.getUnsafe().copyMemory(localHeaderBuf, headerAddr, flatHeaderSize);
-    }
-
-    private void writeDeltaStride(int ks, int[] keyCounts, int deltaHeaderSize,
-                                long bpTrialBuf, int[] bpKeySizes, int bpDataTotal,
-                                long localHeaderBuf) {
-        long headerFilePos = sealTarget.getAppendOffset();
-        for (int i = 0; i < deltaHeaderSize; i += Integer.BYTES) {
-            sealTarget.putInt(0);
-        }
-
-        Unsafe.getUnsafe().setMemory(localHeaderBuf, deltaHeaderSize, (byte) 0);
-        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_DELTA);
-        long countsBase = localHeaderBuf + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-        long offsetsBase = countsBase + (long) ks * Integer.BYTES;
-
-        int dataOffset = 0;
-        int bpBufOffset = 0;
-        for (int j = 0; j < ks; j++) {
-            Unsafe.getUnsafe().putInt(countsBase + (long) j * Integer.BYTES, keyCounts[j]);
-            Unsafe.getUnsafe().putInt(offsetsBase + (long) j * Integer.BYTES, dataOffset);
-
-            if (bpKeySizes[j] > 0) {
-                int bytesWritten = bpKeySizes[j];
-                sealTarget.putBlockOfBytes(bpTrialBuf + bpBufOffset, bytesWritten);
-                dataOffset += bytesWritten;
-            }
-            bpBufOffset += bpKeySizes[j];
-        }
-
-        Unsafe.getUnsafe().putInt(offsetsBase + (long) ks * Integer.BYTES, dataOffset);
-
-        long headerAddr = sealTarget.addressOf(headerFilePos);
-        Unsafe.getUnsafe().copyMemory(localHeaderBuf, headerAddr, deltaHeaderSize);
-    }
-
-    private void switchToSealedValueFile(long newTxn) {
-        // Close old .pv (leave on disk for concurrent readers)
-        // Reopen valueMem on the new sealed .pv file
-        long appendOffset = sealValueMem.getAppendOffset();
-        Misc.free(sealValueMem); // release the seal mapping
-        // Now reopen valueMem on the new file
-        if (partitionPath != null) {
-            Misc.free(valueMem); // close old .pv mapping (left on disk for readers)
-            try (Path p = new Path().of(partitionPath)) {
-                LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, newTxn);
-                valueMem.of(ff, fileName,
-                        configuration.getDataIndexValueAppendPageSize(), appendOffset,
-                        MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
-                valueMem.jumpTo(appendOffset);
-            }
-        }
-        columnNameTxn = newTxn;
-        hasSealBumpedTxn = true;
-    }
-
-    private void openSealValueFile(long newTxn) {
-        if (partitionPath == null) {
-            return;
-        }
-        try (Path p = new Path().of(partitionPath)) {
-            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, newTxn);
-            sealValueMem.of(ff, fileName,
-                    configuration.getDataIndexValueAppendPageSize(),
-                    MemoryTag.MMAP_INDEX_WRITER,
-                    configuration.getWriterFileOpenOpts());
-            sealValueMem.jumpTo(0);
-        }
-        sealTarget = sealValueMem;
-    }
-
-    private void openSidecarFiles(Path path, CharSequence name, long columnNameTxn) {
-        if (coverCount <= 0) {
-            return;
-        }
-        final int plen = path.size();
-        try {
-            // Write .pci info file
-            sidecarInfoMem = Vm.getCMARWInstance();
-            sidecarInfoMem.of(
-                    ff,
-                    PostingIndexUtils.coverInfoFileName(path, name, columnNameTxn),
-                    configuration.getDataIndexValueAppendPageSize(),
-                    0L,
-                    MemoryTag.MMAP_INDEX_WRITER
-            );
-            path.trimTo(plen);
-            sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
-            sidecarInfoMem.putInt(coverCount);
-            for (int c = 0; c < coverCount; c++) {
-                sidecarInfoMem.putInt(coveredColumnIndices[c]);
-                sidecarInfoMem.putInt(coveredColumnTypes[c]);
-            }
-
-            // Open .pc0, .pc1, ... files
-            sidecarMems = new MemoryMARW[coverCount];
-            for (int c = 0; c < coverCount; c++) {
-                sidecarMems[c] = Vm.getCMARWInstance();
-                sidecarMems[c].of(
-                        ff,
-                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, columnNameTxn, c),
-                        configuration.getDataIndexValueAppendPageSize(),
-                        0L,
-                        MemoryTag.MMAP_INDEX_WRITER
-                );
-                path.trimTo(plen);
-            }
-        } catch (Throwable e) {
-            closeSidecarMems();
-            throw e;
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
-    /**
-     * Opens sidecar files for append, preserving existing data. Used by
-     * writeSidecarGenData to add per-gen raw blocks after seal's stride-indexed
-     * data. Creates files if they don't exist, writes .pci header only when new.
-     * <p>
-     * When reopening existing files, the .pci header is preserved as-is. This is
-     * safe because the covered column configuration (INCLUDE clause) is part of
-     * the table schema and cannot change within a column version — schema changes
-     * create new file versions via columnNameTxn bump.
-     */
-    private void openSidecarFilesForAppend(Path path, CharSequence name, long columnNameTxn) {
-        if (coverCount <= 0) {
-            return;
-        }
-        final int plen = path.size();
-        try {
-            LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, columnNameTxn);
-            boolean isNew = !ff.exists(pciFile);
-            sidecarInfoMem = Vm.getCMARWInstance();
-            long pciSize = isNew ? 0L : ff.length(pciFile);
-            if (pciSize < 0) {
-                pciSize = 0L; // I/O error reading length — treat as new file
-            }
-            sidecarInfoMem.of(ff, pciFile,
-                    configuration.getDataIndexValueAppendPageSize(),
-                    pciSize,
-                    MemoryTag.MMAP_INDEX_WRITER);
-            path.trimTo(plen);
-            if (isNew) {
-                sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
-                sidecarInfoMem.putInt(coverCount);
-                for (int c = 0; c < coverCount; c++) {
-                    sidecarInfoMem.putInt(coveredColumnIndices[c]);
-                    sidecarInfoMem.putInt(coveredColumnTypes[c]);
-                }
-            }
-
-            sidecarMems = new MemoryMARW[coverCount];
-            for (int c = 0; c < coverCount; c++) {
-                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, columnNameTxn, c);
-                long fileLen = ff.exists(pcFile) ? ff.length(pcFile) : -1L;
-                long existingSize = fileLen > 0 ? fileLen : 0L;
-                sidecarMems[c] = Vm.getCMARWInstance();
-                sidecarMems[c].of(ff, pcFile,
-                        configuration.getDataIndexValueAppendPageSize(),
-                        existingSize,
-                        MemoryTag.MMAP_INDEX_WRITER);
-                if (existingSize > 0) {
-                    sidecarMems[c].jumpTo(existingSize);
-                }
-                path.trimTo(plen);
-            }
-        } catch (Throwable e) {
-            closeSidecarMems();
-            throw e;
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
-    private static void writeNullSentinel(long addr, int valueSize, int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DOUBLE -> {
-                Unsafe.getUnsafe().putDouble(addr, Double.NaN);
-                return;
-            }
-            case ColumnType.FLOAT -> {
-                Unsafe.getUnsafe().putFloat(addr, Float.NaN);
-                return;
-            }
-            case ColumnType.GEOBYTE -> {
-                Unsafe.getUnsafe().putByte(addr, GeoHashes.BYTE_NULL);
-                return;
-            }
-            case ColumnType.GEOSHORT -> {
-                Unsafe.getUnsafe().putShort(addr, GeoHashes.SHORT_NULL);
-                return;
-            }
-            case ColumnType.GEOINT -> {
-                Unsafe.getUnsafe().putInt(addr, GeoHashes.INT_NULL);
-                return;
-            }
-            case ColumnType.IPv4 -> {
-                Unsafe.getUnsafe().putInt(addr, Numbers.IPv4_NULL);
-                return;
-            }
-            case ColumnType.GEOLONG -> {
-                Unsafe.getUnsafe().putLong(addr, GeoHashes.NULL);
-                return;
-            }
-            default -> {}
-        }
-        // Generic null sentinel by size for types not handled by the switch above
-        Unsafe.getUnsafe().setMemory(addr, valueSize, (byte) 0);
-        // Overlay Long.MIN_VALUE for each 8-byte slot (standard QuestDB null sentinel)
-        for (int off = 0; off + Long.BYTES <= valueSize; off += Long.BYTES) {
-            Unsafe.getUnsafe().putLong(addr + off, Long.MIN_VALUE);
-        }
-    }
-
-    private void writeSidecarStrideData(
-            int ks,
-            int[] keyCounts,
-            long[] keyOffsets,
-            long mergedValuesAddr,
-            long sidecarBuf,
-            long sidecarBufSize
-    ) {
-        if (coverCount <= 0 || sidecarMems == null || (coveredColumnNames == null && coveredColumnAddrs == null)) {
-            return;
-        }
-        // Pre-allocate workspaces once for all covered columns (maxKeyCount is the same)
-        int maxKeyCount = 0;
-        for (int j = 0; j < ks; j++) {
-            maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
-        }
-        long longWorkspaceAddr = maxKeyCount > 0 ? Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER) : 0;
-        long exceptionWorkspaceAddr = maxKeyCount > 0 ? Unsafe.malloc(maxKeyCount, MemoryTag.NATIVE_INDEX_READER) : 0;
-
-        try {
-        for (int c = 0; c < coverCount; c++) {
-            int colType = coveredColumnTypes[c];
-            int shift = coveredColumnShifts[c];
-
-            // Var-sized columns: write per-stride offset-based block (no ALP compression).
-            // Fixed-sized columns: ALP-compressed per-key blocks with stride index.
-            if (shift < 0) {
-                writeSidecarVarStrideData(sidecarMems[c], c, coveredColumnTops[c], colType, ks, keyCounts, keyOffsets, mergedValuesAddr);
-                continue;
-            }
-
-            long colTop = coveredColumnTops[c];
-            int valueSize = 1 << shift;
-
-            // Per-key compressed layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
-            int keyOffsetsSize = ks * Integer.BYTES;
-
-            // Pre-allocate compress buffer for the largest key in this column type
-            int compressBufSize = maxKeyCount > 0 ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
-            long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_INDEX_READER) : 0;
-
-            try {
-                // Write key offsets placeholder, then compress each key's values
-                long keyOffsetsPos = sidecarMems[c].getAppendOffset();
-                for (int j = 0; j < ks; j++) {
-                    sidecarMems[c].putInt(0); // placeholder
-                }
-
-                for (int j = 0; j < ks; j++) {
-                    int count = keyCounts[j];
-                    long currentPos = sidecarMems[c].getAppendOffset();
-                    long keyDataStart = keyOffsetsPos + keyOffsetsSize;
-                    int keyOffset = (int) (currentPos - keyDataStart);
-                    sidecarMems[c].putInt(keyOffsetsPos + (long) j * Integer.BYTES, keyOffset);
-
-                    if (count == 0) {
-                        continue;
-                    }
-
-                    // Assemble this key's raw values into sidecarBuf.
-                    long keyOff = keyOffsets[j];
-                    long rawOffset = 0;
-                    for (int i = 0; i < count; i++) {
-                        long rowId = Unsafe.getUnsafe().getLong(
-                                mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                        if (rowId < colTop) {
-                            writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
-                        } else {
-                            long srcOffset = (rowId - colTop) << shift;
-                            long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
-                            if (addr != 0) {
-                                Unsafe.getUnsafe().copyMemory(addr, sidecarBuf + rawOffset, valueSize);
-                            } else {
-                                writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
-                            }
-                        }
-                        rawOffset += valueSize;
-                    }
-
-                    // Compress and write
-                    boolean isDesignatedTs = timestampColumnIndex >= 0
-                            && coveredColumnIndices[c] == timestampColumnIndex;
-                    int compressedSize = compressSidecarBlock(sidecarBuf, count, shift, colType,
-                            isDesignatedTs, compressBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-                    sidecarMems[c].putBlockOfBytes(compressBuf, compressedSize);
-                }
-            } finally {
-                if (compressBuf != 0) {
-                    Unsafe.free(compressBuf, compressBufSize, MemoryTag.NATIVE_INDEX_READER);
-                }
-            }
-        }
-        } finally {
-            if (longWorkspaceAddr != 0) {
-                Unsafe.free(longWorkspaceAddr, (long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (exceptionWorkspaceAddr != 0) {
-                Unsafe.free(exceptionWorkspaceAddr, maxKeyCount, MemoryTag.NATIVE_INDEX_READER);
-            }
-        }
-    }
-
-    private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType,
-                                              boolean isDesignatedTs,
-                                              long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
-        if (isDesignatedTs) {
-            // Designated timestamp: non-null, monotonically increasing per key.
-            // Linear-prediction FoR gives O(1) random access with same compression as delta.
-            return CoveringCompressor.compressLongsLinearPred(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-        }
-        return switch (ColumnType.tagOf(colType)) {
-            case ColumnType.DOUBLE ->
-                    CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
-                    CoveringCompressor.compressLongs(rawBuf, valueCount, destBuf);
-            case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                    CoveringCompressor.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
-            default -> {
-                // Raw copy for all other fixed-width types: BYTE, SHORT, CHAR, BOOLEAN,
-                // GEOBYTE, GEOSHORT, UUID, LONG256, DECIMAL8/16/128/256, etc.
-                Unsafe.getUnsafe().putInt(destBuf, valueCount);
-                Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
-                yield 4 + (valueCount << shift);
-            }
-        };
-    }
-
-    private void sealFull() {
-        reencodeAllGenerations(
-                keyMem.getLong(activePageOffset + PAGE_OFFSET_MAX_VALUE),
-                Long.MAX_VALUE,
-                false
-        );
-    }
-
-    /**
-     * Decode all generations, optionally filter values > maxValueCutoff, then
-     * re-encode surviving values into a single dense stride-indexed generation.
-     *
-     * @param maxValue        the maxValue to write into the metadata header
-     * @param maxValueCutoff  Long.MAX_VALUE means no filtering (seal path);
-     *                        any other value trims per-key values to those <= cutoff (rollback path)
-     */
-    private void reencodeAllGenerations(long maxValue, long maxValueCutoff, boolean inPlace) {
-
-        // Phase 1: Count total values per key across all generations
-        long totalCountsSize = (long) keyCount * Integer.BYTES;
-        long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
-        try {
-            Unsafe.getUnsafe().setMemory(totalCountsAddr, totalCountsSize, (byte) 0);
-
-            long totalValueCount = 0;
-            for (int gen = 0; gen < genCount; gen++) {
-                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
-                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-                long genAddr = valueMem.addressOf(genFileOffset);
-
-                if (genKeyCount < 0) {
-                    // Sparse format
-                    int activeKeyCount = -genKeyCount;
-                    long keyIdsBase = genAddr;
-                    long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
-                    for (int i = 0; i < activeKeyCount; i++) {
-                        int key = Unsafe.getUnsafe().getInt(keyIdsBase + (long) i * Integer.BYTES);
-                        int count = Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
-                        int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                        Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
-                        totalValueCount += count;
-                    }
-                } else {
-                    // Dense format — stride-indexed (supports delta and flat modes)
-                    int sc = PostingIndexUtils.strideCount(genKeyCount);
-                    int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
-                    for (int s = 0; s < sc; s++) {
-                        int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
-                        long strideAddr = genAddr + siSize + strideOff;
-                        int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
-                        byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-                        if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
-                            // Flat mode: prefixCounts at STRIDE_FLAT_PREFIX_COUNTS_OFFSET
-                            long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-                            for (int j = 0; j < ks; j++) {
-                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-                                int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
-                                        - Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
-                                int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                                Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
-                                totalValueCount += count;
-                            }
-                        } else {
-                            // Delta mode: counts at offset STRIDE_MODE_PREFIX_SIZE
-                            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-                            for (int j = 0; j < ks; j++) {
-                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-                                int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
-                                int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                                Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
-                                totalValueCount += count;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (totalValueCount == 0) {
-                if (inPlace) {
-                    truncate();
-                    setMaxValue(maxValue);
-                }
-                return;
-            }
-
-            // Phase 2: Decode all values grouped by key into a flat buffer
-            long allValuesAddr = Unsafe.malloc(totalValueCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            try {
-                long keyOffsetsSize = (long) keyCount * Long.BYTES;
-                long keyOffsetsAddr = Unsafe.malloc(keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
+            if (keyMem.isOpen()) {
                 try {
-                    // Compute per-key write offsets
-                    long writeOffset = 0;
-                    for (int key = 0; key < keyCount; key++) {
-                        Unsafe.getUnsafe().putLong(keyOffsetsAddr + (long) key * Long.BYTES, writeOffset);
-                        writeOffset += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                    }
-    
-                    // Pre-allocate reencodeUnpackBatch and packedResiduals to avoid
-                    // per-key/per-stride allocations during the decode and re-encode loops.
-                    // Scan totalCountsAddr to find max per-key count and max per-stride total.
-                    int maxPerKeyCount = 0;
-                    int maxStrideTotal = 0;
-                    {
-                        int sc0 = PostingIndexUtils.strideCount(keyCount);
-                        for (int s0 = 0; s0 < sc0; s0++) {
-                            int strideTotal = 0;
-                            int ks0 = PostingIndexUtils.keysInStride(keyCount, s0);
-                            for (int j0 = 0; j0 < ks0; j0++) {
-                                int key0 = s0 * PostingIndexUtils.DENSE_STRIDE + j0;
-                                int c = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key0 * Integer.BYTES);
-                                if (c > maxPerKeyCount) maxPerKeyCount = c;
-                                strideTotal += c;
-                            }
-                            if (strideTotal > maxStrideTotal) maxStrideTotal = strideTotal;
-                        }
-                    }
-                    long reencodeUnpackBatchAddr = 0;
-                    int reencodeUnpackBatchCapacity = 0;
-                    if (maxPerKeyCount > 0) {
-                        reencodeUnpackBatchCapacity = maxPerKeyCount;
-                        reencodeUnpackBatchAddr = Unsafe.malloc((long) maxPerKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    }
-                    try {
-                    if (maxStrideTotal > packedResidualsCapacity) {
-                        if (packedResidualsAddr != 0) {
-                            Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                        }
-                        packedResidualsCapacity = maxStrideTotal;
-                        packedResidualsAddr = Unsafe.malloc((long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    }
-                    for (int gen = 0; gen < genCount; gen++) {
-                        long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
-                        long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
-                        int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-                        long genAddr = valueMem.addressOf(genFileOffset);
-    
-                        if (genKeyCount < 0) {
-                            // Sparse format
-                            int activeKeyCount = -genKeyCount;
-                            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
-                            long keyIdsBase = genAddr;
-                            long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
-                            long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
-    
-                            for (int i = 0; i < activeKeyCount; i++) {
-                                int key = Unsafe.getUnsafe().getInt(keyIdsBase + (long) i * Integer.BYTES);
-                                int count = Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
-                                if (count == 0) continue;
-    
-                                int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) i * Integer.BYTES);
-                                long encodedAddr = genAddr + headerSize + dataOffset;
-    
-                                long keyWriteOff = Unsafe.getUnsafe().getLong(
-                                        keyOffsetsAddr + (long) key * Long.BYTES);
-                                long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
-    
-                                PostingIndexUtils.decodeKeyToNative(encodedAddr, count, destAddr, decodeCtx);
-    
-                                Unsafe.getUnsafe().putLong(
-                                        keyOffsetsAddr + (long) key * Long.BYTES, keyWriteOff + count);
-                            }
-                        } else {
-                            // Dense format — stride-indexed (supports delta and flat modes)
-                            int sc = PostingIndexUtils.strideCount(genKeyCount);
-                            int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
-                            for (int s = 0; s < sc; s++) {
-                                int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
-                                long strideAddr = genAddr + siSize + strideOff;
-                                int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
-                                byte mode = Unsafe.getUnsafe().getByte(strideAddr);
-    
-                                if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
-                                    // Flat mode
-                                    int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
-                                    long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
-                                    long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-                                    int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-                                    long flatDataAddr = strideAddr + flatHeaderSize;
-
-                                    for (int j = 0; j < ks; j++) {
-                                        int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-                                        int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
-                                        int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES) - startIdx;
-                                        if (count == 0) continue;
-
-                                        long keyWriteOff = Unsafe.getUnsafe().getLong(
-                                                keyOffsetsAddr + (long) key * Long.BYTES);
-                                        long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
-
-                                        if (count > reencodeUnpackBatchCapacity) {
-                                            int newCap = Math.max(count, reencodeUnpackBatchCapacity * 2);
-                                            if (reencodeUnpackBatchAddr != 0) {
-                                                Unsafe.free(reencodeUnpackBatchAddr, (long) reencodeUnpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                                            }
-                                            reencodeUnpackBatchCapacity = newCap;
-                                            reencodeUnpackBatchAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                                        }
-                                        BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, reencodeUnpackBatchAddr);
-                                        for (int i = 0; i < count; i++) {
-                                            Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES,
-                                                    Unsafe.getUnsafe().getLong(reencodeUnpackBatchAddr + (long) i * Long.BYTES));
-                                        }
-    
-                                        Unsafe.getUnsafe().putLong(
-                                                keyOffsetsAddr + (long) key * Long.BYTES, keyWriteOff + count);
-                                    }
-                                } else {
-                                    // Delta mode
-                                    long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
-                                    long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
-                                    int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-
-                                    for (int j = 0; j < ks; j++) {
-                                        int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-                                        int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
-                                        if (count == 0) continue;
-
-                                        int dataOff = Unsafe.getUnsafe().getInt(offsetsBase + (long) j * Integer.BYTES);
-                                        long encodedAddr = strideAddr + deltaHeaderSize + dataOff;
-    
-                                        long keyWriteOff = Unsafe.getUnsafe().getLong(
-                                                keyOffsetsAddr + (long) key * Long.BYTES);
-                                        long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
-    
-                                        PostingIndexUtils.decodeKeyToNative(encodedAddr, count, destAddr, decodeCtx);
-    
-                                        Unsafe.getUnsafe().putLong(
-                                                keyOffsetsAddr + (long) key * Long.BYTES, keyWriteOff + count);
-                                    }
-                                }
-                            }
-                        }
-                    }
-    
-                    // Filter step (rollback only): trim each key's values to those <= maxValueCutoff.
-                    // Recompute per-key start offsets in keyOffsetsAddr, then binary search for cutoff.
-                    if (inPlace) {
-                        long cumOff = 0;
-                        for (int key = 0; key < keyCount; key++) {
-                            Unsafe.getUnsafe().putLong(keyOffsetsAddr + (long) key * Long.BYTES, cumOff);
-                            cumOff += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                        }
-    
-                        long survivingValueCount = 0;
-                        int newKeyCount = 0;
-                        for (int key = 0; key < keyCount; key++) {
-                            int origCount = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                            if (origCount == 0) continue;
-    
-                            long keyOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) key * Long.BYTES);
-                            long keyAddr = allValuesAddr + keyOff * Long.BYTES;
-                            int lo = 0, hi = origCount - 1;
-                            int cutoff = -1;
-                            while (lo <= hi) {
-                                int mid = (lo + hi) >>> 1;
-                                long midVal = Unsafe.getUnsafe().getLong(keyAddr + (long) mid * Long.BYTES);
-                                if (midVal <= maxValueCutoff) {
-                                    cutoff = mid;
-                                    lo = mid + 1;
-                                } else {
-                                    hi = mid - 1;
-                                }
-                            }
-    
-                            int newCount = cutoff + 1;
-                            Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, newCount);
-                            survivingValueCount += newCount;
-                            if (newCount > 0) {
-                                newKeyCount = key + 1;
-                            }
-                        }
-    
-                        if (survivingValueCount == 0) {
-                            truncate();
-                            setMaxValue(maxValue);
-                            return;
-                        }
-    
-                        keyCount = newKeyCount;
-                    } else {
-                        // Seal path: recompute start offsets for Phase 3 (values are contiguous)
-                        long cumOff = 0;
-                        for (int key = 0; key < keyCount; key++) {
-                            Unsafe.getUnsafe().putLong(keyOffsetsAddr + (long) key * Long.BYTES, cumOff);
-                            cumOff += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                        }
-                    }
-    
-                    } finally {
-                        if (reencodeUnpackBatchAddr != 0) {
-                            Unsafe.free(reencodeUnpackBatchAddr, (long) reencodeUnpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                        }
-                    }
-
-                    // Phase 3: Re-encode into single generation using stride-indexed format
-                    // with adaptive per-stride encoding (delta vs flat).
-                    // Seal: write to a NEW .pv.{txn+1} file, protecting concurrent readers.
-                    // In-place (rollback): rewrite valueMem at offset 0, no new file.
-                    //
-                    // Note: sealTarget is set here and nulled at the end. On exception,
-                    // sealTarget may remain non-null. This is not a leak — close() always
-                    // frees sealValueMem/valueMem and resets sealTarget. On the non-inPlace
-                    // exception path, the orphaned .pv.{newTxn} file stays on disk until
-                    // purge/vacuum cleanup.
-                    {
-                        int sc = PostingIndexUtils.strideCount(keyCount);
-                        int siSize = PostingIndexUtils.strideIndexSize(keyCount);
-
-                        long newTxn = 0;
-                        if (inPlace) {
-                            valueMem.jumpTo(0);
-                            sealTarget = valueMem;
-                        } else {
-                            newTxn = Math.max(1, columnNameTxn + 1);
-                            openSealValueFile(newTxn);
-                        }
-                        long sealOffset = 0;
-                        sealTarget.jumpTo(0);
-                        for (int i = 0; i < siSize; i += Integer.BYTES) {
-                            sealTarget.putInt(0);
-                        }
-    
-                        // Allocate stride index buffer
-                        long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
-                        int maxDeltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE);
-                        int maxFlatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE);
-                        int maxLocalHeaderSize = Math.max(maxDeltaHeaderSize, maxFlatHeaderSize);
-                        long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
-    
-                        // Per-key delta sizes within a stride (to compute total delta data size)
-                        int[] bpKeySizes = strideBpKeySizes;
-                        int[] keyCounts = strideKeyCounts;
-                        long[] keyOffsets = strideKeyOffsets;
-                        // Trial buffer grows dynamically per stride
-                        long bpTrialBuf = 0;
-                        long bpTrialBufSize = 0;
-
-                        // Sidecar stride index buffers (one per covered column)
-                        long sidecarBuf = 0;
-                        long sidecarBufSize = 0;
-                        long[] sidecarStrideIndexBufs = null;
-                        if (coverCount > 0 && sidecarMems != null) {
-                            sidecarStrideIndexBufs = new long[coverCount];
-                            for (int c = 0; c < coverCount; c++) {
-                                if (inPlace) {
-                                    // In-place rollback: reset write position to 0 so new
-                                    // stride data overwrites old per-gen raw blocks. Do NOT
-                                    // truncate — concurrent readers have MAP_SHARED mappings
-                                    // and truncation causes SIGBUS for pages beyond the new
-                                    // file size. Tail data past the new write position is
-                                    // harmless garbage ignored by metadata.
-                                    sidecarMems[c].jumpTo(0);
-                                }
-                                sidecarStrideIndexBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
-                                // Reserve stride index space in sidecar file
-                                for (int i = 0; i < siSize; i += Integer.BYTES) {
-                                    sidecarMems[c].putInt(0);
-                                }
-                            }
-                        }
-
-                        try {
-                            for (int s = 0; s < sc; s++) {
-                                int ks = PostingIndexUtils.keysInStride(keyCount, s);
-    
-                                // Compute trial buffer size for this stride and collect per-key counts/offsets
-                                long strideTrialSize = 0;
-                                for (int j = 0; j < ks; j++) {
-                                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
-                                    int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
-                                    keyCounts[j] = count;
-                                    long keyOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) key * Long.BYTES);
-                                    keyOffsets[j] = keyOff;
-                                    strideTrialSize += PostingIndexUtils.computeMaxEncodedSize(count);
-                                }
-                                if (strideTrialSize > bpTrialBufSize) {
-                                    if (bpTrialBuf != 0) {
-                                        Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
-                                    }
-                                    bpTrialBufSize = strideTrialSize;
-                                    bpTrialBuf = Unsafe.malloc(bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
-                                }
-    
-                                // Trial delta encode all keys in stride
-                                int bpDataTotal = 0;
-                                for (int j = 0; j < ks; j++) {
-                                    int count = keyCounts[j];
-                                    if (count > 0) {
-                                        long keyAddr = allValuesAddr + (long) keyOffsets[j] * Long.BYTES;
-                                        encodeCtx.ensureCapacity(count);
-                                        bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx);
-                                    } else {
-                                        bpKeySizes[j] = 0;
-                                    }
-                                    bpDataTotal += bpKeySizes[j];
-                                }
-    
-                                // Compute sizes for both modes
-                                int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-                                int deltaSize = deltaHeaderSize + bpDataTotal;
-
-                                // Count total values in stride and find per-stride min/max for flat size
-                                int totalStrideValues = 0;
-                                long strideMinValue = Long.MAX_VALUE;
-                                long strideMaxValue = Long.MIN_VALUE;
-                                for (int j = 0; j < ks; j++) {
-                                    int count = keyCounts[j];
-                                    totalStrideValues += count;
-                                    long keyAddr = allValuesAddr + (long) keyOffsets[j] * Long.BYTES;
-                                    for (int i = 0; i < count; i++) {
-                                        long val = Unsafe.getUnsafe().getLong(keyAddr + (long) i * Long.BYTES);
-                                        if (val < strideMinValue) strideMinValue = val;
-                                        if (val > strideMaxValue) strideMaxValue = val;
-                                    }
-                                }
-                                if (totalStrideValues == 0) {
-                                    strideMinValue = 0;
-                                    strideMaxValue = 0;
-                                }
-                                long strideRange = strideMaxValue - strideMinValue;
-                                int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
-                                int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
-
-                                int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-                                int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-                                int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
-
-                                int localBitWidth;
-                                int flatDataSize;
-                                int flatSize;
-                                if (alignedBitWidth != naturalBitWidth) {
-                                    int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
-                                    int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
-                                    if (alignedFlatSize < deltaSize) {
-                                        localBitWidth = alignedBitWidth;
-                                        flatDataSize = alignedFlatDataSize;
-                                        flatSize = alignedFlatSize;
-                                    } else if (naturalFlatSize < deltaSize) {
-                                        localBitWidth = naturalBitWidth;
-                                        flatDataSize = naturalFlatDataSize;
-                                        flatSize = naturalFlatSize;
-                                    } else {
-                                        localBitWidth = naturalBitWidth;
-                                        flatDataSize = naturalFlatDataSize;
-                                        flatSize = naturalFlatSize;
-                                    }
-                                } else {
-                                    localBitWidth = naturalBitWidth;
-                                    flatDataSize = naturalFlatDataSize;
-                                    flatSize = naturalFlatSize;
-                                }
-
-                                boolean useFlat = flatSize < deltaSize;
-                                LOG.debug().$("reencode stride [s=").$(s)
-                                        .$(", deltaSize=").$(deltaSize)
-                                        .$(", flatSize=").$(flatSize)
-                                        .$(", natBW=").$(naturalBitWidth)
-                                        .$(", alnBW=").$(localBitWidth)
-                                        .$(", totalVals=").$(totalStrideValues)
-                                        .$(", useFlat=").$(useFlat)
-                                        .$(']').$();
-
-                                // Record stride offset (relative to end of stride index)
-                                int strideOff = (int) (sealTarget.getAppendOffset() - sealOffset - siSize);
-                                Unsafe.getUnsafe().putInt(strideIndexBuf + (long) s * Integer.BYTES, strideOff);
-
-                                if (useFlat) {
-                                    writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue,
-                                            flatHeaderSize, flatDataSize, localHeaderBuf, allValuesAddr);
-                                } else {
-                                    writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes,
-                                            bpDataTotal, localHeaderBuf);
-                                }
-
-                                // Write sidecar covered values for this stride
-                                if (coverCount > 0 && sidecarMems != null && totalStrideValues > 0) {
-                                    long neededBuf = (long) totalStrideValues * maxCoveredValueSize();
-                                    if (neededBuf > sidecarBufSize) {
-                                        if (sidecarBuf != 0) {
-                                            Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                                        }
-                                        sidecarBufSize = neededBuf;
-                                        sidecarBuf = Unsafe.malloc(sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                                    }
-                                    for (int c = 0; c < coverCount; c++) {
-                                        Unsafe.getUnsafe().putInt(
-                                                sidecarStrideIndexBufs[c] + (long) s * Integer.BYTES,
-                                                (int) (sidecarMems[c].getAppendOffset() - siSize));
-                                    }
-                                    writeSidecarStrideData(ks, keyCounts, keyOffsets, allValuesAddr, sidecarBuf, sidecarBufSize);
-                                }
-                            }
-
-                            // Sentinel: total size of all stride blocks
-                            int totalStrideBlocksSize = (int) (sealTarget.getAppendOffset() - sealOffset - siSize);
-                            Unsafe.getUnsafe().putInt(strideIndexBuf + (long) sc * Integer.BYTES, totalStrideBlocksSize);
-
-                            // Copy stride index into sealed value file
-                            long strideIndexAddr = sealTarget.addressOf(sealOffset);
-                            Unsafe.getUnsafe().copyMemory(strideIndexBuf, strideIndexAddr, siSize);
-
-                            valueMemSize = sealTarget.getAppendOffset();
-
-                            // Finalize sidecar stride indices
-                            if (coverCount > 0 && sidecarStrideIndexBufs != null) {
-                                for (int c = 0; c < coverCount; c++) {
-                                    // Write sentinel
-                                    Unsafe.getUnsafe().putInt(
-                                            sidecarStrideIndexBufs[c] + (long) sc * Integer.BYTES,
-                                            (int) (sidecarMems[c].getAppendOffset() - siSize));
-                                    // Copy stride index to sidecar file start
-                                    long sidecarIdxAddr = sidecarMems[c].addressOf(0);
-                                    Unsafe.getUnsafe().copyMemory(sidecarStrideIndexBufs[c], sidecarIdxAddr, siSize);
-                                }
-                            }
-                        } finally {
-                            if (bpTrialBuf != 0) {
-                                Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
-                            }
-                            if (sidecarBuf != 0) {
-                                Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                            }
-                            if (sidecarStrideIndexBufs != null) {
-                                for (int c = 0; c < coverCount; c++) {
-                                    if (sidecarStrideIndexBufs[c] != 0) {
-                                        Unsafe.free(sidecarStrideIndexBufs[c], siSize, MemoryTag.NATIVE_INDEX_READER);
-                                    }
-                                }
-                            }
-                            Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
-                            Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
-                        }
-    
-                        genCount = 1;
-                        if (inPlace) {
-                            valueMemSize = sealTarget.getAppendOffset();
-                            sealTarget = null;
-                        } else {
-                            sealValueMem.sync(false);
-                            switchToSealedValueFile(newTxn);
-                        }
-                        Unsafe.getUnsafe().storeFence();
-                        writeMetadataPage(genCount, maxValue,
-                                0, sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
-                    }
-    
+                    keyMem.setSize(KEY_FILE_RESERVED);
                 } finally {
-                    Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
+                    Misc.free(keyMem);
                 }
-            } finally {
-                Unsafe.free(allValuesAddr, totalValueCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
         } finally {
-            Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+            try {
+                Misc.free(sealValueMem);
+                if (valueMem.isOpen()) {
+                    valueMem.close(false, (byte) 0);
+                }
+            } finally {
+                closeSidecarMems();
+                freeNativeBuffers();
+                keyCount = 0;
+                valueMemSize = 0;
+                genCount = 0;
+                hasPendingData = false;
+                activeKeyCount = 0;
+                coverCount = 0;
+                sealTarget = null;
+            }
         }
+    }
+
+    public long getColumnNameTxn() {
+        return columnNameTxn;
     }
 
     @TestOnly
@@ -2138,7 +503,7 @@ public class PostingIndexWriter implements IndexWriter {
 
             if (count == 0) continue;
             long[] decoded = new long[count];
-            PostingIndexUtils.decodeKey(encodedAddr, count, decoded);
+            PostingIndexUtils.decodeKey(encodedAddr, decoded);
             for (int i = 0; i < count; i++) {
                 values.add(decoded[i]);
             }
@@ -2147,36 +512,9 @@ public class PostingIndexWriter implements IndexWriter {
         return new TestFwdCursor(values);
     }
 
-    @Override
-    public int getKeyCount() {
-        return keyCount;
-    }
-
-    public long getColumnNameTxn() {
-        return columnNameTxn;
-    }
-
-    public boolean hasPendingSealTxn() {
-        return hasSealBumpedTxn;
-    }
-
-    public void clearPendingSealTxn() {
-        hasSealBumpedTxn = false;
-    }
-
-    @TestOnly
-    public long getValueMemSize() {
-        return valueMemSize;
-    }
-
     @TestOnly
     public int getGenCount() {
         return genCount;
-    }
-
-    @Override
-    public boolean isOpen() {
-        return keyMem.isOpen();
     }
 
     @Override
@@ -2185,15 +523,18 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
+    public int getKeyCount() {
+        return keyCount;
+    }
+
+    @Override
     public long getMaxValue() {
         return keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE);
     }
 
     @Override
-    public void setMaxValue(long maxValue) {
-        // Write maxValue directly on the active page for writer-only reads.
-        // Published to readers via writeMetadataPage on next commit/seal.
-        keyMem.putLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
+    public boolean isOpen() {
+        return keyMem.isOpen();
     }
 
     @Override
@@ -2306,638 +647,6 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    @Override
-    public void rollbackConditionally(long row) {
-        final long currentMaxRow = getMaxValue();
-        if (row >= 0 && (currentMaxRow < 1 || currentMaxRow >= row)) {
-            if (row == 0) {
-                truncate();
-            } else {
-                rollbackValues(row - 1);
-            }
-        }
-    }
-
-    @Override
-    public void rollbackValues(long maxValue) {
-        if (!keyMem.isOpen()) {
-            return;
-        }
-        flushAllPending();
-
-        if (genCount == 0 && keyCount == 0) {
-            setMaxValue(maxValue);
-            return;
-        }
-
-        LOG.info().$("rollback posting index [maxValue=").$(maxValue).$(", genCount=").$(genCount).$(", keyCount=").$(keyCount).$(']').$();
-        rollbackToMaxValue(maxValue);
-    }
-
-    private void rollbackToMaxValue(long maxValue) {
-        // Rollback writes in-place to the existing valueMem at offset 0 — same
-        // approach as BitmapIndexWriter.rollbackValues() which writes in-place to
-        // keyMem/valueMem. No new .pv file, no columnNameTxn bump.
-        //
-        // Safety: in-place rewrite overwrites MAP_SHARED pages visible to concurrent
-        // readers. This is safe under QuestDB's scoreboard coordination — readers
-        // only access committed data, and rollback only affects uncommitted gens.
-        // Sidecar files are also truncated in the inPlace path (reencodeAllGenerations),
-        // which carries the same concurrent-reader risk as BitmapIndexWriter rollback.
-        reencodeAllGenerations(maxValue, maxValue, true);
-    }
-
-    /**
-     * Writes raw (uncompressed) covered column values for the current gen's
-     * posting entries to the sidecar files. Each sidecar file gets a block:
-     * [valueCount: 4B][raw values: valueCount × elemSize].
-     * <p>
-     * Values are written in the same order as flushAllPending() encodes posting
-     * data: sorted activeKeyIds, spill values first then pending values per key.
-     * This ensures the sidecar ordinal (tracked by the reader's cursor) matches
-     * the posting entry position within the gen.
-     *
-     * @param totalValues total number of posting values in this gen
-     * @return the sidecar offset (position in .pc0 before this gen's block)
-     */
-    private int writeSidecarGenData(int totalValues) {
-        if (coverCount <= 0 || totalValues == 0
-                || (coveredColumnNames == null && coveredColumnAddrs == null)) {
-            return 0;
-        }
-        // Lazily open sidecar files on first gen flush.
-        // Use append mode to preserve existing data (e.g., stride-indexed
-        // sidecar from a prior seal). openSidecarFiles() truncates, which
-        // is correct for seal but wrong here.
-        if (sidecarMems == null && partitionPath != null) {
-            try (Path p = new Path().of(partitionPath)) {
-                openSidecarFilesForAppend(p, indexName, sidecarTxn);
-            }
-        }
-        if (sidecarMems == null) {
-            return 0;
-        }
-        int sidecarOffset = (int) sidecarMems[0].getAppendOffset();
-
-        for (int c = 0; c < coverCount; c++) {
-            int colType = coveredColumnTypes[c];
-            long colTop = coveredColumnTops[c];
-
-            if (ColumnType.isVarSize(colType)) {
-                writeSidecarVarGenBlock(sidecarMems[c], c, colTop, colType, totalValues);
-            } else {
-                int shift = coveredColumnShifts[c];
-                int valueSize = 1 << shift;
-
-                sidecarMems[c].putInt(totalValues);
-
-                for (int idx = 0; idx < activeKeyCount; idx++) {
-                    int key = activeKeyIds[idx];
-                    int pendingCount = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
-                    int spillCount = getSpillCount(key);
-
-                    if (spillCount > 0) {
-                        long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
-                        for (int i = 0; i < spillCount; i++) {
-                            long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
-                            writeSidecarValueSafe(sidecarMems[c], c,
-                                    0, colTop, rowId, shift, valueSize, colType);
-                        }
-                    }
-
-                    long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
-                    for (int i = 0; i < pendingCount; i++) {
-                        long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
-                        writeSidecarValueSafe(sidecarMems[c], c,
-                                0, colTop, rowId, shift, valueSize, colType);
-                    }
-                }
-            }
-        }
-        return sidecarOffset;
-    }
-
-    // Minimum raw data size to attempt FSST compression (below this, overhead > savings)
-    private static final int FSST_MIN_RAW_SIZE = 4096;
-
-    /**
-     * Writes var-sized sidecar data for one stride in the sealed path.
-     * <p>
-     * Uncompressed format: [totalCount:4B][offsets:(totalCount+1)×4B][concatenated bytes]
-     * <p>
-     * FSST-compressed format (count has high bit set):
-     * [totalCount|0x80000000:4B][tableLen:2B][FSST table][offsets:(count+1)×4B][compressed bytes]
-     */
-    private void writeSidecarVarStrideData(
-            MemoryMARW mem, int covIdx, long colTop, int colType,
-            int ks, int[] keyCounts, long[] keyOffsets, long mergedValuesAddr
-    ) {
-        int totalCount = 0;
-        for (int j = 0; j < ks; j++) {
-            totalCount += keyCounts[j];
-        }
-
-        // === Pass 1: Write uncompressed block to mem ===
-        long blockStart = mem.getAppendOffset();
-        mem.putInt(totalCount);
-        long offsetsStart = mem.getAppendOffset();
-        for (int i = 0; i <= totalCount; i++) {
-            mem.putInt(0);
-        }
-        long dataStart = mem.getAppendOffset();
-
-        int valueOrdinal = 0;
-        for (int j = 0; j < ks; j++) {
-            int count = keyCounts[j];
-            long keyOff = keyOffsets[j];
-            for (int i = 0; i < count; i++) {
-                long rowId = Unsafe.getUnsafe().getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                int off = (int) (mem.getAppendOffset() - dataStart);
-                mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
-                writeVarValue(mem, covIdx, colTop, rowId, colType);
-                valueOrdinal++;
-            }
-        }
-        int endOff = (int) (mem.getAppendOffset() - dataStart);
-        mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, endOff);
-        int rawDataLen = endOff;
-
-        // === Pass 2: Try FSST compression ===
-        if (rawDataLen < FSST_MIN_RAW_SIZE || totalCount == 0) {
-            return; // Keep uncompressed
-        }
-
-        long rawDataAddr = mem.addressOf(dataStart);
-        FSST.SymbolTable table = FSST.trainBytes(rawDataAddr, rawDataLen);
-        if (table == null) {
-            return;
-        }
-
-        try {
-        // Compress each value into a native buffer
-        long cmpBufAddr = Unsafe.malloc((long) rawDataLen * 2, MemoryTag.NATIVE_INDEX_READER);
-        int[] cmpOffsets = new int[totalCount + 1];
-        try {
-            int cmpPos = 0;
-            for (int i = 0; i < totalCount; i++) {
-                cmpOffsets[i] = cmpPos;
-                int lo = Unsafe.getUnsafe().getInt(mem.addressOf(offsetsStart + (long) i * Integer.BYTES));
-                int hi = Unsafe.getUnsafe().getInt(mem.addressOf(offsetsStart + (long) (i + 1) * Integer.BYTES));
-                int valLen = hi - lo;
-                if (valLen > 0) {
-                    cmpPos += FSST.compressBytes(table, rawDataAddr + lo, valLen, cmpBufAddr + cmpPos);
-                }
-            }
-            cmpOffsets[totalCount] = cmpPos;
-
-            // Serialize FSST table
-            long tableBufAddr = Unsafe.malloc(FSST.SERIALIZED_MAX_SIZE, MemoryTag.NATIVE_INDEX_READER);
-            try {
-                int tableLen = FSST.serialize(table, tableBufAddr);
-
-                // Only rewrite if compression saved space (accounting for table overhead)
-                int compressedBlockSize = 4 + 2 + tableLen + (totalCount + 1) * 4 + cmpPos;
-                int uncompressedBlockSize = (int) (mem.getAppendOffset() - blockStart);
-                if (compressedBlockSize >= uncompressedBlockSize) {
-                    return; // Not worth it
-                }
-
-                // Rewrite the block from blockStart
-                mem.jumpTo(blockStart);
-                mem.putInt(totalCount | FSST.FSST_BLOCK_FLAG);
-                mem.putShort((short) tableLen);
-                for (int i = 0; i < tableLen; i++) {
-                    mem.putByte(Unsafe.getUnsafe().getByte(tableBufAddr + i));
-                }
-                for (int i = 0; i <= totalCount; i++) {
-                    mem.putInt(cmpOffsets[i]);
-                }
-                for (int i = 0; i < cmpPos; i++) {
-                    mem.putByte(Unsafe.getUnsafe().getByte(cmpBufAddr + i));
-                }
-            } finally {
-                Unsafe.free(tableBufAddr, FSST.SERIALIZED_MAX_SIZE, MemoryTag.NATIVE_INDEX_READER);
-            }
-        } finally {
-            Unsafe.free(cmpBufAddr, (long) rawDataLen * 2, MemoryTag.NATIVE_INDEX_READER);
-        }
-        } finally {
-            table.close();
-        }
-    }
-
-    /**
-     * Writes a per-gen sidecar block for a var-sized column (VARCHAR or STRING).
-     * Format: [count:4B][offsets: (count+1)×4B][concatenated raw bytes]
-     * NULL values have offset[i] == offset[i+1] (zero-length) with a separate
-     * null bitmap not needed — the reader checks for zero-length spans.
-     */
-    private void writeSidecarVarGenBlock(MemoryMARW mem, int covIdx, long colTop, int colType, int totalValues) {
-        // Reserve space: count + (totalValues+1) offsets
-        long blockStart = mem.getAppendOffset();
-        mem.putInt(totalValues);
-        long offsetsStart = mem.getAppendOffset();
-        for (int i = 0; i <= totalValues; i++) {
-            mem.putInt(0); // placeholder offsets
-        }
-        long dataStart = mem.getAppendOffset();
-
-        int valueOrdinal = 0;
-
-        for (int idx = 0; idx < activeKeyCount; idx++) {
-            int key = activeKeyIds[idx];
-            int pendingCount = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
-            int spillCount = getSpillCount(key);
-
-            if (spillCount > 0) {
-                long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
-                for (int i = 0; i < spillCount; i++) {
-                    long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
-                    int off = (int) (mem.getAppendOffset() - dataStart);
-                    mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
-                    writeVarValue(mem, covIdx, colTop, rowId, colType);
-                    valueOrdinal++;
-                }
-            }
-
-            long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
-            for (int i = 0; i < pendingCount; i++) {
-                long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
-                int off = (int) (mem.getAppendOffset() - dataStart);
-                mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
-                writeVarValue(mem, covIdx, colTop, rowId, colType);
-                valueOrdinal++;
-            }
-        }
-        // Sentinel offset
-        int endOff = (int) (mem.getAppendOffset() - dataStart);
-        mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, endOff);
-    }
-
-    private void writeVarValue(MemoryMARW mem, int covIdx, long colTop, long rowId, int colType) {
-        if (rowId < colTop) {
-            return; // NULL — zero-length (offset[i] == offset[i+1])
-        }
-        long row = rowId - colTop;
-        switch (ColumnType.tagOf(colType)) {
-            case ColumnType.VARCHAR -> writeVarcharValue(mem, covIdx, row);
-            case ColumnType.STRING -> writeStringValue(mem, covIdx, row);
-            default -> writeBinaryLikeValue(mem, covIdx, row);
-        }
-    }
-
-    /**
-     * Lazily creates read-only mmaps of the covered column files.
-     * MemoryPMARImpl (the writer's column memory) maps one page at a time,
-     * so addressOf() fails for random reads. These are separate RO mmaps
-     * via the mmap cache, providing O(1) access to any offset.
-     */
-    private void ensureCoveredColumnReadMaps() {
-        if (coveredColReadAddrs != null) {
-            return;
-        }
-        coveredColReadAddrs = new long[coverCount];
-        coveredColReadSizes = new long[coverCount];
-        coveredAuxReadAddrs = new long[coverCount];
-        coveredAuxReadSizes = new long[coverCount];
-
-        if (coveredColumnNames != null && coveredPartitionPath != null) {
-            // Name-based: open files ourselves via mmap cache
-            try (Path p = new Path()) {
-                for (int c = 0; c < coverCount; c++) {
-                    mapColumnFile(p, coveredColumnNames[c], coveredColumnNameTxns[c],
-                            coveredColReadAddrs, coveredColReadSizes, c, false);
-                    if (ColumnType.isVarSize(coveredColumnTypes[c])) {
-                        mapColumnFile(p, coveredColumnNames[c], coveredColumnNameTxns[c],
-                                coveredAuxReadAddrs, coveredAuxReadSizes, c, true);
-                    }
-                }
-            }
-        } else if (coveredColumnAddrs != null) {
-            // Addr-based (O3): reference caller's addresses, size=0 means not owned
-            for (int c = 0; c < coverCount; c++) {
-                coveredColReadAddrs[c] = coveredColumnAddrs[c];
-                coveredColReadSizes[c] = 0; // not owned — caller unmaps
-            }
-        }
-    }
-
-    private void mapColumnFile(Path p, String colName, long colNameTxn,
-                               long[] addrs, long[] sizes, int idx, boolean isAux) {
-        p.of(coveredPartitionPath);
-        LPSZ fileName = isAux
-                ? TableUtils.iFile(p, colName, colNameTxn)
-                : TableUtils.dFile(p, colName, colNameTxn);
-        long fd = ff.openRO(fileName);
-        if (fd >= 0) {
-            try {
-                long fileSize = ff.length(fd);
-                if (fileSize > 0) {
-                    addrs[idx] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
-                    sizes[idx] = fileSize;
-                }
-            } finally {
-                ff.close(fd); // mmap keeps data accessible after FD close
-            }
-        }
-    }
-
-    private void unmapCoveredColumnReads() {
-        if (coveredColReadAddrs != null) {
-            for (int c = 0; c < coveredColReadAddrs.length; c++) {
-                // Only unmap if owned (size > 0). Size == 0 means O3 addr path.
-                if (coveredColReadAddrs[c] != 0 && coveredColReadSizes[c] > 0) {
-                    Files.munmap(coveredColReadAddrs[c], coveredColReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
-                }
-                coveredColReadAddrs[c] = 0;
-                coveredColReadSizes[c] = 0;
-                if (coveredAuxReadAddrs != null && coveredAuxReadAddrs[c] != 0 && coveredAuxReadSizes[c] > 0) {
-                    Files.munmap(coveredAuxReadAddrs[c], coveredAuxReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
-                }
-                if (coveredAuxReadAddrs != null) {
-                    coveredAuxReadAddrs[c] = 0;
-                    coveredAuxReadSizes[c] = 0;
-                }
-            }
-            coveredColReadAddrs = null;
-            coveredColReadSizes = null;
-            coveredAuxReadAddrs = null;
-            coveredAuxReadSizes = null;
-        }
-    }
-
-    private long getCoveredAuxReadAddr(int covIdx, long offset, long needed) {
-        ensureCoveredColumnReadMaps();
-        long addr = coveredAuxReadAddrs[covIdx];
-        long size = coveredAuxReadSizes[covIdx];
-        if (addr == 0) {
-            return 0;
-        }
-        if (size == 0) {
-            return addr + offset;
-        }
-        if (offset + needed > size) {
-            Files.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
-            coveredAuxReadAddrs[covIdx] = 0;
-            if (coveredColumnNames != null && coveredPartitionPath != null) {
-                try (Path p = new Path()) {
-                    mapColumnFile(p, coveredColumnNames[covIdx], coveredColumnNameTxns[covIdx],
-                            coveredAuxReadAddrs, coveredAuxReadSizes, covIdx, true);
-                }
-            }
-            addr = coveredAuxReadAddrs[covIdx];
-            size = coveredAuxReadSizes[covIdx];
-            if (addr == 0 || offset + needed > size) {
-                return 0;
-            }
-        }
-        return addr + offset;
-    }
-
-    private long getCoveredDataReadAddr(int covIdx, long offset, long needed) {
-        ensureCoveredColumnReadMaps();
-        long addr = coveredColReadAddrs[covIdx];
-        long size = coveredColReadSizes[covIdx];
-        if (addr == 0) {
-            return 0;
-        }
-        // size == 0 means addr-based (O3): caller-provided buffer, no bounds check or remap
-        if (size == 0) {
-            return addr + offset;
-        }
-        // size > 0 means name-based: writer-owned mmap, remap if file grew
-        if (offset + needed > size) {
-            Files.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
-            coveredColReadAddrs[covIdx] = 0;
-            if (coveredColumnNames != null && coveredPartitionPath != null) {
-                try (Path p = new Path()) {
-                    mapColumnFile(p, coveredColumnNames[covIdx], coveredColumnNameTxns[covIdx],
-                            coveredColReadAddrs, coveredColReadSizes, covIdx, false);
-                }
-            }
-            addr = coveredColReadAddrs[covIdx];
-            size = coveredColReadSizes[covIdx];
-            if (addr == 0 || offset + needed > size) {
-                return 0;
-            }
-        }
-        return addr + offset;
-    }
-
-    private void writeVarcharValue(MemoryMARW mem, int covIdx, long row) {
-        if (coveredColumnNames == null && coveredColumnAddrs == null) {
-            return;
-        }
-        long auxOffset = VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES * row;
-        long auxAddr = getCoveredAuxReadAddr(covIdx, auxOffset, VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
-        if (auxAddr == 0) return;
-
-        int header = Unsafe.getUnsafe().getInt(auxAddr);
-        if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
-            return;
-        }
-        if ((header & 1) != 0) {
-            int size = (header >>> 4) & 0xF;
-            if (size > 0) {
-                mem.putBlockOfBytes(auxAddr + 1, size);
-            }
-        } else {
-            int size = (header >>> 4) & 0x0FFFFFFF;
-            if (size > 0) {
-                long dataOffset = Unsafe.getUnsafe().getLong(auxAddr + 8) >>> 16;
-                long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, size);
-                if (dataAddr != 0) {
-                    mem.putBlockOfBytes(dataAddr, size);
-                }
-            }
-        }
-    }
-
-    private void writeBinaryLikeValue(MemoryMARW mem, int covIdx, long row) {
-        if (coveredColumnNames == null && coveredColumnAddrs == null
-                || coveredColumnNames == null && coveredColumnAddrs == null) {
-            return;
-        }
-        int colType = coveredColumnTypes[covIdx];
-        int tag = ColumnType.tagOf(colType);
-        if (tag == ColumnType.BINARY) {
-            // BINARY aux: 8-byte offset per row. Data: [8-byte length][raw bytes]
-            long auxAddr = getCoveredAuxReadAddr(covIdx, row << 3, Long.BYTES);
-            if (auxAddr == 0) return;
-            long dataOffset = Unsafe.getUnsafe().getLong(auxAddr);
-
-            long lenAddr = getCoveredDataReadAddr(covIdx, dataOffset, Long.BYTES);
-            if (lenAddr == 0) return;
-            long len = Unsafe.getUnsafe().getLong(lenAddr);
-            if (len < 0) return; // NULL
-
-            long totalBytes = Long.BYTES + len;
-            long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, totalBytes);
-            if (dataAddr != 0) {
-                mem.putBlockOfBytes(dataAddr, totalBytes);
-            }
-        } else {
-            // Arrays: aux is ARRAY_AUX_WIDTH_BYTES per row [8-byte offset][8-byte size]
-            long auxOffset = (long) io.questdb.cairo.arr.ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES * row;
-            long auxAddr = getCoveredAuxReadAddr(covIdx, auxOffset, io.questdb.cairo.arr.ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
-            if (auxAddr == 0) return;
-            long dataOffset = Unsafe.getUnsafe().getLong(auxAddr);
-            long size = Unsafe.getUnsafe().getLong(auxAddr + Long.BYTES);
-            if (size <= 0) return; // NULL or empty
-
-            long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, size);
-            if (dataAddr != 0) {
-                mem.putBlockOfBytes(dataAddr, size);
-            }
-        }
-    }
-
-    private void writeStringValue(MemoryMARW mem, int covIdx, long row) {
-        if (coveredColumnNames == null && coveredColumnAddrs == null
-                || coveredColumnNames == null && coveredColumnAddrs == null) {
-            return;
-        }
-        long auxAddr = getCoveredAuxReadAddr(covIdx, row << 3, Long.BYTES);
-        if (auxAddr == 0) return;
-        long dataOffset = Unsafe.getUnsafe().getLong(auxAddr);
-
-        long lenAddr = getCoveredDataReadAddr(covIdx, dataOffset, Integer.BYTES);
-        if (lenAddr == 0) return;
-        int len = Unsafe.getUnsafe().getInt(lenAddr);
-        if (len < 0) return;
-
-        int totalBytes = Integer.BYTES + len * Character.BYTES;
-        long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, totalBytes);
-        if (dataAddr != 0) {
-            mem.putBlockOfBytes(dataAddr, totalBytes);
-        }
-    }
-
-    private static void putFixedValue(MemoryMARW mem, long addr, int valueSize) {
-        if (valueSize == Long.BYTES) {
-            mem.putLong(Unsafe.getUnsafe().getLong(addr));
-        } else if (valueSize == Integer.BYTES) {
-            mem.putInt(Unsafe.getUnsafe().getInt(addr));
-        } else if (valueSize == Short.BYTES) {
-            mem.putShort(Unsafe.getUnsafe().getShort(addr));
-        } else if (valueSize == Byte.BYTES) {
-            mem.putByte(Unsafe.getUnsafe().getByte(addr));
-        } else {
-            // Multi-long types: UUID (16B), LONG256 (32B), DECIMAL128 (16B), DECIMAL256 (32B)
-            mem.putBlockOfBytes(addr, valueSize);
-        }
-    }
-
-    private void writeSidecarValue(MemoryMARW mem, long colAddr, long colTop, long rowId,
-                                    int shift, int valueSize, int colType) {
-        if (rowId < colTop) {
-            writeNullSentinel(mem, valueSize, colType);
-        } else {
-            long srcOffset = (rowId - colTop) << shift;
-            putFixedValue(mem, colAddr + srcOffset, valueSize);
-        }
-    }
-
-    private void writeSidecarValueSafe(MemoryMARW mem, int covIdx, long colAddr,
-                                        long colTop, long rowId, int shift, int valueSize, int colType) {
-        if (rowId < colTop) {
-            writeNullSentinel(mem, valueSize, colType);
-        } else {
-            long srcOffset = (rowId - colTop) << shift;
-            if (coveredColumnNames != null || coveredColumnAddrs != null) {
-                long addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
-                if (addr == 0) {
-                    writeNullSentinel(mem, valueSize, colType);
-                    return;
-                }
-                putFixedValue(mem, addr, valueSize);
-            } else {
-                putFixedValue(mem, colAddr + srcOffset, valueSize);
-            }
-        }
-    }
-
-    private int maxCoveredValueSize() {
-        int max = Long.BYTES;
-        for (int c = 0; c < coverCount; c++) {
-            int shift = coveredColumnShifts[c];
-            if (shift >= 0) {
-                max = Math.max(max, 1 << shift);
-            }
-        }
-        return max;
-    }
-
-    private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {
-        switch (ColumnType.tagOf(colType)) {
-            case ColumnType.DOUBLE -> mem.putLong(Double.doubleToLongBits(Double.NaN));
-            case ColumnType.FLOAT -> mem.putInt(Float.floatToIntBits(Float.NaN));
-            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL64 -> mem.putLong(Numbers.LONG_NULL);
-            case ColumnType.GEOLONG -> mem.putLong(GeoHashes.NULL);
-            case ColumnType.INT, ColumnType.SYMBOL, ColumnType.DECIMAL32 -> mem.putInt(Numbers.INT_NULL);
-            case ColumnType.IPv4 -> mem.putInt(Numbers.IPv4_NULL);
-            case ColumnType.GEOINT -> mem.putInt(GeoHashes.INT_NULL);
-            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.DECIMAL16 -> mem.putShort((short) 0);
-            case ColumnType.GEOSHORT -> mem.putShort(GeoHashes.SHORT_NULL);
-            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.DECIMAL8 -> mem.putByte((byte) 0);
-            case ColumnType.GEOBYTE -> mem.putByte(GeoHashes.BYTE_NULL);
-            case ColumnType.UUID, ColumnType.DECIMAL128 -> { mem.putLong(Numbers.LONG_NULL); mem.putLong(Numbers.LONG_NULL); }
-            case ColumnType.LONG256, ColumnType.DECIMAL256 -> { for (int i = 0; i < 4; i++) mem.putLong(Numbers.LONG_NULL); }
-            default -> {
-                // Generic fallback: write zero bytes for the value size
-                for (int i = 0; i < valueSize; i++) mem.putByte((byte) 0);
-            }
-        }
-    }
-
-    @Override
-    public void sync(boolean async) {
-        // Flush pending data from native buffers to mmap'd files before syncing,
-        // otherwise readers won't see buffered values.
-        flushAllPending();
-        if (keyMem.isOpen()) {
-            keyMem.sync(async);
-        }
-        if (valueMem.isOpen()) {
-            valueMem.sync(async);
-        }
-    }
-
-    @Override
-    public void closeNoTruncate() {
-        try {
-            seal();
-            compactValueFile();
-        } finally {
-            try {
-                if (keyMem.isOpen()) {
-                    keyMem.close(false);
-                }
-            } finally {
-                try {
-                    Misc.free(sealValueMem);
-                    if (valueMem.isOpen()) {
-                        valueMem.close(false);
-                    }
-                } finally {
-                    closeSidecarMems();
-                    freeNativeBuffers();
-                    keyCount = 0;
-                    valueMemSize = 0;
-                    genCount = 0;
-                    hasPendingData = false;
-                    activeKeyCount = 0;
-                    coverCount = 0;
-                }
-            }
-        }
-    }
-
-    @Override
-    public void clear() {
-        close();
-    }
-
     public void of(Path path, CharSequence name, long columnNameTxn, boolean init) {
         // Flush and close the current partition. close() flushes buffered
         // add() calls to the mmap files so the data is not lost. Seal is
@@ -2958,7 +667,6 @@ public class PostingIndexWriter implements IndexWriter {
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 this.blockCapacity = BLOCK_CAPACITY;
                 initKeyMemory(keyMem, blockCapacity);
-                kFdUnassigned = false;
             } else {
                 if (!ff.exists(keyFile)) {
                     throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
@@ -2972,8 +680,8 @@ public class PostingIndexWriter implements IndexWriter {
                 }
 
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), -1L, MemoryTag.MMAP_INDEX_WRITER);
-                kFdUnassigned = false;
             }
+            kFdUnassigned = false;
 
             if (init) {
                 this.activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
@@ -3026,6 +734,194 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Rebuilds covering sidecar files for an already-sealed posting index.
+     * Called after O3 merge, which rebuilds the posting index but doesn't
+     * write sidecar files (the O3 pool writer has no covering configuration).
+     */
+    public void rebuildSidecars() {
+        if (coverCount <= 0 || genCount == 0 || keyCount == 0) {
+            return;
+        }
+        // Open sidecar files and seal to write sidecar data.
+        // This handles both sparse gens (after O3 commit) and dense gens
+        // (after a prior seal without covering configuration).
+        if (sidecarMems != null) {
+            closeSidecarMems();
+        }
+        if (partitionPath != null) {
+            try (Path p = new Path().of(partitionPath)) {
+                openSidecarFiles(p, indexName, sidecarTxn);
+            }
+        }
+        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        if (gen0KeyCount >= 0) {
+            // Already dense — just rewrite sidecars
+            sealFull();
+        } else {
+            // Sparse — full seal converts to dense + writes sidecars
+            seal();
+        }
+    }
+
+    @Override
+    public void rollbackConditionally(long row) {
+        final long currentMaxRow = getMaxValue();
+        if (row >= 0 && (currentMaxRow < 1 || currentMaxRow >= row)) {
+            if (row == 0) {
+                truncate();
+            } else {
+                rollbackValues(row - 1);
+            }
+        }
+    }
+
+    @Override
+    public void rollbackValues(long maxValue) {
+        if (!keyMem.isOpen()) {
+            return;
+        }
+        flushAllPending();
+
+        if (genCount == 0 && keyCount == 0) {
+            setMaxValue(maxValue);
+            return;
+        }
+
+        LOG.info().$("rollback posting index [maxValue=").$(maxValue).$(", genCount=").$(genCount).$(", keyCount=").$(keyCount).$(']').$();
+        rollbackToMaxValue(maxValue);
+    }
+
+    public void seal() {
+        if (!keyMem.isOpen()) {
+            return;
+        }
+        flushAllPending();
+
+        if (genCount == 0 || keyCount == 0) {
+            return;
+        }
+
+        // Single sparse generation: seal to convert to stride-indexed dense format
+        // (enables flat mode compression which can be significantly smaller)
+        if (genCount == 1) {
+            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+            int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            if (gen0KeyCount >= 0) {
+                // Already dense — nothing to do (sidecar files from previous seal are valid)
+                return;
+            }
+        }
+
+        // Buffer old sidecar data from disk before openSidecarFiles truncates them.
+        // Needed for incremental seal to copy clean stride sidecar blocks.
+        long[] savedSidecarBufs = null;
+        long[] savedSidecarSizes = null;
+        if (coverCount > 0 && partitionPath != null) {
+            try (Path p = new Path().of(partitionPath)) {
+                int pp = p.size();
+                savedSidecarBufs = new long[coverCount];
+                savedSidecarSizes = new long[coverCount];
+                for (int c = 0; c < coverCount; c++) {
+                    LPSZ pcFile = PostingIndexUtils.coverDataFileName(p.trimTo(pp), indexName, sidecarTxn, c);
+                    if (ff.exists(pcFile)) {
+                        long fileLen = ff.length(pcFile);
+                        if (fileLen > 0) {
+                            long fd = ff.openRO(pcFile);
+                            if (fd >= 0) {
+                                try {
+                                    long mapped = ff.mmap(fd, fileLen, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                                    if (mapped > 0) {
+                                        try {
+                                            savedSidecarBufs[c] = Unsafe.malloc(fileLen, MemoryTag.NATIVE_INDEX_READER);
+                                            savedSidecarSizes[c] = fileLen;
+                                            Unsafe.getUnsafe().copyMemory(mapped, savedSidecarBufs[c], fileLen);
+                                        } finally {
+                                            ff.munmap(mapped, fileLen, MemoryTag.MMAP_INDEX_WRITER);
+                                        }
+                                    }
+                                } finally {
+                                    ff.close(fd);
+                                }
+                            }
+                        }
+                    }
+                    p.trimTo(pp);
+                }
+            }
+            if (sidecarMems != null) {
+                closeSidecarMems();
+            }
+        }
+
+        try {
+            // Open sidecar files (truncates to 0 and starts fresh)
+            if (coverCount > 0 && sidecarMems == null && partitionPath != null) {
+                try (Path p = new Path().of(partitionPath)) {
+                    openSidecarFiles(p, indexName, sidecarTxn);
+                }
+            }
+
+            if (genCount == 1) {
+                sealFull();
+                return;
+            }
+
+            // Check if incremental seal is possible:
+            // gen 0 must be dense, and all subsequent gens must be sparse
+            long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+            int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            boolean isIncrementalCandidate = gen0KeyCount >= 0;
+
+            if (isIncrementalCandidate) {
+                for (int g = 1; g < genCount; g++) {
+                    long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+                    int gkc = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                    if (gkc >= 0) {
+                        isIncrementalCandidate = false;
+                        break;
+                    }
+                }
+            }
+
+            if (isIncrementalCandidate && gen0KeyCount == keyCount) {
+                sealIncremental(savedSidecarBufs, savedSidecarSizes);
+                savedSidecarBufs = null; // ownership transferred
+            } else {
+                sealFull();
+            }
+        } finally {
+            if (savedSidecarBufs != null) {
+                for (int c = 0; c < savedSidecarBufs.length; c++) {
+                    if (savedSidecarBufs[c] != 0) {
+                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
+                    }
+                }
+            }
+        }
+    }
+
+    @Override
+    public void setMaxValue(long maxValue) {
+        // Write maxValue directly on the active page for writer-only reads.
+        // Published to readers via writeMetadataPage on next commit/seal.
+        keyMem.putLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE, maxValue);
+    }
+
+    @Override
+    public void sync(boolean async) {
+        // Flush pending data from native buffers to mmap'd files before syncing,
+        // otherwise readers won't see buffered values.
+        flushAllPending();
+        if (keyMem.isOpen()) {
+            keyMem.sync(async);
+        }
+        if (valueMem.isOpen()) {
+            valueMem.sync(async);
+        }
+    }
+
     @Override
     public void truncate() {
         freeNativeBuffers();
@@ -3038,6 +934,130 @@ public class PostingIndexWriter implements IndexWriter {
         hasPendingData = false;
         activeKeyCount = 0;
         allocateNativeBuffers();
+    }
+
+    private static int compressSidecarBlock(long rawBuf, int valueCount, int shift, int colType,
+                                            boolean isDesignatedTs,
+                                            long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
+        if (isDesignatedTs) {
+            // Designated timestamp: non-null, monotonically increasing per key.
+            // Linear-prediction FoR gives O(1) random access with same compression as delta.
+            return CoveringCompressor.compressLongsLinearPred(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+        }
+        return switch (ColumnType.tagOf(colType)) {
+            case ColumnType.DOUBLE ->
+                    CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
+                    CoveringCompressor.compressLongs(rawBuf, valueCount, destBuf);
+            case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL,
+                 ColumnType.DECIMAL32 ->
+                    CoveringCompressor.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            default -> {
+                // Raw copy for all other fixed-width types: BYTE, SHORT, CHAR, BOOLEAN,
+                // GEOBYTE, GEOSHORT, UUID, LONG256, DECIMAL8/16/128/256, etc.
+                Unsafe.getUnsafe().putInt(destBuf, valueCount);
+                Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
+                yield 4 + (valueCount << shift);
+            }
+        };
+    }
+
+    private static void putFixedValue(MemoryMARW mem, long addr, int valueSize) {
+        if (valueSize == Long.BYTES) {
+            mem.putLong(Unsafe.getUnsafe().getLong(addr));
+        } else if (valueSize == Integer.BYTES) {
+            mem.putInt(Unsafe.getUnsafe().getInt(addr));
+        } else if (valueSize == Short.BYTES) {
+            mem.putShort(Unsafe.getUnsafe().getShort(addr));
+        } else if (valueSize == Byte.BYTES) {
+            mem.putByte(Unsafe.getUnsafe().getByte(addr));
+        } else {
+            // Multi-long types: UUID (16B), LONG256 (32B), DECIMAL128 (16B), DECIMAL256 (32B)
+            mem.putBlockOfBytes(addr, valueSize);
+        }
+    }
+
+    private static void writeNullSentinel(long addr, int valueSize, int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DOUBLE -> {
+                Unsafe.getUnsafe().putDouble(addr, Double.NaN);
+                return;
+            }
+            case ColumnType.FLOAT -> {
+                Unsafe.getUnsafe().putFloat(addr, Float.NaN);
+                return;
+            }
+            case ColumnType.GEOBYTE -> {
+                Unsafe.getUnsafe().putByte(addr, GeoHashes.BYTE_NULL);
+                return;
+            }
+            case ColumnType.GEOSHORT -> {
+                Unsafe.getUnsafe().putShort(addr, GeoHashes.SHORT_NULL);
+                return;
+            }
+            case ColumnType.GEOINT -> {
+                Unsafe.getUnsafe().putInt(addr, GeoHashes.INT_NULL);
+                return;
+            }
+            case ColumnType.IPv4 -> {
+                Unsafe.getUnsafe().putInt(addr, Numbers.IPv4_NULL);
+                return;
+            }
+            case ColumnType.GEOLONG -> {
+                Unsafe.getUnsafe().putLong(addr, GeoHashes.NULL);
+                return;
+            }
+            default -> {
+            }
+        }
+        // Generic null sentinel by size for types not handled by the switch above
+        Unsafe.getUnsafe().setMemory(addr, valueSize, (byte) 0);
+        // Overlay Long.MIN_VALUE for each 8-byte slot (standard QuestDB null sentinel)
+        for (int off = 0; off + Long.BYTES <= valueSize; off += Long.BYTES) {
+            Unsafe.getUnsafe().putLong(addr + off, Long.MIN_VALUE);
+        }
+    }
+
+    private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {
+        switch (ColumnType.tagOf(colType)) {
+            case ColumnType.DOUBLE -> mem.putLong(Double.doubleToLongBits(Double.NaN));
+            case ColumnType.FLOAT -> mem.putInt(Float.floatToIntBits(Float.NaN));
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.DECIMAL64 ->
+                    mem.putLong(Numbers.LONG_NULL);
+            case ColumnType.GEOLONG -> mem.putLong(GeoHashes.NULL);
+            case ColumnType.INT, ColumnType.SYMBOL, ColumnType.DECIMAL32 -> mem.putInt(Numbers.INT_NULL);
+            case ColumnType.IPv4 -> mem.putInt(Numbers.IPv4_NULL);
+            case ColumnType.GEOINT -> mem.putInt(GeoHashes.INT_NULL);
+            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.DECIMAL16 -> mem.putShort((short) 0);
+            case ColumnType.GEOSHORT -> mem.putShort(GeoHashes.SHORT_NULL);
+            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.DECIMAL8 -> mem.putByte((byte) 0);
+            case ColumnType.GEOBYTE -> mem.putByte(GeoHashes.BYTE_NULL);
+            case ColumnType.UUID, ColumnType.DECIMAL128 -> {
+                mem.putLong(Numbers.LONG_NULL);
+                mem.putLong(Numbers.LONG_NULL);
+            }
+            case ColumnType.LONG256, ColumnType.DECIMAL256 -> {
+                for (int i = 0; i < 4; i++) mem.putLong(Numbers.LONG_NULL);
+            }
+            default -> {
+                // Generic fallback: write zero bytes for the value size
+                for (int i = 0; i < valueSize; i++) mem.putByte((byte) 0);
+            }
+        }
+    }
+
+    private void allocateNativeBuffers() {
+        keyCapacity = Math.max(INITIAL_KEY_CAPACITY, keyCount);
+        long valBufSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
+        long countBufSize = (long) keyCapacity * Integer.BYTES;
+
+        pendingValuesAddr = Unsafe.malloc(valBufSize, MemoryTag.NATIVE_INDEX_READER);
+        Unsafe.getUnsafe().setMemory(pendingValuesAddr, valBufSize, (byte) 0);
+
+        pendingCountsAddr = Unsafe.malloc(countBufSize, MemoryTag.NATIVE_INDEX_READER);
+        Unsafe.getUnsafe().setMemory(pendingCountsAddr, countBufSize, (byte) 0);
+
+        activeKeyIds = new int[keyCapacity];
     }
 
     /**
@@ -3106,24 +1126,297 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.getUnsafe().storeFence();
         writeMetadataPage(genCount,
                 keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
-                0, 0L, gen0Size, gen0KeyCount, gen0MinKey, gen0MaxKey);
+                0L, gen0Size, gen0KeyCount, gen0MinKey, gen0MaxKey);
 
         LOG.info().$("compacted posting index [deadSpace=").$(gen0Offset)
                 .$(", liveSize=").$(gen0Size).$(']').$();
     }
 
-    private void allocateNativeBuffers() {
-        keyCapacity = Math.max(INITIAL_KEY_CAPACITY, keyCount);
-        long valBufSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
-        long countBufSize = (long) keyCapacity * Integer.BYTES;
+    private void copyStrideFromGen0(long gen0Addr, int gen0KeyCount, int gen0SiSize, int stride,
+                                    long copyBuf, long copyBufSize) {
+        // If this stride existed in gen 0, copy it; otherwise write empty
+        if (stride >= PostingIndexUtils.strideCount(gen0KeyCount)) {
+            // Stride didn't exist in gen 0 — write empty delta stride
+            int ks = PostingIndexUtils.keysInStride(keyCount, stride);
+            int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+            long headerFilePos = sealTarget.getAppendOffset();
+            for (int i = 0; i < deltaHeaderSize; i += Integer.BYTES) {
+                sealTarget.putInt(0);
+            }
+            // Zero header = delta mode, all counts 0, all offsets 0
+            long headerAddr = sealTarget.addressOf(headerFilePos);
+            Unsafe.getUnsafe().setMemory(headerAddr, deltaHeaderSize, (byte) 0);
+            return;
+        }
 
-        pendingValuesAddr = Unsafe.malloc(valBufSize, MemoryTag.NATIVE_INDEX_READER);
-        Unsafe.getUnsafe().setMemory(pendingValuesAddr, valBufSize, (byte) 0);
+        int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) stride * Integer.BYTES);
+        int nextStrideOff;
+        if (stride + 1 < PostingIndexUtils.strideCount(gen0KeyCount)) {
+            nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) (stride + 1) * Integer.BYTES);
+        } else {
+            // Last stride — get sentinel
+            nextStrideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) PostingIndexUtils.strideCount(gen0KeyCount) * Integer.BYTES);
+        }
+        int strideSize = nextStrideOff - strideOff;
+        if (strideSize <= 0) {
+            return;
+        }
 
-        pendingCountsAddr = Unsafe.malloc(countBufSize, MemoryTag.NATIVE_INDEX_READER);
-        Unsafe.getUnsafe().setMemory(pendingCountsAddr, countBufSize, (byte) 0);
+        long srcAddr = gen0Addr + gen0SiSize + strideOff;
+        // Copy via temp buffer because srcAddr may point into valueMem's mapping.
+        if (strideSize <= copyBufSize) {
+            Unsafe.getUnsafe().copyMemory(srcAddr, copyBuf, strideSize);
+            sealTarget.putBlockOfBytes(copyBuf, strideSize);
+        } else {
+            long tmpBuf = Unsafe.malloc(strideSize, MemoryTag.NATIVE_INDEX_READER);
+            try {
+                Unsafe.getUnsafe().copyMemory(srcAddr, tmpBuf, strideSize);
+                sealTarget.putBlockOfBytes(tmpBuf, strideSize);
+            } finally {
+                Unsafe.free(tmpBuf, strideSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
+    }
 
-        activeKeyIds = new int[keyCapacity];
+    /**
+     * Determines which metadata page is currently active (has the highest valid sequence).
+     * A page is valid when its sequence_start == sequence_end.
+     */
+    private void determineActivePageOffset() {
+        long memSize = keyMem.size();
+        long seqA = memSize >= PostingIndexUtils.PAGE_SIZE
+                ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
+        long seqEndA = memSize >= PostingIndexUtils.PAGE_SIZE
+                ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END) : 0;
+        long seqB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
+                ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
+        long seqEndB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
+                ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END) : 0;
+
+        long validA = (seqA == seqEndA) ? seqA : 0;
+        long validB = (seqB == seqEndB) ? seqB : 0;
+        activePageOffset = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+    }
+
+    private void encodeDirtyStride(int s, int ks, long gen0Addr, int gen0KeyCount, int gen0SiSize,
+                                   long bpTrialBuf, long localHeaderBuf,
+                                   int[] bpKeySizes, long mergedValuesAddr) {
+        // For each key in this stride, decode from gen 0 + all sparse gens, merge.
+        // Store all merged values contiguously in mergedValuesAddr with per-key offsets
+        // so writePackedStride can read from the pre-merged buffer without re-merging.
+        int[] keyCounts = strideKeyCounts;
+        long[] keyOffsets = strideKeyOffsets;
+
+        // Merge all keys' values contiguously into mergedValuesAddr
+        long cumOffset = 0;
+        for (int j = 0; j < ks; j++) {
+            int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+            keyOffsets[j] = cumOffset;
+            int mergedCount = mergeKeyValues(key, gen0Addr, gen0KeyCount, gen0SiSize,
+                    mergedValuesAddr + cumOffset * Long.BYTES);
+            keyCounts[j] = mergedCount;
+            cumOffset += mergedCount;
+        }
+
+        // Trial delta encode from the pre-merged buffer (encode directly from native memory)
+        int bpDataTotal = 0;
+        for (int j = 0; j < ks; j++) {
+            int count = keyCounts[j];
+            if (count > 0) {
+                long keyAddr = mergedValuesAddr + keyOffsets[j] * Long.BYTES;
+                encodeCtx.ensureCapacity(count);
+                bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx);
+            } else {
+                bpKeySizes[j] = 0;
+            }
+            bpDataTotal += bpKeySizes[j];
+        }
+
+        // Compute per-stride base value (min across all values in stride)
+        int totalStrideValues = (int) cumOffset;
+        long strideMinValue = Long.MAX_VALUE;
+        long strideMaxValue = Long.MIN_VALUE;
+        for (int i = 0; i < totalStrideValues; i++) {
+            long val = Unsafe.getUnsafe().getLong(mergedValuesAddr + (long) i * Long.BYTES);
+            if (val < strideMinValue) strideMinValue = val;
+            if (val > strideMaxValue) strideMaxValue = val;
+        }
+        if (totalStrideValues == 0) {
+            strideMinValue = 0;
+            strideMaxValue = 0;
+        }
+        long strideRange = strideMaxValue - strideMinValue;
+        int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
+        int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
+
+        // Compute sizes for all three options: delta, flat-natural, flat-aligned
+        int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+        int deltaSize = deltaHeaderSize + bpDataTotal;
+
+        int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
+        int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
+        int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
+
+        // Choose: prefer aligned flat (AVX2-friendly) if it still beats delta,
+        // otherwise natural flat if it beats delta, otherwise delta.
+        int localBitWidth;
+        int flatDataSize;
+        int flatSize;
+        if (alignedBitWidth != naturalBitWidth) {
+            int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
+            int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
+            if (alignedFlatSize < deltaSize) {
+                // Aligned flat beats delta — use it for AVX2 decode
+                localBitWidth = alignedBitWidth;
+                flatDataSize = alignedFlatDataSize;
+                flatSize = alignedFlatSize;
+            } else if (naturalFlatSize < deltaSize) {
+                // Aligned too big, but natural flat still beats delta
+                localBitWidth = naturalBitWidth;
+                flatDataSize = naturalFlatDataSize;
+                flatSize = naturalFlatSize;
+            } else {
+                localBitWidth = naturalBitWidth;
+                flatDataSize = naturalFlatDataSize;
+                flatSize = naturalFlatSize;
+            }
+        } else {
+            localBitWidth = naturalBitWidth;
+            flatDataSize = naturalFlatDataSize;
+            flatSize = naturalFlatSize;
+        }
+
+        boolean useFlat = flatSize < deltaSize;
+
+        LOG.debug().$("stride mode [s=").$(s)
+                .$(", deltaSize=").$(deltaSize)
+                .$(", flatSize=").$(flatSize)
+                .$(", natBW=").$(naturalBitWidth)
+                .$(", alnBW=").$(localBitWidth)
+                .$(", totalVals=").$(totalStrideValues)
+                .$(", useFlat=").$(useFlat)
+                .$(']').$();
+
+        if (useFlat) {
+            writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue, flatHeaderSize, flatDataSize,
+                    localHeaderBuf, mergedValuesAddr);
+        } else {
+            writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes, localHeaderBuf);
+        }
+    }
+
+    /**
+     * Lazily creates read-only mmaps of the covered column files.
+     * MemoryPMARImpl (the writer's column memory) maps one page at a time,
+     * so addressOf() fails for random reads. These are separate RO mmaps
+     * via the mmap cache, providing O(1) access to any offset.
+     */
+    private void ensureCoveredColumnReadMaps() {
+        if (coveredColReadAddrs != null) {
+            return;
+        }
+        coveredColReadAddrs = new long[coverCount];
+        coveredColReadSizes = new long[coverCount];
+        coveredAuxReadAddrs = new long[coverCount];
+        coveredAuxReadSizes = new long[coverCount];
+
+        if (coveredColumnNames != null && coveredPartitionPath != null) {
+            // Name-based: open files ourselves via mmap cache
+            try (Path p = new Path()) {
+                for (int c = 0; c < coverCount; c++) {
+                    mapColumnFile(p, coveredColumnNames[c], coveredColumnNameTxns[c],
+                            coveredColReadAddrs, coveredColReadSizes, c, false);
+                    if (ColumnType.isVarSize(coveredColumnTypes[c])) {
+                        mapColumnFile(p, coveredColumnNames[c], coveredColumnNameTxns[c],
+                                coveredAuxReadAddrs, coveredAuxReadSizes, c, true);
+                    }
+                }
+            }
+        } else if (coveredColumnAddrs != null) {
+            // Addr-based (O3): reference caller's addresses, size=0 means not owned
+            for (int c = 0; c < coverCount; c++) {
+                coveredColReadAddrs[c] = coveredColumnAddrs[c];
+                coveredColReadSizes[c] = 0; // not owned — caller unmaps
+            }
+        }
+    }
+
+    private void ensureSpillArrays(int key) {
+        int needed = key + 1;
+        if (spillKeyAddrsAddr == 0) {
+            int cap = Math.max(keyCapacity, needed);
+            long addrsSize = (long) cap * Long.BYTES;
+            long countsSize = (long) cap * Integer.BYTES;
+            long capsSize = (long) cap * Integer.BYTES;
+            spillKeyAddrsAddr = Unsafe.malloc(addrsSize, MemoryTag.NATIVE_INDEX_READER);
+            try {
+                spillKeyCountsAddr = Unsafe.malloc(countsSize, MemoryTag.NATIVE_INDEX_READER);
+                try {
+                    spillKeyCapacitiesAddr = Unsafe.malloc(capsSize, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(spillKeyCountsAddr, countsSize, MemoryTag.NATIVE_INDEX_READER);
+                    spillKeyCountsAddr = 0;
+                    throw e;
+                }
+            } catch (Throwable e) {
+                Unsafe.free(spillKeyAddrsAddr, addrsSize, MemoryTag.NATIVE_INDEX_READER);
+                spillKeyAddrsAddr = 0;
+                throw e;
+            }
+            Unsafe.getUnsafe().setMemory(spillKeyAddrsAddr, addrsSize, (byte) 0);
+            Unsafe.getUnsafe().setMemory(spillKeyCountsAddr, countsSize, (byte) 0);
+            Unsafe.getUnsafe().setMemory(spillKeyCapacitiesAddr, capsSize, (byte) 0);
+            spillArraysCapacity = cap;
+        } else if (needed > spillArraysCapacity) {
+            int newCap = Math.max(keyCapacity, needed);
+            int savedCapacity = spillArraysCapacity;
+
+            long oldAddrsSize = (long) savedCapacity * Long.BYTES;
+            long newAddrsSize = (long) newCap * Long.BYTES;
+            spillKeyAddrsAddr = Unsafe.realloc(spillKeyAddrsAddr, oldAddrsSize, newAddrsSize, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.getUnsafe().setMemory(spillKeyAddrsAddr + oldAddrsSize, newAddrsSize - oldAddrsSize, (byte) 0);
+
+            // Update spillArraysCapacity after each successful realloc so that
+            // if the next realloc fails OOM, close() computes correct sizes for
+            // already-grown buffers.
+            spillArraysCapacity = newCap;
+
+            long oldCountsSize = (long) savedCapacity * Integer.BYTES;
+            long newCountsSize = (long) newCap * Integer.BYTES;
+            spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, oldCountsSize, newCountsSize, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.getUnsafe().setMemory(spillKeyCountsAddr + oldCountsSize, newCountsSize - oldCountsSize, (byte) 0);
+
+            long oldCapsSize = (long) savedCapacity * Integer.BYTES;
+            long newCapsSize = (long) newCap * Integer.BYTES;
+            spillKeyCapacitiesAddr = Unsafe.realloc(spillKeyCapacitiesAddr, oldCapsSize, newCapsSize, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.getUnsafe().setMemory(spillKeyCapacitiesAddr + oldCapsSize, newCapsSize - oldCapsSize, (byte) 0);
+        }
+    }
+
+    private int estimateMaxPerKey(long gen0Addr, int gen0KeyCount, int gen0SiSize) {
+        int max = 0;
+        int sc = PostingIndexUtils.strideCount(gen0KeyCount);
+        for (int s = 0; s < sc; s++) {
+            int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) s * Integer.BYTES);
+            long strideAddr = gen0Addr + gen0SiSize + strideOff;
+            int ks = PostingIndexUtils.keysInStride(gen0KeyCount, s);
+            byte mode = Unsafe.getUnsafe().getByte(strideAddr);
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                for (int j = 0; j < ks; j++) {
+                    int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
+                            - Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
+                    if (count > max) max = count;
+                }
+            } else {
+                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                for (int j = 0; j < ks; j++) {
+                    int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
+                    if (count > max) max = count;
+                }
+            }
+        }
+        return max;
     }
 
     private void flushAllPending() {
@@ -3313,106 +1606,6 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    private void spillKey(int key, int count) {
-        ensureSpillArrays(key);
-        int prevCount = Unsafe.getUnsafe().getInt(spillKeyCountsAddr + (long) key * Integer.BYTES);
-        int needed = prevCount + count;
-        // Grow per-key spill buffer if needed
-        int curCap = Unsafe.getUnsafe().getInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES);
-        if (needed > curCap) {
-            int newCap = Math.max(needed, curCap * 2);
-            newCap = Math.max(newCap, 256); // minimum 256 values
-            long oldSize = (long) curCap * Long.BYTES;
-            long newSize = (long) newCap * Long.BYTES;
-            long oldAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
-            long newAddr = Unsafe.realloc(oldAddr, oldSize, newSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.getUnsafe().putLong(spillKeyAddrsAddr + (long) key * Long.BYTES, newAddr);
-            Unsafe.getUnsafe().putInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES, newCap);
-        }
-        // Copy values from pending buffer to this key's spill
-        long srcAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
-        long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
-        Unsafe.getUnsafe().copyMemory(srcAddr, spillAddr + (long) prevCount * Long.BYTES,
-                (long) count * Long.BYTES);
-        Unsafe.getUnsafe().putInt(spillKeyCountsAddr + (long) key * Integer.BYTES, needed);
-        hasSpillData = true;
-        // Reset pending count
-        Unsafe.getUnsafe().putInt(pendingCountsAddr + (long) key * Integer.BYTES, 0);
-    }
-
-    private void ensureSpillArrays(int key) {
-        int needed = key + 1;
-        if (spillKeyAddrsAddr == 0) {
-            int cap = Math.max(keyCapacity, needed);
-            long addrsSize = (long) cap * Long.BYTES;
-            long countsSize = (long) cap * Integer.BYTES;
-            long capsSize = (long) cap * Integer.BYTES;
-            spillKeyAddrsAddr = Unsafe.malloc(addrsSize, MemoryTag.NATIVE_INDEX_READER);
-            try {
-                spillKeyCountsAddr = Unsafe.malloc(countsSize, MemoryTag.NATIVE_INDEX_READER);
-                try {
-                    spillKeyCapacitiesAddr = Unsafe.malloc(capsSize, MemoryTag.NATIVE_INDEX_READER);
-                } catch (Throwable e) {
-                    Unsafe.free(spillKeyCountsAddr, countsSize, MemoryTag.NATIVE_INDEX_READER);
-                    spillKeyCountsAddr = 0;
-                    throw e;
-                }
-            } catch (Throwable e) {
-                Unsafe.free(spillKeyAddrsAddr, addrsSize, MemoryTag.NATIVE_INDEX_READER);
-                spillKeyAddrsAddr = 0;
-                throw e;
-            }
-            Unsafe.getUnsafe().setMemory(spillKeyAddrsAddr, addrsSize, (byte) 0);
-            Unsafe.getUnsafe().setMemory(spillKeyCountsAddr, countsSize, (byte) 0);
-            Unsafe.getUnsafe().setMemory(spillKeyCapacitiesAddr, capsSize, (byte) 0);
-            spillArraysCapacity = cap;
-        } else if (needed > spillArraysCapacity) {
-            int newCap = Math.max(keyCapacity, needed);
-            int savedCapacity = spillArraysCapacity;
-
-            long oldAddrsSize = (long) savedCapacity * Long.BYTES;
-            long newAddrsSize = (long) newCap * Long.BYTES;
-            spillKeyAddrsAddr = Unsafe.realloc(spillKeyAddrsAddr, oldAddrsSize, newAddrsSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.getUnsafe().setMemory(spillKeyAddrsAddr + oldAddrsSize, newAddrsSize - oldAddrsSize, (byte) 0);
-
-            // Update spillArraysCapacity after each successful realloc so that
-            // if the next realloc fails OOM, close() computes correct sizes for
-            // already-grown buffers.
-            spillArraysCapacity = newCap;
-
-            long oldCountsSize = (long) savedCapacity * Integer.BYTES;
-            long newCountsSize = (long) newCap * Integer.BYTES;
-            spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, oldCountsSize, newCountsSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.getUnsafe().setMemory(spillKeyCountsAddr + oldCountsSize, newCountsSize - oldCountsSize, (byte) 0);
-
-            long oldCapsSize = (long) savedCapacity * Integer.BYTES;
-            long newCapsSize = (long) newCap * Integer.BYTES;
-            spillKeyCapacitiesAddr = Unsafe.realloc(spillKeyCapacitiesAddr, oldCapsSize, newCapsSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.getUnsafe().setMemory(spillKeyCapacitiesAddr + oldCapsSize, newCapsSize - oldCapsSize, (byte) 0);
-        }
-    }
-
-    private int getSpillCount(int key) {
-        if (spillKeyCountsAddr == 0 || key >= spillArraysCapacity) {
-            return 0;
-        }
-        return Unsafe.getUnsafe().getInt(spillKeyCountsAddr + (long) key * Integer.BYTES);
-    }
-
-    private void resetSpill() {
-        if (!hasSpillData || spillKeyCountsAddr == 0) {
-            return;
-        }
-        for (int i = 0; i < activeKeyCount; i++) {
-            int key = activeKeyIds[i];
-            if (key < spillArraysCapacity) {
-                Unsafe.getUnsafe().putInt(spillKeyCountsAddr + (long) key * Integer.BYTES, 0);
-                // Keep the allocated buffer for reuse, just reset count
-            }
-        }
-        hasSpillData = false;
-    }
-
     private void freeNativeBuffers() {
         if (pendingValuesAddr != 0) {
             Unsafe.free(pendingValuesAddr, (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -3463,6 +1656,71 @@ public class PostingIndexWriter implements IndexWriter {
         keyCapacity = 0;
     }
 
+    private long getCoveredAuxReadAddr(int covIdx, long offset, long needed) {
+        ensureCoveredColumnReadMaps();
+        long addr = coveredAuxReadAddrs[covIdx];
+        long size = coveredAuxReadSizes[covIdx];
+        if (addr == 0) {
+            return 0;
+        }
+        if (size == 0) {
+            return addr + offset;
+        }
+        if (offset + needed > size) {
+            Files.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
+            coveredAuxReadAddrs[covIdx] = 0;
+            if (coveredColumnNames != null && coveredPartitionPath != null) {
+                try (Path p = new Path()) {
+                    mapColumnFile(p, coveredColumnNames[covIdx], coveredColumnNameTxns[covIdx],
+                            coveredAuxReadAddrs, coveredAuxReadSizes, covIdx, true);
+                }
+            }
+            addr = coveredAuxReadAddrs[covIdx];
+            size = coveredAuxReadSizes[covIdx];
+            if (addr == 0 || offset + needed > size) {
+                return 0;
+            }
+        }
+        return addr + offset;
+    }
+
+    private long getCoveredDataReadAddr(int covIdx, long offset, long needed) {
+        ensureCoveredColumnReadMaps();
+        long addr = coveredColReadAddrs[covIdx];
+        long size = coveredColReadSizes[covIdx];
+        if (addr == 0) {
+            return 0;
+        }
+        // size == 0 means addr-based (O3): caller-provided buffer, no bounds check or remap
+        if (size == 0) {
+            return addr + offset;
+        }
+        // size > 0 means name-based: writer-owned mmap, remap if file grew
+        if (offset + needed > size) {
+            Files.munmap(addr, size, MemoryTag.MMAP_INDEX_WRITER);
+            coveredColReadAddrs[covIdx] = 0;
+            if (coveredColumnNames != null && coveredPartitionPath != null) {
+                try (Path p = new Path()) {
+                    mapColumnFile(p, coveredColumnNames[covIdx], coveredColumnNameTxns[covIdx],
+                            coveredColReadAddrs, coveredColReadSizes, covIdx, false);
+                }
+            }
+            addr = coveredColReadAddrs[covIdx];
+            size = coveredColReadSizes[covIdx];
+            if (addr == 0 || offset + needed > size) {
+                return 0;
+            }
+        }
+        return addr + offset;
+    }
+
+    private int getSpillCount(int key) {
+        if (spillKeyCountsAddr == 0 || key >= spillArraysCapacity) {
+            return 0;
+        }
+        return Unsafe.getUnsafe().getInt(spillKeyCountsAddr + (long) key * Integer.BYTES);
+    }
+
     private void growKeyBuffers(int minCapacity) {
         int newCapacity = Math.max(keyCapacity * 2, minCapacity);
 
@@ -3485,52 +1743,1285 @@ public class PostingIndexWriter implements IndexWriter {
         activeKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
     }
 
-    /**
-     * Determines which metadata page is currently active (has the highest valid sequence).
-     * A page is valid when its sequence_start == sequence_end.
-     */
-    private void determineActivePageOffset() {
-        long memSize = keyMem.size();
-        long seqA = memSize >= PostingIndexUtils.PAGE_SIZE
-                ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
-        long seqEndA = memSize >= PostingIndexUtils.PAGE_SIZE
-                ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END) : 0;
-        long seqB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
-                ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
-        long seqEndB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED
-                ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END) : 0;
+    private boolean isClosed() {
+        return coveredColumnNames == null && coveredColumnAddrs == null;
+    }
 
-        long validA = (seqA == seqEndA) ? seqA : 0;
-        long validB = (seqB == seqEndB) ? seqB : 0;
-        activePageOffset = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+    private void mapColumnFile(Path p, String colName, long colNameTxn,
+                               long[] addrs, long[] sizes, int idx, boolean isAux) {
+        p.of(coveredPartitionPath);
+        LPSZ fileName = isAux
+                ? TableUtils.iFile(p, colName, colNameTxn)
+                : TableUtils.dFile(p, colName, colNameTxn);
+        long fd = ff.openRO(fileName);
+        if (fd >= 0) {
+            try {
+                long fileSize = ff.length(fd);
+                if (fileSize > 0) {
+                    addrs[idx] = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_WRITER);
+                    sizes[idx] = fileSize;
+                }
+            } finally {
+                ff.close(fd); // mmap keeps data accessible after FD close
+            }
+        }
+    }
+
+    private int maxCoveredValueSize() {
+        int max = Long.BYTES;
+        for (int c = 0; c < coverCount; c++) {
+            int shift = coveredColumnShifts[c];
+            if (shift >= 0) {
+                max = Math.max(max, 1 << shift);
+            }
+        }
+        return max;
+    }
+
+    private int mergeKeyValues(int key, long gen0Addr, int gen0KeyCount, int gen0SiSize, long destAddr) {
+        int totalCount = 0;
+
+        // Decode from gen 0 (dense)
+        if (key < gen0KeyCount) {
+            int stride = key / PostingIndexUtils.DENSE_STRIDE;
+            int localKey = key % PostingIndexUtils.DENSE_STRIDE;
+            int strideOff = Unsafe.getUnsafe().getInt(gen0Addr + (long) stride * Integer.BYTES);
+            long strideAddr = gen0Addr + gen0SiSize + strideOff;
+            int ks = PostingIndexUtils.keysInStride(gen0KeyCount, stride);
+            byte mode = Unsafe.getUnsafe().getByte(strideAddr);
+
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
+                long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) localKey * Integer.BYTES);
+                int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES) - startIdx;
+                if (count > 0) {
+                    int flatHdrSize = PostingIndexUtils.strideFlatHeaderSize(ks);
+                    long flatDataAddr = strideAddr + flatHdrSize;
+                    if (count > unpackBatchCapacity) {
+                        int newCap = Math.max(count, unpackBatchCapacity * 2);
+                        if (unpackBatchAddr != 0) {
+                            Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                        }
+                        unpackBatchCapacity = newCap;
+                        unpackBatchAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                    BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, unpackBatchAddr);
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.getUnsafe().putLong(destAddr + (long) totalCount * Long.BYTES,
+                                Unsafe.getUnsafe().getLong(unpackBatchAddr + (long) i * Long.BYTES));
+                        totalCount++;
+                    }
+                }
+            } else {
+                long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                int count = Unsafe.getUnsafe().getInt(countsAddr + (long) localKey * Integer.BYTES);
+                if (count > 0) {
+                    long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
+                    int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
+                    int deltaHdrSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+                    long encodedAddr = strideAddr + deltaHdrSize + dataOffset;
+                    PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx);
+                    totalCount += count;
+                }
+            }
+        }
+
+        // Decode from sparse gens 1..N
+        for (int g = 1; g < genCount; g++) {
+            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+            long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+            int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            int activeKeyCount = -genKeyCount;
+            long genAddr = valueMem.addressOf(genFileOffset);
+
+            int idx = PostingIndexUtils.binarySearchKeyId(genAddr, activeKeyCount, key);
+            if (idx < 0) continue;
+
+            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
+            long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+            long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+            int count = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
+            if (count == 0) continue;
+
+            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
+            long encodedAddr = genAddr + headerSize + dataOffset;
+            PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr + (long) totalCount * Long.BYTES, decodeCtx);
+            totalCount += count;
+        }
+
+        return totalCount;
+    }
+
+    private void openSealValueFile(long newTxn) {
+        if (partitionPath == null) {
+            return;
+        }
+        try (Path p = new Path().of(partitionPath)) {
+            LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, newTxn);
+            sealValueMem.of(ff, fileName,
+                    configuration.getDataIndexValueAppendPageSize(),
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts());
+            sealValueMem.jumpTo(0);
+        }
+        sealTarget = sealValueMem;
+    }
+
+    private void openSidecarFiles(Path path, CharSequence name, long columnNameTxn) {
+        if (coverCount <= 0) {
+            return;
+        }
+        final int plen = path.size();
+        try {
+            // Write .pci info file
+            sidecarInfoMem = Vm.getCMARWInstance();
+            sidecarInfoMem.of(
+                    ff,
+                    PostingIndexUtils.coverInfoFileName(path, name, columnNameTxn),
+                    configuration.getDataIndexValueAppendPageSize(),
+                    0L,
+                    MemoryTag.MMAP_INDEX_WRITER
+            );
+            path.trimTo(plen);
+            sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
+            sidecarInfoMem.putInt(coverCount);
+            for (int c = 0; c < coverCount; c++) {
+                sidecarInfoMem.putInt(coveredColumnIndices[c]);
+                sidecarInfoMem.putInt(coveredColumnTypes[c]);
+            }
+
+            // Open .pc0, .pc1, ... files
+            sidecarMems = new MemoryMARW[coverCount];
+            for (int c = 0; c < coverCount; c++) {
+                sidecarMems[c] = Vm.getCMARWInstance();
+                sidecarMems[c].of(
+                        ff,
+                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, columnNameTxn, c),
+                        configuration.getDataIndexValueAppendPageSize(),
+                        0L,
+                        MemoryTag.MMAP_INDEX_WRITER
+                );
+                path.trimTo(plen);
+            }
+        } catch (Throwable e) {
+            closeSidecarMems();
+            throw e;
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    /**
+     * Opens sidecar files for append, preserving existing data. Used by
+     * writeSidecarGenData to add per-gen raw blocks after seal's stride-indexed
+     * data. Creates files if they don't exist, writes .pci header only when new.
+     * <p>
+     * When reopening existing files, the .pci header is preserved as-is. This is
+     * safe because the covered column configuration (INCLUDE clause) is part of
+     * the table schema and cannot change within a column version — schema changes
+     * create new file versions via columnNameTxn bump.
+     */
+    private void openSidecarFilesForAppend(Path path, CharSequence name, long columnNameTxn) {
+        if (coverCount <= 0) {
+            return;
+        }
+        final int plen = path.size();
+        try {
+            LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, name, columnNameTxn);
+            boolean isNew = !ff.exists(pciFile);
+            sidecarInfoMem = Vm.getCMARWInstance();
+            long pciSize = isNew ? 0L : ff.length(pciFile);
+            if (pciSize < 0) {
+                pciSize = 0L; // I/O error reading length — treat as new file
+            }
+            sidecarInfoMem.of(ff, pciFile,
+                    configuration.getDataIndexValueAppendPageSize(),
+                    pciSize,
+                    MemoryTag.MMAP_INDEX_WRITER);
+            path.trimTo(plen);
+            if (isNew) {
+                sidecarInfoMem.putInt(PostingIndexUtils.COVER_INFO_MAGIC);
+                sidecarInfoMem.putInt(coverCount);
+                for (int c = 0; c < coverCount; c++) {
+                    sidecarInfoMem.putInt(coveredColumnIndices[c]);
+                    sidecarInfoMem.putInt(coveredColumnTypes[c]);
+                }
+            }
+
+            sidecarMems = new MemoryMARW[coverCount];
+            for (int c = 0; c < coverCount; c++) {
+                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, columnNameTxn, c);
+                long fileLen = ff.exists(pcFile) ? ff.length(pcFile) : -1L;
+                long existingSize = fileLen > 0 ? fileLen : 0L;
+                sidecarMems[c] = Vm.getCMARWInstance();
+                sidecarMems[c].of(ff, pcFile,
+                        configuration.getDataIndexValueAppendPageSize(),
+                        existingSize,
+                        MemoryTag.MMAP_INDEX_WRITER);
+                if (existingSize > 0) {
+                    sidecarMems[c].jumpTo(existingSize);
+                }
+                path.trimTo(plen);
+            }
+        } catch (Throwable e) {
+            closeSidecarMems();
+            throw e;
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    /**
+     * Decode all generations, optionally filter values > maxValueCutoff, then
+     * re-encode surviving values into a single dense stride-indexed generation.
+     *
+     * @param maxValue       the maxValue to write into the metadata header
+     * @param maxValueCutoff Long.MAX_VALUE means no filtering (seal path);
+     *                       any other value trims per-key values to those <= cutoff (rollback path)
+     */
+    private void reencodeAllGenerations(long maxValue, long maxValueCutoff, boolean inPlace) {
+
+        // Phase 1: Count total values per key across all generations
+        long totalCountsSize = (long) keyCount * Integer.BYTES;
+        long totalCountsAddr = Unsafe.malloc(totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            Unsafe.getUnsafe().setMemory(totalCountsAddr, totalCountsSize, (byte) 0);
+
+            long totalValueCount = 0;
+            for (int gen = 0; gen < genCount; gen++) {
+                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
+                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                long keyIdsBase = valueMem.addressOf(genFileOffset);
+
+                if (genKeyCount < 0) {
+                    // Sparse format
+                    int activeKeyCount = -genKeyCount;
+                    long countsBase = keyIdsBase + (long) activeKeyCount * Integer.BYTES;
+                    for (int i = 0; i < activeKeyCount; i++) {
+                        int key = Unsafe.getUnsafe().getInt(keyIdsBase + (long) i * Integer.BYTES);
+                        int count = Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
+                        int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                        Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
+                        totalValueCount += count;
+                    }
+                } else {
+                    // Dense format — stride-indexed (supports delta and flat modes)
+                    int sc = PostingIndexUtils.strideCount(genKeyCount);
+                    int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+                    for (int s = 0; s < sc; s++) {
+                        int strideOff = Unsafe.getUnsafe().getInt(keyIdsBase + (long) s * Integer.BYTES);
+                        long strideAddr = keyIdsBase + siSize + strideOff;
+                        int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
+                        byte mode = Unsafe.getUnsafe().getByte(strideAddr);
+                        if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                            // Flat mode: prefixCounts at STRIDE_FLAT_PREFIX_COUNTS_OFFSET
+                            long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                            for (int j = 0; j < ks; j++) {
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                                int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES)
+                                        - Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
+                                int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                                Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
+                                totalValueCount += count;
+                            }
+                        } else {
+                            // Delta mode: counts at offset STRIDE_MODE_PREFIX_SIZE
+                            long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                            for (int j = 0; j < ks; j++) {
+                                int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                                int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
+                                int existing = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                                Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, existing + count);
+                                totalValueCount += count;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (totalValueCount == 0) {
+                if (inPlace) {
+                    truncate();
+                    setMaxValue(maxValue);
+                }
+                return;
+            }
+
+            // Phase 2: Decode all values grouped by key into a flat buffer
+            long allValuesAddr = Unsafe.malloc(totalValueCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            try {
+                long keyOffsetsSize = (long) keyCount * Long.BYTES;
+                long keyOffsetsAddr = Unsafe.malloc(keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
+                try {
+                    // Compute per-key write offsets
+                    long writeOffset = 0;
+                    for (int key = 0; key < keyCount; key++) {
+                        Unsafe.getUnsafe().putLong(keyOffsetsAddr + (long) key * Long.BYTES, writeOffset);
+                        writeOffset += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                    }
+
+                    // Pre-allocate reencodeUnpackBatch and packedResiduals to avoid
+                    // per-key/per-stride allocations during the decode and re-encode loops.
+                    // Scan totalCountsAddr to find max per-key count and max per-stride total.
+                    int maxPerKeyCount = 0;
+                    int maxStrideTotal = 0;
+                    {
+                        int sc0 = PostingIndexUtils.strideCount(keyCount);
+                        for (int s0 = 0; s0 < sc0; s0++) {
+                            int strideTotal = 0;
+                            int ks0 = PostingIndexUtils.keysInStride(keyCount, s0);
+                            for (int j0 = 0; j0 < ks0; j0++) {
+                                int key0 = s0 * PostingIndexUtils.DENSE_STRIDE + j0;
+                                int c = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key0 * Integer.BYTES);
+                                if (c > maxPerKeyCount) maxPerKeyCount = c;
+                                strideTotal += c;
+                            }
+                            if (strideTotal > maxStrideTotal) maxStrideTotal = strideTotal;
+                        }
+                    }
+                    long reencodeUnpackBatchAddr = 0;
+                    int reencodeUnpackBatchCapacity = 0;
+                    if (maxPerKeyCount > 0) {
+                        reencodeUnpackBatchCapacity = maxPerKeyCount;
+                        reencodeUnpackBatchAddr = Unsafe.malloc((long) maxPerKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                    try {
+                        if (maxStrideTotal > packedResidualsCapacity) {
+                            if (packedResidualsAddr != 0) {
+                                Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                            }
+                            packedResidualsCapacity = maxStrideTotal;
+                            packedResidualsAddr = Unsafe.malloc((long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                        }
+                        for (int gen = 0; gen < genCount; gen++) {
+                            long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, gen);
+                            long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                            int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                            long keyIdsBase = valueMem.addressOf(genFileOffset);
+
+                            if (genKeyCount < 0) {
+                                // Sparse format
+                                int activeKeyCount = -genKeyCount;
+                                int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
+                                long countsBase = keyIdsBase + (long) activeKeyCount * Integer.BYTES;
+                                long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+
+                                for (int i = 0; i < activeKeyCount; i++) {
+                                    int key = Unsafe.getUnsafe().getInt(keyIdsBase + (long) i * Integer.BYTES);
+                                    int count = Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
+                                    if (count == 0) continue;
+
+                                    int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) i * Integer.BYTES);
+                                    long encodedAddr = keyIdsBase + headerSize + dataOffset;
+
+                                    long keyWriteOff = Unsafe.getUnsafe().getLong(
+                                            keyOffsetsAddr + (long) key * Long.BYTES);
+                                    long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
+
+                                    PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx);
+
+                                    Unsafe.getUnsafe().putLong(
+                                            keyOffsetsAddr + (long) key * Long.BYTES, keyWriteOff + count);
+                                }
+                            } else {
+                                // Dense format — stride-indexed (supports delta and flat modes)
+                                int sc = PostingIndexUtils.strideCount(genKeyCount);
+                                int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+                                for (int s = 0; s < sc; s++) {
+                                    int strideOff = Unsafe.getUnsafe().getInt(keyIdsBase + (long) s * Integer.BYTES);
+                                    long strideAddr = keyIdsBase + siSize + strideOff;
+                                    int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
+                                    byte mode = Unsafe.getUnsafe().getByte(strideAddr);
+
+                                    if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                                        // Flat mode
+                                        int bitWidth = Unsafe.getUnsafe().getByte(strideAddr + 1) & 0xFF;
+                                        long baseValue = Unsafe.getUnsafe().getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                                        long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                                        int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
+                                        long flatDataAddr = strideAddr + flatHeaderSize;
+
+                                        for (int j = 0; j < ks; j++) {
+                                            int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                                            int startIdx = Unsafe.getUnsafe().getInt(prefixAddr + (long) j * Integer.BYTES);
+                                            int count = Unsafe.getUnsafe().getInt(prefixAddr + (long) (j + 1) * Integer.BYTES) - startIdx;
+                                            if (count == 0) continue;
+
+                                            long keyWriteOff = Unsafe.getUnsafe().getLong(
+                                                    keyOffsetsAddr + (long) key * Long.BYTES);
+                                            long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
+
+                                            if (count > reencodeUnpackBatchCapacity) {
+                                                int newCap = Math.max(count, reencodeUnpackBatchCapacity * 2);
+                                                if (reencodeUnpackBatchAddr != 0) {
+                                                    Unsafe.free(reencodeUnpackBatchAddr, (long) reencodeUnpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                                                }
+                                                reencodeUnpackBatchCapacity = newCap;
+                                                reencodeUnpackBatchAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                                            }
+                                            BitpackUtils.unpackValuesFrom(flatDataAddr, startIdx, count, bitWidth, baseValue, reencodeUnpackBatchAddr);
+                                            for (int i = 0; i < count; i++) {
+                                                Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES,
+                                                        Unsafe.getUnsafe().getLong(reencodeUnpackBatchAddr + (long) i * Long.BYTES));
+                                            }
+
+                                            Unsafe.getUnsafe().putLong(
+                                                    keyOffsetsAddr + (long) key * Long.BYTES, keyWriteOff + count);
+                                        }
+                                    } else {
+                                        // Delta mode
+                                        long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+                                        long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
+                                        int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+
+                                        for (int j = 0; j < ks; j++) {
+                                            int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                                            int count = Unsafe.getUnsafe().getInt(countsAddr + (long) j * Integer.BYTES);
+                                            if (count == 0) continue;
+
+                                            int dataOff = Unsafe.getUnsafe().getInt(offsetsBase + (long) j * Integer.BYTES);
+                                            long encodedAddr = strideAddr + deltaHeaderSize + dataOff;
+
+                                            long keyWriteOff = Unsafe.getUnsafe().getLong(
+                                                    keyOffsetsAddr + (long) key * Long.BYTES);
+                                            long destAddr = allValuesAddr + keyWriteOff * Long.BYTES;
+
+                                            PostingIndexUtils.decodeKeyToNative(encodedAddr, destAddr, decodeCtx);
+
+                                            Unsafe.getUnsafe().putLong(
+                                                    keyOffsetsAddr + (long) key * Long.BYTES, keyWriteOff + count);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Filter step (rollback only): trim each key's values to those <= maxValueCutoff.
+                        // Recompute per-key start offsets in keyOffsetsAddr, then binary search for cutoff.
+                        long cumOff = 0;
+                        if (!inPlace) {
+                            // Seal path: recompute start offsets for Phase 3 (values are contiguous)
+                            for (int key = 0; key < keyCount; key++) {
+                                Unsafe.getUnsafe().putLong(keyOffsetsAddr + (long) key * Long.BYTES, cumOff);
+                                cumOff += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                            }
+                        } else {
+                            for (int key = 0; key < keyCount; key++) {
+                                Unsafe.getUnsafe().putLong(keyOffsetsAddr + (long) key * Long.BYTES, cumOff);
+                                cumOff += Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                            }
+
+                            long survivingValueCount = 0;
+                            int newKeyCount = 0;
+                            for (int key = 0; key < keyCount; key++) {
+                                int origCount = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                                if (origCount == 0) continue;
+
+                                long keyOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) key * Long.BYTES);
+                                long keyAddr = allValuesAddr + keyOff * Long.BYTES;
+                                int lo = 0, hi = origCount - 1;
+                                int cutoff = -1;
+                                while (lo <= hi) {
+                                    int mid = (lo + hi) >>> 1;
+                                    long midVal = Unsafe.getUnsafe().getLong(keyAddr + (long) mid * Long.BYTES);
+                                    if (midVal <= maxValueCutoff) {
+                                        cutoff = mid;
+                                        lo = mid + 1;
+                                    } else {
+                                        hi = mid - 1;
+                                    }
+                                }
+
+                                int newCount = cutoff + 1;
+                                Unsafe.getUnsafe().putInt(totalCountsAddr + (long) key * Integer.BYTES, newCount);
+                                survivingValueCount += newCount;
+                                if (newCount > 0) {
+                                    newKeyCount = key + 1;
+                                }
+                            }
+
+                            if (survivingValueCount == 0) {
+                                truncate();
+                                setMaxValue(maxValue);
+                                return;
+                            }
+
+                            keyCount = newKeyCount;
+                        }
+
+                    } finally {
+                        if (reencodeUnpackBatchAddr != 0) {
+                            Unsafe.free(reencodeUnpackBatchAddr, (long) reencodeUnpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                        }
+                    }
+
+                    // Phase 3: Re-encode into single generation using stride-indexed format
+                    // with adaptive per-stride encoding (delta vs flat).
+                    // Seal: write to a NEW .pv.{txn+1} file, protecting concurrent readers.
+                    // In-place (rollback): rewrite valueMem at offset 0, no new file.
+                    //
+                    // Note: sealTarget is set here and nulled at the end. On exception,
+                    // sealTarget may remain non-null. This is not a leak — close() always
+                    // frees sealValueMem/valueMem and resets sealTarget. On the non-inPlace
+                    // exception path, the orphaned .pv.{newTxn} file stays on disk until
+                    // purge/vacuum cleanup.
+                    {
+                        int sc = PostingIndexUtils.strideCount(keyCount);
+                        int siSize = PostingIndexUtils.strideIndexSize(keyCount);
+
+                        long newTxn = 0;
+                        if (inPlace) {
+                            valueMem.jumpTo(0);
+                            sealTarget = valueMem;
+                        } else {
+                            newTxn = Math.max(1, columnNameTxn + 1);
+                            openSealValueFile(newTxn);
+                        }
+                        long sealOffset = 0;
+                        sealTarget.jumpTo(0);
+                        for (int i = 0; i < siSize; i += Integer.BYTES) {
+                            sealTarget.putInt(0);
+                        }
+
+                        // Allocate stride index buffer
+                        long strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+                        int maxDeltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE);
+                        int maxFlatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE);
+                        int maxLocalHeaderSize = Math.max(maxDeltaHeaderSize, maxFlatHeaderSize);
+                        long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+
+                        // Per-key delta sizes within a stride (to compute total delta data size)
+                        int[] bpKeySizes = strideBpKeySizes;
+                        int[] keyCounts = strideKeyCounts;
+                        long[] keyOffsets = strideKeyOffsets;
+                        // Trial buffer grows dynamically per stride
+                        long bpTrialBuf = 0;
+                        long bpTrialBufSize = 0;
+
+                        // Sidecar stride index buffers (one per covered column)
+                        long sidecarBuf = 0;
+                        long sidecarBufSize = 0;
+                        long[] sidecarStrideIndexBufs = null;
+                        if (coverCount > 0 && sidecarMems != null) {
+                            sidecarStrideIndexBufs = new long[coverCount];
+                            for (int c = 0; c < coverCount; c++) {
+                                if (inPlace) {
+                                    // In-place rollback: reset write position to 0 so new
+                                    // stride data overwrites old per-gen raw blocks. Do NOT
+                                    // truncate — concurrent readers have MAP_SHARED mappings
+                                    // and truncation causes SIGBUS for pages beyond the new
+                                    // file size. Tail data past the new write position is
+                                    // harmless garbage ignored by metadata.
+                                    sidecarMems[c].jumpTo(0);
+                                }
+                                sidecarStrideIndexBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+                                // Reserve stride index space in sidecar file
+                                for (int i = 0; i < siSize; i += Integer.BYTES) {
+                                    sidecarMems[c].putInt(0);
+                                }
+                            }
+                        }
+
+                        try {
+                            for (int s = 0; s < sc; s++) {
+                                int ks = PostingIndexUtils.keysInStride(keyCount, s);
+
+                                // Compute trial buffer size for this stride and collect per-key counts/offsets
+                                long strideTrialSize = 0;
+                                for (int j = 0; j < ks; j++) {
+                                    int key = s * PostingIndexUtils.DENSE_STRIDE + j;
+                                    int count = Unsafe.getUnsafe().getInt(totalCountsAddr + (long) key * Integer.BYTES);
+                                    keyCounts[j] = count;
+                                    long keyOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) key * Long.BYTES);
+                                    keyOffsets[j] = keyOff;
+                                    strideTrialSize += PostingIndexUtils.computeMaxEncodedSize(count);
+                                }
+                                if (strideTrialSize > bpTrialBufSize) {
+                                    if (bpTrialBuf != 0) {
+                                        Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
+                                    }
+                                    bpTrialBufSize = strideTrialSize;
+                                    bpTrialBuf = Unsafe.malloc(bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
+                                }
+
+                                // Trial delta encode all keys in stride
+                                int bpDataTotal = 0;
+                                for (int j = 0; j < ks; j++) {
+                                    int count = keyCounts[j];
+                                    if (count > 0) {
+                                        long keyAddr = allValuesAddr + keyOffsets[j] * Long.BYTES;
+                                        encodeCtx.ensureCapacity(count);
+                                        bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx);
+                                    } else {
+                                        bpKeySizes[j] = 0;
+                                    }
+                                    bpDataTotal += bpKeySizes[j];
+                                }
+
+                                // Compute sizes for both modes
+                                int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+                                int deltaSize = deltaHeaderSize + bpDataTotal;
+
+                                // Count total values in stride and find per-stride min/max for flat size
+                                int totalStrideValues = 0;
+                                long strideMinValue = Long.MAX_VALUE;
+                                long strideMaxValue = Long.MIN_VALUE;
+                                for (int j = 0; j < ks; j++) {
+                                    int count = keyCounts[j];
+                                    totalStrideValues += count;
+                                    long keyAddr = allValuesAddr + keyOffsets[j] * Long.BYTES;
+                                    for (int i = 0; i < count; i++) {
+                                        long val = Unsafe.getUnsafe().getLong(keyAddr + (long) i * Long.BYTES);
+                                        if (val < strideMinValue) strideMinValue = val;
+                                        if (val > strideMaxValue) strideMaxValue = val;
+                                    }
+                                }
+                                if (totalStrideValues == 0) {
+                                    strideMinValue = 0;
+                                    strideMaxValue = 0;
+                                }
+                                long strideRange = strideMaxValue - strideMinValue;
+                                int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
+                                int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
+
+                                int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
+                                int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
+                                int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
+
+                                int localBitWidth;
+                                int flatDataSize;
+                                int flatSize;
+                                if (alignedBitWidth != naturalBitWidth) {
+                                    int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
+                                    int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
+                                    if (alignedFlatSize < deltaSize) {
+                                        localBitWidth = alignedBitWidth;
+                                        flatDataSize = alignedFlatDataSize;
+                                        flatSize = alignedFlatSize;
+                                    } else if (naturalFlatSize < deltaSize) {
+                                        localBitWidth = naturalBitWidth;
+                                        flatDataSize = naturalFlatDataSize;
+                                        flatSize = naturalFlatSize;
+                                    } else {
+                                        localBitWidth = naturalBitWidth;
+                                        flatDataSize = naturalFlatDataSize;
+                                        flatSize = naturalFlatSize;
+                                    }
+                                } else {
+                                    localBitWidth = naturalBitWidth;
+                                    flatDataSize = naturalFlatDataSize;
+                                    flatSize = naturalFlatSize;
+                                }
+
+                                boolean useFlat = flatSize < deltaSize;
+                                LOG.debug().$("reencode stride [s=").$(s)
+                                        .$(", deltaSize=").$(deltaSize)
+                                        .$(", flatSize=").$(flatSize)
+                                        .$(", natBW=").$(naturalBitWidth)
+                                        .$(", alnBW=").$(localBitWidth)
+                                        .$(", totalVals=").$(totalStrideValues)
+                                        .$(", useFlat=").$(useFlat)
+                                        .$(']').$();
+
+                                // Record stride offset (relative to end of stride index)
+                                int strideOff = (int) (sealTarget.getAppendOffset() - sealOffset - siSize);
+                                Unsafe.getUnsafe().putInt(strideIndexBuf + (long) s * Integer.BYTES, strideOff);
+
+                                if (useFlat) {
+                                    writePackedStride(ks, keyCounts, keyOffsets, localBitWidth, strideMinValue,
+                                            flatHeaderSize, flatDataSize, localHeaderBuf, allValuesAddr);
+                                } else {
+                                    writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes,
+                                            localHeaderBuf);
+                                }
+
+                                // Write sidecar covered values for this stride
+                                if (coverCount > 0 && sidecarMems != null && totalStrideValues > 0) {
+                                    long neededBuf = (long) totalStrideValues * maxCoveredValueSize();
+                                    if (neededBuf > sidecarBufSize) {
+                                        if (sidecarBuf != 0) {
+                                            Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
+                                        }
+                                        sidecarBufSize = neededBuf;
+                                        sidecarBuf = Unsafe.malloc(sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
+                                    }
+                                    for (int c = 0; c < coverCount; c++) {
+                                        Unsafe.getUnsafe().putInt(
+                                                sidecarStrideIndexBufs[c] + (long) s * Integer.BYTES,
+                                                (int) (sidecarMems[c].getAppendOffset() - siSize));
+                                    }
+                                    writeSidecarStrideData(ks, keyCounts, keyOffsets, allValuesAddr, sidecarBuf);
+                                }
+                            }
+
+                            // Sentinel: total size of all stride blocks
+                            int totalStrideBlocksSize = (int) (sealTarget.getAppendOffset() - sealOffset - siSize);
+                            Unsafe.getUnsafe().putInt(strideIndexBuf + (long) sc * Integer.BYTES, totalStrideBlocksSize);
+
+                            // Copy stride index into sealed value file
+                            long strideIndexAddr = sealTarget.addressOf(sealOffset);
+                            Unsafe.getUnsafe().copyMemory(strideIndexBuf, strideIndexAddr, siSize);
+
+                            valueMemSize = sealTarget.getAppendOffset();
+
+                            // Finalize sidecar stride indices
+                            if (coverCount > 0 && sidecarStrideIndexBufs != null) {
+                                for (int c = 0; c < coverCount; c++) {
+                                    // Write sentinel
+                                    Unsafe.getUnsafe().putInt(
+                                            sidecarStrideIndexBufs[c] + (long) sc * Integer.BYTES,
+                                            (int) (sidecarMems[c].getAppendOffset() - siSize));
+                                    // Copy stride index to sidecar file start
+                                    long sidecarIdxAddr = sidecarMems[c].addressOf(0);
+                                    Unsafe.getUnsafe().copyMemory(sidecarStrideIndexBufs[c], sidecarIdxAddr, siSize);
+                                }
+                            }
+                        } finally {
+                            if (bpTrialBuf != 0) {
+                                Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
+                            }
+                            if (sidecarBuf != 0) {
+                                Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
+                            }
+                            if (sidecarStrideIndexBufs != null) {
+                                for (int c = 0; c < coverCount; c++) {
+                                    if (sidecarStrideIndexBufs[c] != 0) {
+                                        Unsafe.free(sidecarStrideIndexBufs[c], siSize, MemoryTag.NATIVE_INDEX_READER);
+                                    }
+                                }
+                            }
+                            Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+                            Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
+                        }
+
+                        genCount = 1;
+                        if (inPlace) {
+                            valueMemSize = sealTarget.getAppendOffset();
+                            sealTarget = null;
+                        } else {
+                            sealValueMem.sync(false);
+                            switchToSealedValueFile(newTxn);
+                        }
+                        Unsafe.getUnsafe().storeFence();
+                        writeMetadataPage(genCount, maxValue,
+                                sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
+                    }
+
+                } finally {
+                    Unsafe.free(keyOffsetsAddr, keyOffsetsSize, MemoryTag.NATIVE_INDEX_READER);
+                }
+            } finally {
+                Unsafe.free(allValuesAddr, totalValueCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+        } finally {
+            Unsafe.free(totalCountsAddr, totalCountsSize, MemoryTag.NATIVE_INDEX_READER);
+        }
+    }
+
+    private void resetSpill() {
+        if (!hasSpillData || spillKeyCountsAddr == 0) {
+            return;
+        }
+        for (int i = 0; i < activeKeyCount; i++) {
+            int key = activeKeyIds[i];
+            if (key < spillArraysCapacity) {
+                Unsafe.getUnsafe().putInt(spillKeyCountsAddr + (long) key * Integer.BYTES, 0);
+                // Keep the allocated buffer for reuse, just reset count
+            }
+        }
+        hasSpillData = false;
+    }
+
+    private void rollbackToMaxValue(long maxValue) {
+        // Rollback writes in-place to the existing valueMem at offset 0 — same
+        // approach as BitmapIndexWriter.rollbackValues() which writes in-place to
+        // keyMem/valueMem. No new .pv file, no columnNameTxn bump.
+        //
+        // Safety: in-place rewrite overwrites MAP_SHARED pages visible to concurrent
+        // readers. This is safe under QuestDB's scoreboard coordination — readers
+        // only access committed data, and rollback only affects uncommitted gens.
+        // Sidecar files are also truncated in the inPlace path (reencodeAllGenerations),
+        // which carries the same concurrent-reader risk as BitmapIndexWriter rollback.
+        reencodeAllGenerations(maxValue, maxValue, true);
+    }
+
+    private void sealFull() {
+        reencodeAllGenerations(
+                keyMem.getLong(activePageOffset + PAGE_OFFSET_MAX_VALUE),
+                Long.MAX_VALUE,
+                false
+        );
+    }
+
+    /**
+     * Incremental seal: only re-encode dirty strides (those touched by sparse gens 1..N).
+     * Clean strides are copied verbatim from the existing dense gen 0.
+     */
+    private void sealIncremental(long[] savedSidecarBufs, long[] savedSidecarSizes) {
+        int sc = PostingIndexUtils.strideCount(keyCount);
+        long dirtyStridesAddr = Unsafe.malloc(sc, MemoryTag.NATIVE_INDEX_READER);
+        int dirtyCount;
+        try {
+            Unsafe.getUnsafe().setMemory(dirtyStridesAddr, sc, (byte) 0);
+            dirtyCount = 0;
+            for (int g = 1; g < genCount; g++) {
+                long dirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+                long genFileOffset = keyMem.getLong(dirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+                int genKeyCount = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                int activeKeyCount = -genKeyCount;
+                long genAddr = valueMem.addressOf(genFileOffset);
+
+                for (int i = 0; i < activeKeyCount; i++) {
+                    int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
+                    int stride = key / PostingIndexUtils.DENSE_STRIDE;
+                    if (stride < sc && Unsafe.getUnsafe().getByte(dirtyStridesAddr + stride) == 0) {
+                        Unsafe.getUnsafe().putByte(dirtyStridesAddr + stride, (byte) 1);
+                        dirtyCount++;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
+            throw t;
+        }
+
+        // If all strides are dirty, fall back to full seal (no savings).
+        // Free savedSidecarBufs since sealFull rebuilds sidecars from scratch.
+        if (dirtyCount == sc) {
+            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
+            if (savedSidecarBufs != null) {
+                for (int c = 0; c < savedSidecarBufs.length; c++) {
+                    if (savedSidecarBufs[c] != 0) {
+                        Unsafe.free(savedSidecarBufs[c], savedSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
+                        savedSidecarBufs[c] = 0;
+                    }
+                }
+            }
+            sealFull();
+            return;
+        }
+
+        // Read gen 0 metadata — do NOT cache gen0Addr here because valueMem
+        // may be remapped (mremap) when the seal loop extends it to write
+        // new stride data. Use gen0FileOffset and recompute the address each
+        // time it's needed.
+        long gen0DirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, 0);
+        long gen0FileOffset = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+        long copyBufSize = keyMem.getLong(gen0DirOffset + GEN_DIR_OFFSET_SIZE);
+        int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+        int gen0SiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
+
+        // Allocate output buffers — initialize to 0 so the finally block
+        // can conditionally free only those that were successfully allocated.
+        int siSize = PostingIndexUtils.strideIndexSize(keyCount);
+        int maxPerKey = estimateMaxPerKey(valueMem.addressOf(gen0FileOffset), gen0KeyCount, gen0SiSize);
+        // Scan sparse gens for actual max per-key count — the spill mechanism
+        // can produce counts >> BLOCK_CAPACITY, so BLOCK_CAPACITY * genCount
+        // is not a safe upper bound.
+        int sparseMaxPerKey = 0;
+        for (int g = 1; g < genCount; g++) {
+            long gDirOffset = PostingIndexUtils.getGenDirOffset(activePageOffset, g);
+            long gFileOffset = keyMem.getLong(gDirOffset + GEN_DIR_OFFSET_FILE_OFFSET);
+            long gDataSize = keyMem.getLong(gDirOffset + GEN_DIR_OFFSET_SIZE);
+            int gKeyCount = keyMem.getInt(gDirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+            if (gKeyCount >= 0 || gDataSize == 0) continue; // dense or empty
+            int activeKeys = -gKeyCount;
+            valueMem.extend(gFileOffset + gDataSize);
+            long gAddr = valueMem.addressOf(gFileOffset);
+            long countsBase = gAddr + (long) activeKeys * Integer.BYTES;
+            for (int i = 0; i < activeKeys; i++) {
+                int c = Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
+                if (c > sparseMaxPerKey) sparseMaxPerKey = c;
+            }
+        }
+        int preAllocPerKey = maxPerKey + sparseMaxPerKey * (genCount - 1);
+        long perKeyBufSize = PostingIndexUtils.computeMaxEncodedSize(Math.max(preAllocPerKey, PostingIndexUtils.BLOCK_CAPACITY));
+        long maxBPStrideDataSize = PostingIndexUtils.DENSE_STRIDE * perKeyBufSize;
+        int maxHeaderSize = Math.max(
+                PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE),
+                PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE)
+        );
+        long maxPerStride = (long) PostingIndexUtils.DENSE_STRIDE * preAllocPerKey;
+        long mergedValuesSize = Math.max(maxPerStride, 1024) * Long.BYTES;
+        long copyBufAllocSize = copyBufSize > 0 ? copyBufSize : 1;
+
+        long strideIndexBuf = 0;
+        long bpTrialBuf = 0;
+        long localHeaderBuf = 0;
+        long mergedValuesAddr = 0;
+        long copyBuf = 0;
+        long[] incrSidecarSiBufs = null;
+        long incrSidecarBuf = 0;
+        long incrSidecarBufSize = 0;
+        long[] oldSidecarBufs = null;
+        long[] oldSidecarSizes = null;
+
+        try {
+            strideIndexBuf = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+            bpTrialBuf = Unsafe.malloc(maxBPStrideDataSize, MemoryTag.NATIVE_INDEX_READER);
+            localHeaderBuf = Unsafe.malloc(maxHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+            mergedValuesAddr = Unsafe.malloc(mergedValuesSize, MemoryTag.NATIVE_INDEX_READER);
+            copyBuf = Unsafe.malloc(copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
+
+            // Pre-allocate seal-path arrays to avoid per-stride allocations
+            if (preAllocPerKey > unpackBatchCapacity) {
+                if (unpackBatchAddr != 0) {
+                    Unsafe.free(unpackBatchAddr, (long) unpackBatchCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                unpackBatchCapacity = preAllocPerKey;
+                unpackBatchAddr = Unsafe.malloc((long) preAllocPerKey * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            int preAllocPerStride = (int) Math.min(maxPerStride, Integer.MAX_VALUE);
+            if (preAllocPerStride > packedResidualsCapacity) {
+                if (packedResidualsAddr != 0) {
+                    Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                packedResidualsCapacity = preAllocPerStride;
+                packedResidualsAddr = Unsafe.malloc((long) preAllocPerStride * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+
+            // Write sealed data to a NEW value file — the old .pv is untouched
+            // so concurrent readers keep their valid mmap.
+            long newTxn = Math.max(1, columnNameTxn + 1);
+            openSealValueFile(newTxn);
+            long sealOffset = 0;
+            sealValueMem.jumpTo(0);
+            // Reserve stride index
+            for (int i = 0; i < siSize; i += Integer.BYTES) {
+                sealValueMem.putInt(0);
+            }
+
+            // Sidecar: use saved old data (buffered in seal() before truncation)
+            if (coverCount > 0 && sidecarMems != null) {
+                incrSidecarSiBufs = new long[coverCount];
+                oldSidecarBufs = savedSidecarBufs;
+                oldSidecarSizes = savedSidecarSizes;
+                for (int c = 0; c < coverCount; c++) {
+                    sidecarMems[c].jumpTo(0);
+                    sidecarMems[c].truncate();
+                    incrSidecarSiBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
+                    for (int i = 0; i < siSize; i += Integer.BYTES) {
+                        sidecarMems[c].putInt(0);
+                    }
+                }
+            }
+
+            for (int s = 0; s < sc; s++) {
+                int strideOff = (int) (sealValueMem.getAppendOffset() - sealOffset - siSize);
+                Unsafe.getUnsafe().putInt(strideIndexBuf + (long) s * Integer.BYTES, strideOff);
+
+                // Recompute gen0Addr each iteration because valueMem writes
+                // (putBlockOfBytes, putInt, etc.) can trigger mremap which
+                // moves the mapping, invalidating cached native addresses.
+                long gen0Addr = valueMem.addressOf(gen0FileOffset);
+
+                if (Unsafe.getUnsafe().getByte(dirtyStridesAddr + s) == 0) {
+                    // Clean stride: copy verbatim from gen 0
+                    copyStrideFromGen0(gen0Addr, gen0KeyCount, gen0SiSize, s, copyBuf, copyBufSize);
+                    // Sidecar: copy old stride block verbatim
+                    if (incrSidecarSiBufs != null && oldSidecarBufs != null) {
+                        int oldSiSize = PostingIndexUtils.strideIndexSize(gen0KeyCount);
+                        for (int c = 0; c < coverCount; c++) {
+                            Unsafe.getUnsafe().putInt(
+                                    incrSidecarSiBufs[c] + (long) s * Integer.BYTES,
+                                    (int) (sidecarMems[c].getAppendOffset() - siSize));
+                            if (oldSidecarBufs[c] != 0 && oldSidecarSizes[c] > oldSiSize) {
+                                // Read old stride data range from old stride index
+                                int oldStrideOff = Unsafe.getUnsafe().getInt(oldSidecarBufs[c] + (long) s * Integer.BYTES);
+                                int nextStrideOff;
+                                if (s + 1 < sc) {
+                                    nextStrideOff = Unsafe.getUnsafe().getInt(oldSidecarBufs[c] + (long) (s + 1) * Integer.BYTES);
+                                } else {
+                                    nextStrideOff = (int) (oldSidecarSizes[c] - oldSiSize);
+                                }
+                                int strideDataSize = nextStrideOff - oldStrideOff;
+                                if (strideDataSize > 0) {
+                                    long oldStrideDataAddr = oldSidecarBufs[c] + oldSiSize + oldStrideOff;
+                                    sidecarMems[c].putBlockOfBytes(oldStrideDataAddr, strideDataSize);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Dirty stride: decode from gen 0 + sparse gens, merge, re-encode
+                    int ks = PostingIndexUtils.keysInStride(keyCount, s);
+                    encodeDirtyStride(s, ks, gen0Addr, gen0KeyCount, gen0SiSize,
+                            bpTrialBuf, localHeaderBuf, strideBpKeySizes, mergedValuesAddr);
+
+                    // Write sidecar data for dirty stride
+                    if (incrSidecarSiBufs != null) {
+                        int totalStrideVals = 0;
+                        for (int j = 0; j < ks; j++) {
+                            totalStrideVals += strideKeyCounts[j];
+                        }
+                        if (totalStrideVals > 0) {
+                            long neededBuf = (long) totalStrideVals * Long.BYTES;
+                            if (neededBuf > incrSidecarBufSize) {
+                                if (incrSidecarBuf != 0) {
+                                    Unsafe.free(incrSidecarBuf, incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
+                                }
+                                incrSidecarBufSize = neededBuf;
+                                incrSidecarBuf = Unsafe.malloc(incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
+                            }
+                            for (int c = 0; c < coverCount; c++) {
+                                Unsafe.getUnsafe().putInt(
+                                        incrSidecarSiBufs[c] + (long) s * Integer.BYTES,
+                                        (int) (sidecarMems[c].getAppendOffset() - siSize));
+                            }
+                            writeSidecarStrideData(ks, strideKeyCounts, strideKeyOffsets,
+                                    mergedValuesAddr, incrSidecarBuf);
+                        } else {
+                            for (int c = 0; c < coverCount; c++) {
+                                Unsafe.getUnsafe().putInt(
+                                        incrSidecarSiBufs[c] + (long) s * Integer.BYTES,
+                                        (int) (sidecarMems[c].getAppendOffset() - siSize));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Sentinel
+            int totalStrideBlocksSize = (int) (sealValueMem.getAppendOffset() - sealOffset - siSize);
+            Unsafe.getUnsafe().putInt(strideIndexBuf + (long) sc * Integer.BYTES, totalStrideBlocksSize);
+
+            // Copy stride index
+            long strideIndexAddr = sealValueMem.addressOf(sealOffset);
+            Unsafe.getUnsafe().copyMemory(strideIndexBuf, strideIndexAddr, siSize);
+
+            valueMemSize = sealValueMem.getAppendOffset();
+
+            // Finalize sidecar stride indices for incremental seal
+            if (incrSidecarSiBufs != null) {
+                for (int c = 0; c < coverCount; c++) {
+                    Unsafe.getUnsafe().putInt(
+                            incrSidecarSiBufs[c] + (long) sc * Integer.BYTES,
+                            (int) (sidecarMems[c].getAppendOffset() - siSize));
+                    long sidecarIdxAddr = sidecarMems[c].addressOf(0);
+                    Unsafe.getUnsafe().copyMemory(incrSidecarSiBufs[c], sidecarIdxAddr, siSize);
+                }
+            }
+
+            genCount = 1;
+            // Sync sealed file, switch writer to it, then publish metadata.
+            // columnNameTxn must be set BEFORE writeMetadataPage so the
+            // VALUE_FILE_TXN field in the metadata page reflects the new file.
+            sealValueMem.sync(false);
+            switchToSealedValueFile(newTxn);
+            Unsafe.getUnsafe().storeFence();
+            writeMetadataPage(genCount,
+                    keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_MAX_VALUE),
+                    sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
+        } finally {
+            if (copyBuf != 0) {
+                Unsafe.free(copyBuf, copyBufAllocSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            Unsafe.free(dirtyStridesAddr, sc, MemoryTag.NATIVE_INDEX_READER);
+            if (strideIndexBuf != 0) {
+                Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (bpTrialBuf != 0) {
+                Unsafe.free(bpTrialBuf, maxBPStrideDataSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (localHeaderBuf != 0) {
+                Unsafe.free(localHeaderBuf, maxHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (mergedValuesAddr != 0) {
+                Unsafe.free(mergedValuesAddr, mergedValuesSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (incrSidecarBuf != 0) {
+                Unsafe.free(incrSidecarBuf, incrSidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (incrSidecarSiBufs != null) {
+                for (int c = 0; c < coverCount; c++) {
+                    if (incrSidecarSiBufs[c] != 0) {
+                        Unsafe.free(incrSidecarSiBufs[c], siSize, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                }
+            }
+            if (oldSidecarBufs != null) {
+                for (int c = 0; c < coverCount; c++) {
+                    if (oldSidecarBufs[c] != 0) {
+                        Unsafe.free(oldSidecarBufs[c], oldSidecarSizes[c], MemoryTag.NATIVE_INDEX_READER);
+                    }
+                }
+            }
+        }
+    }
+
+    private void spillKey(int key, int count) {
+        ensureSpillArrays(key);
+        int prevCount = Unsafe.getUnsafe().getInt(spillKeyCountsAddr + (long) key * Integer.BYTES);
+        int needed = prevCount + count;
+        // Grow per-key spill buffer if needed
+        int curCap = Unsafe.getUnsafe().getInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES);
+        if (needed > curCap) {
+            int newCap = Math.max(needed, curCap * 2);
+            newCap = Math.max(newCap, 256); // minimum 256 values
+            long oldSize = (long) curCap * Long.BYTES;
+            long newSize = (long) newCap * Long.BYTES;
+            long oldAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
+            long newAddr = Unsafe.realloc(oldAddr, oldSize, newSize, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.getUnsafe().putLong(spillKeyAddrsAddr + (long) key * Long.BYTES, newAddr);
+            Unsafe.getUnsafe().putInt(spillKeyCapacitiesAddr + (long) key * Integer.BYTES, newCap);
+        }
+        // Copy values from pending buffer to this key's spill
+        long srcAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
+        long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
+        Unsafe.getUnsafe().copyMemory(srcAddr, spillAddr + (long) prevCount * Long.BYTES,
+                (long) count * Long.BYTES);
+        Unsafe.getUnsafe().putInt(spillKeyCountsAddr + (long) key * Integer.BYTES, needed);
+        hasSpillData = true;
+        // Reset pending count
+        Unsafe.getUnsafe().putInt(pendingCountsAddr + (long) key * Integer.BYTES, 0);
+    }
+
+    private void switchToSealedValueFile(long newTxn) {
+        // Close old .pv (leave on disk for concurrent readers)
+        // Reopen valueMem on the new sealed .pv file
+        long appendOffset = sealValueMem.getAppendOffset();
+        Misc.free(sealValueMem); // release the seal mapping
+        // Now reopen valueMem on the new file
+        if (partitionPath != null) {
+            Misc.free(valueMem); // close old .pv mapping (left on disk for readers)
+            try (Path p = new Path().of(partitionPath)) {
+                LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, newTxn);
+                valueMem.of(ff, fileName,
+                        configuration.getDataIndexValueAppendPageSize(), appendOffset,
+                        MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
+                valueMem.jumpTo(appendOffset);
+            }
+        }
+        columnNameTxn = newTxn;
+    }
+
+    private void unmapCoveredColumnReads() {
+        if (coveredColReadAddrs != null) {
+            for (int c = 0; c < coveredColReadAddrs.length; c++) {
+                // Only unmap if owned (size > 0). Size == 0 means O3 addr path.
+                if (coveredColReadAddrs[c] != 0 && coveredColReadSizes[c] > 0) {
+                    Files.munmap(coveredColReadAddrs[c], coveredColReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+                }
+                coveredColReadAddrs[c] = 0;
+                coveredColReadSizes[c] = 0;
+                if (coveredAuxReadAddrs != null && coveredAuxReadAddrs[c] != 0 && coveredAuxReadSizes[c] > 0) {
+                    Files.munmap(coveredAuxReadAddrs[c], coveredAuxReadSizes[c], MemoryTag.MMAP_INDEX_WRITER);
+                }
+                if (coveredAuxReadAddrs != null) {
+                    coveredAuxReadAddrs[c] = 0;
+                    coveredAuxReadSizes[c] = 0;
+                }
+            }
+            coveredColReadAddrs = null;
+            coveredColReadSizes = null;
+            coveredAuxReadAddrs = null;
+            coveredAuxReadSizes = null;
+        }
+    }
+
+    private void writeBinaryLikeValue(MemoryMARW mem, int covIdx, long row) {
+        if (isClosed()) {
+            return;
+        }
+        int colType = coveredColumnTypes[covIdx];
+        int tag = ColumnType.tagOf(colType);
+        if (tag == ColumnType.BINARY) {
+            // BINARY aux: 8-byte offset per row. Data: [8-byte length][raw bytes]
+            long auxAddr = getCoveredAuxReadAddr(covIdx, row << 3, Long.BYTES);
+            if (auxAddr == 0) return;
+            long dataOffset = Unsafe.getUnsafe().getLong(auxAddr);
+
+            long lenAddr = getCoveredDataReadAddr(covIdx, dataOffset, Long.BYTES);
+            if (lenAddr == 0) return;
+            long len = Unsafe.getUnsafe().getLong(lenAddr);
+            if (len < 0) return; // NULL
+
+            long totalBytes = Long.BYTES + len;
+            long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, totalBytes);
+            if (dataAddr != 0) {
+                mem.putBlockOfBytes(dataAddr, totalBytes);
+            }
+        } else {
+            // Arrays: aux is ARRAY_AUX_WIDTH_BYTES per row [8-byte offset][8-byte size]
+            long auxOffset = (long) io.questdb.cairo.arr.ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES * row;
+            long auxAddr = getCoveredAuxReadAddr(covIdx, auxOffset, io.questdb.cairo.arr.ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
+            if (auxAddr == 0) return;
+            long dataOffset = Unsafe.getUnsafe().getLong(auxAddr);
+            long size = Unsafe.getUnsafe().getLong(auxAddr + Long.BYTES);
+            if (size <= 0) return; // NULL or empty
+
+            long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, size);
+            if (dataAddr != 0) {
+                mem.putBlockOfBytes(dataAddr, size);
+            }
+        }
+    }
+
+    private void writeDeltaStride(int ks,
+                                  int[] keyCounts,
+                                  int deltaHeaderSize,
+                                  long bpTrialBuf,
+                                  int[] bpKeySizes,
+                                  long localHeaderBuf
+    ) {
+        long headerFilePos = sealTarget.getAppendOffset();
+        for (int i = 0; i < deltaHeaderSize; i += Integer.BYTES) {
+            sealTarget.putInt(0);
+        }
+
+        Unsafe.getUnsafe().setMemory(localHeaderBuf, deltaHeaderSize, (byte) 0);
+        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_DELTA);
+        long countsBase = localHeaderBuf + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+        long offsetsBase = countsBase + (long) ks * Integer.BYTES;
+
+        int dataOffset = 0;
+        int bpBufOffset = 0;
+        for (int j = 0; j < ks; j++) {
+            Unsafe.getUnsafe().putInt(countsBase + (long) j * Integer.BYTES, keyCounts[j]);
+            Unsafe.getUnsafe().putInt(offsetsBase + (long) j * Integer.BYTES, dataOffset);
+
+            if (bpKeySizes[j] > 0) {
+                int bytesWritten = bpKeySizes[j];
+                sealTarget.putBlockOfBytes(bpTrialBuf + bpBufOffset, bytesWritten);
+                dataOffset += bytesWritten;
+            }
+            bpBufOffset += bpKeySizes[j];
+        }
+
+        Unsafe.getUnsafe().putInt(offsetsBase + (long) ks * Integer.BYTES, dataOffset);
+
+        long headerAddr = sealTarget.addressOf(headerFilePos);
+        Unsafe.getUnsafe().copyMemory(localHeaderBuf, headerAddr, deltaHeaderSize);
     }
 
     /**
      * Writes a new metadata page to the inactive page (double-buffer protocol).
      * Copies gen dir entries from the active page, with an optional override for one entry.
      *
-     * @param genCount        number of generations
-     * @param maxValue        max value to write
-     * @param overrideGenIndex gen dir index to override (-1 to copy all from active page)
+     * @param genCount           number of generations
+     * @param maxValue           max value to write
      * @param overrideFileOffset file offset for the overridden gen dir entry
-     * @param overrideSize    size for the overridden gen dir entry
-     * @param overrideKeyCount key count for the overridden gen dir entry
-     * @param overrideMinKey  min key for the overridden gen dir entry
-     * @param overrideMaxKey  max key for the overridden gen dir entry
+     * @param overrideSize       size for the overridden gen dir entry
+     * @param overrideKeyCount   key count for the overridden gen dir entry
+     * @param overrideMinKey     min key for the overridden gen dir entry
+     * @param overrideMaxKey     max key for the overridden gen dir entry
      */
     private void writeMetadataPage(int genCount, long maxValue,
-                                    int overrideGenIndex, long overrideFileOffset,
-                                    long overrideSize, int overrideKeyCount,
-                                    int overrideMinKey, int overrideMaxKey) {
-        writeMetadataPage(genCount, maxValue, overrideGenIndex, overrideFileOffset,
+                                   long overrideFileOffset,
+                                   long overrideSize, int overrideKeyCount,
+                                   int overrideMinKey, int overrideMaxKey) {
+        writeMetadataPage(genCount, maxValue, 0, overrideFileOffset,
                 overrideSize, overrideKeyCount, overrideMinKey, overrideMaxKey, 0);
     }
 
     private void writeMetadataPage(int genCount, long maxValue,
-                                    int overrideGenIndex, long overrideFileOffset,
-                                    long overrideSize, int overrideKeyCount,
-                                    int overrideMinKey, int overrideMaxKey,
-                                    int overrideSidecarOffset) {
+                                   int overrideGenIndex, long overrideFileOffset,
+                                   long overrideSize, int overrideKeyCount,
+                                   int overrideMinKey, int overrideMaxKey,
+                                   int overrideSidecarOffset) {
         // Compute inactive page offset
         long inactivePageOffset = (activePageOffset == PostingIndexUtils.PAGE_A_OFFSET)
                 ? PostingIndexUtils.PAGE_B_OFFSET
@@ -3556,7 +3047,7 @@ public class PostingIndexWriter implements IndexWriter {
         // Bulk copy gen dir entries that already exist on the active page, then
         // overwrite or append the new entry. The active page has (genCount - 1) valid
         // entries when the caller incremented genCount before calling us.
-        int activePageGenCount = (int) keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+        int activePageGenCount = keyMem.getInt(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
         int entriesToCopy = Math.min(genCount, activePageGenCount);
         if (entriesToCopy > 0) {
             long srcGenDir = keyMem.addressOf(activePageOffset + PostingIndexUtils.PAGE_OFFSET_GEN_DIR);
@@ -3580,6 +3071,488 @@ public class PostingIndexWriter implements IndexWriter {
 
         // Switch active page
         activePageOffset = inactivePageOffset;
+    }
+
+    private void writePackedStride(int ks, int[] keyCounts, long[] keyOffsets,
+                                   int localBitWidth, long strideMinValue, int flatHeaderSize, int flatDataSize,
+                                   long localHeaderBuf, long mergedValuesAddr) {
+        long headerFilePos = sealTarget.getAppendOffset();
+        for (int i = 0; i < flatHeaderSize; i += Integer.BYTES) {
+            sealTarget.putInt(0);
+        }
+
+        Unsafe.getUnsafe().setMemory(localHeaderBuf, flatHeaderSize, (byte) 0);
+        Unsafe.getUnsafe().putByte(localHeaderBuf, PostingIndexUtils.STRIDE_MODE_FLAT);
+        Unsafe.getUnsafe().putByte(localHeaderBuf + 1, (byte) localBitWidth);
+        Unsafe.getUnsafe().putLong(localHeaderBuf + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET, strideMinValue);
+        int cumCount = 0;
+        for (int j = 0; j <= ks; j++) {
+            Unsafe.getUnsafe().putInt(
+                    localHeaderBuf + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET + (long) j * Integer.BYTES,
+                    cumCount);
+            if (j < ks) {
+                cumCount += keyCounts[j];
+            }
+        }
+
+        long packedBuf = Unsafe.malloc(flatDataSize > 0 ? flatDataSize : 1, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            if (flatDataSize > 0) {
+                Unsafe.getUnsafe().setMemory(packedBuf, flatDataSize, (byte) 0);
+            }
+            // Collect all residuals contiguously, then batch-pack
+            int totalValues = 0;
+            for (int j = 0; j < ks; j++) {
+                totalValues += keyCounts[j];
+            }
+            if (totalValues > 0 && localBitWidth > 0) {
+                if (totalValues > packedResidualsCapacity) {
+                    int newCap = Math.max(totalValues, packedResidualsCapacity * 2);
+                    if (packedResidualsAddr != 0) {
+                        Unsafe.free(packedResidualsAddr, (long) packedResidualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                    packedResidualsCapacity = newCap;
+                    packedResidualsAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                int idx = 0;
+                for (int j = 0; j < ks; j++) {
+                    int count = keyCounts[j];
+                    long keyAddr = mergedValuesAddr + keyOffsets[j] * Long.BYTES;
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.getUnsafe().putLong(packedResidualsAddr + (long) idx * Long.BYTES,
+                                Unsafe.getUnsafe().getLong(keyAddr + (long) i * Long.BYTES) - strideMinValue);
+                        idx++;
+                    }
+                }
+                BitpackUtils.packValues(packedResidualsAddr, totalValues, 0, localBitWidth, packedBuf);
+            }
+
+            sealTarget.putBlockOfBytes(packedBuf, flatDataSize);
+        } finally {
+            Unsafe.free(packedBuf, flatDataSize > 0 ? flatDataSize : 1, MemoryTag.NATIVE_INDEX_READER);
+        }
+
+        long headerAddr = sealTarget.addressOf(headerFilePos);
+        Unsafe.getUnsafe().copyMemory(localHeaderBuf, headerAddr, flatHeaderSize);
+    }
+
+    /**
+     * Writes raw (uncompressed) covered column values for the current gen's
+     * posting entries to the sidecar files. Each sidecar file gets a block:
+     * [valueCount: 4B][raw values: valueCount × elemSize].
+     * <p>
+     * Values are written in the same order as flushAllPending() encodes posting
+     * data: sorted activeKeyIds, spill values first then pending values per key.
+     * This ensures the sidecar ordinal (tracked by the reader's cursor) matches
+     * the posting entry position within the gen.
+     *
+     * @param totalValues total number of posting values in this gen
+     * @return the sidecar offset (position in .pc0 before this gen's block)
+     */
+    private int writeSidecarGenData(int totalValues) {
+        if (coverCount <= 0 || totalValues == 0
+                || (coveredColumnNames == null && coveredColumnAddrs == null)) {
+            return 0;
+        }
+        // Lazily open sidecar files on first gen flush.
+        // Use append mode to preserve existing data (e.g., stride-indexed
+        // sidecar from a prior seal). openSidecarFiles() truncates, which
+        // is correct for seal but wrong here.
+        if (sidecarMems == null && partitionPath != null) {
+            try (Path p = new Path().of(partitionPath)) {
+                openSidecarFilesForAppend(p, indexName, sidecarTxn);
+            }
+        }
+        if (sidecarMems == null) {
+            return 0;
+        }
+        int sidecarOffset = (int) sidecarMems[0].getAppendOffset();
+
+        for (int c = 0; c < coverCount; c++) {
+            int colType = coveredColumnTypes[c];
+            long colTop = coveredColumnTops[c];
+
+            if (ColumnType.isVarSize(colType)) {
+                writeSidecarVarGenBlock(sidecarMems[c], c, colTop, colType, totalValues);
+            } else {
+                int shift = coveredColumnShifts[c];
+                int valueSize = 1 << shift;
+
+                sidecarMems[c].putInt(totalValues);
+
+                for (int idx = 0; idx < activeKeyCount; idx++) {
+                    int key = activeKeyIds[idx];
+                    int pendingCount = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+                    int spillCount = getSpillCount(key);
+
+                    if (spillCount > 0) {
+                        long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
+                        for (int i = 0; i < spillCount; i++) {
+                            long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
+                            writeSidecarValueSafe(sidecarMems[c], c,
+                                    colTop, rowId, shift, valueSize, colType);
+                        }
+                    }
+
+                    long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
+                    for (int i = 0; i < pendingCount; i++) {
+                        long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
+                        writeSidecarValueSafe(sidecarMems[c], c,
+                                colTop, rowId, shift, valueSize, colType);
+                    }
+                }
+            }
+        }
+        return sidecarOffset;
+    }
+
+    private void writeSidecarStrideData(
+            int ks,
+            int[] keyCounts,
+            long[] keyOffsets,
+            long mergedValuesAddr,
+            long sidecarBuf
+    ) {
+        if (coverCount <= 0 || sidecarMems == null || (coveredColumnNames == null && coveredColumnAddrs == null)) {
+            return;
+        }
+        // Pre-allocate workspaces once for all covered columns (maxKeyCount is the same)
+        int maxKeyCount = 0;
+        for (int j = 0; j < ks; j++) {
+            maxKeyCount = Math.max(maxKeyCount, keyCounts[j]);
+        }
+        long longWorkspaceAddr = maxKeyCount > 0 ? Unsafe.malloc((long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER) : 0;
+        long exceptionWorkspaceAddr = maxKeyCount > 0 ? Unsafe.malloc(maxKeyCount, MemoryTag.NATIVE_INDEX_READER) : 0;
+
+        try {
+            for (int c = 0; c < coverCount; c++) {
+                int colType = coveredColumnTypes[c];
+                int shift = coveredColumnShifts[c];
+
+                // Var-sized columns: write per-stride offset-based block (no ALP compression).
+                // Fixed-sized columns: ALP-compressed per-key blocks with stride index.
+                if (shift < 0) {
+                    writeSidecarVarStrideData(sidecarMems[c], c, coveredColumnTops[c], colType, ks, keyCounts, keyOffsets, mergedValuesAddr);
+                    continue;
+                }
+
+                long colTop = coveredColumnTops[c];
+                int valueSize = 1 << shift;
+
+                // Per-key compressed layout: [key_offsets: ks × 4B][key_0_block][key_1_block]...
+                int keyOffsetsSize = ks * Integer.BYTES;
+
+                // Pre-allocate compress buffer for the largest key in this column type
+                int compressBufSize = maxKeyCount > 0 ? CoveringCompressor.maxCompressedSize(maxKeyCount, colType) : 0;
+                long compressBuf = compressBufSize > 0 ? Unsafe.malloc(compressBufSize, MemoryTag.NATIVE_INDEX_READER) : 0;
+
+                try {
+                    // Write key offsets placeholder, then compress each key's values
+                    long keyOffsetsPos = sidecarMems[c].getAppendOffset();
+                    for (int j = 0; j < ks; j++) {
+                        sidecarMems[c].putInt(0); // placeholder
+                    }
+
+                    for (int j = 0; j < ks; j++) {
+                        int count = keyCounts[j];
+                        long currentPos = sidecarMems[c].getAppendOffset();
+                        long keyDataStart = keyOffsetsPos + keyOffsetsSize;
+                        int keyOffset = (int) (currentPos - keyDataStart);
+                        sidecarMems[c].putInt(keyOffsetsPos + (long) j * Integer.BYTES, keyOffset);
+
+                        if (count == 0) {
+                            continue;
+                        }
+
+                        // Assemble this key's raw values into sidecarBuf.
+                        long keyOff = keyOffsets[j];
+                        long rawOffset = 0;
+                        for (int i = 0; i < count; i++) {
+                            long rowId = Unsafe.getUnsafe().getLong(
+                                    mergedValuesAddr + (keyOff + i) * Long.BYTES);
+                            if (rowId < colTop) {
+                                writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                            } else {
+                                long srcOffset = (rowId - colTop) << shift;
+                                long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
+                                if (addr != 0) {
+                                    Unsafe.getUnsafe().copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                                } else {
+                                    writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                                }
+                            }
+                            rawOffset += valueSize;
+                        }
+
+                        // Compress and write
+                        boolean isDesignatedTs = timestampColumnIndex >= 0
+                                && coveredColumnIndices[c] == timestampColumnIndex;
+                        int compressedSize = compressSidecarBlock(sidecarBuf, count, shift, colType,
+                                isDesignatedTs, compressBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+                        sidecarMems[c].putBlockOfBytes(compressBuf, compressedSize);
+                    }
+                } finally {
+                    if (compressBuf != 0) {
+                        Unsafe.free(compressBuf, compressBufSize, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                }
+            }
+        } finally {
+            if (longWorkspaceAddr != 0) {
+                Unsafe.free(longWorkspaceAddr, (long) maxKeyCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (exceptionWorkspaceAddr != 0) {
+                Unsafe.free(exceptionWorkspaceAddr, maxKeyCount, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
+    }
+
+    private void writeSidecarValueSafe(
+            MemoryMARW mem,
+            int covIdx,
+            long colTop,
+            long rowId,
+            int shift,
+            int valueSize,
+            int colType
+    ) {
+        if (rowId < colTop) {
+            writeNullSentinel(mem, valueSize, colType);
+        } else {
+            long srcOffset = (rowId - colTop) << shift;
+            if (coveredColumnNames != null || coveredColumnAddrs != null) {
+                long addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
+                if (addr == 0) {
+                    writeNullSentinel(mem, valueSize, colType);
+                    return;
+                }
+                putFixedValue(mem, addr, valueSize);
+            } else {
+                putFixedValue(mem, srcOffset, valueSize);
+            }
+        }
+    }
+
+    /**
+     * Writes a per-gen sidecar block for a var-sized column (VARCHAR or STRING).
+     * Format: [count:4B][offsets: (count+1)×4B][concatenated raw bytes]
+     * NULL values have offset[i] == offset[i+1] (zero-length) with a separate
+     * null bitmap not needed — the reader checks for zero-length spans.
+     */
+    private void writeSidecarVarGenBlock(MemoryMARW mem, int covIdx, long colTop, int colType, int totalValues) {
+        // Reserve space: count + (totalValues+1) offsets
+        mem.putInt(totalValues);
+        long offsetsStart = mem.getAppendOffset();
+        for (int i = 0; i <= totalValues; i++) {
+            mem.putInt(0); // placeholder offsets
+        }
+        long dataStart = mem.getAppendOffset();
+
+        int valueOrdinal = 0;
+
+        for (int idx = 0; idx < activeKeyCount; idx++) {
+            int key = activeKeyIds[idx];
+            int pendingCount = Unsafe.getUnsafe().getInt(pendingCountsAddr + (long) key * Integer.BYTES);
+            int spillCount = getSpillCount(key);
+
+            if (spillCount > 0) {
+                long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
+                for (int i = 0; i < spillCount; i++) {
+                    long rowId = Unsafe.getUnsafe().getLong(spillAddr + (long) i * Long.BYTES);
+                    int off = (int) (mem.getAppendOffset() - dataStart);
+                    mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
+                    writeVarValue(mem, covIdx, colTop, rowId, colType);
+                    valueOrdinal++;
+                }
+            }
+
+            long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
+            for (int i = 0; i < pendingCount; i++) {
+                long rowId = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) i * Long.BYTES);
+                int off = (int) (mem.getAppendOffset() - dataStart);
+                mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
+                writeVarValue(mem, covIdx, colTop, rowId, colType);
+                valueOrdinal++;
+            }
+        }
+        // Sentinel offset
+        int endOff = (int) (mem.getAppendOffset() - dataStart);
+        mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, endOff);
+    }
+
+    /**
+     * Writes var-sized sidecar data for one stride in the sealed path.
+     * <p>
+     * Uncompressed format: [totalCount:4B][offsets:(totalCount+1)×4B][concatenated bytes]
+     * <p>
+     * FSST-compressed format (count has high bit set):
+     * [totalCount|0x80000000:4B][tableLen:2B][FSST table][offsets:(count+1)×4B][compressed bytes]
+     */
+    private void writeSidecarVarStrideData(
+            MemoryMARW mem, int covIdx, long colTop, int colType,
+            int ks, int[] keyCounts, long[] keyOffsets, long mergedValuesAddr
+    ) {
+        int totalCount = 0;
+        for (int j = 0; j < ks; j++) {
+            totalCount += keyCounts[j];
+        }
+
+        // === Pass 1: Write uncompressed block to mem ===
+        long blockStart = mem.getAppendOffset();
+        mem.putInt(totalCount);
+        long offsetsStart = mem.getAppendOffset();
+        for (int i = 0; i <= totalCount; i++) {
+            mem.putInt(0);
+        }
+        long dataStart = mem.getAppendOffset();
+
+        int valueOrdinal = 0;
+        for (int j = 0; j < ks; j++) {
+            int count = keyCounts[j];
+            long keyOff = keyOffsets[j];
+            for (int i = 0; i < count; i++) {
+                long rowId = Unsafe.getUnsafe().getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
+                int off = (int) (mem.getAppendOffset() - dataStart);
+                mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, off);
+                writeVarValue(mem, covIdx, colTop, rowId, colType);
+                valueOrdinal++;
+            }
+        }
+        int rawDataLen = (int) (mem.getAppendOffset() - dataStart);
+        mem.putInt(offsetsStart + (long) valueOrdinal * Integer.BYTES, rawDataLen);
+
+        // === Pass 2: Try FSST compression ===
+        if (rawDataLen < FSST_MIN_RAW_SIZE || totalCount == 0) {
+            return; // Keep uncompressed
+        }
+
+        long rawDataAddr = mem.addressOf(dataStart);
+        FSST.SymbolTable table = FSST.trainBytes(rawDataAddr, rawDataLen);
+
+        try (table) {
+            if (table == null) {
+                return;
+            }
+            // Compress each value into a native buffer
+            long cmpBufAddr = Unsafe.malloc((long) rawDataLen * 2, MemoryTag.NATIVE_INDEX_READER);
+            int[] cmpOffsets = new int[totalCount + 1];
+            try {
+                int cmpPos = 0;
+                for (int i = 0; i < totalCount; i++) {
+                    cmpOffsets[i] = cmpPos;
+                    int lo = Unsafe.getUnsafe().getInt(mem.addressOf(offsetsStart + (long) i * Integer.BYTES));
+                    int hi = Unsafe.getUnsafe().getInt(mem.addressOf(offsetsStart + (long) (i + 1) * Integer.BYTES));
+                    int valLen = hi - lo;
+                    if (valLen > 0) {
+                        cmpPos += FSST.compressBytes(table, rawDataAddr + lo, valLen, cmpBufAddr + cmpPos);
+                    }
+                }
+                cmpOffsets[totalCount] = cmpPos;
+
+                // Serialize FSST table
+                long tableBufAddr = Unsafe.malloc(FSST.SERIALIZED_MAX_SIZE, MemoryTag.NATIVE_INDEX_READER);
+                try {
+                    int tableLen = FSST.serialize(table, tableBufAddr);
+
+                    // Only rewrite if compression saved space (accounting for table overhead)
+                    int compressedBlockSize = 4 + 2 + tableLen + (totalCount + 1) * 4 + cmpPos;
+                    int uncompressedBlockSize = (int) (mem.getAppendOffset() - blockStart);
+                    if (compressedBlockSize >= uncompressedBlockSize) {
+                        return; // Not worth it
+                    }
+
+                    // Rewrite the block from blockStart
+                    mem.jumpTo(blockStart);
+                    mem.putInt(totalCount | FSST.FSST_BLOCK_FLAG);
+                    mem.putShort((short) tableLen);
+                    for (int i = 0; i < tableLen; i++) {
+                        mem.putByte(Unsafe.getUnsafe().getByte(tableBufAddr + i));
+                    }
+                    for (int i = 0; i <= totalCount; i++) {
+                        mem.putInt(cmpOffsets[i]);
+                    }
+                    for (int i = 0; i < cmpPos; i++) {
+                        mem.putByte(Unsafe.getUnsafe().getByte(cmpBufAddr + i));
+                    }
+                } finally {
+                    Unsafe.free(tableBufAddr, FSST.SERIALIZED_MAX_SIZE, MemoryTag.NATIVE_INDEX_READER);
+                }
+            } finally {
+                Unsafe.free(cmpBufAddr, (long) rawDataLen * 2, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
+    }
+
+    private void writeStringValue(MemoryMARW mem, int covIdx, long row) {
+        if (isClosed()) {
+            return;
+        }
+        long auxAddr = getCoveredAuxReadAddr(covIdx, row << 3, Long.BYTES);
+        if (auxAddr == 0) return;
+        long dataOffset = Unsafe.getUnsafe().getLong(auxAddr);
+
+        long lenAddr = getCoveredDataReadAddr(covIdx, dataOffset, Integer.BYTES);
+        if (lenAddr == 0) return;
+        int len = Unsafe.getUnsafe().getInt(lenAddr);
+        if (len < 0) return;
+
+        int totalBytes = Integer.BYTES + len * Character.BYTES;
+        long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, totalBytes);
+        if (dataAddr != 0) {
+            mem.putBlockOfBytes(dataAddr, totalBytes);
+        }
+    }
+
+    private void writeVarValue(MemoryMARW mem, int covIdx, long colTop, long rowId, int colType) {
+        if (rowId < colTop) {
+            return; // NULL — zero-length (offset[i] == offset[i+1])
+        }
+        long row = rowId - colTop;
+        switch (ColumnType.tagOf(colType)) {
+            case ColumnType.VARCHAR -> writeVarcharValue(mem, covIdx, row);
+            case ColumnType.STRING -> writeStringValue(mem, covIdx, row);
+            default -> writeBinaryLikeValue(mem, covIdx, row);
+        }
+    }
+
+    private void writeVarcharValue(MemoryMARW mem, int covIdx, long row) {
+        if (coveredColumnNames == null && coveredColumnAddrs == null) {
+            return;
+        }
+        long auxOffset = VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES * row;
+        long auxAddr = getCoveredAuxReadAddr(covIdx, auxOffset, VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+        if (auxAddr == 0) return;
+
+        int header = Unsafe.getUnsafe().getInt(auxAddr);
+        if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
+            return;
+        }
+        if ((header & 1) != 0) {
+            int size = (header >>> 4) & 0xF;
+            if (size > 0) {
+                mem.putBlockOfBytes(auxAddr + 1, size);
+            }
+        } else {
+            int size = (header >>> 4) & 0x0FFFFFFF;
+            if (size > 0) {
+                long dataOffset = Unsafe.getUnsafe().getLong(auxAddr + 8) >>> 16;
+                long dataAddr = getCoveredDataReadAddr(covIdx, dataOffset, size);
+                if (dataAddr != 0) {
+                    mem.putBlockOfBytes(dataAddr, size);
+                }
+            }
+        }
+    }
+
+    static int maybeAlignBitWidth(int bitWidth, double threshold) {
+        if (bitWidth <= 0 || bitWidth > 32) return bitWidth;
+        int aligned;
+        if (bitWidth <= 8) aligned = 8;
+        else if (bitWidth <= 16) aligned = 16;
+        else aligned = 32;
+        if (aligned == bitWidth) return bitWidth;
+        double overhead = (double) (aligned - bitWidth) / bitWidth;
+        return overhead <= threshold ? aligned : bitWidth;
     }
 
     private static class TestFwdCursor implements RowCursor {

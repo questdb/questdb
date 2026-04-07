@@ -41,6 +41,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+
 import static io.questdb.cairo.TableUtils.validationException;
 
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
@@ -162,6 +163,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public byte getIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -182,8 +188,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public byte getIndexType(int columnIndex) {
-        return getColumnMetadata(columnIndex).getIndexType();
+    public boolean getSymbolCacheFlag(int columnIndex) {
+        return getColumnMetadata(columnIndex).isSymbolCacheFlag();
     }
 
     @Override
@@ -215,11 +221,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return writerColumnCount;
     }
 
-    @Override
-    public boolean getSymbolCacheFlag(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolCacheFlag();
-    }
-
     public boolean isSoftLink() {
         return isSoftLink;
     }
@@ -227,6 +228,21 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public boolean isWalEnabled() {
         return walEnabled;
+    }
+
+    public void loadFrom(TableReaderMetadata srcMeta) {
+        assert tableToken.equals(srcMeta.tableToken);
+        // Copy src meta memory.
+        copyMemFrom(srcMeta);
+        // Now, read it.
+        try {
+            isCopy = true;
+            Misc.free(metaMem);
+            readFromMem(metaCopyMem);
+        } catch (Throwable e) {
+            clear();
+            throw e;
+        }
     }
 
     public void loadMetadata(LPSZ path) {
@@ -263,21 +279,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 existenceChecked = true;
                 TableUtils.handleMetadataLoadException(tableToken, deadline, ex, millisecondClock, spinLockTimeout);
             }
-        }
-    }
-
-    public void loadFrom(TableReaderMetadata srcMeta) {
-        assert tableToken.equals(srcMeta.tableToken);
-        // Copy src meta memory.
-        copyMemFrom(srcMeta);
-        // Now, read it.
-        try {
-            isCopy = true;
-            Misc.free(metaMem);
-            readFromMem(metaCopyMem);
-        } catch (Throwable e) {
-            clear();
-            throw e;
         }
     }
 
@@ -357,48 +358,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
         this.columnCount = columnMetadata.size();
         readCoveringColumnData(mem, columnCount);
-    }
-
-    private void readCoveringColumnData(MemoryR mem, int columnCount) {
-        long memSize = mem.size();
-        // Compute offset past all column names
-        long offset = TableUtils.getColumnNameOffset(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            if (offset + Integer.BYTES > memSize) {
-                return;
-            }
-            int strLen = mem.getInt(offset);
-            offset += Vm.getStorageLength(strLen);
-        }
-        if (offset >= memSize) {
-            return;
-        }
-
-        // Read covering column indices for each column that has the covering flag
-        for (int i = 0; i < columnCount; i++) {
-            boolean isCovering = TableUtils.isColumnCovering(mem, i);
-            if (isCovering) {
-                if (offset + Integer.BYTES > mem.size()) {
-                    break;
-                }
-                int includeCount = mem.getInt(offset);
-                offset += Integer.BYTES;
-                if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= mem.size()) {
-                    int[] indices = new int[includeCount];
-                    for (int j = 0; j < includeCount; j++) {
-                        indices[j] = mem.getInt(offset);
-                        offset += Integer.BYTES;
-                    }
-                    // Find the corresponding TableColumnMetadata for writerIndex i
-                    for (int k = 0, n = columnMetadata.size(); k < n; k++) {
-                        if (columnMetadata.getQuick(k).getWriterIndex() == i) {
-                            columnMetadata.getQuick(k).setCoveringColumnIndices(indices);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
     }
 
     public void updateTableToken(TableToken tableToken) {
@@ -546,5 +505,47 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     private MemoryR getMetaMem() {
         return !isCopy ? metaMem : metaCopyMem;
+    }
+
+    private void readCoveringColumnData(MemoryR mem, int columnCount) {
+        long memSize = mem.size();
+        // Compute offset past all column names
+        long offset = TableUtils.getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return;
+            }
+            int strLen = mem.getInt(offset);
+            offset += Vm.getStorageLength(strLen);
+        }
+        if (offset >= memSize) {
+            return;
+        }
+
+        // Read covering column indices for each column that has the covering flag
+        for (int i = 0; i < columnCount; i++) {
+            boolean isCovering = TableUtils.isColumnCovering(mem, i);
+            if (isCovering) {
+                if (offset + Integer.BYTES > mem.size()) {
+                    break;
+                }
+                int includeCount = mem.getInt(offset);
+                offset += Integer.BYTES;
+                if (includeCount > 0 && offset + (long) includeCount * Integer.BYTES <= mem.size()) {
+                    int[] indices = new int[includeCount];
+                    for (int j = 0; j < includeCount; j++) {
+                        indices[j] = mem.getInt(offset);
+                        offset += Integer.BYTES;
+                    }
+                    // Find the corresponding TableColumnMetadata for writerIndex i
+                    for (int k = 0, n = columnMetadata.size(); k < n; k++) {
+                        if (columnMetadata.getQuick(k).getWriterIndex() == i) {
+                            columnMetadata.getQuick(k).setCoveringColumnIndices(indices);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 }

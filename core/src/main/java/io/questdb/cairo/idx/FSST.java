@@ -177,164 +177,35 @@ public final class FSST {
     }
 
     /**
-     * Train a symbol table from raw byte data in native memory.
-     * Internally chunks the data into 8-byte segments for the standard training algorithm.
+     * Deserialize symbol table from native memory.
      *
-     * @param srcAddr byte data address
-     * @param srcLen  byte data length
-     * @return trained SymbolTable, or null if data is too small to benefit from compression
+     * @return new SymbolTable
      */
-    public static SymbolTable trainBytes(long srcAddr, int srcLen) {
-        if (srcLen < 16) {
-            return null;
-        }
-        // Chunk into 8-byte longs for the existing training algorithm
-        int longCount = (srcLen + 7) / 8;
-        long bufAddr = Unsafe.malloc(longCount * 8L, MemoryTag.NATIVE_DEFAULT);
-        try {
-            // Copy, padding last chunk with zeros
-            Unsafe.getUnsafe().copyMemory(srcAddr, bufAddr, srcLen);
-            if (srcLen < longCount * 8L) {
-                Unsafe.getUnsafe().setMemory(bufAddr + srcLen, longCount * 8L - srcLen, (byte) 0);
-            }
-            return train(bufAddr, longCount);
-        } finally {
-            Unsafe.free(bufAddr, longCount * 8L, MemoryTag.NATIVE_DEFAULT);
-        }
+    public static SymbolTable deserialize(long srcAddr) {
+        SymbolTable table = new SymbolTable();
+        deserializeInto(srcAddr, table);
+        return table;
     }
 
     /**
-     * Read up to 8 bytes from srcAddr into a long (little-endian), without reading past the boundary.
+     * Deserialize symbol table from native memory into an existing table (zero allocation).
      */
-    private static long readWindow(long addr, int available) {
-        long result = 0;
-        for (int i = 0; i < available && i < 8; i++) {
-            result |= ((long) (Unsafe.getUnsafe().getByte(addr + i) & 0xFF)) << (i * 8);
-        }
-        return result;
-    }
-
-    /**
-     * Decode multiple 8-byte longs from a contiguous FSST-encoded byte stream.
-     *
-     * @param table   symbol table
-     * @param srcAddr start of encoded bytes
-     * @param srcLen  total encoded byte length
-     * @param count   number of longs to decode
-     * @param dstAddr destination address (array of count longs)
-     */
-    public static void decodeBulk(SymbolTable table, long srcAddr, int srcLen, int count, long dstAddr) {
-        int off = 0;
-        for (int v = 0; v < count; v++) {
-            long result = 0;
-            int bytePos = 0;
-            while (bytePos < 8 && off < srcLen) {
-                int code = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
-                off++;
-                if (code == ESCAPE) {
-                    if (off < srcLen) {
-                        int literal = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
-                        off++;
-                        result |= ((long) literal) << (bytePos * 8);
-                        bytePos++;
-                    }
-                } else {
-                    int len = table.getLen(code);
-                    long sym = table.getSymbol(code);
-                    for (int b = 0; b < len && bytePos < 8; b++) {
-                        result |= ((sym >>> (b * 8)) & 0xFFL) << (bytePos * 8);
-                        bytePos++;
-                    }
-                }
-            }
-            Unsafe.getUnsafe().putLong(dstAddr + (long) v * Long.BYTES, result);
-        }
-    }
-
-    /**
-     * Decode a single 8-byte long from FSST-encoded bytes.
-     *
-     * @param table   symbol table
-     * @param srcAddr start of encoded bytes for this value
-     * @param srcLen  number of encoded bytes for this value
-     * @return decoded long value
-     */
-    public static long decodeSingle(SymbolTable table, long srcAddr, int srcLen) {
-        long result = 0;
-        int bytePos = 0;
-        int off = 0;
-        while (off < srcLen && bytePos < 8) {
-            int code = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
+    public static void deserializeInto(long srcAddr, SymbolTable table) {
+        int count = Unsafe.getUnsafe().getByte(srcAddr) & 0xFF;
+        int off = 1;
+        for (int i = 0; i < count; i++) {
+            int len = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
             off++;
-            if (code == ESCAPE) {
-                if (off < srcLen) {
-                    int literal = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
-                    off++;
-                    result |= ((long) literal) << (bytePos * 8);
-                    bytePos++;
-                }
-            } else {
-                int len = table.getLen(code);
-                long sym = table.getSymbol(code);
-                for (int b = 0; b < len && bytePos < 8; b++) {
-                    result |= ((sym >>> (b * 8)) & 0xFFL) << (bytePos * 8);
-                    bytePos++;
-                }
+            long sym = Unsafe.getUnsafe().getLong(srcAddr + off);
+            if (len < 8) {
+                sym &= (1L << (len * 8)) - 1;
             }
+            off += Long.BYTES;
+            table.putSymbol(i, sym);
+            table.putLen(i, len);
         }
-        return result;
-    }
-
-    /**
-     * Returns the encoded size of a single long value (without writing anything).
-     */
-    public static int encodedSize(SymbolTable table, long value) {
-        int size = 0;
-        int remaining = 8;
-        int bytePos = 0;
-        while (remaining > 0) {
-            int bestLen = 0;
-            // Try to find longest matching symbol
-            if (remaining >= 2) {
-                long window = (value >>> (bytePos * 8));
-                for (int candLen = Math.min(remaining, 8); candLen >= 2 && candLen > bestLen; candLen--) {
-                    long prefix = candLen == 8 ? window : (window & ((1L << (candLen * 8)) - 1));
-                    int h = hash(prefix, candLen);
-                    for (int probe = 0; probe < 4; probe++) {
-                        int idx = (h + probe) & (HASH_SIZE - 1);
-                        int code = table.getHashCode(idx);
-                        if (code < 0) break;
-                        if (table.getLen(code) != candLen) continue;
-                        if (table.getSymbol(code) == prefix) {
-                            bestLen = candLen;
-                            break;
-                        }
-                    }
-                }
-            }
-            // Also try single-byte symbol (common case)
-            if (bestLen <= 1) {
-                int b = (int) ((value >>> (bytePos * 8)) & 0xFF);
-                int singleCode = table.getByteMap(b);
-                if (singleCode >= 0) {
-                    size++;
-                    bytePos++;
-                    remaining--;
-                    continue;
-                }
-            }
-            if (bestLen >= 2) {
-                size++;
-                bytePos += bestLen;
-                remaining -= bestLen;
-            } else {
-                // Escape + literal
-                size += 2;
-                bytePos++;
-                remaining--;
-            }
-        }
-        return size;
+        table.symbolCount = count;
+        table.rebuildLookups();
     }
 
     /**
@@ -353,17 +224,6 @@ public final class FSST {
             off += Long.BYTES;
         }
         return off;
-    }
-
-    /**
-     * Deserialize symbol table from native memory.
-     *
-     * @return new SymbolTable
-     */
-    public static SymbolTable deserialize(long srcAddr) {
-        SymbolTable table = new SymbolTable();
-        deserializeInto(srcAddr, table);
-        return table;
     }
 
     /**
@@ -423,130 +283,157 @@ public final class FSST {
 
         SymbolTable table = new SymbolTable();
         try {
-        table.populateFrom(candidateSyms, candidateLens, candidateCount);
+            table.populateFrom(candidateSyms, candidateLens, candidateCount);
 
-        // Iterative refinement
-        for (int iter = 0; iter < TRAIN_ITERATIONS; iter++) {
-            // Compress sample with current table and count code pair frequencies
-            int[] codeFreq = new int[MAX_SYMBOLS];
-            // pairFreq[a * 256 + b] = frequency of code a followed by code b
-            // Use a smaller hash map instead of 64K array
-            int pairHashSize = 4096;
-            int[] pairKeys = new int[pairHashSize];
-            int[] pairVals = new int[pairHashSize];
-            java.util.Arrays.fill(pairKeys, -1);
+            // Iterative refinement
+            for (int iter = 0; iter < TRAIN_ITERATIONS; iter++) {
+                // Compress sample with current table and count code pair frequencies
+                int[] codeFreq = new int[MAX_SYMBOLS];
+                // pairFreq[a * 256 + b] = frequency of code a followed by code b
+                // Use a smaller hash map instead of 64K array
+                int pairHashSize = 4096;
+                int[] pairKeys = new int[pairHashSize];
+                int[] pairVals = new int[pairHashSize];
+                java.util.Arrays.fill(pairKeys, -1);
 
-            int prevCode = -1;
-            for (int i = 0; i < sampleCount; i++) {
-                long value = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
-                int bytePos = 0;
-                while (bytePos < 8) {
-                    int code = findBestCode(table, value, bytePos);
-                    int advance;
-                    if (code >= 0) {
-                        codeFreq[code]++;
-                        advance = table.getLen(code);
-                    } else {
-                        // Escape
-                        code = -1;
-                        advance = 1;
-                    }
+                int prevCode = -1;
+                for (int i = 0; i < sampleCount; i++) {
+                    long value = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+                    int bytePos = 0;
+                    while (bytePos < 8) {
+                        int code = findBestCode(table, value, bytePos);
+                        int advance;
+                        if (code >= 0) {
+                            codeFreq[code]++;
+                            advance = table.getLen(code);
+                        } else {
+                            // Escape
+                            code = -1;
+                            advance = 1;
+                        }
 
-                    if (prevCode >= 0 && code >= 0) {
-                        int pairKey = prevCode * 256 + code;
-                        int ph = (pairKey * 0x9E3779B1) >>> (32 - 12);
-                        ph &= pairHashSize - 1;
-                        for (int p = 0; p < 8; p++) {
-                            int slot = (ph + p) & (pairHashSize - 1);
-                            if (pairKeys[slot] == pairKey) {
-                                pairVals[slot]++;
-                                break;
-                            }
-                            if (pairKeys[slot] == -1) {
-                                pairKeys[slot] = pairKey;
-                                pairVals[slot] = 1;
-                                break;
+                        if (prevCode >= 0 && code >= 0) {
+                            int pairKey = prevCode * 256 + code;
+                            int ph = (pairKey * 0x9E3779B1) >>> (32 - 12);
+                            ph &= pairHashSize - 1;
+                            for (int p = 0; p < 8; p++) {
+                                int slot = (ph + p) & (pairHashSize - 1);
+                                if (pairKeys[slot] == pairKey) {
+                                    pairVals[slot]++;
+                                    break;
+                                }
+                                if (pairKeys[slot] == -1) {
+                                    pairKeys[slot] = pairKey;
+                                    pairVals[slot] = 1;
+                                    break;
+                                }
                             }
                         }
+                        prevCode = code;
+                        bytePos += advance;
                     }
-                    prevCode = code;
-                    bytePos += advance;
+                    prevCode = -1; // Reset across values
                 }
-                prevCode = -1; // Reset across values
-            }
 
-            // Generate candidates: existing symbols + concatenations of frequent pairs
-            long[] newSyms = new long[MAX_SYMBOLS * 2];
-            int[] newLens = new int[MAX_SYMBOLS * 2];
-            long[] newGains = new long[MAX_SYMBOLS * 2];
-            int newCount = 0;
+                // Generate candidates: existing symbols + concatenations of frequent pairs
+                long[] newSyms = new long[MAX_SYMBOLS * 2];
+                int[] newLens = new int[MAX_SYMBOLS * 2];
+                long[] newGains = new long[MAX_SYMBOLS * 2];
+                int newCount = 0;
 
-            // Keep existing symbols with their frequency as gain
-            for (int i = 0; i < table.symbolCount; i++) {
-                if (codeFreq[i] > 0 && newCount < newSyms.length) {
-                    newSyms[newCount] = table.getSymbol(i);
-                    newLens[newCount] = table.getLen(i);
-                    // Gain = freq * (encodedWithout - encodedWith)
-                    // Single-byte symbol saves (2-1)=1 byte per use if the byte would otherwise escape
-                    // Multi-byte symbol saves (len*2 - 1) per use in the worst case
-                    newGains[newCount] = (long) codeFreq[i] * (table.getLen(i) > 1 ? table.getLen(i) : 1);
+                // Keep existing symbols with their frequency as gain
+                for (int i = 0; i < table.symbolCount; i++) {
+                    if (codeFreq[i] > 0 && newCount < newSyms.length) {
+                        newSyms[newCount] = table.getSymbol(i);
+                        newLens[newCount] = table.getLen(i);
+                        // Gain = freq * (encodedWithout - encodedWith)
+                        // Single-byte symbol saves (2-1)=1 byte per use if the byte would otherwise escape
+                        // Multi-byte symbol saves (len*2 - 1) per use in the worst case
+                        newGains[newCount] = (long) codeFreq[i] * (Math.max(table.getLen(i), 1));
+                        newCount++;
+                    }
+                }
+
+                // Add pair concatenations
+                for (int slot = 0; slot < pairHashSize; slot++) {
+                    if (pairKeys[slot] < 0 || pairVals[slot] < 2) continue;
+                    int a = pairKeys[slot] / 256;
+                    int b = pairKeys[slot] % 256;
+                    int combinedLen = table.getLen(a) + table.getLen(b);
+                    if (combinedLen > 8) continue;
+                    if (newCount >= newSyms.length) break;
+
+                    // Build concatenated symbol
+                    long sym = table.getSymbol(a) | (table.getSymbol(b) << (table.getLen(a) * 8));
+                    if (combinedLen < 8) {
+                        sym &= (1L << (combinedLen * 8)) - 1;
+                    }
+                    newSyms[newCount] = sym;
+                    newLens[newCount] = combinedLen;
+                    // Gain: each occurrence saves 1 code byte (2 codes → 1 code)
+                    newGains[newCount] = pairVals[slot];
                     newCount++;
                 }
-            }
 
-            // Add pair concatenations
-            for (int slot = 0; slot < pairHashSize; slot++) {
-                if (pairKeys[slot] < 0 || pairVals[slot] < 2) continue;
-                int a = pairKeys[slot] / 256;
-                int b = pairKeys[slot] % 256;
-                int combinedLen = table.getLen(a) + table.getLen(b);
-                if (combinedLen > 8) continue;
-                if (newCount >= newSyms.length) break;
+                // Select top 255 by gain
+                // Partial sort: repeatedly find max
+                int selected = Math.min(MAX_SYMBOLS, newCount);
+                long[] selSyms = new long[MAX_SYMBOLS];
+                int[] selLens = new int[MAX_SYMBOLS];
+                int selCount = 0;
+                boolean[] used = new boolean[newCount];
 
-                // Build concatenated symbol
-                long sym = table.getSymbol(a) | (table.getSymbol(b) << (table.getLen(a) * 8));
-                if (combinedLen < 8) {
-                    sym &= (1L << (combinedLen * 8)) - 1;
-                }
-                newSyms[newCount] = sym;
-                newLens[newCount] = combinedLen;
-                // Gain: each occurrence saves 1 code byte (2 codes → 1 code)
-                newGains[newCount] = pairVals[slot];
-                newCount++;
-            }
-
-            // Select top 255 by gain
-            // Partial sort: repeatedly find max
-            int selected = Math.min(MAX_SYMBOLS, newCount);
-            long[] selSyms = new long[MAX_SYMBOLS];
-            int[] selLens = new int[MAX_SYMBOLS];
-            int selCount = 0;
-            boolean[] used = new boolean[newCount];
-
-            for (int s = 0; s < selected; s++) {
-                long bestGain = -1;
-                int bestIdx = -1;
-                for (int j = 0; j < newCount; j++) {
-                    if (!used[j] && newGains[j] > bestGain) {
-                        bestGain = newGains[j];
-                        bestIdx = j;
+                for (int s = 0; s < selected; s++) {
+                    long bestGain = -1;
+                    int bestIdx = -1;
+                    for (int j = 0; j < newCount; j++) {
+                        if (!used[j] && newGains[j] > bestGain) {
+                            bestGain = newGains[j];
+                            bestIdx = j;
+                        }
                     }
+                    if (bestIdx < 0 || bestGain <= 0) break;
+                    used[bestIdx] = true;
+                    selSyms[selCount] = newSyms[bestIdx];
+                    selLens[selCount] = newLens[bestIdx];
+                    selCount++;
                 }
-                if (bestIdx < 0 || bestGain <= 0) break;
-                used[bestIdx] = true;
-                selSyms[selCount] = newSyms[bestIdx];
-                selLens[selCount] = newLens[bestIdx];
-                selCount++;
+
+                if (selCount == 0) break;
+                table.populateFrom(selSyms, selLens, selCount);
             }
 
-            if (selCount == 0) break;
-            table.populateFrom(selSyms, selLens, selCount);
-        }
-
-        return table;
+            return table;
         } catch (Throwable t) {
             table.close();
             throw t;
+        }
+    }
+
+    /**
+     * Train a symbol table from raw byte data in native memory.
+     * Internally chunks the data into 8-byte segments for the standard training algorithm.
+     *
+     * @param srcAddr byte data address
+     * @param srcLen  byte data length
+     * @return trained SymbolTable, or null if data is too small to benefit from compression
+     */
+    public static SymbolTable trainBytes(long srcAddr, int srcLen) {
+        if (srcLen < 16) {
+            return null;
+        }
+        // Chunk into 8-byte longs for the existing training algorithm
+        int longCount = (srcLen + 7) / 8;
+        long bufAddr = Unsafe.malloc(longCount * 8L, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // Copy, padding last chunk with zeros
+            Unsafe.getUnsafe().copyMemory(srcAddr, bufAddr, srcLen);
+            if (srcLen < longCount * 8L) {
+                Unsafe.getUnsafe().setMemory(bufAddr + srcLen, longCount * 8L - srcLen, (byte) 0);
+            }
+            return train(bufAddr, longCount);
+        } finally {
+            Unsafe.free(bufAddr, longCount * 8L, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -648,6 +535,17 @@ public final class FSST {
     }
 
     /**
+     * Read up to 8 bytes from srcAddr into a long (little-endian), without reading past the boundary.
+     */
+    private static long readWindow(long addr, int available) {
+        long result = 0;
+        for (int i = 0; i < available && i < 8; i++) {
+            result |= ((long) (Unsafe.getUnsafe().getByte(addr + i) & 0xFF)) << (i * 8);
+        }
+        return result;
+    }
+
+    /**
      * Native-memory symbol table. All arrays (symbols, lens, byteMap, hashCodes)
      * are stored in a single contiguous native allocation for cache locality and
      * zero GC pressure. Must be explicitly freed via {@link #close()}.
@@ -658,54 +556,72 @@ public final class FSST {
      * </pre>
      */
     public static final class SymbolTable implements io.questdb.std.QuietCloseable {
-        private static final long SYMBOLS_SIZE = (long) MAX_SYMBOLS * Long.BYTES;     // 2040
-        private static final long LENS_SIZE = (long) MAX_SYMBOLS * Integer.BYTES;      // 1020
         private static final long BYTEMAP_SIZE = 256L * Integer.BYTES;                 // 1024
         private static final long HASHCODES_SIZE = (long) HASH_SIZE * Integer.BYTES;   // 65536
-        private static final long TOTAL_SIZE = SYMBOLS_SIZE + LENS_SIZE + BYTEMAP_SIZE + HASHCODES_SIZE;
-
+        private static final long LENS_SIZE = (long) MAX_SYMBOLS * Integer.BYTES;      // 1020
+        private static final long SYMBOLS_SIZE = (long) MAX_SYMBOLS * Long.BYTES;     // 2040
         private static final long LENS_OFFSET = SYMBOLS_SIZE;
         private static final long BYTEMAP_OFFSET = LENS_OFFSET + LENS_SIZE;
         private static final long HASHCODES_OFFSET = BYTEMAP_OFFSET + BYTEMAP_SIZE;
-
-        private long baseAddr;
+        private static final long TOTAL_SIZE = SYMBOLS_SIZE + LENS_SIZE + BYTEMAP_SIZE + HASHCODES_SIZE;
         int symbolCount;
+        private long baseAddr;
 
         SymbolTable() {
             this.baseAddr = Unsafe.malloc(TOTAL_SIZE, MemoryTag.NATIVE_INDEX_READER);
             this.symbolCount = 0;
         }
 
-        long getSymbol(int idx) {
-            return Unsafe.getUnsafe().getLong(baseAddr + (long) idx * Long.BYTES);
-        }
-
-        void putSymbol(int idx, long sym) {
-            Unsafe.getUnsafe().putLong(baseAddr + (long) idx * Long.BYTES, sym);
-        }
-
-        int getLen(int idx) {
-            return Unsafe.getUnsafe().getInt(baseAddr + LENS_OFFSET + (long) idx * Integer.BYTES);
-        }
-
-        void putLen(int idx, int len) {
-            Unsafe.getUnsafe().putInt(baseAddr + LENS_OFFSET + (long) idx * Integer.BYTES, len);
+        @Override
+        public void close() {
+            if (baseAddr != 0) {
+                Unsafe.free(baseAddr, TOTAL_SIZE, MemoryTag.NATIVE_INDEX_READER);
+                baseAddr = 0;
+            }
         }
 
         int getByteMap(int b) {
             return Unsafe.getUnsafe().getInt(baseAddr + BYTEMAP_OFFSET + (long) b * Integer.BYTES);
         }
 
-        void putByteMap(int b, int code) {
-            Unsafe.getUnsafe().putInt(baseAddr + BYTEMAP_OFFSET + (long) b * Integer.BYTES, code);
-        }
-
         int getHashCode(int idx) {
             return Unsafe.getUnsafe().getInt(baseAddr + HASHCODES_OFFSET + (long) idx * Integer.BYTES);
         }
 
+        int getLen(int idx) {
+            return Unsafe.getUnsafe().getInt(baseAddr + LENS_OFFSET + (long) idx * Integer.BYTES);
+        }
+
+        long getSymbol(int idx) {
+            return Unsafe.getUnsafe().getLong(baseAddr + (long) idx * Long.BYTES);
+        }
+
+        /**
+         * Populate from Java arrays (used by train()). Zero-copy into native memory.
+         */
+        void populateFrom(long[] syms, int[] lens, int count) {
+            this.symbolCount = count;
+            for (int i = 0; i < count; i++) {
+                putSymbol(i, syms[i]);
+                putLen(i, lens[i]);
+            }
+            rebuildLookups();
+        }
+
+        void putByteMap(int b, int code) {
+            Unsafe.getUnsafe().putInt(baseAddr + BYTEMAP_OFFSET + (long) b * Integer.BYTES, code);
+        }
+
         void putHashCode(int idx, int code) {
             Unsafe.getUnsafe().putInt(baseAddr + HASHCODES_OFFSET + (long) idx * Integer.BYTES, code);
+        }
+
+        void putLen(int idx, int len) {
+            Unsafe.getUnsafe().putInt(baseAddr + LENS_OFFSET + (long) idx * Integer.BYTES, len);
+        }
+
+        void putSymbol(int idx, long sym) {
+            Unsafe.getUnsafe().putLong(baseAddr + (long) idx * Long.BYTES, sym);
         }
 
         /**
@@ -741,46 +657,5 @@ public final class FSST {
                 }
             }
         }
-
-        /**
-         * Populate from Java arrays (used by train()). Zero-copy into native memory.
-         */
-        void populateFrom(long[] syms, int[] lens, int count) {
-            this.symbolCount = count;
-            for (int i = 0; i < count; i++) {
-                putSymbol(i, syms[i]);
-                putLen(i, lens[i]);
-            }
-            rebuildLookups();
-        }
-
-        @Override
-        public void close() {
-            if (baseAddr != 0) {
-                Unsafe.free(baseAddr, TOTAL_SIZE, MemoryTag.NATIVE_INDEX_READER);
-                baseAddr = 0;
-            }
-        }
-    }
-
-    /**
-     * Deserialize symbol table from native memory into an existing table (zero allocation).
-     */
-    public static void deserializeInto(long srcAddr, SymbolTable table) {
-        int count = Unsafe.getUnsafe().getByte(srcAddr) & 0xFF;
-        int off = 1;
-        for (int i = 0; i < count; i++) {
-            int len = Unsafe.getUnsafe().getByte(srcAddr + off) & 0xFF;
-            off++;
-            long sym = Unsafe.getUnsafe().getLong(srcAddr + off);
-            if (len < 8) {
-                sym &= (1L << (len * 8)) - 1;
-            }
-            off += Long.BYTES;
-            table.putSymbol(i, sym);
-            table.putLen(i, len);
-        }
-        table.symbolCount = count;
-        table.rebuildLookups();
     }
 }

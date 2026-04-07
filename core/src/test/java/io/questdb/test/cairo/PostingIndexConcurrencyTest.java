@@ -51,13 +51,13 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
     private static final int JOIN_MS = 500;
 
     @Test
-    public void testConcurrentFwdReadersWhileWriterCommits() throws Exception {
-        runConcurrentTest("conc_fwd", 4, true, false);
+    public void testConcurrentBwdReadersWhileWriterCommits() throws Exception {
+        runConcurrentTest("conc_bwd", 4, false, true);
     }
 
     @Test
-    public void testConcurrentBwdReadersWhileWriterCommits() throws Exception {
-        runConcurrentTest("conc_bwd", 4, false, true);
+    public void testConcurrentFwdReadersWhileWriterCommits() throws Exception {
+        runConcurrentTest("conc_fwd", 4, true, false);
     }
 
     @Test
@@ -70,72 +70,33 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
         runConcurrentTest("conc_high", 16, true, false);
     }
 
-    private void runConcurrentTest(String name, int numReaders, boolean useFwd, boolean useBwd) throws Exception {
-        assertMemoryLeak(64, () -> {
-        final String dbRoot = configuration.getDbRoot();
-        final AtomicReference<Throwable> error = new AtomicReference<>();
-        final AtomicInteger committed = new AtomicInteger(0);
-        final CountDownLatch writerDone = new CountDownLatch(1);
-
-        try (Path path = new Path().of(dbRoot)) {
-            try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
-                // Seed initial data
-                for (int v = 0; v < BP_BATCH; v++) {
-                    writer.add(0, v);
-                }
-                writer.setMaxValue(BP_BATCH - 1);
-                writer.commit();
-                committed.set(1);
-
-                Thread[] readers = new Thread[numReaders];
-                for (int r = 0; r < numReaders; r++) {
-                    final int id = r;
-                    // Alternate fwd/bwd when both are requested
-                    final boolean forward = useFwd && (!useBwd || r % 2 == 0);
-                    readers[r] = new Thread(() -> {
-                        try {
-                            if (forward) {
-                                readForward(dbRoot, name, id, writerDone, committed);
-                            } else {
-                                readBackward(dbRoot, name, id, writerDone, committed);
-                            }
-                        } catch (Throwable t) {
-                            error.compareAndSet(null, t);
-                        }
-                    });
-                    readers[r].setDaemon(true);
-                    readers[r].start();
-                }
-
-                // Writer commits in a tight loop
-                for (int batch = 1; batch < COMMITS; batch++) {
-                    long base = (long) batch * BP_BATCH;
-                    for (int v = 0; v < BP_BATCH; v++) {
-                        writer.add(0, base + v);
+    private static void readBackward(String dbRoot, String name, int id,
+                                     CountDownLatch writerDone, AtomicInteger committed) {
+        try (Path rPath = new Path().of(dbRoot);
+             PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
+                reader.reloadConditionally();
+                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                long prev = Long.MAX_VALUE;
+                int count = 0;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    if (val >= prev) {
+                        throw new AssertionError(
+                                "bwd " + id + ": non-descending " + prev + " -> " + val);
                     }
-                    writer.setMaxValue(base + BP_BATCH - 1);
-                    writer.commit();
-                    committed.incrementAndGet();
+                    prev = val;
+                    count++;
                 }
-                writerDone.countDown();
-
-                for (Thread t : readers) {
-                    t.join(JOIN_MS);
-                    if (t.isAlive()) {
-                        t.interrupt();
-                    }
+                if (count == 0) {
+                    throw new AssertionError("bwd " + id + ": zero values");
                 }
-                // Wait for interrupted threads to fully exit before writer closes
-                for (Thread t : readers) {
-                    t.join(JOIN_MS);
-                }
-
-                if (error.get() != null) {
-                    throw new AssertionError("Concurrent reader failed", error.get());
+                if (count % BP_BATCH != 0) {
+                    throw new AssertionError("bwd " + id + ": partial batch, count=" + count);
                 }
             }
         }
-        });
     }
 
     private static void readForward(String dbRoot, String name, int id,
@@ -167,32 +128,71 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
         }
     }
 
-    private static void readBackward(String dbRoot, String name, int id,
-                                     CountDownLatch writerDone, AtomicInteger committed) {
-        try (Path rPath = new Path().of(dbRoot);
-             PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
-                reader.reloadConditionally();
-                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
-                long prev = Long.MAX_VALUE;
-                int count = 0;
-                while (cursor.hasNext()) {
-                    long val = cursor.next();
-                    if (val >= prev) {
-                        throw new AssertionError(
-                                "bwd " + id + ": non-descending " + prev + " -> " + val);
+    private void runConcurrentTest(String name, int numReaders, boolean useFwd, boolean useBwd) throws Exception {
+        assertMemoryLeak(64, () -> {
+            final String dbRoot = configuration.getDbRoot();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final AtomicInteger committed = new AtomicInteger(0);
+            final CountDownLatch writerDone = new CountDownLatch(1);
+
+            try (Path path = new Path().of(dbRoot)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    // Seed initial data
+                    for (int v = 0; v < BP_BATCH; v++) {
+                        writer.add(0, v);
                     }
-                    prev = val;
-                    count++;
-                }
-                if (count == 0) {
-                    throw new AssertionError("bwd " + id + ": zero values");
-                }
-                if (count % BP_BATCH != 0) {
-                    throw new AssertionError("bwd " + id + ": partial batch, count=" + count);
+                    writer.setMaxValue(BP_BATCH - 1);
+                    writer.commit();
+                    committed.set(1);
+
+                    Thread[] readers = new Thread[numReaders];
+                    for (int r = 0; r < numReaders; r++) {
+                        final int id = r;
+                        // Alternate fwd/bwd when both are requested
+                        final boolean forward = useFwd && (!useBwd || r % 2 == 0);
+                        readers[r] = new Thread(() -> {
+                            try {
+                                if (forward) {
+                                    readForward(dbRoot, name, id, writerDone, committed);
+                                } else {
+                                    readBackward(dbRoot, name, id, writerDone, committed);
+                                }
+                            } catch (Throwable t) {
+                                error.compareAndSet(null, t);
+                            }
+                        });
+                        readers[r].setDaemon(true);
+                        readers[r].start();
+                    }
+
+                    // Writer commits in a tight loop
+                    for (int batch = 1; batch < COMMITS; batch++) {
+                        long base = (long) batch * BP_BATCH;
+                        for (int v = 0; v < BP_BATCH; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH - 1);
+                        writer.commit();
+                        committed.incrementAndGet();
+                    }
+                    writerDone.countDown();
+
+                    for (Thread t : readers) {
+                        t.join(JOIN_MS);
+                        if (t.isAlive()) {
+                            t.interrupt();
+                        }
+                    }
+                    // Wait for interrupted threads to fully exit before writer closes
+                    for (Thread t : readers) {
+                        t.join(JOIN_MS);
+                    }
+
+                    if (error.get() != null) {
+                        throw new AssertionError("Concurrent reader failed", error.get());
+                    }
                 }
             }
-        }
+        });
     }
 }

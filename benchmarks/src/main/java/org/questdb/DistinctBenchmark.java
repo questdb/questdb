@@ -11,19 +11,15 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
 
 import java.io.File;
-import java.io.IOException;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SimpleFileVisitor;
-import java.nio.file.attribute.BasicFileAttributes;
 
 /**
  * SELECT DISTINCT benchmark comparing:
  * - Fresh .pd (posting index sealed, distinct keys file matches)
  * - Stale .pd (O3 append invalidated the sequence → fallback to per-key scan)
  * - No .pd (bitmap index, no posting index optimisation)
- *
+ * <p>
  * Tests across varying distinct key counts and partition counts.
  *
  * <pre>
@@ -34,9 +30,9 @@ import java.nio.file.attribute.BasicFileAttributes;
  */
 public class DistinctBenchmark {
 
-    private static final java.io.PrintStream out = System.err;
-    private static final int WARMUP = 3;
     private static final int RUNS = 7;
+    private static final int WARMUP = 3;
+    private static final java.io.PrintStream out = System.err;
 
     public static void main(String[] args) throws Exception {
         LogFactory.haltInstance();
@@ -63,7 +59,7 @@ public class DistinctBenchmark {
 
                 for (int keys : keyCounts) {
                     for (int parts : partitionCounts) {
-                        runScenario(engine, compiler, ctx, tmpDir, keys, parts);
+                        runScenario(engine, compiler, ctx, keys, parts);
                     }
                 }
             }
@@ -73,18 +69,57 @@ public class DistinctBenchmark {
         System.exit(0);
     }
 
+    private static void deleteDir(File dir) {
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                if (f.isDirectory()) deleteDir(f);
+                else f.delete();
+            }
+        }
+        dir.delete();
+    }
+
+    private static void drainCursor(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String sql) throws SqlException {
+        long sink = 0;
+        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(ctx)) {
+            while (cursor.hasNext()) {
+                CharSequence s = cursor.getRecord().getSymA(0);
+                if (s != null) sink += s.length();
+            }
+        }
+        if (sink == Long.MIN_VALUE) throw new IllegalStateException();
+    }
+
+    private static double measureDistinct(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String table) throws SqlException {
+        String sql = "SELECT DISTINCT sym FROM " + table;
+
+        // Warmup
+        for (int w = 0; w < WARMUP; w++) {
+            drainCursor(compiler, ctx, sql);
+        }
+
+        // Measure
+        long totalNs = 0;
+        for (int r = 0; r < RUNS; r++) {
+            long start = System.nanoTime();
+            drainCursor(compiler, ctx, sql);
+            totalNs += System.nanoTime() - start;
+        }
+        return totalNs / 1e6 / RUNS;
+    }
+
     private static void runScenario(
             CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContextImpl ctx,
-            Path dbDir, int distinctKeys, int partitions
-    ) throws SqlException, IOException {
+            int distinctKeys, int partitions
+    ) {
         // 100 rows per key per partition → total = keys * rowsPerKey * partitions
         int rowsPerKeyPerPartition = 100;
         long totalRows = (long) distinctKeys * rowsPerKeyPerPartition * partitions;
-        String table = "d_" + distinctKeys + "_" + partitions;
-
         out.printf("--- %,d keys x %d partitions (%,d rows) ---%n", distinctKeys, partitions, totalRows);
         try {
-            runScenarioInner(engine, compiler, ctx, dbDir, distinctKeys, partitions, totalRows);
+            runScenarioInner(engine, compiler, ctx, distinctKeys, partitions, totalRows);
         } catch (Throwable e) {
             out.printf("    FAILED: %s%n%n", e.getMessage());
         }
@@ -92,9 +127,8 @@ public class DistinctBenchmark {
 
     private static void runScenarioInner(
             CairoEngine engine, SqlCompilerImpl compiler, SqlExecutionContextImpl ctx,
-            Path dbDir, int distinctKeys, int partitions, long totalRows
-    ) throws SqlException, IOException {
-        int rowsPerKeyPerPartition = 100;
+            int distinctKeys, int partitions, long totalRows
+    ) throws SqlException {
         String table = "d_" + distinctKeys + "_" + partitions;
 
         // Create table with POSTING index (produces .pd on seal)
@@ -171,52 +205,10 @@ public class DistinctBenchmark {
 
         // Cleanup
         engine.execute("DROP TABLE " + table, ctx);
-        try { engine.execute("DROP TABLE IF EXISTS " + bitmapTable, ctx); } catch (Throwable ignored) {}
+        try {
+            engine.execute("DROP TABLE IF EXISTS " + bitmapTable, ctx);
+        } catch (Throwable ignored) {
+        }
         engine.releaseAllWriters();
-    }
-
-    private static double measureDistinct(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String table) throws SqlException {
-        String sql = "SELECT DISTINCT sym FROM " + table;
-
-        // Warmup
-        for (int w = 0; w < WARMUP; w++) {
-            drainCursor(compiler, ctx, sql);
-        }
-
-        // Measure
-        long totalNs = 0;
-        for (int r = 0; r < RUNS; r++) {
-            long start = System.nanoTime();
-            drainCursor(compiler, ctx, sql);
-            totalNs += System.nanoTime() - start;
-        }
-        return totalNs / 1e6 / RUNS;
-    }
-
-    private static long drainCursor(SqlCompilerImpl compiler, SqlExecutionContextImpl ctx, String sql) throws SqlException {
-        long count = 0;
-        long sink = 0;
-        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(ctx)) {
-            while (cursor.hasNext()) {
-                CharSequence s = cursor.getRecord().getSymA(0);
-                if (s != null) sink += s.length();
-                count++;
-            }
-        }
-        if (sink == Long.MIN_VALUE) throw new IllegalStateException();
-        return count;
-    }
-
-
-    private static void deleteDir(File dir) {
-        File[] files = dir.listFiles();
-        if (files != null) {
-            for (File f : files) {
-                if (f.isDirectory()) deleteDir(f);
-                else f.delete();
-            }
-        }
-        dir.delete();
     }
 }

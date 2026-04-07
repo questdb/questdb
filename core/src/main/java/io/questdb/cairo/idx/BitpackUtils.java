@@ -65,27 +65,9 @@ public final class BitpackUtils {
     // Block configuration
     public static final int BLOCK_CAPACITY = 128;  // Values per block (power of 2 for fast division)
     public static final int BLOCK_HEADER_SIZE = 12; // minValue(8) + bitWidth(1) + valueCount(2) + padding(1)
-    public static final int BLOCK_OFFSET_BIT_WIDTH = 8;    // 1 byte
-    public static final int BLOCK_OFFSET_DATA = 12;        // Packed data starts here
-    // Block header offsets
-    public static final int BLOCK_OFFSET_MIN_VALUE = 0;    // 8 bytes
-    public static final int BLOCK_OFFSET_VALUE_COUNT = 9;  // 2 bytes
-    public static final int KEY_ENTRY_OFFSET_BLOCK_COUNT = 24;     // 4 bytes - number of blocks
-    public static final int KEY_ENTRY_OFFSET_COUNT_CHECK = 28;     // 4 bytes - consistency check
-    public static final int KEY_ENTRY_OFFSET_FIRST_BLOCK = 8;      // 8 bytes - offset to first block in value file
-    public static final int KEY_ENTRY_OFFSET_LAST_VALUE = 16;      // 8 bytes - last value added (for O(1) append check)
-    // Key entry layout (32 bytes per key, 8-byte aligned)
-    public static final int KEY_ENTRY_OFFSET_VALUE_COUNT = 0;      // 8 bytes - total values for this key
-    public static final int KEY_ENTRY_SIZE = 32;
 
     // Key file header layout (64 bytes reserved, 8-byte aligned)
     public static final int KEY_FILE_RESERVED = 64;
-    public static final int KEY_RESERVED_OFFSET_KEY_COUNT = 24;       // 8 bytes (4 byte count + 4 padding)
-    public static final int KEY_RESERVED_OFFSET_MAX_VALUE = 40;       // 8 bytes
-    public static final int KEY_RESERVED_OFFSET_SEQUENCE = 8;         // 8 bytes
-    public static final int KEY_RESERVED_OFFSET_SEQUENCE_CHECK = 32;  // 8 bytes
-    public static final int KEY_RESERVED_OFFSET_SIGNATURE = 0;        // 8 bytes (1 byte sig + 7 padding)
-    public static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 16;  // 8 bytes
     // Bytes 48-63 reserved for future use
     // Signature for FOR-encoded index (distinct from legacy 0xfa and delta 0xfc)
     public static final byte SIGNATURE = (byte) 0xfd;
@@ -108,13 +90,6 @@ public final class BitpackUtils {
     }
 
     /**
-     * Returns the offset of a key entry in the key file.
-     */
-    public static long getKeyEntryOffset(int key) {
-        return (long) key * KEY_ENTRY_SIZE + KEY_FILE_RESERVED;
-    }
-
-    /**
      * Generates the key file name for a FOR bitmap index.
      */
     public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {
@@ -129,11 +104,11 @@ public final class BitpackUtils {
      * Packs values into bit-packed format using Unsafe.
      * Values are stored as offsets from minValue.
      *
-     * @param values   array of values to pack
-     * @param count    number of values
-     * @param minValue minimum value (reference frame)
-     * @param bitWidth bits per offset
-     * @param destAddr destination memory address
+     * @param valuesAddr source memory address of values to pack
+     * @param count      number of values
+     * @param minValue   minimum value (reference frame)
+     * @param bitWidth   bits per offset
+     * @param destAddr   destination memory address
      */
     public static void packValues(long valuesAddr, int count, long minValue, int bitWidth, long destAddr) {
         long buffer = 0;
@@ -185,7 +160,7 @@ public final class BitpackUtils {
      * @param valueCount number of values to unpack
      * @param bitWidth   bits per offset
      * @param minValue   minimum value to add back
-     * @param dest       destination array
+     * @param destAddr   destination memory address for unpacked values
      */
     public static void unpackAllValues(long srcAddr, int valueCount, int bitWidth, long minValue, long destAddr) {
         if (PostingIndexNative.isNativeAvailable() && valueCount > 0 && bitWidth > 0 && bitWidth <= 32) {
@@ -254,9 +229,52 @@ public final class BitpackUtils {
     }
 
     /**
+     * Unpacks a single value from bit-packed data using Unsafe.
+     *
+     * @param srcAddr  source memory address of packed data
+     * @param index    index of value to unpack (0-based)
+     * @param bitWidth bits per offset
+     * @param minValue minimum value to add back
+     * @return unpacked value
+     */
+    public static long unpackValue(long srcAddr, int index, int bitWidth, long minValue) {
+        long bitOffset = (long) index * bitWidth;
+        int byteOffset = (int) (bitOffset / 8);
+        int bitShift = (int) (bitOffset % 8);
+
+        // Read enough bytes to cover the value
+        long value = 0;
+        int bitsRead = 0;
+        int bytesNeeded = (bitShift + bitWidth + 7) / 8;
+
+        for (int i = 0; i < bytesNeeded; i++) {
+            long b = Unsafe.getUnsafe().getByte(srcAddr + byteOffset + i) & 0xFFL;
+            value |= (b << bitsRead);
+            bitsRead += 8;
+        }
+
+        // Shift and mask to get the offset
+        value >>>= bitShift;
+        long mask = (1L << bitWidth) - 1;
+        if (bitWidth == 64) {
+            mask = -1L; // All bits set
+        }
+        long offset = value & mask;
+
+        return minValue + offset;
+    }
+
+    /**
      * Batch-unpacks values from bit-packed data starting at an arbitrary index.
      * Uses native AVX2 path when available for byte-aligned widths (8/16/32-bit),
      * falling back to Java scalar for non-aligned widths.
+     *
+     * @param srcAddr    source memory address of packed data
+     * @param startIndex index of the first value to unpack (0-based)
+     * @param valueCount number of values to unpack
+     * @param bitWidth   bits per offset
+     * @param minValue   minimum value to add back
+     * @param destAddr   destination memory address for unpacked values
      */
     public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount, int bitWidth, long minValue, long destAddr) {
         if (valueCount == 0) {
@@ -316,42 +334,6 @@ public final class BitpackUtils {
             buffer >>>= bitWidth;
             bufferBits -= bitWidth;
         }
-    }
-
-    /**
-     * Unpacks a single value from bit-packed data using Unsafe.
-     *
-     * @param srcAddr  source memory address of packed data
-     * @param index    index of value to unpack (0-based)
-     * @param bitWidth bits per offset
-     * @param minValue minimum value to add back
-     * @return unpacked value
-     */
-    public static long unpackValue(long srcAddr, int index, int bitWidth, long minValue) {
-        long bitOffset = (long) index * bitWidth;
-        int byteOffset = (int) (bitOffset / 8);
-        int bitShift = (int) (bitOffset % 8);
-
-        // Read enough bytes to cover the value
-        long value = 0;
-        int bitsRead = 0;
-        int bytesNeeded = (bitShift + bitWidth + 7) / 8;
-
-        for (int i = 0; i < bytesNeeded; i++) {
-            long b = Unsafe.getUnsafe().getByte(srcAddr + byteOffset + i) & 0xFFL;
-            value |= (b << bitsRead);
-            bitsRead += 8;
-        }
-
-        // Shift and mask to get the offset
-        value >>>= bitShift;
-        long mask = (1L << bitWidth) - 1;
-        if (bitWidth == 64) {
-            mask = -1L; // All bits set
-        }
-        long offset = value & mask;
-
-        return minValue + offset;
     }
 
     /**

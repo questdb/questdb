@@ -37,13 +37,13 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * Constants and encoding/decoding utilities for the Posting index sealed format.
  *
  * <h2>Sealed stride encoding</h2>
- *
+ * <p>
  * At seal time the writer groups keys into strides of {@link #DENSE_STRIDE} (256)
  * consecutive keys and independently encodes each stride using the smaller of two
  * modes:
  *
  * <h3>Delta mode ({@link #STRIDE_MODE_DELTA}, 0x00) — per-key delta + FoR</h3>
- *
+ * <p>
  * Each key's sorted row-ID list is encoded independently:
  * <ol>
  *   <li>Delta-encode: compute successive differences.</li>
@@ -59,7 +59,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * and tight per-key delta distributions keep bitwidths low.
  *
  * <h3>Flat mode ({@link #STRIDE_MODE_FLAT}, 0x01) — stride-wide FoR</h3>
- *
+ * <p>
  * All values across all 256 keys in the stride are packed into a single contiguous
  * bitpacked array with one shared base value and one bitwidth:
  * <pre>
@@ -80,7 +80,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * inflates the bitwidth to reach an aligned boundary.
  *
  * <h3>Mode selection</h3>
- *
+ * <p>
  * The seal path trial-encodes both modes and picks whichever produces fewer bytes.
  * The threshold is purely size-based; there is no speed-vs-size trade-off knob.
  *
@@ -154,9 +154,35 @@ public final class PostingIndexUtils {
     public static final int BLOCK_CAPACITY = 64;
     public static final int COVER_INFO_MAGIC = 0x50434930; // "PCI0"
     public static final int DENSE_STRIDE = 256;
+    public static final int FORMAT_VERSION = 1;
+    // Generation directory entry (32 bytes per generation, 8-byte aligned)
+    public static final int GEN_DIR_ENTRY_SIZE = 32;
+    public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
+    public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
+    public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
+    public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
+    public static final int GEN_DIR_OFFSET_SIDECAR_OFFSET = 28; // 4 bytes: offset into .pc* sidecar files
+    public static final int GEN_DIR_OFFSET_SIZE = 8;
+    public static final int KEY_FILE_RESERVED = 8192; // was 64
     public static final int MAX_COVER_COUNT = 4096; // corruption guard for readCoverCountFromInfoFile
+    public static final int MAX_GEN_COUNT = 125; // (4088-64)/32 = 125
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
-
+    public static final long PAGE_A_OFFSET = 0;
+    public static final long PAGE_B_OFFSET = 4096;
+    public static final int PAGE_OFFSET_BLOCK_CAPACITY = 16;
+    public static final int PAGE_OFFSET_FORMAT_VERSION = 36;
+    public static final int PAGE_OFFSET_GEN_COUNT = 32;
+    public static final int PAGE_OFFSET_GEN_DIR = 64;
+    public static final int PAGE_OFFSET_KEY_COUNT = 20;
+    public static final int PAGE_OFFSET_MAX_VALUE = 24;
+    public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
+    // Per-page offsets
+    public static final int PAGE_OFFSET_SEQUENCE_START = 0;
+    public static final int PAGE_OFFSET_VALUE_FILE_TXN = 40; // 8 bytes: txn suffix for the .pv file
+    public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
+    // Double-buffered 4KB metadata pages (v2 format)
+    public static final int PAGE_SIZE = 4096;
+    public static final byte SIGNATURE = (byte) 0xfb;
     // Stride block mode constants — see class javadoc for when each mode wins
     public static final byte STRIDE_MODE_DELTA = 0;
     public static final byte STRIDE_MODE_FLAT = 1;
@@ -164,39 +190,28 @@ public final class PostingIndexUtils {
     public static final int STRIDE_FLAT_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
     public static final int STRIDE_FLAT_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
 
-    // Double-buffered 4KB metadata pages (v2 format)
-    public static final int PAGE_SIZE = 4096;
-    public static final long PAGE_A_OFFSET = 0;
-    public static final long PAGE_B_OFFSET = 4096;
-    public static final int KEY_FILE_RESERVED = 8192; // was 64
-
-    // Per-page offsets
-    public static final int PAGE_OFFSET_SEQUENCE_START = 0;
-    public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
-    public static final int PAGE_OFFSET_BLOCK_CAPACITY = 16;
-    public static final int PAGE_OFFSET_KEY_COUNT = 20;
-    public static final int PAGE_OFFSET_MAX_VALUE = 24;
-    public static final int PAGE_OFFSET_GEN_COUNT = 32;
-    public static final int PAGE_OFFSET_FORMAT_VERSION = 36;
-    public static final int PAGE_OFFSET_VALUE_FILE_TXN = 40; // 8 bytes: txn suffix for the .pv file
-    public static final int PAGE_OFFSET_GEN_DIR = 64;
-    public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
-
-    public static final int MAX_GEN_COUNT = 125; // (4088-64)/32 = 125
-    public static final int FORMAT_VERSION = 1;
-
-    public static final byte SIGNATURE = (byte) 0xfb;
-
-    // Generation directory entry (32 bytes per generation, 8-byte aligned)
-    public static final int GEN_DIR_ENTRY_SIZE = 32;
-    public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
-    public static final int GEN_DIR_OFFSET_SIZE = 8;
-    public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
-    public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
-    public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
-    public static final int GEN_DIR_OFFSET_SIDECAR_OFFSET = 28; // 4 bytes: offset into .pc* sidecar files
-
     private PostingIndexUtils() {
+    }
+
+    /**
+     * Binary search for a key ID in a sorted keyIds array stored at native memory.
+     *
+     * @return index if found (>= 0), or -(insertionPoint + 1) if not found
+     */
+    public static int binarySearchKeyId(long keyIdsAddr, int activeKeyCount, int key) {
+        int lo = 0, hi = activeKeyCount - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int midKey = Unsafe.getUnsafe().getInt(keyIdsAddr + (long) mid * Integer.BYTES);
+            if (midKey < key) {
+                lo = mid + 1;
+            } else if (midKey > key) {
+                hi = mid - 1;
+            } else {
+                return mid;
+            }
+        }
+        return -(lo + 1);
     }
 
     /**
@@ -213,16 +228,31 @@ public final class PostingIndexUtils {
         return 4 + (long) blockCount * 18 + packedOffsetsSize + totalDeltas * 8;
     }
 
+    public static LPSZ coverDataFileName(Path path, CharSequence name, long columnNameTxn, int includeIdx) {
+        path.concat(name).put(".pc").put(includeIdx);
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
+    public static LPSZ coverInfoFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pci");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
     /**
      * Decodes all values for a key from delta-encoded data.
      * Allocates temporary arrays per call — use the overload with DecodeContext
      * on hot paths to avoid allocations.
      *
-     * @param srcAddr    address of the encoded data for this key
-     * @param totalCount total number of values expected
-     * @param dest       destination array (must have room for totalCount values)
+     * @param srcAddr address of the encoded data for this key
+     * @param dest    destination array (must have room for totalCount values)
      */
-    public static void decodeKey(long srcAddr, int totalCount, long[] dest) {
+    public static void decodeKey(long srcAddr, long[] dest) {
         int blockCount = Unsafe.getUnsafe().getInt(srcAddr);
         long pos = srcAddr + 4;
 
@@ -307,89 +337,14 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Decodes all values for a key from delta-encoded data into a Java array,
-     * using pre-allocated workspace arrays from the provided context.
-     *
-     * @param srcAddr    address of the encoded data for this key
-     * @param totalCount total number of values expected
-     * @param dest       destination array (must have room for totalCount values)
-     * @param ctx        reusable decode context (call ensureCapacity first)
-     */
-    public static void decodeKey(long srcAddr, int totalCount, long[] dest, DecodeContext ctx) {
-        int blockCount = Unsafe.getUnsafe().getInt(srcAddr);
-        long pos = srcAddr + 4;
-
-        ctx.ensureCapacity(blockCount);
-        long valueCountsAddr = ctx.valueCountsAddr;
-        long firstValuesAddr = ctx.firstValuesAddr;
-        long minDeltasAddr = ctx.minDeltasAddr;
-        long bitWidthsAddr = ctx.bitWidthsAddr;
-        long blockDeltasAddr = ctx.blockDeltasAddr;
-
-        for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putInt(valueCountsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
-        }
-        pos += blockCount;
-
-        for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
-                    Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
-        }
-        pos += (long) blockCount * Long.BYTES;
-
-        for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
-                    Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
-        }
-        pos += (long) blockCount * Long.BYTES;
-
-        for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
-        }
-        pos += blockCount;
-
-        // Skip packedOffsets (only present for multi-block keys)
-        if (blockCount > 1) {
-            pos += (long) blockCount * Integer.BYTES;
-        }
-
-        int destIdx = 0;
-        for (int b = 0; b < blockCount; b++) {
-            int count = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
-            int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
-            int numDeltas = count - 1;
-
-            if (numDeltas > 0) {
-                long minD = Unsafe.getUnsafe().getLong(minDeltasAddr + (long) b * Long.BYTES);
-                if (bitWidth == 0) {
-                    for (int i = 0; i < numDeltas; i++) {
-                        Unsafe.getUnsafe().putLong(blockDeltasAddr + (long) i * Long.BYTES, minD);
-                    }
-                } else {
-                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minD, blockDeltasAddr);
-                }
-            }
-            pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
-
-            long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
-            dest[destIdx++] = cumulative;
-            for (int i = 0; i < numDeltas; i++) {
-                cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
-                dest[destIdx++] = cumulative;
-            }
-        }
-    }
-
-    /**
      * Decodes all values for a key from delta-encoded data directly into native memory,
      * using pre-allocated workspace arrays from the provided context.
      *
-     * @param srcAddr    address of the encoded data for this key
-     * @param totalCount total number of values expected
-     * @param destAddr   native memory destination address (must have room for totalCount longs)
-     * @param ctx        reusable decode context (call ensureCapacity first)
+     * @param srcAddr  address of the encoded data for this key
+     * @param destAddr native memory destination address (must have room for totalCount longs)
+     * @param ctx      reusable decode context (call ensureCapacity first)
      */
-    public static void decodeKeyToNative(long srcAddr, int totalCount, long destAddr, DecodeContext ctx) {
+    public static void decodeKeyToNative(long srcAddr, long destAddr, DecodeContext ctx) {
         int blockCount = Unsafe.getUnsafe().getInt(srcAddr);
         long pos = srcAddr + 4;
 
@@ -456,19 +411,12 @@ public final class PostingIndexUtils {
         }
     }
 
-    /**
-     * Encodes sorted values for a single key using delta + FoR64 bitpacking.
-     * Allocates temporary arrays internally — use the overload with EncodeContext
-     * on hot paths to avoid allocations.
-     */
-    public static int encodeKey(long[] values, int count, long destAddr) {
-        EncodeContext ctx = new EncodeContext();
-        try {
-            ctx.ensureCapacity(count);
-            return encodeKey(values, count, destAddr, ctx);
-        } finally {
-            ctx.close();
+    public static LPSZ distinctKeysFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pd");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
         }
+        return path.$();
     }
 
     /**
@@ -745,6 +693,140 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Size of the per-generation sparse header: keyIds + counts + offsets for active keys only.
+     */
+    public static int genHeaderSizeSparse(int activeKeyCount) {
+        return activeKeyCount * Integer.BYTES * 3;
+    }
+
+    /**
+     * Offset of generation directory entry within a metadata page.
+     *
+     * @param pageBase the base offset of the page (PAGE_A_OFFSET or PAGE_B_OFFSET)
+     * @param genIndex the generation index
+     */
+    public static long getGenDirOffset(long pageBase, int genIndex) {
+        return pageBase + PAGE_OFFSET_GEN_DIR + (long) genIndex * GEN_DIR_ENTRY_SIZE;
+    }
+
+    public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pk");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
+    /**
+     * Number of keys in a given stride block.
+     */
+    public static int keysInStride(int keyCount, int stride) {
+        int sc = strideCount(keyCount);
+        if (stride < sc - 1) return DENSE_STRIDE;
+        int rem = keyCount % DENSE_STRIDE;
+        return rem == 0 ? DENSE_STRIDE : rem;
+    }
+
+    public static int readCoverCountFromInfoFile(FilesFacade ff, LPSZ pciFilePath) {
+        long fd = ff.openRO(pciFilePath);
+        if (fd < 0) {
+            return 0;
+        }
+        try {
+            int magic = ff.readNonNegativeInt(fd, 0);
+            if (magic != COVER_INFO_MAGIC) {
+                return 0;
+            }
+            int count = ff.readNonNegativeInt(fd, 4);
+            // Guard against corrupted .pci: a garbled count could cause
+            // billions of removeQuiet iterations in removeSidecarFiles.
+            // No table can have more than a few thousand columns, so any
+            // value beyond that is corruption.
+            return count >= 0 && count <= MAX_COVER_COUNT ? count : 0;
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    public static long readValueFileTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
+        long fd = ff.openRO(keyFilePath);
+        if (fd < 0) {
+            return -1;
+        }
+        try {
+            // Read sequence from both pages, pick the one with higher valid sequence
+            long seqA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+            long seqEndA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+            long seqB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+            long seqEndB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+
+            long pageOffset;
+            if (seqA == seqEndA && seqB == seqEndB) {
+                pageOffset = seqA >= seqB ? PAGE_A_OFFSET : PAGE_B_OFFSET;
+            } else if (seqA == seqEndA) {
+                pageOffset = PAGE_A_OFFSET;
+            } else if (seqB == seqEndB) {
+                pageOffset = PAGE_B_OFFSET;
+            } else {
+                return -1;
+            }
+            return ff.readNonNegativeLong(fd, pageOffset + PAGE_OFFSET_VALUE_FILE_TXN);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    public static void removeSidecarFiles(FilesFacade ff, Path path, int pathTrimTo, CharSequence columnName, long columnVersion) {
+        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, columnVersion);
+        if (ff.exists(pciFile)) {
+            int coverCount = readCoverCountFromInfoFile(ff, pciFile);
+            ff.removeQuiet(pciFile);
+            for (int c = 0; c < coverCount; c++) {
+                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, columnVersion, c));
+            }
+        }
+        // Remove distinct keys file (.pd) if present
+        ff.removeQuiet(distinctKeysFileName(path.trimTo(pathTrimTo), columnName, columnVersion));
+    }
+
+    /**
+     * Number of stride blocks for the given key count.
+     */
+    public static int strideCount(int keyCount) {
+        return (keyCount + DENSE_STRIDE - 1) / DENSE_STRIDE;
+    }
+
+    /**
+     * Size of a delta-mode stride block header: mode prefix + counts + prefix-sum offsets.
+     */
+    public static int strideDeltaHeaderSize(int keysInStride) {
+        return STRIDE_MODE_PREFIX_SIZE + keysInStride * Integer.BYTES + (keysInStride + 1) * Integer.BYTES;
+    }
+
+    /**
+     * Size of a flat-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.
+     */
+    public static int strideFlatHeaderSize(int keysInStride) {
+        return STRIDE_FLAT_PREFIX_COUNTS_OFFSET + (keysInStride + 1) * Integer.BYTES;
+    }
+
+    /**
+     * Size of the stride index: (strideCount + 1) × 4B.
+     * The extra entry is a sentinel holding the total size of all stride blocks.
+     */
+    public static int strideIndexSize(int keyCount) {
+        return (strideCount(keyCount) + 1) * Integer.BYTES;
+    }
+
+    public static LPSZ valueFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pv");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
+    /**
      * Optimized single-block encode for keys with count <= BLOCK_CAPACITY.
      * Single pass: reads values, computes deltas inline, finds min/max,
      * writes metadata and packs residuals without per-block loop overhead.
@@ -813,20 +895,132 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Reusable workspace for decodeKey to avoid per-call allocations.
+     */
+    public static class DecodeContext implements QuietCloseable {
+        long bitWidthsAddr;
+        long blockDeltasAddr;
+        long firstValuesAddr;
+        long minDeltasAddr;
+        long valueCountsAddr;
+        private int blockCapacity;
+
+        public void close() {
+            if (firstValuesAddr != 0) {
+                Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                firstValuesAddr = 0;
+            }
+            if (minDeltasAddr != 0) {
+                Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                minDeltasAddr = 0;
+            }
+            if (valueCountsAddr != 0) {
+                Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                valueCountsAddr = 0;
+            }
+            if (bitWidthsAddr != 0) {
+                Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                bitWidthsAddr = 0;
+            }
+            if (blockDeltasAddr != 0) {
+                Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockDeltasAddr = 0;
+            }
+            blockCapacity = 0;
+        }
+
+        public void ensureCapacity(int blockCount) {
+            if (blockCount > blockCapacity) {
+                int newCapacity = Math.max(blockCount, blockCapacity * 2);
+                long newFirstAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newMinAddr;
+                try {
+                    newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(newFirstAddr, (long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    throw e;
+                }
+                if (firstValuesAddr != 0) {
+                    Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                if (minDeltasAddr != 0) {
+                    Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                firstValuesAddr = newFirstAddr;
+                minDeltasAddr = newMinAddr;
+                long newValueCountsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newBitWidthsAddr;
+                try {
+                    newBitWidthsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(newValueCountsAddr, (long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    throw e;
+                }
+                if (valueCountsAddr != 0) {
+                    Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                if (bitWidthsAddr != 0) {
+                    Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                valueCountsAddr = newValueCountsAddr;
+                bitWidthsAddr = newBitWidthsAddr;
+                blockCapacity = newCapacity;
+            }
+            if (blockDeltasAddr == 0) {
+                blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
+    }
+
+    /**
      * Reusable workspace for encodeKey to avoid per-call allocations.
      */
     public static class EncodeContext implements QuietCloseable {
-        long deltasAddr;
-        long blockValueCountsAddr;
+        long blockBitWidthsAddr;
         long blockFirstValuesAddr;
         long blockMinDeltasAddr;
-        long blockBitWidthsAddr;
-        long residualsAddr;
+        long blockValueCountsAddr;
+        int deltaCapacity;
+        long deltasAddr;
         // Native residuals buffer for SIMD packing (BLOCK_CAPACITY * 8 bytes)
         long nativeResidualsAddr;
-        int deltaCapacity;
+        long residualsAddr;
         private int blockCapacity;
         private int residualsCapacity;
+
+        public void close() {
+            if (deltasAddr != 0) {
+                Unsafe.free(deltasAddr, (long) deltaCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                deltasAddr = 0;
+            }
+            if (blockFirstValuesAddr != 0) {
+                Unsafe.free(blockFirstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockFirstValuesAddr = 0;
+            }
+            if (blockMinDeltasAddr != 0) {
+                Unsafe.free(blockMinDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockMinDeltasAddr = 0;
+            }
+            if (blockValueCountsAddr != 0) {
+                Unsafe.free(blockValueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockValueCountsAddr = 0;
+            }
+            if (blockBitWidthsAddr != 0) {
+                Unsafe.free(blockBitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBitWidthsAddr = 0;
+            }
+            blockCapacity = 0;
+            deltaCapacity = 0;
+            if (residualsAddr != 0) {
+                Unsafe.free(residualsAddr, (long) residualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                residualsAddr = 0;
+            }
+            if (nativeResidualsAddr != 0) {
+                Unsafe.free(nativeResidualsAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                nativeResidualsAddr = 0;
+            }
+            residualsCapacity = 0;
+        }
 
         public void ensureCapacity(int count) {
             if (count > deltaCapacity) {
@@ -883,297 +1077,6 @@ public final class PostingIndexUtils {
                 nativeResidualsAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
         }
-
-        public void close() {
-            if (deltasAddr != 0) {
-                Unsafe.free(deltasAddr, (long) deltaCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                deltasAddr = 0;
-            }
-            if (blockFirstValuesAddr != 0) {
-                Unsafe.free(blockFirstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockFirstValuesAddr = 0;
-            }
-            if (blockMinDeltasAddr != 0) {
-                Unsafe.free(blockMinDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockMinDeltasAddr = 0;
-            }
-            if (blockValueCountsAddr != 0) {
-                Unsafe.free(blockValueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockValueCountsAddr = 0;
-            }
-            if (blockBitWidthsAddr != 0) {
-                Unsafe.free(blockBitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockBitWidthsAddr = 0;
-            }
-            blockCapacity = 0;
-            deltaCapacity = 0;
-            if (residualsAddr != 0) {
-                Unsafe.free(residualsAddr, (long) residualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                residualsAddr = 0;
-            }
-            if (nativeResidualsAddr != 0) {
-                Unsafe.free(nativeResidualsAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                nativeResidualsAddr = 0;
-            }
-            residualsCapacity = 0;
-        }
-    }
-
-    /**
-     * Reusable workspace for decodeKey to avoid per-call allocations.
-     */
-    public static class DecodeContext implements QuietCloseable {
-        long valueCountsAddr;
-        long firstValuesAddr;
-        long minDeltasAddr;
-        long bitWidthsAddr;
-        long blockDeltasAddr;
-        private int blockCapacity;
-
-        public void ensureCapacity(int blockCount) {
-            if (blockCount > blockCapacity) {
-                int newCapacity = Math.max(blockCount, blockCapacity * 2);
-                long newFirstAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                long newMinAddr;
-                try {
-                    newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                } catch (Throwable e) {
-                    Unsafe.free(newFirstAddr, (long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    throw e;
-                }
-                if (firstValuesAddr != 0) {
-                    Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                if (minDeltasAddr != 0) {
-                    Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                firstValuesAddr = newFirstAddr;
-                minDeltasAddr = newMinAddr;
-                long newValueCountsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                long newBitWidthsAddr;
-                try {
-                    newBitWidthsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                } catch (Throwable e) {
-                    Unsafe.free(newValueCountsAddr, (long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    throw e;
-                }
-                if (valueCountsAddr != 0) {
-                    Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                if (bitWidthsAddr != 0) {
-                    Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                valueCountsAddr = newValueCountsAddr;
-                bitWidthsAddr = newBitWidthsAddr;
-                blockCapacity = newCapacity;
-            }
-            if (blockDeltasAddr == 0) {
-                blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-        }
-
-        public void close() {
-            if (firstValuesAddr != 0) {
-                Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                firstValuesAddr = 0;
-            }
-            if (minDeltasAddr != 0) {
-                Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                minDeltasAddr = 0;
-            }
-            if (valueCountsAddr != 0) {
-                Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                valueCountsAddr = 0;
-            }
-            if (bitWidthsAddr != 0) {
-                Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                bitWidthsAddr = 0;
-            }
-            if (blockDeltasAddr != 0) {
-                Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockDeltasAddr = 0;
-            }
-            blockCapacity = 0;
-        }
-    }
-
-    /**
-     * Offset of generation directory entry within a metadata page.
-     *
-     * @param pageBase the base offset of the page (PAGE_A_OFFSET or PAGE_B_OFFSET)
-     * @param genIndex the generation index
-     */
-    public static long getGenDirOffset(long pageBase, int genIndex) {
-        return pageBase + PAGE_OFFSET_GEN_DIR + (long) genIndex * GEN_DIR_ENTRY_SIZE;
-    }
-
-    /**
-     * Number of stride blocks for the given key count.
-     */
-    public static int strideCount(int keyCount) {
-        return (keyCount + DENSE_STRIDE - 1) / DENSE_STRIDE;
-    }
-
-    /**
-     * Size of the stride index: (strideCount + 1) × 4B.
-     * The extra entry is a sentinel holding the total size of all stride blocks.
-     */
-    public static int strideIndexSize(int keyCount) {
-        return (strideCount(keyCount) + 1) * Integer.BYTES;
-    }
-
-    /**
-     * Number of keys in a given stride block.
-     */
-    public static int keysInStride(int keyCount, int stride) {
-        int sc = strideCount(keyCount);
-        if (stride < sc - 1) return DENSE_STRIDE;
-        int rem = keyCount % DENSE_STRIDE;
-        return rem == 0 ? DENSE_STRIDE : rem;
-    }
-
-    /**
-     * Size of a delta-mode stride block header: mode prefix + counts + prefix-sum offsets.
-     */
-    public static int strideDeltaHeaderSize(int keysInStride) {
-        return STRIDE_MODE_PREFIX_SIZE + keysInStride * Integer.BYTES + (keysInStride + 1) * Integer.BYTES;
-    }
-
-    /**
-     * Size of a flat-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.
-     */
-    public static int strideFlatHeaderSize(int keysInStride) {
-        return STRIDE_FLAT_PREFIX_COUNTS_OFFSET + (keysInStride + 1) * Integer.BYTES;
-    }
-
-    /**
-     * Size of the per-generation sparse header: keyIds + counts + offsets for active keys only.
-     */
-    public static int genHeaderSizeSparse(int activeKeyCount) {
-        return activeKeyCount * Integer.BYTES * 3;
-    }
-
-    /**
-     * Binary search for a key ID in a sorted keyIds array stored at native memory.
-     *
-     * @return index if found (>= 0), or -(insertionPoint + 1) if not found
-     */
-    public static int binarySearchKeyId(long keyIdsAddr, int activeKeyCount, int key) {
-        int lo = 0, hi = activeKeyCount - 1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            int midKey = Unsafe.getUnsafe().getInt(keyIdsAddr + (long) mid * Integer.BYTES);
-            if (midKey < key) {
-                lo = mid + 1;
-            } else if (midKey > key) {
-                hi = mid - 1;
-            } else {
-                return mid;
-            }
-        }
-        return -(lo + 1);
-    }
-
-    public static LPSZ coverDataFileName(Path path, CharSequence name, long columnNameTxn, int includeIdx) {
-        path.concat(name).put(".pc").put(includeIdx);
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
-    public static LPSZ coverInfoFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".pci");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
-    public static void removeSidecarFiles(FilesFacade ff, Path path, int pathTrimTo, CharSequence columnName, long columnVersion) {
-        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, columnVersion);
-        if (ff.exists(pciFile)) {
-            int coverCount = readCoverCountFromInfoFile(ff, pciFile);
-            ff.removeQuiet(pciFile);
-            for (int c = 0; c < coverCount; c++) {
-                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, columnVersion, c));
-            }
-        }
-        // Remove distinct keys file (.pd) if present
-        ff.removeQuiet(distinctKeysFileName(path.trimTo(pathTrimTo), columnName, columnVersion));
-    }
-
-    public static int readCoverCountFromInfoFile(FilesFacade ff, LPSZ pciFilePath) {
-        long fd = ff.openRO(pciFilePath);
-        if (fd < 0) {
-            return 0;
-        }
-        try {
-            int magic = ff.readNonNegativeInt(fd, 0);
-            if (magic != COVER_INFO_MAGIC) {
-                return 0;
-            }
-            int count = ff.readNonNegativeInt(fd, 4);
-            // Guard against corrupted .pci: a garbled count could cause
-            // billions of removeQuiet iterations in removeSidecarFiles.
-            // No table can have more than a few thousand columns, so any
-            // value beyond that is corruption.
-            return count >= 0 && count <= MAX_COVER_COUNT ? count : 0;
-        } finally {
-            ff.close(fd);
-        }
-    }
-
-    public static long readValueFileTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
-        long fd = ff.openRO(keyFilePath);
-        if (fd < 0) {
-            return -1;
-        }
-        try {
-            // Read sequence from both pages, pick the one with higher valid sequence
-            long seqA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-            long seqEndA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
-            long seqB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-            long seqEndB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
-
-            long pageOffset;
-            if (seqA == seqEndA && seqB == seqEndB) {
-                pageOffset = seqA >= seqB ? PAGE_A_OFFSET : PAGE_B_OFFSET;
-            } else if (seqA == seqEndA) {
-                pageOffset = PAGE_A_OFFSET;
-            } else if (seqB == seqEndB) {
-                pageOffset = PAGE_B_OFFSET;
-            } else {
-                return -1;
-            }
-            return ff.readNonNegativeLong(fd, pageOffset + PAGE_OFFSET_VALUE_FILE_TXN);
-        } finally {
-            ff.close(fd);
-        }
-    }
-
-    public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".pk");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
-    public static LPSZ valueFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".pv");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
-    public static LPSZ distinctKeysFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".pd");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
     }
 
 }

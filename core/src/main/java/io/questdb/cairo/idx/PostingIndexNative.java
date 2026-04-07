@@ -37,21 +37,6 @@ import io.questdb.std.Unsafe;
 public final class PostingIndexNative {
     private static final boolean NATIVE_AVAILABLE;
 
-    static {
-        boolean available;
-        try {
-            // Trigger Os static init which loads libquestdb
-            @SuppressWarnings("unused")
-            int osType = Os.type;
-            // Probe: count=0 so no memory access
-            packValues0(0, 0, 0, 1, 0);
-            available = true;
-        } catch (UnsatisfiedLinkError e) {
-            available = false;
-        }
-        NATIVE_AVAILABLE = available;
-    }
-
     private PostingIndexNative() {
     }
 
@@ -88,7 +73,7 @@ public final class PostingIndexNative {
      * @param destAddr   destination native address for int64 values
      */
     public static void unpackAllValuesNative(long srcAddr, int valueCount, int bitWidth,
-                                              long minValue, long destAddr) {
+                                             long minValue, long destAddr) {
         if (NATIVE_AVAILABLE) {
             unpackAllValues0(srcAddr, valueCount, bitWidth, minValue, destAddr);
         } else {
@@ -97,28 +82,20 @@ public final class PostingIndexNative {
     }
 
     /**
-     * Unpacks bit-packed data to a Java long array. For the hot read path
-     * (cursor decode), avoids intermediate native buffer by using Java fallback
-     * for arbitrary widths and native SIMD only for aligned widths where the
-     * gain outweighs copy cost.
-     */
-    public static void unpackAllValues(long srcAddr, int valueCount, int bitWidth,
-                                        long minValue, long destAddr) {
-        BitpackUtils.unpackAllValues(srcAddr, valueCount, bitWidth, minValue, destAddr);
-    }
-
-    /**
      * Unpacks values from bit-packed data starting at an arbitrary index,
      * writing directly into a Java long[] array via GetPrimitiveArrayCritical
      * (zero-copy). Uses AVX2 for byte-aligned widths (8/16/32-bit).
      */
     public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount,
-                                         int bitWidth, long minValue, long destAddr) {
+                                        int bitWidth, long minValue, long destAddr) {
         unpackValuesFrom0(srcAddr, startIndex, valueCount, bitWidth, minValue, destAddr);
     }
 
+    private static native void packValues0(long valuesAddr, int count, long minValue,
+                                           int bitWidth, long destAddr);
+
     private static void packValuesNativeFallback(long valuesAddr, int count, long minValue,
-                                                  int bitWidth, long destAddr) {
+                                                 int bitWidth, long destAddr) {
         long buffer = 0;
         int bufferBits = 0;
         int destOffset = 0;
@@ -141,8 +118,11 @@ public final class PostingIndexNative {
         }
     }
 
+    private static native void unpackAllValues0(long srcAddr, int valueCount, int bitWidth,
+                                                long minValue, long destAddr);
+
     private static void unpackAllValuesNativeFallback(long srcAddr, int valueCount, int bitWidth,
-                                                       long minValue, long destAddr) {
+                                                      long minValue, long destAddr) {
         long buffer = 0;
         int bufferBits = 0;
         int srcOffset = 0;
@@ -161,12 +141,21 @@ public final class PostingIndexNative {
         }
     }
 
-    private static native void packValues0(long valuesAddr, int count, long minValue,
-                                            int bitWidth, long destAddr);
-
-    private static native void unpackAllValues0(long srcAddr, int valueCount, int bitWidth,
-                                                 long minValue, long destAddr);
-
     private static native void unpackValuesFrom0(long srcAddr, int startIndex, int valueCount,
-                                                   int bitWidth, long minValue, long destAddr);
+                                                 int bitWidth, long minValue, long destAddr);
+
+    static {
+        boolean available;
+        try {
+            // Trigger Os static init which loads libquestdb
+            @SuppressWarnings("unused")
+            int osType = Os.type;
+            // Probe: count=0 so no memory access
+            packValues0(0, 0, 0, 1, 0);
+            available = true;
+        } catch (UnsatisfiedLinkError e) {
+            available = false;
+        }
+        NATIVE_AVAILABLE = available;
+    }
 }

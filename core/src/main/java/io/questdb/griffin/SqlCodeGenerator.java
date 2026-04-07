@@ -279,6 +279,7 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexRowCursorFactory;
@@ -305,13 +306,12 @@ import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecord;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
-import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
@@ -605,7 +605,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // cast both types to string.
             return isStringyType(typeA) ? typeB
                     : isStringyType(typeB) ? typeA
-                    : STRING;
+                      : STRING;
         }
         if (isGeoHashA) {
             // Both types are geohash, resolve to the one with fewer geohash bits.
@@ -630,7 +630,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // We also support casting between decimal and stringy types.
             return isStringyType(typeA) ? typeB :
                     isStringyType(typeB) ? typeA :
-                            ColumnType.STRING; // Fallback should be supported by any type
+                    ColumnType.STRING; // Fallback should be supported by any type
         }
 
         if (tagA == INTERVAL || tagB == INTERVAL) {
@@ -816,6 +816,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return true;
+    }
+
+    /**
+     * Checks if all selected columns can be served from the covering index
+     * sidecar. Returns a mapping array (query col → include idx, or -1 for the
+     * indexed symbol column) if fully covered, or null otherwise.
+     */
+    private static int[] buildCoveringIndexMapping(
+            TableReader reader,
+            int keyReaderColIdx,
+            IntList columnIndexes,
+            RecordMetadata queryMeta
+    ) {
+        // keyReaderColIdx is the reader column index of the indexed symbol column.
+        int[] coveringIndices = reader.getMetadata().getColumnMetadata(keyReaderColIdx).getCoveringColumnIndices();
+        if (coveringIndices == null || coveringIndices.length == 0) {
+            return null;
+        }
+        // The mapping is keyed by query column position (0 to queryColCount-1).
+        // SelectedRecord wraps CoveringRecord but maps via identity (factory metadata
+        // column position == query column position) so the query-position index is correct.
+        int queryColCount = queryMeta.getColumnCount();
+        int[] mapping = new int[queryColCount];
+        for (int q = 0; q < queryColCount; q++) {
+            int readerColIdx = columnIndexes.getQuick(q);
+            if (readerColIdx == keyReaderColIdx) {
+                mapping[q] = -1; // symbol column — value known from WHERE key
+                continue;
+            }
+            int writerColIdx = reader.getMetadata().getWriterIndex(readerColIdx);
+            int includeIdx = -1;
+            for (int c = 0; c < coveringIndices.length; c++) {
+                if (coveringIndices[c] == writerColIdx) {
+                    includeIdx = c;
+                    break;
+                }
+            }
+            if (includeIdx < 0) {
+                return null; // not covered — fallback to regular scan
+            }
+            mapping[q] = includeIdx;
+        }
+        return mapping;
     }
 
     private static void buildHorizonColumnMappings(
@@ -1492,6 +1535,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    /**
+     * Checks if all selected columns in the query can be served from the covering
+     * index sidecar files. Returns a mapping array (query column → include index)
+     * if fully covered, or null if any column requires column file access.
+     */
+
     private boolean checkIfSetCastIsRequired(RecordMetadata metadataA, RecordMetadata metadataB, boolean symbolDisallowed) {
         int columnCount = metadataA.getColumnCount();
         assert columnCount == metadataB.getColumnCount();
@@ -1504,93 +1553,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
-    }
-
-    /**
-     * Checks if all selected columns in the query can be served from the covering
-     * index sidecar files. Returns a mapping array (query column → include index)
-     * if fully covered, or null if any column requires column file access.
-     */
-    /**
-     * Checks if all selected columns can be served from the covering index
-     * sidecar. Returns a mapping array (query col → include idx, or -1 for the
-     * indexed symbol column) if fully covered, or null otherwise.
-     */
-    @Nullable
-    private static int[] buildCoveringIndexMapping(
-            TableReader reader,
-            int keyReaderColIdx,
-            IntList columnIndexes,
-            RecordMetadata queryMeta
-    ) {
-        // keyReaderColIdx is the reader column index of the indexed symbol column.
-        int[] coveringIndices = reader.getMetadata().getColumnMetadata(keyReaderColIdx).getCoveringColumnIndices();
-        if (coveringIndices == null || coveringIndices.length == 0) {
-            return null;
-        }
-        // The mapping is keyed by query column position (0 to queryColCount-1).
-        // SelectedRecord wraps CoveringRecord but maps via identity (factory metadata
-        // column position == query column position) so the query-position index is correct.
-        int queryColCount = queryMeta.getColumnCount();
-        int[] mapping = new int[queryColCount];
-        for (int q = 0; q < queryColCount; q++) {
-            int readerColIdx = columnIndexes.getQuick(q);
-            if (readerColIdx == keyReaderColIdx) {
-                mapping[q] = -1; // symbol column — value known from WHERE key
-                continue;
-            }
-            int writerColIdx = reader.getMetadata().getWriterIndex(readerColIdx);
-            int includeIdx = -1;
-            for (int c = 0; c < coveringIndices.length; c++) {
-                if (coveringIndices[c] == writerColIdx) {
-                    includeIdx = c;
-                    break;
-                }
-            }
-            if (includeIdx < 0) {
-                return null; // not covered — fallback to regular scan
-            }
-            mapping[q] = includeIdx;
-        }
-        return mapping;
-    }
-
-    private RecordCursorFactory wrapCoveringWithFilter(
-            RecordCursorFactory coveringFactory,
-            Function filter,
-            ExpressionNode filterExpr,
-            RecordMetadata queryMeta,
-            QueryModel model,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
-            IntHashSet filterUsedColumnIndexes = new IntHashSet();
-            collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
-            Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-            int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-            return new AsyncFilteredRecordCursorFactory(
-                    executionContext.getCairoEngine(),
-                    configuration,
-                    executionContext.getMessageBus(),
-                    coveringFactory,
-                    filter,
-                    filterUsedColumnIndexes,
-                    reduceTaskFactory,
-                    compileWorkerFiltersConditionally(
-                            executionContext,
-                            filter,
-                            executionContext.getSharedQueryWorkerCount(),
-                            filterExpr,
-                            queryMeta
-                    ),
-                    deepClone(expressionNodePool, filterExpr),
-                    limitLoFunction,
-                    limitLoPos,
-                    executionContext.getSharedQueryWorkerCount(),
-                    SqlHints.hasEnablePreTouchHint(model, model.getName())
-            );
-        }
-        return new FilteredRecordCursorFactory(coveringFactory, filter);
     }
 
     @Nullable
@@ -8494,7 +8456,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata.add(i, new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
                                         m.getColumnType(),
-                                m.getIndexType(),
+                                        m.getIndexType(),
                                         m.getIndexValueBlockCapacity(),
                                         m.isSymbolTableStatic(),
                                         baseMetadata
@@ -8546,7 +8508,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata.add(i, new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
                                         m.getColumnType(),
-                                m.getIndexType(),
+                                        m.getIndexType(),
                                         m.getIndexValueBlockCapacity(),
                                         m.isSymbolTableStatic(),
                                         baseMetadata
@@ -9827,7 +9789,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 isStandalone
                                         ? totalUnnestColumns
                                         : masterColumnCount
-                                        + totalUnnestColumns
+                                          + totalUnnestColumns
                         );
                 if (!isStandalone) {
                     outputMetadata.copyColumnMetadataFrom(
@@ -10392,6 +10354,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         "ASOF/LT JOIN cannot use designated timestamp as a join key");
             }
         }
+    }
+
+    private RecordCursorFactory wrapCoveringWithFilter(
+            RecordCursorFactory coveringFactory,
+            Function filter,
+            ExpressionNode filterExpr,
+            RecordMetadata queryMeta,
+            QueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
+            IntHashSet filterUsedColumnIndexes = new IntHashSet();
+            collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+            Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+            int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+            return new AsyncFilteredRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    coveringFactory,
+                    filter,
+                    filterUsedColumnIndexes,
+                    reduceTaskFactory,
+                    compileWorkerFiltersConditionally(
+                            executionContext,
+                            filter,
+                            executionContext.getSharedQueryWorkerCount(),
+                            filterExpr,
+                            queryMeta
+                    ),
+                    deepClone(expressionNodePool, filterExpr),
+                    limitLoFunction,
+                    limitLoPos,
+                    executionContext.getSharedQueryWorkerCount(),
+                    SqlHints.hasEnablePreTouchHint(model, model.getName())
+            );
+        }
+        return new FilteredRecordCursorFactory(coveringFactory, filter);
     }
 
     // used in tests
