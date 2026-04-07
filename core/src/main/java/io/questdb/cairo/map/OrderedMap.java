@@ -452,15 +452,66 @@ public class OrderedMap implements Map, Reopenable {
         return valueOf(newStartAddr, newAppendAddr, true, value);
     }
 
+    /**
+     * Probes the map for a var-size key stored at an external memory address using
+     * a precomputed hash. The external key has the same layout as on-heap keys:
+     * [4-byte length prefix | key data].
+     */
+    MapValue probeExternalVarSize(long extKeyAddr, int extKeyLen, long hashCode) {
+        assert keySize == -1 : "probeExternalVarSize only supports var-size keys";
+        int hashCodeLo = Numbers.decodeLowInt(hashCode);
+        int index = hashCodeLo & mask;
+
+        long offsetAddr = offsetsAddr + ((long) index << 3);
+        long slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+        int rawOffset = Numbers.decodeLowInt(slotValue);
+        while (rawOffset > 0) {
+            int storedHash = Numbers.decodeHighInt(slotValue);
+            if (hashCodeLo == storedHash) {
+                long offset = decompressOffset(rawOffset);
+                long heapKeyAddr = heapAddr + offset;
+                if (Unsafe.getUnsafe().getInt(heapKeyAddr) == extKeyLen
+                        && Vect.memeq(heapKeyAddr + keyOffset, extKeyAddr + keyOffset, extKeyLen)) {
+                    return valueOf(heapKeyAddr, heapKeyAddr + keyOffset + extKeyLen, false, value);
+                }
+            }
+            index = (index + 1) & mask;
+            offsetAddr = offsetsAddr + ((long) index << 3);
+            slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
+            rawOffset = Numbers.decodeLowInt(slotValue);
+        }
+
+        // New key — copy length prefix + key data to the heap.
+        long entryDataSize = keyOffset + extKeyLen;
+        long requiredSize = entryDataSize + valueSize;
+        if (kPos + requiredSize > heapLimit) {
+            resize(requiredSize, kPos);
+        }
+        Vect.memcpy(kPos, extKeyAddr, entryDataSize);
+        long newStartAddr = kPos;
+        long newAppendAddr = kPos + entryDataSize;
+        kPos = Bytes.align8b(newAppendAddr + valueSize);
+
+        Unsafe.getUnsafe().putInt(offsetAddr, compressOffset(newStartAddr - heapAddr));
+        Unsafe.getUnsafe().putInt(offsetAddr + 4, hashCodeLo);
+        size++;
+        if (--free == 0) {
+            rehash();
+        }
+        return valueOf(newStartAddr, newAppendAddr, true, value);
+    }
+
     @Override
     public MapBatchProber createBatchProber(int batchSize) {
         if (keySize > 0) {
             return new FixedSizeBatchProber(batchSize, (int) keySize);
         }
-        return null;
+        return new VarSizeBatchProber(batchSize);
     }
 
     private static native void hashAndPrefetch(long keysAddr, int keySize, int keyCount, long offsetsAddr, int mask, long hashesOut);
+
+    private static native void hashAndPrefetchVarSize(long keysAddr, long keyOffsetsAddr, int keyCount, long offsetsAddr, int mask, long hashesOut);
 
     private static int compressOffset(long offset) {
         return (int) ((offset >> 3) + 1);
@@ -1261,6 +1312,309 @@ public class OrderedMap implements Map, Reopenable {
             long hash = Unsafe.getUnsafe().getLong(hashesAddr + (long) index * Long.BYTES);
             long extKeyAddr = keysAddr + (long) index * keySize;
             return probeExternal(extKeyAddr, hash);
+        }
+    }
+
+    class VarSizeBatchProber implements MapBatchProber {
+        private static final int INITIAL_KEY_BUF_SIZE = 128;
+
+        private final int batchSize;
+        private long appendAddr;
+        private long hashesAddr;
+        private int keyCount;
+        private long keyOffsetsAddr;
+        private long keysAddr;
+        private long keysCapacity;
+        private long keyStartAddr;
+
+        VarSizeBatchProber(int batchSize) {
+            this.batchSize = batchSize;
+            keysCapacity = (long) batchSize * INITIAL_KEY_BUF_SIZE;
+            keysAddr = Unsafe.malloc(keysCapacity, MemoryTag.NATIVE_DEFAULT);
+            keyOffsetsAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            hashesAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            appendAddr = keysAddr;
+        }
+
+        @Override
+        public void beginKey() {
+            // Record offset of this key's length prefix.
+            Unsafe.getUnsafe().putLong(keyOffsetsAddr + (long) keyCount * Long.BYTES, appendAddr - keysAddr);
+            // Reserve 4 bytes for the length prefix (filled in by endKey).
+            ensureCapacity(keyOffset);
+            appendAddr += keyOffset;
+        }
+
+        @Override
+        public void close() {
+            if (keysAddr != 0) {
+                Unsafe.free(keysAddr, keysCapacity, MemoryTag.NATIVE_DEFAULT);
+                keysAddr = 0;
+            }
+            if (keyOffsetsAddr != 0) {
+                Unsafe.free(keyOffsetsAddr, (long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                keyOffsetsAddr = 0;
+            }
+            if (hashesAddr != 0) {
+                Unsafe.free(hashesAddr, (long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                hashesAddr = 0;
+            }
+            appendAddr = 0;
+        }
+
+        @Override
+        public void endKey() {
+            long keyOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) keyCount * Long.BYTES);
+            keyStartAddr = keysAddr + keyOff;
+            int len = (int) (appendAddr - keyStartAddr - keyOffset);
+            Unsafe.getUnsafe().putInt(keyStartAddr, len);
+            keyCount++;
+        }
+
+        @Override
+        public long getHash(int index) {
+            return Unsafe.getUnsafe().getLong(hashesAddr + (long) index * Long.BYTES);
+        }
+
+        @Override
+        public void hashAndPrefetch(int keyCount) {
+            OrderedMap.hashAndPrefetchVarSize(keysAddr, keyOffsetsAddr, keyCount, offsetsAddr, mask, hashesAddr);
+        }
+
+        @Override
+        public MapValue probeWithHash(int index) {
+            long keyOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) index * Long.BYTES);
+            long extKeyAddr = keysAddr + keyOff;
+            int extKeyLen = Unsafe.getUnsafe().getInt(extKeyAddr);
+            long hash = Unsafe.getUnsafe().getLong(hashesAddr + (long) index * Long.BYTES);
+            return probeExternalVarSize(extKeyAddr, extKeyLen, hash);
+        }
+
+        @Override
+        public void putArray(ArrayView view) {
+            long byteCount = ArrayTypeDriver.getPlainValueSize(view);
+            ensureCapacity(byteCount);
+            ArrayTypeDriver.appendPlainValue(appendAddr, view);
+            appendAddr += byteCount;
+        }
+
+        @Override
+        public void putBin(BinarySequence value) {
+            if (value == null) {
+                putVarSizeNull();
+            } else {
+                long len = value.length() + 4L;
+                if (len > Integer.MAX_VALUE) {
+                    throw CairoException.nonCritical().put("binary column is too large");
+                }
+                ensureCapacity(len);
+                int l = (int) (len - Integer.BYTES);
+                Unsafe.getUnsafe().putInt(appendAddr, l);
+                value.copyTo(appendAddr + Integer.BYTES, 0, l);
+                appendAddr += len;
+            }
+        }
+
+        @Override
+        public void putBool(boolean value) {
+            ensureCapacity(1);
+            Unsafe.getUnsafe().putByte(appendAddr, (byte) (value ? 1 : 0));
+            appendAddr += 1;
+        }
+
+        @Override
+        public void putByte(byte value) {
+            ensureCapacity(1);
+            Unsafe.getUnsafe().putByte(appendAddr, value);
+            appendAddr += 1;
+        }
+
+        @Override
+        public void putChar(char value) {
+            ensureCapacity(2);
+            Unsafe.getUnsafe().putChar(appendAddr, value);
+            appendAddr += 2;
+        }
+
+        @Override
+        public void putDate(long value) {
+            putLong(value);
+        }
+
+        @Override
+        public void putDecimal128(Decimal128 value) {
+            ensureCapacity(16);
+            Decimal128.put(value, appendAddr);
+            appendAddr += 16;
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 value) {
+            ensureCapacity(32);
+            Decimal256.put(value, appendAddr);
+            appendAddr += 32;
+        }
+
+        @Override
+        public void putDouble(double value) {
+            ensureCapacity(8);
+            Unsafe.getUnsafe().putDouble(appendAddr, value);
+            appendAddr += 8;
+        }
+
+        @Override
+        public void putFloat(float value) {
+            ensureCapacity(4);
+            Unsafe.getUnsafe().putFloat(appendAddr, value);
+            appendAddr += 4;
+        }
+
+        @Override
+        public void putIPv4(int value) {
+            putInt(value);
+        }
+
+        @Override
+        public void putInt(int value) {
+            ensureCapacity(4);
+            Unsafe.getUnsafe().putInt(appendAddr, value);
+            appendAddr += 4;
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
+            ensureCapacity(16);
+            Unsafe.getUnsafe().putLong(appendAddr, interval.getLo());
+            Unsafe.getUnsafe().putLong(appendAddr + 8, interval.getHi());
+            appendAddr += 16;
+        }
+
+        @Override
+        public void putLong(long value) {
+            ensureCapacity(8);
+            Unsafe.getUnsafe().putLong(appendAddr, value);
+            appendAddr += 8;
+        }
+
+        @Override
+        public void putLong128(long lo, long hi) {
+            ensureCapacity(16);
+            Unsafe.getUnsafe().putLong(appendAddr, lo);
+            Unsafe.getUnsafe().putLong(appendAddr + 8, hi);
+            appendAddr += 16;
+        }
+
+        @Override
+        public void putLong256(Long256 value) {
+            ensureCapacity(32);
+            Unsafe.getUnsafe().putLong(appendAddr, value.getLong0());
+            Unsafe.getUnsafe().putLong(appendAddr + 8, value.getLong1());
+            Unsafe.getUnsafe().putLong(appendAddr + 16, value.getLong2());
+            Unsafe.getUnsafe().putLong(appendAddr + 24, value.getLong3());
+            appendAddr += 32;
+        }
+
+        @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            ensureCapacity(32);
+            Unsafe.getUnsafe().putLong(appendAddr, l0);
+            Unsafe.getUnsafe().putLong(appendAddr + 8, l1);
+            Unsafe.getUnsafe().putLong(appendAddr + 16, l2);
+            Unsafe.getUnsafe().putLong(appendAddr + 24, l3);
+            appendAddr += 32;
+        }
+
+        @Override
+        public void putRecord(Record value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putShort(short value) {
+            ensureCapacity(2);
+            Unsafe.getUnsafe().putShort(appendAddr, value);
+            appendAddr += 2;
+        }
+
+        @Override
+        public void putStr(CharSequence value) {
+            if (value == null) {
+                putVarSizeNull();
+                return;
+            }
+            int len = value.length();
+            ensureCapacity(((long) len << 1) + 4L);
+            Unsafe.getUnsafe().putInt(appendAddr, len);
+            appendAddr += 4;
+            for (int i = 0; i < len; i++) {
+                Unsafe.getUnsafe().putChar(appendAddr + ((long) i << 1), value.charAt(i));
+            }
+            appendAddr += (long) len << 1;
+        }
+
+        @Override
+        public void putStr(CharSequence value, int lo, int hi) {
+            int len = hi - lo;
+            ensureCapacity(((long) len << 1) + 4L);
+            Unsafe.getUnsafe().putInt(appendAddr, len);
+            appendAddr += 4;
+            for (int i = lo; i < hi; i++) {
+                Unsafe.getUnsafe().putChar(appendAddr + ((long) (i - lo) << 1), value.charAt(i));
+            }
+            appendAddr += (long) len << 1;
+        }
+
+        @Override
+        public void putTimestamp(long value) {
+            putLong(value);
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
+            ensureCapacity(byteCount);
+            VarcharTypeDriver.appendPlainValue(appendAddr, value, false);
+            appendAddr += byteCount;
+        }
+
+        @Override
+        public void reopen() {
+            if (keysAddr == 0) {
+                keysCapacity = (long) batchSize * INITIAL_KEY_BUF_SIZE;
+                keysAddr = Unsafe.malloc(keysCapacity, MemoryTag.NATIVE_DEFAULT);
+                keyOffsetsAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                hashesAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+            appendAddr = keysAddr;
+            keyCount = 0;
+        }
+
+        @Override
+        public void resetBatch() {
+            appendAddr = keysAddr;
+            keyCount = 0;
+        }
+
+        @Override
+        public void skip(int bytes) {
+            ensureCapacity(bytes);
+            appendAddr += bytes;
+        }
+
+        private void ensureCapacity(long required) {
+            long used = appendAddr - keysAddr;
+            if (used + required > keysCapacity) {
+                long newCapacity = Math.max(keysCapacity << 1, used + required);
+                keysAddr = Unsafe.realloc(keysAddr, keysCapacity, newCapacity, MemoryTag.NATIVE_DEFAULT);
+                keysCapacity = newCapacity;
+                appendAddr = keysAddr + used;
+            }
+        }
+
+        private void putVarSizeNull() {
+            ensureCapacity(4);
+            Unsafe.getUnsafe().putInt(appendAddr, TableUtils.NULL_LEN);
+            appendAddr += 4;
         }
     }
 }

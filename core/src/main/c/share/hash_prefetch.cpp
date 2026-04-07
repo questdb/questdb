@@ -218,4 +218,32 @@ Java_io_questdb_cairo_map_Unordered8Map_hashAndPrefetch(
     hashAndPrefetchEntries<hashMem64_8>(keys, 8, keyCount, mem, entrySize, mask, hashes);
 }
 
+// OrderedMap: var-size keys with per-key offsets, hashMem64 semantics.
+JNIEXPORT void JNICALL
+Java_io_questdb_cairo_map_OrderedMap_hashAndPrefetchVarSize(
+        JNIEnv *env,
+        jclass cl,
+        jlong keysAddr,
+        jlong keyOffsetsAddr,
+        jint keyCount,
+        jlong offsetsAddr,
+        jint mask,
+        jlong hashesOut
+) {
+    const auto *keys = reinterpret_cast<const uint8_t *>(keysAddr);
+    const auto *keyOffsets = reinterpret_cast<const int64_t *>(keyOffsetsAddr);
+    const auto *offsets = reinterpret_cast<const uint8_t *>(offsetsAddr);
+    auto *hashes = reinterpret_cast<int64_t *>(hashesOut);
+
+    for (int32_t i = 0; i < keyCount; i++) {
+        const uint8_t *keyStart = keys + keyOffsets[i];
+        int32_t keyLen;
+        memcpy(&keyLen, keyStart, 4); // read 4-byte length prefix
+        const uint64_t h = hashMem64(keyStart + 4, keyLen); // hash data portion
+        hashes[i] = static_cast<int64_t>(h);
+        const auto index = static_cast<int32_t>(h) & mask;
+        MM_PREFETCH_T2(offsets + ((int64_t) index << 3));
+    }
+}
+
 } // extern "C"

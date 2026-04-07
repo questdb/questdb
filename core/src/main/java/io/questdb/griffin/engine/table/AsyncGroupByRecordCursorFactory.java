@@ -265,7 +265,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             prober.resetBatch();
             for (int i = 0; i < currentBatchSize; i++) {
                 record.setRowIndex(rowOffset + i);
+                prober.beginKey();
                 mapSink.copy(record, prober);
+                prober.endKey();
             }
 
             prober.hashAndPrefetch(currentBatchSize);

@@ -27,7 +27,6 @@ package io.questdb.test.cairo.map;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
-import io.questdb.cairo.map.BaseFixedSizeMapBatchProber;
 import io.questdb.cairo.map.MapBatchProber;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -65,7 +64,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                         for (int i = 0; i < keys.length; i++) {
                             Unsafe.getUnsafe().putInt(keyBuf, keys[i]);
                             long expected = Hash.hashMem64(keyBuf, 4);
-                            long actual = ((BaseFixedSizeMapBatchProber) prober).getHash(i);
+                            long actual = prober.getHash(i);
                             Assert.assertEquals("hash mismatch for key " + keys[i], expected, actual);
                         }
                     } finally {
@@ -98,7 +97,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                         for (int i = 0; i < keys.length; i++) {
                             Unsafe.getUnsafe().putLong(keyBuf, keys[i]);
                             long expected = Hash.hashMem64(keyBuf, 8);
-                            long actual = ((BaseFixedSizeMapBatchProber) prober).getHash(i);
+                            long actual = prober.getHash(i);
                             Assert.assertEquals("hash mismatch for key " + keys[i], expected, actual);
                         }
                     } finally {
@@ -131,11 +130,11 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     try {
                         Unsafe.getUnsafe().putInt(keyBuf, -1);
                         Unsafe.getUnsafe().putLong(keyBuf + 4, Long.MAX_VALUE);
-                        Assert.assertEquals(Hash.hashMem64(keyBuf, 12), ((BaseFixedSizeMapBatchProber) prober).getHash(0));
+                        Assert.assertEquals(Hash.hashMem64(keyBuf, 12), prober.getHash(0));
 
                         Unsafe.getUnsafe().putInt(keyBuf, 0);
                         Unsafe.getUnsafe().putLong(keyBuf + 4, 0);
-                        Assert.assertEquals(Hash.hashMem64(keyBuf, 12), ((BaseFixedSizeMapBatchProber) prober).getHash(1));
+                        Assert.assertEquals(Hash.hashMem64(keyBuf, 12), prober.getHash(1));
                     } finally {
                         Unsafe.free(keyBuf, 12, MemoryTag.NATIVE_DEFAULT);
                     }
@@ -162,7 +161,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
 
                     for (int i = 0; i < keys.length; i++) {
                         long expected = Hash.hashInt64(keys[i]);
-                        long actual = ((BaseFixedSizeMapBatchProber) prober).getHash(i);
+                        long actual = prober.getHash(i);
                         Assert.assertEquals("hash mismatch for key " + keys[i], expected, actual);
                     }
                 } finally {
@@ -188,7 +187,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
 
                     for (int i = 0; i < keys.length; i++) {
                         long expected = Hash.hashLong64(keys[i]);
-                        long actual = ((BaseFixedSizeMapBatchProber) prober).getHash(i);
+                        long actual = prober.getHash(i);
                         Assert.assertEquals("hash mismatch for key " + keys[i], expected, actual);
                     }
                 } finally {
@@ -220,7 +219,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                         for (int i = 0; i < keys.length; i++) {
                             Unsafe.getUnsafe().putLong(keyBuf, keys[i]);
                             long expected = Hash.hashMem64(keyBuf, 8);
-                            long actual = ((BaseFixedSizeMapBatchProber) prober).getHash(i);
+                            long actual = prober.getHash(i);
                             Assert.assertEquals("hash mismatch at index " + i, expected, actual);
                         }
                     } finally {
@@ -251,7 +250,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
 
                     for (int i = 0; i < keys.length; i++) {
                         long expected = Hash.hashInt64(keys[i]);
-                        long actual = ((BaseFixedSizeMapBatchProber) prober).getHash(i);
+                        long actual = prober.getHash(i);
                         Assert.assertEquals("hash mismatch at index " + i, expected, actual);
                     }
                 } finally {
@@ -800,13 +799,211 @@ public class MapBatchProberTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderedMapVarSizeKeyReturnsNullProber() throws Exception {
+    public void testOrderedMapVarSizeKeyReturnsProber() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.STRING);
             try (OrderedMap map = new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 64, 0.8, Integer.MAX_VALUE)) {
-                Assert.assertNull(map.createBatchProber(256));
+                MapBatchProber prober = map.createBatchProber(256);
+                Assert.assertNotNull(prober);
+                prober.close();
             }
         });
+    }
+
+    @Test
+    public void testOrderedMapVarSizeHashMatchesJava() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.STRING);
+            try (OrderedMap map = new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 64, 0.8, Integer.MAX_VALUE)) {
+                MapBatchProber prober = map.createBatchProber(256);
+                Assert.assertNotNull(prober);
+                try {
+                    String[] keys = {"hello", "", "a", "test string with spaces", null};
+                    prober.resetBatch();
+                    for (String key : keys) {
+                        prober.beginKey();
+                        prober.putStr(key);
+                        prober.endKey();
+                    }
+                    prober.hashAndPrefetch(keys.length);
+
+                    // Compute expected hashes using the standard MapKey path.
+                    for (int i = 0; i < keys.length; i++) {
+                        MapKey mapKey = map.withKey();
+                        mapKey.putStr(keys[i]);
+                        mapKey.commit(); // commit() sets the length field needed by hash()
+                        long expected = mapKey.hash();
+                        long actual = prober.getHash(i);
+                        Assert.assertEquals("hash mismatch for key '" + keys[i] + "'", expected, actual);
+                    }
+                } finally {
+                    prober.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedMapVarSizeBatchVsPerKey() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.STRING);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (
+                    OrderedMap batchMap = new OrderedMap(4096, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE);
+                    OrderedMap perKeyMap = new OrderedMap(4096, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)
+            ) {
+                MapBatchProber prober = batchMap.createBatchProber(256);
+                Assert.assertNotNull(prober);
+                try {
+                    final int N = 10_000;
+                    String[] keys = new String[N];
+                    for (int i = 0; i < N; i++) {
+                        keys[i] = "key_" + (rnd.nextInt() % 2_000);
+                    }
+
+                    // Per-key
+                    for (String k : keys) {
+                        MapKey key = perKeyMap.withKey();
+                        key.putStr(k);
+                        MapValue value = key.createValue();
+                        if (value.isNew()) {
+                            value.putLong(0, 1);
+                        } else {
+                            value.addLong(0, 1);
+                        }
+                    }
+
+                    // Batch
+                    for (int offset = 0; offset < N; offset += 256) {
+                        int batchSize = Math.min(256, N - offset);
+                        prober.resetBatch();
+                        for (int i = 0; i < batchSize; i++) {
+                            prober.beginKey();
+                            prober.putStr(keys[offset + i]);
+                            prober.endKey();
+                        }
+                        prober.hashAndPrefetch(batchSize);
+                        for (int i = 0; i < batchSize; i++) {
+                            MapValue value = prober.probeWithHash(i);
+                            if (value.isNew()) {
+                                value.putLong(0, 1);
+                            } else {
+                                value.addLong(0, 1);
+                            }
+                        }
+                    }
+
+                    Assert.assertEquals(perKeyMap.size(), batchMap.size());
+                    assertOrderedStringMapsEqual(keys, perKeyMap, batchMap);
+                } finally {
+                    prober.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedMapVarSizeBatchWithRehashDuringProbe() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.STRING);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            // Small capacity to force rehash mid-batch.
+            try (OrderedMap map = new OrderedMap(256, keyTypes, valueTypes, 16, 0.8, Integer.MAX_VALUE)) {
+                MapBatchProber prober = map.createBatchProber(256);
+                Assert.assertNotNull(prober);
+                try {
+                    // 20 unique keys + 20 duplicates in one batch
+                    int batchSize = 40;
+                    prober.resetBatch();
+                    for (int i = 0; i < batchSize; i++) {
+                        prober.beginKey();
+                        prober.putStr("key_" + (i % 20));
+                        prober.endKey();
+                    }
+                    prober.hashAndPrefetch(batchSize);
+                    for (int i = 0; i < batchSize; i++) {
+                        MapValue value = prober.probeWithHash(i);
+                        if (value.isNew()) {
+                            value.putLong(0, 1);
+                        } else {
+                            value.addLong(0, 1);
+                        }
+                    }
+
+                    Assert.assertEquals(20, map.size());
+                    for (int k = 0; k < 20; k++) {
+                        MapKey key = map.withKey();
+                        key.putStr("key_" + k);
+                        MapValue v = key.findValue();
+                        Assert.assertNotNull("key not found: key_" + k, v);
+                        Assert.assertEquals("value mismatch for key_" + k, 2, v.getLong(0));
+                    }
+                } finally {
+                    prober.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedMapVarSizeBatchInsertOneByOne() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.STRING);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (OrderedMap map = new OrderedMap(256, keyTypes, valueTypes, 16, 0.8, Integer.MAX_VALUE)) {
+                MapBatchProber prober = map.createBatchProber(1);
+                Assert.assertNotNull(prober);
+                try {
+                    for (int round = 0; round < 2; round++) {
+                        for (int k = 0; k < 20; k++) {
+                            prober.resetBatch();
+                            prober.beginKey();
+                            prober.putStr("key_" + k);
+                            prober.endKey();
+                            prober.hashAndPrefetch(1);
+                            MapValue value = prober.probeWithHash(0);
+                            if (value.isNew()) {
+                                Assert.assertEquals("round " + round + " key_" + k, 0, round);
+                                value.putLong(0, 1);
+                            } else {
+                                Assert.assertEquals("round " + round + " key_" + k, 1, round);
+                                value.addLong(0, 1);
+                            }
+                        }
+                    }
+
+                    Assert.assertEquals(20, map.size());
+                    for (int k = 0; k < 20; k++) {
+                        MapKey key = map.withKey();
+                        key.putStr("key_" + k);
+                        MapValue v = key.findValue();
+                        Assert.assertNotNull("key not found: key_" + k, v);
+                        Assert.assertEquals("value mismatch for key_" + k, 2, v.getLong(0));
+                    }
+                } finally {
+                    prober.close();
+                }
+            }
+        });
+    }
+
+    private static void assertOrderedStringMapsEqual(String[] keys, OrderedMap expected, OrderedMap actual) {
+        for (String k : keys) {
+            MapKey expectedKey = expected.withKey();
+            expectedKey.putStr(k);
+            MapValue expectedValue = expectedKey.findValue();
+            Assert.assertNotNull("key not found in expected map: " + k, expectedValue);
+
+            MapKey actualKey = actual.withKey();
+            actualKey.putStr(k);
+            MapValue actualValue = actualKey.findValue();
+            Assert.assertNotNull("key not found in batch map: " + k, actualValue);
+            Assert.assertEquals("value mismatch for key " + k, expectedValue.getLong(0), actualValue.getLong(0));
+        }
     }
 
     private static void assertOrderedMapsEqual(long[] keys, OrderedMap expected, OrderedMap actual) {

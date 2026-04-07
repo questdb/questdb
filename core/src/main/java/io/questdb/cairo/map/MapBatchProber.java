@@ -40,6 +40,27 @@ import io.questdb.cairo.Reopenable;
 public interface MapBatchProber extends RecordSinkSPI, Reopenable {
 
     /**
+     * Marks the start of a new key in the batch. Must be called before
+     * writing key columns via the {@link RecordSinkSPI} put methods.
+     * No-op for fixed-size key probers.
+     */
+    default void beginKey() {
+    }
+
+    /**
+     * Marks the end of the current key in the batch. Must be called after
+     * writing all key columns. No-op for fixed-size key probers.
+     */
+    default void endKey() {
+    }
+
+    /**
+     * Returns the precomputed hash for the key at the given batch index.
+     * Must be called after {@link #hashAndPrefetch(int)}.
+     */
+    long getHash(int index);
+
+    /**
      * Computes hashes for the packed keys and prefetches the corresponding
      * map slots. Must be called after packing {@code keyCount} keys via
      * the {@link RecordSinkSPI} put methods.
