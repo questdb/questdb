@@ -36,7 +36,6 @@ import io.questdb.std.ObjList;
 public class QwpSchemaRegistry {
 
     private final int maxSchemasPerConnection;
-    private int nextExpectedSchemaId;
     private final ObjList<QwpSchema> schemas = new ObjList<>();
     private long hits;
     private long misses;
@@ -53,7 +52,6 @@ public class QwpSchemaRegistry {
         schemas.clear();
         hits = 0;
         misses = 0;
-        nextExpectedSchemaId = 0;
     }
 
     public QwpSchema get(int schemaId) {
@@ -94,9 +92,6 @@ public class QwpSchemaRegistry {
         // or when tables are encoded in hash map iteration order (not
         // schema ID assignment order).
         schemas.extendAndSet(schemaId, schema);
-        if (schemaId >= nextExpectedSchemaId) {
-            nextExpectedSchemaId = schemaId + 1;
-        }
     }
 
     public int size() {
