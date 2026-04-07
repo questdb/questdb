@@ -330,7 +330,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         int recvBufferSize = context.getRecvBufferSize();
 
         try {
-            // Keep reading while the socket is hot.
+            // We register the connection with edge-trigger epoll. This makes it dangerous to stop reading
+            // while the socket buffer still has data. We must not re-arm the trigger until it's empty.
+            // A safe option for better fairness would be to temporarily exit this loop so other tasks
+            // get CPU time, but schedule to unconditionally re-enter it after a round.
             while (true) {
                 int recvBufferLen = state.getRecvBufferLen();
                 if (recvBufferLen >= recvBufferSize) {
