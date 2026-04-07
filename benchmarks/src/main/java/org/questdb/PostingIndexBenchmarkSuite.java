@@ -77,10 +77,22 @@ public class PostingIndexBenchmarkSuite {
     private static final double CLOUD_US_PER_PAGE = 1_000;
     private static final long COL_TXN = COLUMN_NAME_TXN_NONE;
     private static final double HDD_US_PER_PAGE = 4_000;
+    private static final boolean IS_DELTA = "delta".equals(System.getProperty("questdb.posting.format", "ef"));
     private static final double NVME_US_PER_PAGE = 80;
     private static final int PAGE_SIZE = 4096;
+    // SQL keyword for the posting index type: "POSTING" (EF default) or "POSTING DELTA"
+    private static final String POSTING_SQL = IS_DELTA ? "POSTING DELTA" : "POSTING";
 
     private static final PrintStream out = System.err;
+
+    private static DefaultCairoConfiguration benchConfig(String root) {
+        return new DefaultCairoConfiguration(root) {
+            @Override
+            public boolean isPostingIndexEliasFanoEnabled() {
+                return !IS_DELTA;
+            }
+        };
+    }
 
     public static void main(String[] args) throws Exception {
         System.setProperty("questdb.log.level", "E");
@@ -205,8 +217,9 @@ public class PostingIndexBenchmarkSuite {
                             sum += switch (s.columnType) {
                                 case "DOUBLE" -> (long) crc.getCoveredDouble(0);
                                 case "FLOAT" -> (long) crc.getCoveredFloat(0);
-                                case "LONG" -> crc.getCoveredLong(0);
-                                case "INT" -> crc.getCoveredInt(0);
+                                case "LONG", "DECIMAL64" -> crc.getCoveredLong(0);
+                                case "INT", "DECIMAL32" -> crc.getCoveredInt(0);
+                                case "SHORT" -> crc.getCoveredShort(0);
                                 default -> 0;
                             };
                         }
@@ -216,8 +229,9 @@ public class PostingIndexBenchmarkSuite {
                             sum += switch (s.columnType) {
                                 case "DOUBLE" -> (long) Unsafe.getUnsafe().getDouble(s.colAddr + rowId * 8);
                                 case "FLOAT" -> (long) Unsafe.getUnsafe().getFloat(s.colAddr + rowId * 4);
-                                case "LONG" -> Unsafe.getUnsafe().getLong(s.colAddr + rowId * 8);
-                                case "INT" -> Unsafe.getUnsafe().getInt(s.colAddr + rowId * 4);
+                                case "LONG", "DECIMAL64" -> Unsafe.getUnsafe().getLong(s.colAddr + rowId * 8);
+                                case "INT", "DECIMAL32" -> Unsafe.getUnsafe().getInt(s.colAddr + rowId * 4);
+                                case "SHORT" -> Unsafe.getUnsafe().getShort(s.colAddr + rowId * 2);
                                 default -> 0;
                             };
                         }
@@ -432,7 +446,7 @@ public class PostingIndexBenchmarkSuite {
 
         out.println();
         out.println("╔══════════════════════════════════════════════════════════════════════════════════╗");
-        out.println("║                     POSTING INDEX BENCHMARK SUMMARY                             ║");
+        out.printf("║              POSTING INDEX BENCHMARK SUMMARY  [encoding: %-5s]                  ║%n", IS_DELTA ? "DELTA" : "EF");
         out.println("╚══════════════════════════════════════════════════════════════════════════════════╝");
 
         // --- Decode ---
@@ -472,7 +486,7 @@ public class PostingIndexBenchmarkSuite {
         // --- Sidecar ---
         out.println("── Sidecar Compression (ops/s, higher=better) ────────────────────────────────────");
         out.printf("  %-8s %10s %10s %8s%n", "type", "baseline", "covering", "ratio");
-        for (String t : new String[]{"DOUBLE", "FLOAT", "LONG", "INT"}) {
+        for (String t : new String[]{"DOUBLE", "FLOAT", "LONG", "INT", "DECIMAL64", "DECIMAL32", "SHORT"}) {
             Double base = scores.get("sidecarRead/" + t + "/baseline");
             Double cov = scores.get("sidecarRead/" + t + "/covering");
             if (base != null && cov != null) {
@@ -560,7 +574,7 @@ public class PostingIndexBenchmarkSuite {
 
         LogFactory.haltInstance();
         String tmpDir = System.getProperty("java.io.tmpdir");
-        CairoConfiguration config = new DefaultCairoConfiguration(tmpDir);
+        CairoConfiguration config = benchConfig(tmpDir);
         int[] keyAssignment = buildShuffled(rows, keys);
         int[] queryKeys = new int[readKeys];
         Random rng = new Random(99);
@@ -725,7 +739,7 @@ public class PostingIndexBenchmarkSuite {
         @Setup(Level.Trial)
         public void setup() {
             String tmpDir = System.getProperty("java.io.tmpdir");
-            config = new DefaultCairoConfiguration(tmpDir);
+            config = benchConfig(tmpDir);
         }
     }
 
@@ -791,7 +805,7 @@ public class PostingIndexBenchmarkSuite {
         @Setup(Level.Trial)
         public void setup() {
             String tmpDir = System.getProperty("java.io.tmpdir");
-            config = new DefaultCairoConfiguration(tmpDir);
+            config = benchConfig(tmpDir);
             isPosting = "POSTING".equals(format);
 
             // Scaled data sizes: preserve distribution, ~1-2M rows for speed
@@ -961,7 +975,7 @@ public class PostingIndexBenchmarkSuite {
         static final int ROWS = KEYS * VPK;
         long colAddr;
         int colType, colShift, colSize;
-        @Param({"DOUBLE", "FLOAT", "LONG", "INT"})
+        @Param({"DOUBLE", "FLOAT", "LONG", "INT", "DECIMAL64", "DECIMAL32", "SHORT"})
         String columnType;
         CairoConfiguration config;
         String dir;
@@ -992,11 +1006,26 @@ public class PostingIndexBenchmarkSuite {
                     colShift = 2;
                     colSize = 4;
                 }
+                case "DECIMAL64" -> {
+                    colType = ColumnType.DECIMAL64;
+                    colShift = 3;
+                    colSize = 8;
+                }
+                case "DECIMAL32" -> {
+                    colType = ColumnType.DECIMAL32;
+                    colShift = 2;
+                    colSize = 4;
+                }
+                case "SHORT" -> {
+                    colType = ColumnType.SHORT;
+                    colShift = 1;
+                    colSize = 2;
+                }
                 default -> throw new IllegalArgumentException(columnType);
             }
 
             String tmpDir = System.getProperty("java.io.tmpdir");
-            config = new DefaultCairoConfiguration(tmpDir);
+            config = benchConfig(tmpDir);
             dir = tmpDir + File.separator + "suite_cov_" + columnType + "_" + mode + "_" + System.nanoTime();
             new File(dir).mkdirs();
 
@@ -1011,6 +1040,13 @@ public class PostingIndexBenchmarkSuite {
                     case "LONG" ->
                             Unsafe.getUnsafe().putLong(colAddr + (long) i * 8, 1_700_000_000_000_000L + rng.nextInt(1_000_000));
                     case "INT" -> Unsafe.getUnsafe().putInt(colAddr + (long) i * 4, rng.nextInt(10_000));
+                    case "DECIMAL64" ->
+                            // Prices with scale=2: 100.00–1000.00 → unscaled 10_000–100_000
+                            Unsafe.getUnsafe().putLong(colAddr + (long) i * 8, 10_000L + rng.nextInt(90_000));
+                    case "DECIMAL32" ->
+                            // Prices with scale=2: 20.00–25.00 → unscaled 2_000–2_500
+                            Unsafe.getUnsafe().putInt(colAddr + (long) i * 4, 2_000 + rng.nextInt(500));
+                    case "SHORT" -> Unsafe.getUnsafe().putShort(colAddr + (long) i * 2, (short) rng.nextInt(1_000));
                 }
             }
 
@@ -1075,6 +1111,11 @@ public class PostingIndexBenchmarkSuite {
                 public int getRndFunctionMemoryMaxPages() {
                     return 4096;
                 }
+
+                @Override
+                public boolean isPostingIndexEliasFanoEnabled() {
+                    return !IS_DELTA;
+                }
             };
             engine = new CairoEngine(config);
             ctx = new SqlExecutionContextImpl(engine, 1)
@@ -1084,7 +1125,7 @@ public class PostingIndexBenchmarkSuite {
 
             // Core table: sym with covering index on price (200 keys, 400K rows)
             engine.execute("CREATE TABLE bench (" +
-                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE" +
+                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price), price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO bench SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
                     "rnd_symbol(200, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(400000)", ctx);
@@ -1105,7 +1146,7 @@ public class PostingIndexBenchmarkSuite {
 
             // Wide table: 8 columns, covering 2 (200 keys, 200K rows)
             engine.execute("CREATE TABLE wide (" +
-                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (c1, c2), " +
+                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (c1, c2), " +
                     "c1 DOUBLE, c2 INT, c3 DOUBLE, c4 INT, c5 DOUBLE, c6 INT, c7 DOUBLE, c8 INT" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO wide SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
@@ -1115,7 +1156,7 @@ public class PostingIndexBenchmarkSuite {
 
             // VARCHAR/FSST table: covering includes VARCHAR (200 keys, 200K rows)
             engine.execute("CREATE TABLE vchar (" +
-                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (name, price), " +
+                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (name, price), " +
                     "name VARCHAR, price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO vchar SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
@@ -1125,7 +1166,7 @@ public class PostingIndexBenchmarkSuite {
             // Bulk table: few keys, many rows per key — tests sustained output throughput
             // 20 keys × 50K rows = 1M rows (covering VARCHAR + DOUBLE, FSST compressed)
             engine.execute("CREATE TABLE bulk (" +
-                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (name, price), " +
+                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (name, price), " +
                     "name VARCHAR, price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL", ctx);
             engine.execute("INSERT INTO bulk SELECT dateadd('T', x::INT, '2024-01-01')::TIMESTAMP, " +
@@ -1134,7 +1175,7 @@ public class PostingIndexBenchmarkSuite {
 
             // O3 table: in-order insert then out-of-order insert
             engine.execute("CREATE TABLE o3bench (" +
-                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE" +
+                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price), price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
             engine.execute("INSERT INTO o3bench SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP, " +
                     "rnd_symbol(50, 4, 8, 0), rnd_double() * 1000 FROM long_sequence(100000)", ctx);
@@ -1216,6 +1257,11 @@ public class PostingIndexBenchmarkSuite {
                 public int getRndFunctionMemoryMaxPages() {
                     return 4096;
                 }
+
+                @Override
+                public boolean isPostingIndexEliasFanoEnabled() {
+                    return !IS_DELTA;
+                }
             };
             engine = new CairoEngine(config);
             ctx = new SqlExecutionContextImpl(engine, 1)
@@ -1229,13 +1275,13 @@ public class PostingIndexBenchmarkSuite {
                 case "bitmap" -> "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX, price DOUBLE, name VARCHAR) " +
                         "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
                 case "posting" ->
-                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, price DOUBLE, name VARCHAR) " +
+                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + ", price DOUBLE, name VARCHAR) " +
                                 "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
                 case "posting_covering" ->
-                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price), " +
+                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price), " +
                                 "price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
                 case "posting_varchar" ->
-                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price, name), " +
+                        "CREATE TABLE wbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL + " INCLUDE (price, name), " +
                                 "price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL";
                 default -> throw new IllegalArgumentException(indexType);
             };

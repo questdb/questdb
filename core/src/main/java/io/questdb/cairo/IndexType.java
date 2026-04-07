@@ -45,11 +45,12 @@ public final class IndexType {
      */
     public static final byte BITMAP = 1;
     /**
-     * Posting index with Elias-Fano row ID encoding (default).
+     * Posting index with adaptive row ID encoding.
+     * Trial-encodes both Elias-Fano and delta-FoR per key and picks the smaller.
      */
     public static final byte POSTING = 2;
     /**
-     * Posting index with legacy delta-FoR row ID encoding.
+     * Posting index with delta-FoR row ID encoding only (no Elias-Fano).
      * Created via {@code INDEX TYPE POSTING DELTA}.
      */
     public static final byte POSTING_DELTA = 3;
@@ -68,10 +69,6 @@ public final class IndexType {
         return indexType != NONE;
     }
 
-    /**
-     * Returns true if the given index type is any posting index variant
-     * (POSTING or POSTING_DELTA).
-     */
     public static boolean isPosting(byte indexType) {
         return indexType == POSTING || indexType == POSTING_DELTA;
     }

@@ -471,6 +471,19 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
      * column access methods. Subclasses provide iteration direction (hasNext/next).
      */
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
+        // Cached ALP bulk-decoded doubles for the current sidecar block.
+        // Populated lazily on first getCoveredDouble() within a block; invalidated when
+        // keyBlockAddrs changes (new key or stride). Keyed on (blockAddr, includeIdx).
+        private long alpCacheAddr;
+        private long alpCacheBlockAddr;
+        private int alpCacheCapacity;
+        private int alpCacheCount;
+        private int alpCacheIncludeIdx = -1;
+        private long floatCacheAddr;
+        private long floatCacheBlockAddr;
+        private int floatCacheCapacity;
+        private int floatCacheCount;
+        private int floatCacheIncludeIdx = -1;
         protected final BorrowedArray arrayView = new BorrowedArray();
         protected final DirectBinarySequence binView = new DirectBinarySequence();
         protected int cachedSidecarIdx;
@@ -564,7 +577,32 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Double.NaN;
             }
-            return CoveringCompressor.readDoubleAt(keyBlockAddrs[includeIdx], idx);
+            long blockAddr = keyBlockAddrs[includeIdx];
+            int count = Unsafe.getUnsafe().getInt(blockAddr);
+            if (count <= 0 || idx >= count) {
+                return Double.NaN;
+            }
+
+            // Point query: single value — decode inline, skip bulk cache overhead
+            if (count == 1) {
+                return CoveringCompressor.readDoubleAt(blockAddr, idx);
+            }
+
+            // Bulk path: decode entire block on first access, serve from cache
+            if (blockAddr != alpCacheBlockAddr || includeIdx != alpCacheIncludeIdx) {
+                if (count > alpCacheCapacity) {
+                    if (alpCacheAddr != 0) {
+                        Unsafe.free(alpCacheAddr, (long) alpCacheCapacity * Double.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                    alpCacheCapacity = count;
+                    alpCacheAddr = Unsafe.malloc((long) count * Double.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                ensureDecodeWorkspaceCapacity(count);
+                alpCacheCount = CoveringCompressor.decompressDoublesToAddr(blockAddr, alpCacheAddr, decodeWorkspaceAddr);
+                alpCacheBlockAddr = blockAddr;
+                alpCacheIncludeIdx = includeIdx;
+            }
+            return Unsafe.getUnsafe().getDouble(alpCacheAddr + (long) idx * Double.BYTES);
         }
 
         @Override
@@ -576,7 +614,28 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             if (idx < 0 || keyBlockAddrs == null || keyBlockAddrs[includeIdx] == 0) {
                 return Float.NaN;
             }
-            return CoveringCompressor.readFloatAt(keyBlockAddrs[includeIdx], idx);
+            long blockAddr = keyBlockAddrs[includeIdx];
+            int count = Unsafe.getUnsafe().getInt(blockAddr);
+            if (count <= 0 || idx >= count) {
+                return Float.NaN;
+            }
+            if (count == 1) {
+                return CoveringCompressor.readFloatAt(blockAddr, idx);
+            }
+            if (blockAddr != floatCacheBlockAddr || includeIdx != floatCacheIncludeIdx) {
+                if (count > floatCacheCapacity) {
+                    if (floatCacheAddr != 0) {
+                        Unsafe.free(floatCacheAddr, (long) floatCacheCapacity * Float.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    }
+                    floatCacheCapacity = count;
+                    floatCacheAddr = Unsafe.malloc((long) count * Float.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                ensureDecodeWorkspaceCapacity(count);
+                floatCacheCount = CoveringCompressor.decompressFloatsToAddr(blockAddr, floatCacheAddr, decodeWorkspaceAddr);
+                floatCacheBlockAddr = blockAddr;
+                floatCacheIncludeIdx = includeIdx;
+            }
+            return Unsafe.getUnsafe().getFloat(floatCacheAddr + (long) idx * Float.BYTES);
         }
 
         @Override
@@ -746,6 +805,22 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         }
 
         protected void closeCoveringResources() {
+            if (alpCacheAddr != 0) {
+                Unsafe.free(alpCacheAddr, (long) alpCacheCapacity * Double.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                alpCacheAddr = 0;
+                alpCacheCapacity = 0;
+            }
+            alpCacheBlockAddr = 0;
+            alpCacheIncludeIdx = -1;
+            alpCacheCount = 0;
+            if (floatCacheAddr != 0) {
+                Unsafe.free(floatCacheAddr, (long) floatCacheCapacity * Float.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                floatCacheAddr = 0;
+                floatCacheCapacity = 0;
+            }
+            floatCacheBlockAddr = 0;
+            floatCacheIncludeIdx = -1;
+            floatCacheCount = 0;
             if (decodeWorkspaceAddr != 0) {
                 Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 decodeWorkspaceAddr = 0;
@@ -911,6 +986,12 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             this.cachedKeyBlockStride = -1;
             this.cachedSidecarIdx = 0;
             this.isCurrentGenDense = false;
+            this.alpCacheBlockAddr = 0;
+            this.alpCacheIncludeIdx = -1;
+            this.alpCacheCount = 0;
+            this.floatCacheBlockAddr = 0;
+            this.floatCacheIncludeIdx = -1;
+            this.floatCacheCount = 0;
         }
 
         protected int sidecarValueIdx() {
@@ -1028,19 +1109,14 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                             CoveringCompressor.decompressDoublesToAddr(keyBlockAddr, outAddr, decodeWorkspaceAddr);
                     case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
                             CoveringCompressor.decompressLongsToAddr(keyBlockAddr, outAddr, decodeWorkspaceAddr);
-                    case ColumnType.INT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.SYMBOL ->
+                    case ColumnType.FLOAT ->
+                            CoveringCompressor.decompressFloatsToAddr(keyBlockAddr, outAddr, decodeWorkspaceAddr);
+                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL ->
                             CoveringCompressor.decompressIntsToAddr(keyBlockAddr, outAddr, decodeWorkspaceAddr);
-                    case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT -> {
-                        long rawAddr = keyBlockAddr + 4;
-                        for (int i = 0; i < kc; i++) {
-                            Unsafe.getUnsafe().putShort(outAddr + (long) i * Short.BYTES,
-                                    Unsafe.getUnsafe().getShort(rawAddr + (long) i * Short.BYTES));
-                        }
-                    }
-                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE -> {
-                        long rawAddr = keyBlockAddr + 4;
-                        Unsafe.getUnsafe().copyMemory(rawAddr, outAddr, kc);
-                    }
+                    case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT ->
+                            CoveringCompressor.decompressShortsToAddr(keyBlockAddr, outAddr, decodeWorkspaceAddr);
+                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
+                            CoveringCompressor.decompressBytesToAddr(keyBlockAddr, outAddr, decodeWorkspaceAddr);
                 }
             }
             return count;

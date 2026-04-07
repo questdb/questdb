@@ -42,11 +42,16 @@ import io.questdb.std.Unsafe;
 public class CoveringCompressor {
 
     static final int MAX_EXPONENT = 18;
+    static final int MAX_EXPONENT_FLOAT = 9;
     // 2^52 + 2^51: forces rounding in IEEE 754 double arithmetic
     private static final double SWEET = (double) (1L << 52) + (double) (1L << 51);
     // SWEET trick works in [-2^51, 2^51]. Use a slightly conservative limit.
     private static final double ENCODING_UPPER_LIMIT = (double) (1L << 51);
     private static final double ENCODING_LOWER_LIMIT = -(double) (1L << 51);
+    // Float ALP: 2^23 + 2^22 forces rounding in float arithmetic
+    private static final float SWEET_F = (float) (1 << 23) + (float) (1 << 22);
+    private static final float FLOAT_ENCODING_UPPER_LIMIT = (float) (1 << 22);
+    private static final float FLOAT_ENCODING_LOWER_LIMIT = -(float) (1 << 22);
 
     // Pre-computed powers of 10 as doubles (ascending)
     static final double[] F10 = {
@@ -60,10 +65,15 @@ public class CoveringCompressor {
             1e-10, 1e-11, 1e-12, 1e-13, 1e-14, 1e-15, 1e-16, 1e-17, 1e-18
     };
 
+    // Float-precision powers of 10
+    static final float[] F10F = {1e0f, 1e1f, 1e2f, 1e3f, 1e4f, 1e5f, 1e6f, 1e7f, 1e8f, 1e9f};
+    static final float[] IF10F = {1e-0f, 1e-1f, 1e-2f, 1e-3f, 1e-4f, 1e-5f, 1e-6f, 1e-7f, 1e-8f, 1e-9f};
+
     // Compressed block header sizes (excluding packed data)
     // DOUBLE: valueCount(4) + e(1) + f(1) + bitWidth(1) + excCount(4) + forBase(8) = 19
     public static final int DOUBLE_HEADER_SIZE = 19;
-    // FLOAT is compressed via compressInts (INT_HEADER_SIZE)
+    // FLOAT ALP: valueCount(4) + e(1) + f(1) + bitWidth(1) + excCount(4) + forBase(4) = 15
+    public static final int FLOAT_ALP_HEADER_SIZE = 15;
     // LONG: valueCount(4) + bitWidth(1) + forBase(8) = 13
     static final int LONG_HEADER_SIZE = 13;
     // LONG delta: valueCount(4) + bitWidth|0x80(1) + deltaBase(8) + firstValue(8) = 21
@@ -80,6 +90,8 @@ public class CoveringCompressor {
     static final int INT_HEADER_SIZE = 9;
     // SHORT: valueCount(4) + bitWidth(1) + forBase(2) = 7
     static final int SHORT_HEADER_SIZE = 7;
+    // BYTE: valueCount(4) + bitWidth(1) + forBase(1) = 6
+    static final int BYTE_HEADER_SIZE = 6;
 
     /**
      * Encode a single double value to a long integer using ALP.
@@ -99,6 +111,136 @@ public class CoveringCompressor {
      */
     public static double alpDecode(long encoded, int e, int f) {
         return (double) encoded * F10[f] * IF10[e];
+    }
+
+    public static float alpDecodeFloat(int encoded, int e, int f) {
+        return (float) encoded * F10F[f] * IF10F[e];
+    }
+
+    public static int alpEncodeFloat(float value, int e, int f) {
+        float tmp = value * F10F[e] * IF10F[f];
+        if (!Float.isFinite(tmp) || tmp > FLOAT_ENCODING_UPPER_LIMIT || tmp < FLOAT_ENCODING_LOWER_LIMIT) {
+            return Integer.MAX_VALUE;
+        }
+        return (int) ((tmp + SWEET_F) - SWEET_F);
+    }
+
+    public static int compressFloats(long srcAddr, int count, long destAddr, long encodedAddr, long exceptionAddr) {
+        int params = findBestAlpParamsFloat(srcAddr, count);
+        int e = params >>> 16;
+        int f = params & 0xFFFF;
+
+        Unsafe.getUnsafe().setMemory(exceptionAddr, count, (byte) 0);
+        int excCount = 0;
+        int fillValue = 0;
+        boolean fillFound = false;
+
+        for (int i = 0; i < count; i++) {
+            float val = Unsafe.getUnsafe().getFloat(srcAddr + (long) i * Float.BYTES);
+            int enc = alpEncodeFloat(val, e, f);
+            if (enc == Integer.MAX_VALUE) {
+                Unsafe.getUnsafe().putByte(exceptionAddr + i, (byte) 1);
+                excCount++;
+                continue;
+            }
+            float dec = alpDecodeFloat(enc, e, f);
+            if (Float.floatToRawIntBits(dec) != Float.floatToRawIntBits(val)) {
+                Unsafe.getUnsafe().putByte(exceptionAddr + i, (byte) 1);
+                excCount++;
+            } else {
+                Unsafe.getUnsafe().putInt(encodedAddr + (long) i * Integer.BYTES, enc);
+                if (!fillFound) {
+                    fillValue = enc;
+                    fillFound = true;
+                }
+            }
+        }
+
+        for (int i = 0; i < count; i++) {
+            if (Unsafe.getUnsafe().getByte(exceptionAddr + i) != 0) {
+                Unsafe.getUnsafe().putInt(encodedAddr + (long) i * Integer.BYTES, fillValue);
+            }
+        }
+
+        int forBase = Integer.MAX_VALUE;
+        int forMax = Integer.MIN_VALUE;
+        for (int i = 0; i < count; i++) {
+            int v = Unsafe.getUnsafe().getInt(encodedAddr + (long) i * Integer.BYTES);
+            forBase = Math.min(forBase, v);
+            forMax = Math.max(forMax, v);
+        }
+        if (forBase == Integer.MAX_VALUE) forBase = 0;
+        long range = (long) forMax - (long) forBase;
+        int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
+
+        // Write header
+        long pos = destAddr;
+        Unsafe.getUnsafe().putInt(pos, count); pos += 4;
+        Unsafe.getUnsafe().putByte(pos++, (byte) e);
+        Unsafe.getUnsafe().putByte(pos++, (byte) f);
+        Unsafe.getUnsafe().putByte(pos++, (byte) bw);
+        Unsafe.getUnsafe().putInt(pos, excCount); pos += 4;
+        Unsafe.getUnsafe().putInt(pos, forBase); pos += 4;
+
+        // Pack encoded values (widen ints to longs in-place for BitpackUtils)
+        int packedBytes = BitpackUtils.packedDataSize(count, bw);
+        if (bw > 0) {
+            // Widen in reverse to avoid overwriting unread ints (long stride > int stride)
+            for (int i = count - 1; i >= 0; i--) {
+                Unsafe.getUnsafe().putLong(encodedAddr + (long) i * Long.BYTES,
+                        Unsafe.getUnsafe().getInt(encodedAddr + (long) i * Integer.BYTES));
+            }
+            BitpackUtils.packValues(encodedAddr, count, forBase, bw, pos);
+        }
+        pos += packedBytes;
+
+        // Exception positions and values
+        for (int i = 0; i < count; i++) {
+            if (Unsafe.getUnsafe().getByte(exceptionAddr + i) != 0) {
+                Unsafe.getUnsafe().putInt(pos, i); pos += 4;
+            }
+        }
+        for (int i = 0; i < count; i++) {
+            if (Unsafe.getUnsafe().getByte(exceptionAddr + i) != 0) {
+                Unsafe.getUnsafe().putFloat(pos, Unsafe.getUnsafe().getFloat(srcAddr + (long) i * Float.BYTES));
+                pos += 4;
+            }
+        }
+        return (int) (pos - destAddr);
+    }
+
+    public static int decompressFloatsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr;
+        int count = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int excCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int forBase = Unsafe.getUnsafe().getInt(pos); pos += 4;
+
+        int packedBytes = BitpackUtils.packedDataSize(count, bw);
+        if (bw > 0) {
+            BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
+        } else {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+            }
+        }
+        pos += packedBytes;
+
+        for (int i = 0; i < count; i++) {
+            int encoded = (int) Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES);
+            Unsafe.getUnsafe().putFloat(outputAddr + (long) i * Float.BYTES, alpDecodeFloat(encoded, e, f));
+        }
+
+        long excPosAddr = pos;
+        long excValAddr = pos + (long) excCount * 4;
+        for (int i = 0; i < excCount; i++) {
+            int excIdx = Unsafe.getUnsafe().getInt(excPosAddr + (long) i * 4);
+            float excVal = Unsafe.getUnsafe().getFloat(excValAddr + (long) i * 4);
+            Unsafe.getUnsafe().putFloat(outputAddr + (long) excIdx * Float.BYTES, excVal);
+        }
+        return count;
     }
 
     /**
@@ -845,6 +987,10 @@ public class CoveringCompressor {
                 // ALP header + packed data (worst case 64 bits) + all exceptions
                 return DOUBLE_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64)
                         + count * (4 + 8); // worst case: all exceptions (4B pos + 8B value)
+            case ColumnType.FLOAT:
+                // Float ALP header + packed data (worst case 32 bits) + all exceptions
+                return FLOAT_ALP_HEADER_SIZE + BitpackUtils.packedDataSize(count, 32)
+                        + count * (4 + 4); // worst case: all exceptions (4B pos + 4B value)
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.GEOLONG:
@@ -855,7 +1001,6 @@ public class CoveringCompressor {
                 return LONG_LINEAR_PRED_HEADER_SIZE + BitpackUtils.packedDataSize(count, 64);
             case ColumnType.INT:
             case ColumnType.IPv4:
-            case ColumnType.FLOAT:
             case ColumnType.GEOINT:
             case ColumnType.SYMBOL:
             case ColumnType.DECIMAL32:
@@ -865,8 +1010,13 @@ public class CoveringCompressor {
             case ColumnType.GEOSHORT:
             case ColumnType.DECIMAL16:
                 return SHORT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 16);
+            case ColumnType.BYTE:
+            case ColumnType.BOOLEAN:
+            case ColumnType.GEOBYTE:
+            case ColumnType.DECIMAL8:
+                return BYTE_HEADER_SIZE + BitpackUtils.packedDataSize(count, 8);
             default:
-                // BYTE, BOOLEAN, GEOBYTE, DECIMAL8, UUID, DECIMAL128, LONG256, DECIMAL256:
+                // UUID, DECIMAL128, LONG256, DECIMAL256:
                 // raw copy with count header (4B) + valueSize each
                 return 4 + count * ColumnType.sizeOf(columnType);
         }
@@ -959,25 +1109,189 @@ public class CoveringCompressor {
         return forBase + (int) BitpackUtils.unpackValue(pos, index, bw, 0);
     }
 
+    public static int findBestAlpParamsFloat(long srcAddr, int count) {
+        int bestE = 0, bestF = 0;
+        long bestCost = Long.MAX_VALUE;
+        int sampleStep = Math.max(1, count / SAMPLE_SIZE);
+        int sampleCount = (count + sampleStep - 1) / sampleStep;
+
+        for (int e = MAX_EXPONENT_FLOAT; e >= 0; e--) {
+            for (int f = e; f >= 0; f--) {
+                int exceptions = 0;
+                int maxEnc = Integer.MIN_VALUE;
+                int minEnc = Integer.MAX_VALUE;
+
+                for (int i = 0; i < count; i += sampleStep) {
+                    float val = Unsafe.getUnsafe().getFloat(srcAddr + (long) i * Float.BYTES);
+                    int enc = alpEncodeFloat(val, e, f);
+                    if (enc == Integer.MAX_VALUE) {
+                        exceptions++;
+                        continue;
+                    }
+                    float dec = alpDecodeFloat(enc, e, f);
+                    if (Float.floatToRawIntBits(dec) != Float.floatToRawIntBits(val)) {
+                        exceptions++;
+                    } else {
+                        maxEnc = Math.max(maxEnc, enc);
+                        minEnc = Math.min(minEnc, enc);
+                    }
+                }
+
+                if (sampleCount - exceptions < 1) continue;
+                long range = (long) maxEnc - (long) minEnc;
+                int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
+                long cost = (long) sampleCount * bw + (long) exceptions * (32 + 16);
+
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    bestE = e;
+                    bestF = f;
+                }
+            }
+        }
+        return (bestE << 16) | bestF;
+    }
+
     /**
-     * Read a single FoR-compressed float (stored as int) at the given index.
+     * Read a single ALP-compressed float at the given index.
      */
     public static float readFloatAt(long srcAddr, int index) {
-        return Float.intBitsToFloat(readIntAt(srcAddr, index));
+        long pos = srcAddr;
+        int count = Unsafe.getUnsafe().getInt(pos);
+        if (index < 0 || index >= count) return Float.NaN;
+        pos += 4;
+        int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        int excCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int forBase = Unsafe.getUnsafe().getInt(pos); pos += 4;
+
+        int packedBytes = BitpackUtils.packedDataSize(count, bw);
+        long excPosAddr = pos + packedBytes;
+        long excValAddr = excPosAddr + (long) excCount * Integer.BYTES;
+        for (int i = 0; i < excCount; i++) {
+            if (Unsafe.getUnsafe().getInt(excPosAddr + (long) i * Integer.BYTES) == index) {
+                return Unsafe.getUnsafe().getFloat(excValAddr + (long) i * Float.BYTES);
+            }
+        }
+
+        int encoded = (bw > 0) ? forBase + (int) BitpackUtils.unpackValue(pos, index, bw, 0) : forBase;
+        return alpDecodeFloat(encoded, e, f);
     }
 
-    /**
-     * Read a single uncompressed short at the given index (raw format: count + shorts).
-     */
+    public static int compressShorts(long srcAddr, int count, long destAddr, long workspaceAddr) {
+        // Use long arithmetic to handle signed shorts and GeoHash null sentinels (-1)
+        // without overflow. Sign-extend each short to long for correct signed comparison.
+        long forBase = Long.MAX_VALUE;
+        long forMax = Long.MIN_VALUE;
+        for (int i = 0; i < count; i++) {
+            long val = Unsafe.getUnsafe().getShort(srcAddr + (long) i * Short.BYTES);
+            if (val < forBase) forBase = val;
+            if (val > forMax) forMax = val;
+        }
+        if (forBase == Long.MAX_VALUE) forBase = 0;
+        long range = forMax - forBase;
+        int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
+
+        long pos = destAddr;
+        Unsafe.getUnsafe().putInt(pos, count); pos += 4;
+        Unsafe.getUnsafe().putByte(pos++, (byte) bw);
+        Unsafe.getUnsafe().putShort(pos, (short) forBase); pos += 2;
+
+        if (bw > 0) {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES,
+                        (long) Unsafe.getUnsafe().getShort(srcAddr + (long) i * Short.BYTES));
+            }
+            BitpackUtils.packValues(workspaceAddr, count, forBase, bw, pos);
+        }
+        pos += BitpackUtils.packedDataSize(count, bw);
+        return (int) (pos - destAddr);
+    }
+
+    public static int compressBytes(long srcAddr, int count, long destAddr, long workspaceAddr) {
+        long forBase = Long.MAX_VALUE;
+        long forMax = Long.MIN_VALUE;
+        for (int i = 0; i < count; i++) {
+            long val = Unsafe.getUnsafe().getByte(srcAddr + i);
+            if (val < forBase) forBase = val;
+            if (val > forMax) forMax = val;
+        }
+        if (forBase == Long.MAX_VALUE) forBase = 0;
+        long range = forMax - forBase;
+        int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
+
+        long pos = destAddr;
+        Unsafe.getUnsafe().putInt(pos, count); pos += 4;
+        Unsafe.getUnsafe().putByte(pos++, (byte) bw);
+        Unsafe.getUnsafe().putByte(pos++, (byte) forBase);
+
+        if (bw > 0) {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(workspaceAddr + (long) i * Long.BYTES,
+                        (long) Unsafe.getUnsafe().getByte(srcAddr + i));
+            }
+            BitpackUtils.packValues(workspaceAddr, count, forBase, bw, pos);
+        }
+        pos += BitpackUtils.packedDataSize(count, bw);
+        return (int) (pos - destAddr);
+    }
+
+    public static int decompressShortsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr;
+        int count = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        long forBase = Unsafe.getUnsafe().getShort(pos); pos += 2; // sign-extend
+
+        if (bw > 0) {
+            BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putShort(outputAddr + (long) i * Short.BYTES,
+                        (short) Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES));
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putShort(outputAddr + (long) i * Short.BYTES, (short) forBase);
+            }
+        }
+        return count;
+    }
+
+    public static int decompressBytesToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr;
+        int count = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        long forBase = Unsafe.getUnsafe().getByte(pos++); // sign-extend
+
+        if (bw > 0) {
+            BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putByte(outputAddr + i,
+                        (byte) Unsafe.getUnsafe().getLong(workspaceAddr + (long) i * Long.BYTES));
+            }
+        } else {
+            Unsafe.getUnsafe().setMemory(outputAddr, count, (byte) forBase);
+        }
+        return count;
+    }
+
     public static short readShortAt(long srcAddr, int index) {
-        return Unsafe.getUnsafe().getShort(srcAddr + 4 + (long) index * Short.BYTES);
+        long pos = srcAddr;
+        pos += 4; // skip count
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        long forBase = Unsafe.getUnsafe().getShort(pos); // sign-extend
+        pos += 2;
+        if (bw == 0) return (short) forBase;
+        return (short) (forBase + BitpackUtils.unpackValue(pos, index, bw, 0));
     }
 
-    /**
-     * Read a single uncompressed byte at the given index (raw format: count + bytes).
-     */
     public static byte readByteAt(long srcAddr, int index) {
-        return Unsafe.getUnsafe().getByte(srcAddr + 4 + index);
+        long pos = srcAddr;
+        pos += 4; // skip count
+        int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
+        long forBase = Unsafe.getUnsafe().getByte(pos++); // sign-extend
+        if (bw == 0) return (byte) forBase;
+        return (byte) (forBase + BitpackUtils.unpackValue(pos, index, bw, 0));
     }
 
     /**

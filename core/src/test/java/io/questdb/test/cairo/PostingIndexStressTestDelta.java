@@ -27,12 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import org.junit.BeforeClass;
 
-/**
- * Runs all PostingIndexStressTest cases with legacy delta-FoR row ID encoding.
- * The base class defaults to Elias-Fano via configuration.
- */
 public class PostingIndexStressTestDelta extends PostingIndexStressTest {
-
     @BeforeClass
     public static void setUpDelta() {
         setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "delta");

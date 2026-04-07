@@ -37,13 +37,13 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * Constants and encoding/decoding utilities for the Posting index sealed format.
  *
  * <h2>Sealed stride encoding</h2>
- *
+ * <p>
  * At seal time the writer groups keys into strides of {@link #DENSE_STRIDE} (256)
  * consecutive keys and independently encodes each stride using the smaller of two
  * modes:
  *
  * <h3>Delta mode ({@link #STRIDE_MODE_DELTA}, 0x00) — per-key delta + FoR</h3>
- *
+ * <p>
  * Each key's sorted row-ID list is encoded independently:
  * <ol>
  *   <li>Delta-encode: compute successive differences.</li>
@@ -59,7 +59,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * and tight per-key delta distributions keep bitwidths low.
  *
  * <h3>Flat mode ({@link #STRIDE_MODE_FLAT}, 0x01) — stride-wide FoR</h3>
- *
+ * <p>
  * All values across all 256 keys in the stride are packed into a single contiguous
  * bitpacked array with one shared base value and one bitwidth:
  * <pre>
@@ -80,7 +80,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * inflates the bitwidth to reach an aligned boundary.
  *
  * <h3>Mode selection</h3>
- *
+ * <p>
  * The seal path trial-encodes both modes and picks whichever produces fewer bytes.
  * The threshold is purely size-based; there is no speed-vs-size trade-off knob.
  *
@@ -154,9 +154,41 @@ public final class PostingIndexUtils {
     public static final int BLOCK_CAPACITY = 64;
     public static final int COVER_INFO_MAGIC = 0x50434930; // "PCI0"
     public static final int DENSE_STRIDE = 256;
+    // Elias-Fano encoding: if the first 4 bytes of an encoded key blob equal this sentinel,
+    // the blob uses Elias-Fano format. Otherwise, it is the legacy delta-FoR format.
+    // Safe because delta-FoR's leading blockCount is always a small positive integer.
+    public static final int EF_FORMAT_SENTINEL = Integer.MIN_VALUE; // 0x80000000
+    // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
+    static final int EF_HEADER_SIZE = 17;
+    public static final int FORMAT_VERSION = 1;
+    // Generation directory entry (32 bytes per generation, 8-byte aligned)
+    public static final int GEN_DIR_ENTRY_SIZE = 32;
+    public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
+    public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
+    public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
+    public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
+    public static final int GEN_DIR_OFFSET_SIDECAR_OFFSET = 28; // 4 bytes: offset into .pc* sidecar files
+    public static final int GEN_DIR_OFFSET_SIZE = 8;
+    public static final int KEY_FILE_RESERVED = 8192; // was 64
     public static final int MAX_COVER_COUNT = 4096; // corruption guard for readCoverCountFromInfoFile
+    public static final int MAX_GEN_COUNT = 125; // (4088-64)/32 = 125
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
-
+    public static final long PAGE_A_OFFSET = 0;
+    public static final long PAGE_B_OFFSET = 4096;
+    public static final int PAGE_OFFSET_BLOCK_CAPACITY = 16;
+    public static final int PAGE_OFFSET_FORMAT_VERSION = 36;
+    public static final int PAGE_OFFSET_GEN_COUNT = 32;
+    public static final int PAGE_OFFSET_GEN_DIR = 64;
+    public static final int PAGE_OFFSET_KEY_COUNT = 20;
+    public static final int PAGE_OFFSET_MAX_VALUE = 24;
+    public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
+    // Per-page offsets
+    public static final int PAGE_OFFSET_SEQUENCE_START = 0;
+    public static final int PAGE_OFFSET_VALUE_FILE_TXN = 40; // 8 bytes: txn suffix for the .pv file
+    public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
+    // Double-buffered 4KB metadata pages (v2 format)
+    public static final int PAGE_SIZE = 4096;
+    public static final byte SIGNATURE = (byte) 0xfb;
     // Stride block mode constants — see class javadoc for when each mode wins
     public static final byte STRIDE_MODE_DELTA = 0;
     public static final byte STRIDE_MODE_FLAT = 1;
@@ -164,54 +196,33 @@ public final class PostingIndexUtils {
     public static final int STRIDE_FLAT_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
     public static final int STRIDE_FLAT_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
 
-    // Double-buffered 4KB metadata pages (v2 format)
-    public static final int PAGE_SIZE = 4096;
-    public static final long PAGE_A_OFFSET = 0;
-    public static final long PAGE_B_OFFSET = 4096;
-    public static final int KEY_FILE_RESERVED = 8192; // was 64
-
-    // Per-page offsets
-    public static final int PAGE_OFFSET_SEQUENCE_START = 0;
-    public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
-    public static final int PAGE_OFFSET_BLOCK_CAPACITY = 16;
-    public static final int PAGE_OFFSET_KEY_COUNT = 20;
-    public static final int PAGE_OFFSET_MAX_VALUE = 24;
-    public static final int PAGE_OFFSET_GEN_COUNT = 32;
-    public static final int PAGE_OFFSET_FORMAT_VERSION = 36;
-    public static final int PAGE_OFFSET_VALUE_FILE_TXN = 40; // 8 bytes: txn suffix for the .pv file
-    public static final int PAGE_OFFSET_GEN_DIR = 64;
-    public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
-
-    public static final int MAX_GEN_COUNT = 125; // (4088-64)/32 = 125
-    public static final int FORMAT_VERSION = 1;
-
-    public static final byte SIGNATURE = (byte) 0xfb;
-
-    // Generation directory entry (32 bytes per generation, 8-byte aligned)
-    public static final int GEN_DIR_ENTRY_SIZE = 32;
-    public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
-    public static final int GEN_DIR_OFFSET_SIZE = 8;
-    public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
-    public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
-    public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
-    public static final int GEN_DIR_OFFSET_SIDECAR_OFFSET = 28; // 4 bytes: offset into .pc* sidecar files
-
-    // Elias-Fano encoding: if the first 4 bytes of an encoded key blob equal this sentinel,
-    // the blob uses Elias-Fano format. Otherwise, it is the legacy delta-FoR format.
-    // Safe because delta-FoR's leading blockCount is always a small positive integer.
-    public static final int EF_FORMAT_SENTINEL = Integer.MIN_VALUE; // 0x80000000
-
-    // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
-    static final int EF_HEADER_SIZE = 17;
-
-
     private PostingIndexUtils() {
     }
 
     /**
+     * Binary search for a key ID in a sorted keyIds array stored at native memory.
+     *
+     * @return index if found (>= 0), or -(insertionPoint + 1) if not found
+     */
+    public static int binarySearchKeyId(long keyIdsAddr, int activeKeyCount, int key) {
+        int lo = 0, hi = activeKeyCount - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int midKey = Unsafe.getUnsafe().getInt(keyIdsAddr + (long) mid * Integer.BYTES);
+            if (midKey < key) {
+                lo = mid + 1;
+            } else if (midKey > key) {
+                hi = mid - 1;
+            } else {
+                return mid;
+            }
+        }
+        return -(lo + 1);
+    }
+
+    /**
      * Computes worst-case encoded size for a key with {@code count} values.
-     * Used to pre-allocate encode buffers.  Returns the maximum of the
-     * Elias-Fano and legacy delta-FoR bounds so the buffer is safe for either.
+     * Used to pre-allocate encode buffers.
      */
     public static long computeMaxEncodedSize(int count) {
         // EF worst case: header + 8-byte-aligned low bits (L=63) + 8-byte-aligned high bits
@@ -224,17 +235,31 @@ public final class PostingIndexUtils {
         return Math.max(efMax, deltaMax);
     }
 
+    public static LPSZ coverDataFileName(Path path, CharSequence name, long columnNameTxn, int includeIdx) {
+        path.concat(name).put(".pc").put(includeIdx);
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
+    public static LPSZ coverInfoFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pci");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
     /**
      * Decodes all values for a key from delta-encoded data.
      * Allocates temporary arrays per call — use the overload with DecodeContext
      * on hot paths to avoid allocations.
      *
-     * @param srcAddr    address of the encoded data for this key
-     * @param totalCount total number of values expected
-     * @param dest       destination array (must have room for totalCount values)
+     * @param srcAddr address of the encoded data for this key
+     * @param dest    destination array (must have room for totalCount values)
      */
-    public static void decodeKey(long srcAddr, int totalCount, long[] dest) {
-        if (totalCount == 0) return;
+    public static void decodeKey(long srcAddr, long[] dest) {
         int firstWord = Unsafe.getUnsafe().getInt(srcAddr);
         if (firstWord == EF_FORMAT_SENTINEL) {
             decodeKeyEF(srcAddr, dest);
@@ -324,170 +349,14 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Decodes all values for a key from delta-encoded data into a Java array,
-     * using pre-allocated workspace arrays from the provided context.
-     *
-     * @param srcAddr    address of the encoded data for this key
-     * @param totalCount total number of values expected
-     * @param dest       destination array (must have room for totalCount values)
-     * @param ctx        reusable decode context (call ensureCapacity first)
-     */
-    public static void decodeKey(long srcAddr, int totalCount, long[] dest, DecodeContext ctx) {
-        if (totalCount == 0) return;
-        int firstWord = Unsafe.getUnsafe().getInt(srcAddr);
-        if (firstWord == EF_FORMAT_SENTINEL) {
-            decodeKeyEF(srcAddr, dest);
-            return;
-        }
-        int blockCount = firstWord;
-        long pos = srcAddr + 4;
-
-        ctx.ensureCapacity(blockCount);
-        long valueCountsAddr = ctx.valueCountsAddr;
-        long firstValuesAddr = ctx.firstValuesAddr;
-        long minDeltasAddr = ctx.minDeltasAddr;
-        long bitWidthsAddr = ctx.bitWidthsAddr;
-        long blockDeltasAddr = ctx.blockDeltasAddr;
-
-        for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putInt(valueCountsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
-        }
-        pos += blockCount;
-
-        for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
-                    Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
-        }
-        pos += (long) blockCount * Long.BYTES;
-
-        for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
-                    Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
-        }
-        pos += (long) blockCount * Long.BYTES;
-
-        for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
-        }
-        pos += blockCount;
-
-        // Skip packedOffsets (only present for multi-block keys)
-        if (blockCount > 1) {
-            pos += (long) blockCount * Integer.BYTES;
-        }
-
-        int destIdx = 0;
-        for (int b = 0; b < blockCount; b++) {
-            int count = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
-            int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
-            int numDeltas = count - 1;
-
-            if (numDeltas > 0) {
-                long minD = Unsafe.getUnsafe().getLong(minDeltasAddr + (long) b * Long.BYTES);
-                if (bitWidth == 0) {
-                    for (int i = 0; i < numDeltas; i++) {
-                        Unsafe.getUnsafe().putLong(blockDeltasAddr + (long) i * Long.BYTES, minD);
-                    }
-                } else {
-                    BitpackUtils.unpackAllValues(pos, numDeltas, bitWidth, minD, blockDeltasAddr);
-                }
-            }
-            pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
-
-            long cumulative = Unsafe.getUnsafe().getLong(firstValuesAddr + (long) b * Long.BYTES);
-            dest[destIdx++] = cumulative;
-            for (int i = 0; i < numDeltas; i++) {
-                cumulative += Unsafe.getUnsafe().getLong(blockDeltasAddr + (long) i * Long.BYTES);
-                dest[destIdx++] = cumulative;
-            }
-        }
-    }
-
-    /**
-     * Decodes an Elias-Fano encoded key into a Java array.
-     * Uses word-at-a-time high-bit scanning with tzcnt.
-     */
-    public static void decodeKeyEF(long srcAddr, long[] dest) {
-        long pos = srcAddr + 4; // skip sentinel
-        int n = Unsafe.getUnsafe().getInt(pos); pos += 4;
-        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
-        long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
-
-        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
-        long lowStart = pos;
-        int lowBytes = efLowBytesAligned(n, L);
-        long highStart = pos + lowBytes;
-        int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
-
-        // Single-pass: scan high bits, extract low bits inline
-        int outputIdx = 0;
-        for (int w = 0; w < numHighWords && outputIdx < n; w++) {
-            long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
-            if (word == 0) continue;
-            long base = (long) w * 64 - outputIdx;
-            while (word != 0 && outputIdx < n) {
-                int trail = Long.numberOfTrailingZeros(word);
-                long low = readBitsWord(lowStart, (long) outputIdx * L, L) & lowMask;
-                dest[outputIdx++] = ((base + trail) << L) | low;
-                base--;
-                word &= word - 1;
-            }
-        }
-    }
-
-    /**
-     * Decodes an Elias-Fano encoded key directly to native memory.
-     * Two-pass: (1) SIMD bulk-unpack low bits into destAddr, (2) scan high bits
-     * word-at-a-time and merge via read-modify-write. The SIMD unpack in pass 1
-     * is ~10x faster than per-value bit extraction and dominates the performance.
-     */
-    public static void decodeKeyEFToNative(long srcAddr, long destAddr) {
-        long pos = srcAddr + 4; // skip sentinel
-        int n = Unsafe.getUnsafe().getInt(pos); pos += 4;
-        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
-        long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
-
-        long lowStart = pos;
-        int lowBytes = efLowBytesAligned(n, L);
-        long highStart = pos + lowBytes;
-        int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
-
-        // Pass 1: SIMD bulk-unpack all low bits into destAddr
-        if (L > 0) {
-            BitpackUtils.unpackAllValues(lowStart, n, L, 0, destAddr);
-        } else {
-            Unsafe.getUnsafe().setMemory(destAddr, (long) n * Long.BYTES, (byte) 0);
-        }
-
-        // Pass 2: scan high bits, merge into destAddr via read-modify-write
-        int outputIdx = 0;
-        for (int w = 0; w < numHighWords && outputIdx < n; w++) {
-            long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
-            if (word == 0) continue;
-            long base = (long) w * 64 - outputIdx;
-            while (word != 0 && outputIdx < n) {
-                int trail = Long.numberOfTrailingZeros(word);
-                long addr = destAddr + (long) outputIdx * 8;
-                Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) | ((base + trail) << L));
-                outputIdx++;
-                base--;
-                word &= word - 1;
-            }
-        }
-    }
-
-    /**
      * Decodes all values for a key from delta-encoded data directly into native memory,
      * using pre-allocated workspace arrays from the provided context.
-     * Supports both Elias-Fano and legacy delta-FoR formats via sentinel detection.
      *
-     * @param srcAddr    address of the encoded data for this key
-     * @param totalCount total number of values expected
-     * @param destAddr   native memory destination address (must have room for totalCount longs)
-     * @param ctx        reusable decode context (call ensureCapacity first)
+     * @param srcAddr  address of the encoded data for this key
+     * @param destAddr native memory destination address (must have room for totalCount longs)
+     * @param ctx      reusable decode context (call ensureCapacity first)
      */
-    public static void decodeKeyToNative(long srcAddr, int totalCount, long destAddr, DecodeContext ctx) {
-        if (totalCount == 0) return;
+    public static void decodeKeyToNative(long srcAddr, long destAddr, DecodeContext ctx) {
         int firstWord = Unsafe.getUnsafe().getInt(srcAddr);
         if (firstWord == EF_FORMAT_SENTINEL) {
             decodeKeyEFToNative(srcAddr, destAddr);
@@ -559,24 +428,17 @@ public final class PostingIndexUtils {
         }
     }
 
-    /**
-     * Encodes sorted values for a single key using delta + FoR64 bitpacking.
-     * Allocates temporary arrays internally — use the overload with EncodeContext
-     * on hot paths to avoid allocations.
-     */
-    public static int encodeKey(long[] values, int count, long destAddr) {
-        EncodeContext ctx = new EncodeContext();
-        try {
-            ctx.ensureCapacity(count);
-            return encodeKey(values, count, destAddr, ctx);
-        } finally {
-            ctx.close();
+    public static LPSZ distinctKeysFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pd");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
         }
+        return path.$();
     }
 
     /**
-     * Encodes sorted values for a single key using Elias-Fano encoding.
-     * Uses pre-allocated workspace from ctx as a native staging buffer.
+     * Encodes sorted values for a single key using delta + FoR64 bitpacking.
+     * Uses pre-allocated workspace arrays from the provided context.
      *
      * @param values   array of sorted values
      * @param count    number of values
@@ -593,14 +455,23 @@ public final class PostingIndexUtils {
             Unsafe.getUnsafe().putInt(destAddr, 0);
             return 4;
         }
-        if (!useEliasFano) {
-            return encodeKeyDeltaFoR(values, count, destAddr, ctx);
+        if (useEliasFano) {
+            // Copy values to deltasAddr for the EF trial encode, then use the
+            // Java array for delta-FoR (encodeKeyDeltaFoR reads from the array,
+            // not deltasAddr, avoiding aliasing issues).
+            long srcAddr = ctx.deltasAddr;
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
+            }
+            int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr);
+            int deltaSize = encodeKeyDeltaFoR(values, count, destAddr, ctx);
+            if (efSize < deltaSize) {
+                Unsafe.getUnsafe().copyMemory(ctx.efTrialAddr, destAddr, efSize);
+                return efSize;
+            }
+            return deltaSize;
         }
-        long srcAddr = ctx.deltasAddr;
-        for (int i = 0; i < count; i++) {
-            Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
-        }
-        return encodeKeyEF(srcAddr, count, destAddr);
+        return encodeKeyDeltaFoR(values, count, destAddr, ctx);
     }
 
     /**
@@ -735,78 +606,14 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Encodes sorted long values using Elias-Fano encoding directly from native memory.
-     * Format: [sentinel:4B][count:4B][L:1B][universe:8B][lowBits][highBits]
-     * <p>
-     * Provides ~28% better compression and ~5x faster sequential decode than delta-FoR,
-     * with O(1) random access via rank/select on the high bit array.
-     *
-     * @param srcAddr  native memory address of sorted long values
-     * @param count    number of values (must be > 0)
-     * @param destAddr destination memory address
-     * @return number of bytes written
-     */
-    public static int encodeKeyEF(long srcAddr, int count, long destAddr) {
-        long lastValue = Unsafe.getUnsafe().getLong(srcAddr + (long) (count - 1) * Long.BYTES);
-        long u = lastValue + 1;
-        int L = Math.max(0, 63 - Long.numberOfLeadingZeros(u / count));
-        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
-
-        // Header: sentinel(4B) + count(4B) + L(1B) + universe(8B)
-        long pos = destAddr;
-        Unsafe.getUnsafe().putInt(pos, EF_FORMAT_SENTINEL); pos += 4;
-        Unsafe.getUnsafe().putInt(pos, count); pos += 4;
-        Unsafe.getUnsafe().putByte(pos, (byte) L); pos += 1;
-        Unsafe.getUnsafe().putLong(pos, u); pos += 8;
-
-        // Low bits: n values × L bits each, 8-byte aligned for safe word reads
-        long lowStart = pos;
-        int lowBytes = efLowBytesAligned(count, L);
-        for (long i = 0; i < lowBytes; i += 8) {
-            Unsafe.getUnsafe().putLong(lowStart + i, 0);
-        }
-        for (int i = 0; i < count; i++) {
-            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
-            writeBitsWord(lowStart, (long) i * L, val & lowMask, L);
-        }
-        pos += lowBytes;
-
-        // High bits: unary encoding, 8-byte aligned for safe word reads
-        long highStart = pos;
-        long totalHighBits = count + (u >>> L);
-        int numHighWords = (int) ((totalHighBits + 63) / 64);
-        int highBytes = numHighWords * 8;
-        for (long i = 0; i < highBytes; i += 8) {
-            Unsafe.getUnsafe().putLong(highStart + i, 0);
-        }
-        long bitPos = 0;
-        long prevHigh = 0;
-        for (int i = 0; i < count; i++) {
-            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
-            long high = val >>> L;
-            bitPos += (high - prevHigh);
-            setBitWord(highStart, bitPos);
-            bitPos++;
-            prevHigh = high;
-        }
-        pos += highBytes;
-
-        return (int) (pos - destAddr);
-    }
-
-    /** Computes 8-byte-aligned size for the EF low bits region. */
-    static int efLowBytesAligned(int n, int L) {
-        return (int) ((((long) n * L + 63) >>> 6) << 3);
-    }
-
-    /**
-     * Encodes sorted values for a single key directly from native memory
-     * using Elias-Fano encoding.
+     * Encodes sorted values for a single key directly from native memory,
+     * eliminating the copy to a Java array. Used by the writer's flushAllPending()
+     * to encode values directly from the pending values buffer.
      *
      * @param srcAddr  native memory address of sorted long values
      * @param count    number of values
      * @param destAddr destination memory address
-     * @param ctx      reusable encode context (unused for EF, kept for API compatibility)
+     * @param ctx      reusable encode context (call ensureCapacity first)
      * @return number of bytes written
      */
     public static int encodeKeyNative(long srcAddr, int count, long destAddr, EncodeContext ctx) {
@@ -819,16 +626,34 @@ public final class PostingIndexUtils {
             return 4;
         }
         if (useEliasFano) {
-            return encodeKeyEF(srcAddr, count, destAddr);
+            return encodeKeyNativeAdaptive(srcAddr, count, destAddr, ctx);
         }
-        assert count <= ctx.deltaCapacity;
         return encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
     }
 
+    /**
+     * Encodes a key using the smaller of EF and delta-FoR.
+     * Trial-encodes with both codecs and picks the winner. The format sentinel
+     * (EF_FORMAT_SENTINEL for EF, positive blockCount for delta-FoR) allows the
+     * decoder to auto-detect the format, so mixed keys within a stride work
+     * transparently.
+     */
+    public static int encodeKeyNativeAdaptive(long srcAddr, int count, long destAddr, EncodeContext ctx) {
+        if (count == 0) {
+            Unsafe.getUnsafe().putInt(destAddr, 0);
+            return 4;
+        }
+        int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr);
+        int deltaSize = encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
+        if (efSize < deltaSize) {
+            Unsafe.getUnsafe().copyMemory(ctx.efTrialAddr, destAddr, efSize);
+            return efSize;
+        }
+        return deltaSize;
+    }
 
     /**
      * Legacy: encodes sorted values using delta + FoR64 bitpacking from native memory.
-     * Retained for reading old-format data and for flat-vs-delta trial encoding in seal.
      */
     public static int encodeKeyNativeDeltaFoR(long srcAddr, int count, long destAddr, EncodeContext ctx) {
         if (count == 0) {
@@ -956,6 +781,140 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Size of the per-generation sparse header: keyIds + counts + offsets for active keys only.
+     */
+    public static int genHeaderSizeSparse(int activeKeyCount) {
+        return activeKeyCount * Integer.BYTES * 3;
+    }
+
+    /**
+     * Offset of generation directory entry within a metadata page.
+     *
+     * @param pageBase the base offset of the page (PAGE_A_OFFSET or PAGE_B_OFFSET)
+     * @param genIndex the generation index
+     */
+    public static long getGenDirOffset(long pageBase, int genIndex) {
+        return pageBase + PAGE_OFFSET_GEN_DIR + (long) genIndex * GEN_DIR_ENTRY_SIZE;
+    }
+
+    public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pk");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
+    /**
+     * Number of keys in a given stride block.
+     */
+    public static int keysInStride(int keyCount, int stride) {
+        int sc = strideCount(keyCount);
+        if (stride < sc - 1) return DENSE_STRIDE;
+        int rem = keyCount % DENSE_STRIDE;
+        return rem == 0 ? DENSE_STRIDE : rem;
+    }
+
+    public static int readCoverCountFromInfoFile(FilesFacade ff, LPSZ pciFilePath) {
+        long fd = ff.openRO(pciFilePath);
+        if (fd < 0) {
+            return 0;
+        }
+        try {
+            int magic = ff.readNonNegativeInt(fd, 0);
+            if (magic != COVER_INFO_MAGIC) {
+                return 0;
+            }
+            int count = ff.readNonNegativeInt(fd, 4);
+            // Guard against corrupted .pci: a garbled count could cause
+            // billions of removeQuiet iterations in removeSidecarFiles.
+            // No table can have more than a few thousand columns, so any
+            // value beyond that is corruption.
+            return count >= 0 && count <= MAX_COVER_COUNT ? count : 0;
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    public static long readValueFileTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
+        long fd = ff.openRO(keyFilePath);
+        if (fd < 0) {
+            return -1;
+        }
+        try {
+            // Read sequence from both pages, pick the one with higher valid sequence
+            long seqA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+            long seqEndA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+            long seqB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+            long seqEndB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+
+            long pageOffset;
+            if (seqA == seqEndA && seqB == seqEndB) {
+                pageOffset = seqA >= seqB ? PAGE_A_OFFSET : PAGE_B_OFFSET;
+            } else if (seqA == seqEndA) {
+                pageOffset = PAGE_A_OFFSET;
+            } else if (seqB == seqEndB) {
+                pageOffset = PAGE_B_OFFSET;
+            } else {
+                return -1;
+            }
+            return ff.readNonNegativeLong(fd, pageOffset + PAGE_OFFSET_VALUE_FILE_TXN);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    public static void removeSidecarFiles(FilesFacade ff, Path path, int pathTrimTo, CharSequence columnName, long columnVersion) {
+        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, columnVersion);
+        if (ff.exists(pciFile)) {
+            int coverCount = readCoverCountFromInfoFile(ff, pciFile);
+            ff.removeQuiet(pciFile);
+            for (int c = 0; c < coverCount; c++) {
+                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, columnVersion, c));
+            }
+        }
+        // Remove distinct keys file (.pd) if present
+        ff.removeQuiet(distinctKeysFileName(path.trimTo(pathTrimTo), columnName, columnVersion));
+    }
+
+    /**
+     * Number of stride blocks for the given key count.
+     */
+    public static int strideCount(int keyCount) {
+        return (keyCount + DENSE_STRIDE - 1) / DENSE_STRIDE;
+    }
+
+    /**
+     * Size of a delta-mode stride block header: mode prefix + counts + prefix-sum offsets.
+     */
+    public static int strideDeltaHeaderSize(int keysInStride) {
+        return STRIDE_MODE_PREFIX_SIZE + keysInStride * Integer.BYTES + (keysInStride + 1) * Integer.BYTES;
+    }
+
+    /**
+     * Size of a flat-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.
+     */
+    public static int strideFlatHeaderSize(int keysInStride) {
+        return STRIDE_FLAT_PREFIX_COUNTS_OFFSET + (keysInStride + 1) * Integer.BYTES;
+    }
+
+    /**
+     * Size of the stride index: (strideCount + 1) × 4B.
+     * The extra entry is a sentinel holding the total size of all stride blocks.
+     */
+    public static int strideIndexSize(int keyCount) {
+        return (strideCount(keyCount) + 1) * Integer.BYTES;
+    }
+
+    public static LPSZ valueFileName(Path path, CharSequence name, long columnNameTxn) {
+        path.concat(name).put(".pv");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
+    }
+
+    /**
      * Optimized single-block encode for keys with count <= BLOCK_CAPACITY.
      * Single pass: reads values, computes deltas inline, finds min/max,
      * writes metadata and packs residuals without per-block loop overhead.
@@ -1023,95 +982,263 @@ public final class PostingIndexUtils {
         return (int) (pos - destAddr);
     }
 
-    // ==================================================================================
-    // Elias-Fano support methods for readers
-    // ==================================================================================
-
     /**
-     * O(1) point access to value at given index in an EF-encoded key.
-     * Requires a pre-built rank directory from {@link #efBuildRankDirectory}.
-     *
-     * @param encodedAddr start of the EF-encoded blob (at the sentinel)
-     * @param rankDirAddr rank directory built by efBuildRankDirectory
-     * @param numHighWords number of rank directory entries
-     * @param index 0-based value index
-     * @return the decoded value at the given index
+     * Reusable workspace for decodeKey to avoid per-call allocations.
      */
-    public static long efAccessValue(long encodedAddr, long rankDirAddr, int numHighWords, int index) {
-        long pos = encodedAddr + 4; // skip sentinel
-        int L = Unsafe.getUnsafe().getByte(pos + 4) & 0xFF; // skip count(4B), read L(1B)
-        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
-        long lowStart = pos + 4 + 1 + 8; // skip count + L + universe
-        int n = Unsafe.getUnsafe().getInt(pos);
-        int lowBytes = efLowBytesAligned(n, L);
-        long highStart = lowStart + lowBytes;
+    public static class DecodeContext implements QuietCloseable {
+        long bitWidthsAddr;
+        long blockDeltasAddr;
+        long firstValuesAddr;
+        long minDeltasAddr;
+        long valueCountsAddr;
+        private int blockCapacity;
 
-        // Low bits: direct access
-        long low = readBitsWord(lowStart, (long) index * L, L) & lowMask;
+        public void close() {
+            if (firstValuesAddr != 0) {
+                Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                firstValuesAddr = 0;
+            }
+            if (minDeltasAddr != 0) {
+                Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                minDeltasAddr = 0;
+            }
+            if (valueCountsAddr != 0) {
+                Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                valueCountsAddr = 0;
+            }
+            if (bitWidthsAddr != 0) {
+                Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                bitWidthsAddr = 0;
+            }
+            if (blockDeltasAddr != 0) {
+                Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockDeltasAddr = 0;
+            }
+            blockCapacity = 0;
+        }
 
-        // High bits: select(index) via rank directory
-        long selectPos = efSelect(highStart, rankDirAddr, numHighWords, index);
-        long highValue = selectPos - index;
-
-        return (highValue << L) | low;
+        public void ensureCapacity(int blockCount) {
+            if (blockCount > blockCapacity) {
+                int newCapacity = Math.max(blockCount, blockCapacity * 2);
+                long newFirstAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newMinAddr;
+                try {
+                    newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(newFirstAddr, (long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    throw e;
+                }
+                if (firstValuesAddr != 0) {
+                    Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                if (minDeltasAddr != 0) {
+                    Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                firstValuesAddr = newFirstAddr;
+                minDeltasAddr = newMinAddr;
+                long newValueCountsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                long newBitWidthsAddr;
+                try {
+                    newBitWidthsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                } catch (Throwable e) {
+                    Unsafe.free(newValueCountsAddr, (long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    throw e;
+                }
+                if (valueCountsAddr != 0) {
+                    Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                if (bitWidthsAddr != 0) {
+                    Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                valueCountsAddr = newValueCountsAddr;
+                bitWidthsAddr = newBitWidthsAddr;
+                blockCapacity = newCapacity;
+            }
+            if (blockDeltasAddr == 0) {
+                blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
     }
 
+    // ==================================================================================
+    // Elias-Fano encode/decode
+    // ==================================================================================
+
     /**
-     * Builds a rank directory from the high bits of an EF-encoded key.
-     * rankDir[w] = cumulative popcount of high-bit words 0..w-1.
-     *
-     * @param encodedAddr start of the EF-encoded blob (at the sentinel)
-     * @param rankDirAddr destination for rank directory (numHighWords × 4B)
-     * @return number of high-bit words (= rank directory entries)
+     * Decodes an Elias-Fano encoded key into a Java array.
      */
-    public static int efBuildRankDirectory(long encodedAddr, long rankDirAddr) {
-        long pos = encodedAddr + 4; // skip sentinel
+    public static void decodeKeyEF(long srcAddr, long[] dest) {
+        long pos = srcAddr + 4; // skip sentinel
         int n = Unsafe.getUnsafe().getInt(pos); pos += 4;
         int L = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
         long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
 
+        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
+        long lowStart = pos;
         int lowBytes = efLowBytesAligned(n, L);
         long highStart = pos + lowBytes;
         int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
 
+        int outputIdx = 0;
+        for (int w = 0; w < numHighWords && outputIdx < n; w++) {
+            long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
+            if (word == 0) continue;
+            long base = (long) w * 64 - outputIdx;
+            while (word != 0 && outputIdx < n) {
+                int trail = Long.numberOfTrailingZeros(word);
+                long low = readBitsWord(lowStart, (long) outputIdx * L, L) & lowMask;
+                dest[outputIdx++] = ((base + trail) << L) | low;
+                base--;
+                word &= word - 1;
+            }
+        }
+    }
+
+    /**
+     * Decodes an Elias-Fano encoded key directly to native memory.
+     * Two-pass: (1) SIMD bulk-unpack low bits, (2) scan high bits and merge.
+     */
+    public static void decodeKeyEFToNative(long srcAddr, long destAddr) {
+        long pos = srcAddr + 4; // skip sentinel
+        int n = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
+        long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
+
+        long lowStart = pos;
+        int lowBytes = efLowBytesAligned(n, L);
+        long highStart = pos + lowBytes;
+        int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
+
+        // Pass 1: SIMD bulk-unpack all low bits into destAddr
+        if (L > 0) {
+            BitpackUtils.unpackAllValues(lowStart, n, L, 0, destAddr);
+        } else {
+            Unsafe.getUnsafe().setMemory(destAddr, (long) n * Long.BYTES, (byte) 0);
+        }
+
+        // Pass 2: scan high bits, merge into destAddr via read-modify-write
+        int outputIdx = 0;
+        for (int w = 0; w < numHighWords && outputIdx < n; w++) {
+            long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
+            if (word == 0) continue;
+            long base = (long) w * 64 - outputIdx;
+            while (word != 0 && outputIdx < n) {
+                int trail = Long.numberOfTrailingZeros(word);
+                long addr = destAddr + (long) outputIdx * 8;
+                Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) | ((base + trail) << L));
+                outputIdx++;
+                base--;
+                word &= word - 1;
+            }
+        }
+    }
+
+    /**
+     * Encodes sorted long values using Elias-Fano encoding directly from native memory.
+     * Format: [sentinel:4B][count:4B][L:1B][universe:8B][lowBits][highBits]
+     */
+    public static int encodeKeyEF(long srcAddr, int count, long destAddr) {
+        long lastValue = Unsafe.getUnsafe().getLong(srcAddr + (long) (count - 1) * Long.BYTES);
+        long u = lastValue + 1;
+        int L = Math.max(0, 63 - Long.numberOfLeadingZeros(u / count));
+        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
+
+        long pos = destAddr;
+        Unsafe.getUnsafe().putInt(pos, EF_FORMAT_SENTINEL); pos += 4;
+        Unsafe.getUnsafe().putInt(pos, count); pos += 4;
+        Unsafe.getUnsafe().putByte(pos, (byte) L); pos += 1;
+        Unsafe.getUnsafe().putLong(pos, u); pos += 8;
+
+        long lowStart = pos;
+        int lowBytes = efLowBytesAligned(count, L);
+        for (long i = 0; i < lowBytes; i += 8) {
+            Unsafe.getUnsafe().putLong(lowStart + i, 0);
+        }
+        for (int i = 0; i < count; i++) {
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+            writeBitsWord(lowStart, (long) i * L, val & lowMask, L);
+        }
+        pos += lowBytes;
+
+        long highStart = pos;
+        long totalHighBits = count + (u >>> L);
+        int numHighWords = (int) ((totalHighBits + 63) / 64);
+        int highBytes = numHighWords * 8;
+        for (long i = 0; i < highBytes; i += 8) {
+            Unsafe.getUnsafe().putLong(highStart + i, 0);
+        }
+        long bitPos = 0;
+        long prevHigh = 0;
+        for (int i = 0; i < count; i++) {
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+            long high = val >>> L;
+            bitPos += (high - prevHigh);
+            setBitWord(highStart, bitPos);
+            bitPos++;
+            prevHigh = high;
+        }
+        pos += highBytes;
+
+        return (int) (pos - destAddr);
+    }
+
+    // ==================================================================================
+    // Elias-Fano support methods for readers
+    // ==================================================================================
+
+    /** O(1) point access to value at given index in an EF-encoded key. */
+    public static long efAccessValue(long encodedAddr, long rankDirAddr, int numHighWords, int index) {
+        long pos = encodedAddr + 4;
+        int L = Unsafe.getUnsafe().getByte(pos + 4) & 0xFF;
+        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
+        long lowStart = pos + 4 + 1 + 8;
+        int n = Unsafe.getUnsafe().getInt(pos);
+        int lowBytes = efLowBytesAligned(n, L);
+        long highStart = lowStart + lowBytes;
+        long low = readBitsWord(lowStart, (long) index * L, L) & lowMask;
+        long selectPos = efSelect(highStart, rankDirAddr, numHighWords, index);
+        return ((selectPos - index) << L) | low;
+    }
+
+    /** Builds rank directory from high bits of an EF-encoded key. */
+    public static int efBuildRankDirectory(long encodedAddr, long rankDirAddr) {
+        long pos = encodedAddr + 4;
+        int n = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
+        long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
+        int lowBytes = efLowBytesAligned(n, L);
+        long highStart = pos + lowBytes;
+        int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
         int cumulative = 0;
         for (int w = 0; w < numHighWords; w++) {
             Unsafe.getUnsafe().putInt(rankDirAddr + (long) w * Integer.BYTES, cumulative);
-            long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
-            cumulative += Long.bitCount(word);
+            cumulative += Long.bitCount(Unsafe.getUnsafe().getLong(highStart + (long) w * 8));
         }
         return numHighWords;
     }
 
-    /**
-     * Finds the position of the k-th set bit (0-indexed) in the high bit array
-     * using binary search on the rank directory + broadword select within a word.
-     */
+    /** Computes 8-byte-aligned size for the EF low bits region. */
+    static int efLowBytesAligned(int n, int L) {
+        return (int) ((((long) n * L + 63) >>> 6) << 3);
+    }
+
+    /** Finds position of k-th set bit in high bit array via rank directory. */
     static long efSelect(long highStart, long rankDirAddr, int numWords, int k) {
         int lo = 0, hi = numWords - 1;
         while (lo < hi) {
             int mid = (lo + hi + 1) >>> 1;
-            int rank = Unsafe.getUnsafe().getInt(rankDirAddr + (long) mid * Integer.BYTES);
-            if (rank <= k) {
-                lo = mid;
-            } else {
-                hi = mid - 1;
-            }
+            if (Unsafe.getUnsafe().getInt(rankDirAddr + (long) mid * Integer.BYTES) <= k) lo = mid;
+            else hi = mid - 1;
         }
         int rankBefore = Unsafe.getUnsafe().getInt(rankDirAddr + (long) lo * Integer.BYTES);
-        int remaining = k - rankBefore;
-        long word = Unsafe.getUnsafe().getLong(highStart + (long) lo * 8);
-        return (long) lo * 64 + selectInWord(word, remaining);
+        return (long) lo * 64 + selectInWord(Unsafe.getUnsafe().getLong(highStart + (long) lo * 8), k - rankBefore);
     }
 
     // ==================================================================================
     // Bit manipulation helpers for Elias-Fano
     // ==================================================================================
 
-    /**
-     * Reads numBits starting at bitPos using 64-bit aligned loads.
-     * At most 2 loads for any bitwidth <= 57.
-     */
+    /** Reads numBits starting at bitPos using 64-bit aligned loads. */
     static long readBitsWord(long baseAddr, long bitPos, int numBits) {
         if (numBits == 0) return 0;
         long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
@@ -1119,16 +1246,12 @@ public final class PostingIndexUtils {
         long word = Unsafe.getUnsafe().getLong(wordAddr);
         long value = word >>> bitOffset;
         if (bitOffset + numBits > 64) {
-            long word2 = Unsafe.getUnsafe().getLong(wordAddr + 8);
-            value |= word2 << (64 - bitOffset);
+            value |= Unsafe.getUnsafe().getLong(wordAddr + 8) << (64 - bitOffset);
         }
         return (numBits < 64) ? value & ((1L << numBits) - 1) : value;
     }
 
-    /**
-     * Finds position of the k-th set bit (0-indexed) within a 64-bit word.
-     * Uses divide-and-conquer with popcount: O(6) steps.
-     */
+    /** Finds position of k-th set bit (0-indexed) within a 64-bit word. */
     static int selectInWord(long word, int k) {
         int pos = 0;
         long lo32 = word & 0xFFFFFFFFL;
@@ -1144,7 +1267,6 @@ public final class PostingIndexUtils {
         return pos + Long.numberOfTrailingZeros(word);
     }
 
-    /** Sets a single bit using word-aligned read-modify-write. */
     private static void setBitWord(long baseAddr, long bitPos) {
         long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
         int bitOffset = (int) (bitPos & 63);
@@ -1152,17 +1274,14 @@ public final class PostingIndexUtils {
         Unsafe.getUnsafe().putLong(wordAddr, word | (1L << bitOffset));
     }
 
-    /** Writes numBits at bitPos using 64-bit word-aligned read-modify-write. */
     private static void writeBitsWord(long baseAddr, long bitPos, long value, int numBits) {
         if (numBits == 0) return;
         long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
         int bitOffset = (int) (bitPos & 63);
         long mask = (numBits < 64) ? (1L << numBits) - 1 : -1L;
-
         long word = Unsafe.getUnsafe().getLong(wordAddr);
         word = (word & ~(mask << bitOffset)) | ((value & mask) << bitOffset);
         Unsafe.getUnsafe().putLong(wordAddr, word);
-
         if (bitOffset + numBits > 64) {
             long word2 = Unsafe.getUnsafe().getLong(wordAddr + 8);
             int bitsInSecond = bitOffset + numBits - 64;
@@ -1176,17 +1295,58 @@ public final class PostingIndexUtils {
      * Reusable workspace for encodeKey to avoid per-call allocations.
      */
     public static class EncodeContext implements QuietCloseable {
-        long deltasAddr;
-        long blockValueCountsAddr;
+        long blockBitWidthsAddr;
         long blockFirstValuesAddr;
         long blockMinDeltasAddr;
-        long blockBitWidthsAddr;
-        long residualsAddr;
+        long blockValueCountsAddr;
+        int deltaCapacity;
+        long deltasAddr;
+        long efTrialAddr;
+        int efTrialCapacity;
         // Native residuals buffer for SIMD packing (BLOCK_CAPACITY * 8 bytes)
         long nativeResidualsAddr;
-        int deltaCapacity;
+        long residualsAddr;
         private int blockCapacity;
         private int residualsCapacity;
+
+        public void close() {
+            if (deltasAddr != 0) {
+                Unsafe.free(deltasAddr, (long) deltaCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                deltasAddr = 0;
+            }
+            if (blockFirstValuesAddr != 0) {
+                Unsafe.free(blockFirstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockFirstValuesAddr = 0;
+            }
+            if (blockMinDeltasAddr != 0) {
+                Unsafe.free(blockMinDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockMinDeltasAddr = 0;
+            }
+            if (blockValueCountsAddr != 0) {
+                Unsafe.free(blockValueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockValueCountsAddr = 0;
+            }
+            if (blockBitWidthsAddr != 0) {
+                Unsafe.free(blockBitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBitWidthsAddr = 0;
+            }
+            blockCapacity = 0;
+            deltaCapacity = 0;
+            if (efTrialAddr != 0) {
+                Unsafe.free(efTrialAddr, efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
+                efTrialAddr = 0;
+                efTrialCapacity = 0;
+            }
+            if (residualsAddr != 0) {
+                Unsafe.free(residualsAddr, (long) residualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                residualsAddr = 0;
+            }
+            if (nativeResidualsAddr != 0) {
+                Unsafe.free(nativeResidualsAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                nativeResidualsAddr = 0;
+            }
+            residualsCapacity = 0;
+        }
 
         public void ensureCapacity(int count) {
             if (count > deltaCapacity) {
@@ -1242,298 +1402,15 @@ public final class PostingIndexUtils {
             if (nativeResidualsAddr == 0 && PostingIndexNative.isNativeAvailable()) {
                 nativeResidualsAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
-        }
-
-        public void close() {
-            if (deltasAddr != 0) {
-                Unsafe.free(deltasAddr, (long) deltaCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                deltasAddr = 0;
-            }
-            if (blockFirstValuesAddr != 0) {
-                Unsafe.free(blockFirstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockFirstValuesAddr = 0;
-            }
-            if (blockMinDeltasAddr != 0) {
-                Unsafe.free(blockMinDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockMinDeltasAddr = 0;
-            }
-            if (blockValueCountsAddr != 0) {
-                Unsafe.free(blockValueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockValueCountsAddr = 0;
-            }
-            if (blockBitWidthsAddr != 0) {
-                Unsafe.free(blockBitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockBitWidthsAddr = 0;
-            }
-            blockCapacity = 0;
-            deltaCapacity = 0;
-            if (residualsAddr != 0) {
-                Unsafe.free(residualsAddr, (long) residualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                residualsAddr = 0;
-            }
-            if (nativeResidualsAddr != 0) {
-                Unsafe.free(nativeResidualsAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                nativeResidualsAddr = 0;
-            }
-            residualsCapacity = 0;
-        }
-    }
-
-    /**
-     * Reusable workspace for decodeKey to avoid per-call allocations.
-     */
-    public static class DecodeContext implements QuietCloseable {
-        long valueCountsAddr;
-        long firstValuesAddr;
-        long minDeltasAddr;
-        long bitWidthsAddr;
-        long blockDeltasAddr;
-        private int blockCapacity;
-
-        public void ensureCapacity(int blockCount) {
-            if (blockCount > blockCapacity) {
-                int newCapacity = Math.max(blockCount, blockCapacity * 2);
-                long newFirstAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                long newMinAddr;
-                try {
-                    newMinAddr = Unsafe.malloc((long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                } catch (Throwable e) {
-                    Unsafe.free(newFirstAddr, (long) newCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    throw e;
+            long needed = computeMaxEncodedSize(count);
+            if (needed > efTrialCapacity) {
+                if (efTrialAddr != 0) {
+                    Unsafe.free(efTrialAddr, efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
                 }
-                if (firstValuesAddr != 0) {
-                    Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                if (minDeltasAddr != 0) {
-                    Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                firstValuesAddr = newFirstAddr;
-                minDeltasAddr = newMinAddr;
-                long newValueCountsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                long newBitWidthsAddr;
-                try {
-                    newBitWidthsAddr = Unsafe.malloc((long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                } catch (Throwable e) {
-                    Unsafe.free(newValueCountsAddr, (long) newCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    throw e;
-                }
-                if (valueCountsAddr != 0) {
-                    Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                if (bitWidthsAddr != 0) {
-                    Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                }
-                valueCountsAddr = newValueCountsAddr;
-                bitWidthsAddr = newBitWidthsAddr;
-                blockCapacity = newCapacity;
-            }
-            if (blockDeltasAddr == 0) {
-                blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                efTrialCapacity = (int) needed;
+                efTrialAddr = Unsafe.malloc(efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
             }
         }
-
-        public void close() {
-            if (firstValuesAddr != 0) {
-                Unsafe.free(firstValuesAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                firstValuesAddr = 0;
-            }
-            if (minDeltasAddr != 0) {
-                Unsafe.free(minDeltasAddr, (long) blockCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                minDeltasAddr = 0;
-            }
-            if (valueCountsAddr != 0) {
-                Unsafe.free(valueCountsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                valueCountsAddr = 0;
-            }
-            if (bitWidthsAddr != 0) {
-                Unsafe.free(bitWidthsAddr, (long) blockCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                bitWidthsAddr = 0;
-            }
-            if (blockDeltasAddr != 0) {
-                Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockDeltasAddr = 0;
-            }
-            blockCapacity = 0;
-        }
-    }
-
-    /**
-     * Offset of generation directory entry within a metadata page.
-     *
-     * @param pageBase the base offset of the page (PAGE_A_OFFSET or PAGE_B_OFFSET)
-     * @param genIndex the generation index
-     */
-    public static long getGenDirOffset(long pageBase, int genIndex) {
-        return pageBase + PAGE_OFFSET_GEN_DIR + (long) genIndex * GEN_DIR_ENTRY_SIZE;
-    }
-
-    /**
-     * Number of stride blocks for the given key count.
-     */
-    public static int strideCount(int keyCount) {
-        return (keyCount + DENSE_STRIDE - 1) / DENSE_STRIDE;
-    }
-
-    /**
-     * Size of the stride index: (strideCount + 1) × 4B.
-     * The extra entry is a sentinel holding the total size of all stride blocks.
-     */
-    public static int strideIndexSize(int keyCount) {
-        return (strideCount(keyCount) + 1) * Integer.BYTES;
-    }
-
-    /**
-     * Number of keys in a given stride block.
-     */
-    public static int keysInStride(int keyCount, int stride) {
-        int sc = strideCount(keyCount);
-        if (stride < sc - 1) return DENSE_STRIDE;
-        int rem = keyCount % DENSE_STRIDE;
-        return rem == 0 ? DENSE_STRIDE : rem;
-    }
-
-    /**
-     * Size of a delta-mode stride block header: mode prefix + counts + prefix-sum offsets.
-     */
-    public static int strideDeltaHeaderSize(int keysInStride) {
-        return STRIDE_MODE_PREFIX_SIZE + keysInStride * Integer.BYTES + (keysInStride + 1) * Integer.BYTES;
-    }
-
-    /**
-     * Size of a flat-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.
-     */
-    public static int strideFlatHeaderSize(int keysInStride) {
-        return STRIDE_FLAT_PREFIX_COUNTS_OFFSET + (keysInStride + 1) * Integer.BYTES;
-    }
-
-    /**
-     * Size of the per-generation sparse header: keyIds + counts + offsets for active keys only.
-     */
-    public static int genHeaderSizeSparse(int activeKeyCount) {
-        return activeKeyCount * Integer.BYTES * 3;
-    }
-
-    /**
-     * Binary search for a key ID in a sorted keyIds array stored at native memory.
-     *
-     * @return index if found (>= 0), or -(insertionPoint + 1) if not found
-     */
-    public static int binarySearchKeyId(long keyIdsAddr, int activeKeyCount, int key) {
-        int lo = 0, hi = activeKeyCount - 1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            int midKey = Unsafe.getUnsafe().getInt(keyIdsAddr + (long) mid * Integer.BYTES);
-            if (midKey < key) {
-                lo = mid + 1;
-            } else if (midKey > key) {
-                hi = mid - 1;
-            } else {
-                return mid;
-            }
-        }
-        return -(lo + 1);
-    }
-
-    public static LPSZ coverDataFileName(Path path, CharSequence name, long columnNameTxn, int includeIdx) {
-        path.concat(name).put(".pc").put(includeIdx);
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
-    public static LPSZ coverInfoFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".pci");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
-    public static void removeSidecarFiles(FilesFacade ff, Path path, int pathTrimTo, CharSequence columnName, long columnVersion) {
-        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, columnVersion);
-        if (ff.exists(pciFile)) {
-            int coverCount = readCoverCountFromInfoFile(ff, pciFile);
-            ff.removeQuiet(pciFile);
-            for (int c = 0; c < coverCount; c++) {
-                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, columnVersion, c));
-            }
-        }
-        // Remove distinct keys file (.pd) if present
-        ff.removeQuiet(distinctKeysFileName(path.trimTo(pathTrimTo), columnName, columnVersion));
-    }
-
-    public static int readCoverCountFromInfoFile(FilesFacade ff, LPSZ pciFilePath) {
-        long fd = ff.openRO(pciFilePath);
-        if (fd < 0) {
-            return 0;
-        }
-        try {
-            int magic = ff.readNonNegativeInt(fd, 0);
-            if (magic != COVER_INFO_MAGIC) {
-                return 0;
-            }
-            int count = ff.readNonNegativeInt(fd, 4);
-            // Guard against corrupted .pci: a garbled count could cause
-            // billions of removeQuiet iterations in removeSidecarFiles.
-            // No table can have more than a few thousand columns, so any
-            // value beyond that is corruption.
-            return count >= 0 && count <= MAX_COVER_COUNT ? count : 0;
-        } finally {
-            ff.close(fd);
-        }
-    }
-
-    public static long readValueFileTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
-        long fd = ff.openRO(keyFilePath);
-        if (fd < 0) {
-            return -1;
-        }
-        try {
-            // Read sequence from both pages, pick the one with higher valid sequence
-            long seqA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-            long seqEndA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
-            long seqB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-            long seqEndB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
-
-            long pageOffset;
-            if (seqA == seqEndA && seqB == seqEndB) {
-                pageOffset = seqA >= seqB ? PAGE_A_OFFSET : PAGE_B_OFFSET;
-            } else if (seqA == seqEndA) {
-                pageOffset = PAGE_A_OFFSET;
-            } else if (seqB == seqEndB) {
-                pageOffset = PAGE_B_OFFSET;
-            } else {
-                return -1;
-            }
-            return ff.readNonNegativeLong(fd, pageOffset + PAGE_OFFSET_VALUE_FILE_TXN);
-        } finally {
-            ff.close(fd);
-        }
-    }
-
-    public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".pk");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
-    public static LPSZ valueFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".pv");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
-    public static LPSZ distinctKeysFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".pd");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
     }
 
 }

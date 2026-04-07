@@ -115,7 +115,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long constantDeltaValue;
         private int currentBlock;
         private int currentGen;
-        // Elias-Fano backward streaming state
         private int efHighWordIdx;
         private long efHighStart;
         private int efL;
@@ -200,7 +199,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
 
-                // EF mode: decode previous high-bits word chunk
                 if (isEFMode && efHighWordIdx >= 0) {
                     decodeNextEFChunkReverse();
                     continue;
@@ -425,17 +423,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             blockBufferPos = count - 1;
         }
 
-        /**
-         * Decodes the previous chunk of EF values by processing one 64-bit word
-         * of high bits in reverse. Single-pass: extracts low bits inline.
-         */
         private void decodeNextEFChunkReverse() {
             while (efHighWordIdx >= 0) {
                 long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
-                if (word == 0) {
-                    efHighWordIdx--;
-                    continue;
-                }
+                if (word == 0) { efHighWordIdx--; continue; }
                 int rankBefore = Unsafe.getUnsafe().getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
                 int bufIdx = 0;
                 long w = word;
@@ -714,10 +705,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void readDeltaBlockMetadata(long encodedAddr, int totalValueCount) {
             long pos = encodedAddr;
             int firstWord = Unsafe.getUnsafe().getInt(pos);
-
-            // Elias-Fano format: build rank directory for backward iteration
             if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
-                pos += 4; // skip sentinel
+                pos += 4;
                 efTotalCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
                 efL = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
                 long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
@@ -726,7 +715,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 int lowBytes = PostingIndexUtils.efLowBytesAligned(efTotalCount, efL);
                 efHighStart = pos + lowBytes;
                 efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
-                // Build rank directory for backward word-by-word iteration
+                // Build rank directory for reverse iteration
                 if (efNumHighWords > efRankDirCapacity) {
                     if (efRankDirAddr != 0) {
                         Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -734,24 +723,22 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     efRankDirCapacity = Math.max(efNumHighWords, efRankDirCapacity * 2);
                     efRankDirAddr = Unsafe.malloc((long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 }
-                PostingIndexUtils.efBuildRankDirectory(encodedAddr, efRankDirAddr);
-                // Start from the last high-bits word
+                int cumulative = 0;
+                for (int w = 0; w < efNumHighWords; w++) {
+                    Unsafe.getUnsafe().putInt(efRankDirAddr + (long) w * Integer.BYTES, cumulative);
+                    cumulative += Long.bitCount(Unsafe.getUnsafe().getLong(efHighStart + (long) w * 8));
+                }
                 efHighWordIdx = efNumHighWords - 1;
-                isEFMode = true;
-                isFlatMode = false;
-                encodedBlockCount = 0;
-                currentBlock = -1;
-                minBlock = 0;
-                blockBufferPos = -1;
+                isEFMode = true; encodedBlockCount = 0; isFlatMode = false;
+                currentBlock = -1; blockBufferPos = -1;
                 return;
             }
-
             int blockCount = firstWord;
+            isEFMode = false;
             if (blockCount < 0 || blockCount > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
                 throw CairoException.critical(0).put("corrupt posting index: invalid block count [blockCount=")
                         .put(blockCount).put(", totalValues=").put(totalValueCount).put(']');
             }
-            isEFMode = false;
             pos += 4;
 
             // Point directly into mapped value memory — no copies

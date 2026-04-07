@@ -2042,17 +2042,16 @@ public class SqlParser {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
             }
             if (indexType == IndexType.POSTING) {
-                tok = tok(lexer, "'ef', 'delta', 'include', 'capacity' or ')'");
+                tok = tok(lexer, "'capacity' or ')'");
                 if (SqlKeywords.isDeltaKeyword(tok)) {
                     indexType = IndexType.POSTING_DELTA;
-                    tok = tok(lexer, "'include', 'capacity' or ')'");
                 } else if (SqlKeywords.isEfKeyword(tok)) {
-                    tok = tok(lexer, "'include', 'capacity' or ')'");
+                    // explicit EF — keep POSTING
+                } else {
+                    lexer.unparseLast();
                 }
-                // else: not a posting sub-type keyword, fall through to capacity/include check
-            } else {
-                tok = tok(lexer, "'capacity' or ')'");
             }
+            tok = tok(lexer, "'capacity' or ')'");
         }
         if (isCapacityKeyword(tok)) {
             if (indexType != IndexType.BITMAP) {
@@ -2095,21 +2094,18 @@ public class SqlParser {
             if (indexType == IndexType.NONE) {
                 throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
             }
-
-            // Check for optional EF/DELTA qualifier after POSTING
             if (indexType == IndexType.POSTING) {
                 tok = tok(lexer, ") | , expected");
                 if (SqlKeywords.isDeltaKeyword(tok)) {
                     indexType = IndexType.POSTING_DELTA;
-                    tok = tok(lexer, ") | , expected");
                 } else if (SqlKeywords.isEfKeyword(tok)) {
-                    tok = tok(lexer, ") | , expected");
+                    // explicit EF — keep POSTING
+                } else {
+                    lexer.unparseLast();
                 }
-                // else: not a posting sub-type, fall through with tok already read
-            } else {
-                tok = tok(lexer, ") | , expected");
             }
 
+            tok = tok(lexer, ") | , expected");
             if (isFieldTerm(tok) || isParquetKeyword(tok)) {
                 model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
                 return tok;

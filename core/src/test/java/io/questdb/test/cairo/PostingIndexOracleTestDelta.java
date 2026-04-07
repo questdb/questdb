@@ -27,11 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import org.junit.BeforeClass;
 
-/**
- * Runs all PostingIndexOracleTest cases with legacy delta-FoR row ID encoding.
- */
 public class PostingIndexOracleTestDelta extends PostingIndexOracleTest {
-
     @BeforeClass
     public static void setUpDelta() {
         setProperty(PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "delta");

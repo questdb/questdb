@@ -320,13 +320,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<Runnable> o3NullSetters1;
     private ObjList<Runnable> o3NullSetters2;
     private PagedDirectLongList o3PartitionUpdateSink;
+    private long o3RowCount;
     // Reusable arrays for sealPostingIndexesForO3Partitions (zero-GC on commit path)
     private long[] o3SealAddrs = new long[0];
     private long[] o3SealMappedSizes = new long[0];
-    private long[] o3SealTops = new long[0];
     private int[] o3SealShifts = new int[0];
+    private long[] o3SealTops = new long[0];
     private int[] o3SealTypes = new int[0];
-    private long o3RowCount;
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
@@ -1308,10 +1308,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
         return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
-    }
-
-    public boolean isCheckpointInProgress() {
-        return engine.getCheckpointStatus().isInProgress();
     }
 
     @Override
@@ -2609,6 +2605,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
+    }
+
+    public boolean isCheckpointInProgress() {
+        return engine.getCheckpointStatus().isInProgress();
     }
 
     public boolean isCommitDedupMode() {
@@ -4414,6 +4414,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
+        TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
+        int[] coveringCols = colMeta.getCoveringColumnIndices();
+        if (coveringCols == null || coveringCols.length == 0) {
+            return;
+        }
+        int coverCount = coveringCols.length;
+        String[] names = new String[coverCount];
+        long[] nameTxns = new long[coverCount];
+        long[] tops = new long[coverCount];
+        int[] shifts = new int[coverCount];
+        int[] indices = new int[coverCount];
+        int[] types = new int[coverCount];
+        for (int i = 0; i < coverCount; i++) {
+            int covCol = coveringCols[i];
+            names[i] = Chars.toString(metadata.getColumnName(covCol));
+            nameTxns[i] = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
+            tops[i] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
+            int covType = metadata.getColumnType(covCol);
+            types[i] = covType;
+            indices[i] = covCol;
+            shifts[i] = ColumnType.pow2SizeOf(covType);
+        }
+        indexer.configureCovering(names, nameTxns, tops, shifts, indices, types, coverCount,
+                metadata.getTimestampIndex());
+    }
+
     private void configureTimestampSetter() {
         int index = metadata.getTimestampIndex();
         if (index == -1) {
@@ -4537,97 +4564,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return res;
     }
 
-
-
     /**
      * Creates index files for a column. This method uses primary column instance as a temporary tool to
      * append index data. Therefore, it must be called before the primary column is initialized.
      *
-     * @param columnName              column name
-     * @param indexValueBlockCapacity approximate number of values per index key
-     * @param indexType               the type of index to create
-     * @param plen                    path length. This is used to trim the shared path object to.
+     * @param columnName             column name
+     * @param columnNameTxn          column name txn
+     * @param indexValueBlockCapacity value block capacity for the index
+     * @param indexType              type of index to create
+     * @param plen                   path length. This is used to trim the shared path object to.
+     * @param force                  when true, recreates the index file even if it already exists
      */
-    private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
-        keyFileName(IndexType.POSTING, path.trimTo(plen), columnName, columnNameTxn);
-        if (!ff.exists(path.$()) || ff.length(path.$()) < io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED) {
-            return false;
-        }
-        // Read the key file header to check seqlock validity and genCount.
-        // Use ddlMem for temporary read — it's not in use during indexing.
-        long fd = ff.openRO(path.$());
-        if (fd < 0) {
-            return false;
-        }
-        try {
-            long addr = ff.mmap(fd, io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
-            if (addr == -1) {
-                return false;
-            }
-            try {
-                // Check both pages, use the one with the higher valid sequence
-                long seqA = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                long seqEndA = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-                long seqB = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                long seqEndB = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-
-                long validA = (seqA == seqEndA) ? seqA : 0;
-                long validB = (seqB == seqEndB) ? seqB : 0;
-                long activePage = (validB > validA)
-                        ? io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET
-                        : io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET;
-                long activeSeq = Math.max(validA, validB);
-
-                if (activeSeq <= 0) {
-                    return false; // no valid page
-                }
-
-                int genCount = Unsafe.getUnsafe().getInt(addr + activePage + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-                return genCount > 0; // sealed if at least one generation exists
-            } finally {
-                ff.munmap(addr, io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED, MemoryTag.MMAP_DEFAULT);
-            }
-        } finally {
-            ff.close(fd);
-        }
-    }
-
-    /**
-     * Hard-links auxiliary posting index files (sealed .pv.{txn}, sidecar .pci/.pc*,
-     * and distinct keys .pd) from the source partition directory to the destination.
-     * The .pk and base .pv are already linked by the caller.
-     */
-    private void linkPostingIndexAuxFiles(int srcDirLen, int dstDirLen, CharSequence columnName, long columnNameTxn) {
-        // Sealed value file: read VALUE_FILE_TXN from .pk metadata
-        long valueTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                ff, keyFileName(IndexType.POSTING, path.trimTo(dstDirLen), columnName, columnNameTxn)
-        );
-        if (valueTxn > 0 && valueTxn != columnNameTxn) {
-            linkFile(ff,
-                    IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), columnName, valueTxn),
-                    IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), columnName, valueTxn)
-            );
-        }
-        // Sidecar info file (.pci) and per-column data files (.pc0, .pc1, ...)
-        LPSZ pciSrc = PostingIndexUtils.coverInfoFileName(path.trimTo(srcDirLen), columnName, columnNameTxn);
-        if (ff.exists(pciSrc)) {
-            int coverCount = PostingIndexUtils.readCoverCountFromInfoFile(ff, pciSrc);
-            linkFile(ff, pciSrc,
-                    PostingIndexUtils.coverInfoFileName(other.trimTo(dstDirLen), columnName, columnNameTxn));
-            for (int c = 0; c < coverCount; c++) {
-                linkFile(ff,
-                        PostingIndexUtils.coverDataFileName(path.trimTo(srcDirLen), columnName, columnNameTxn, c),
-                        PostingIndexUtils.coverDataFileName(other.trimTo(dstDirLen), columnName, columnNameTxn, c)
-                );
-            }
-        }
-        // Distinct keys file (.pd)
-        linkFile(ff,
-                PostingIndexUtils.distinctKeysFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
-                PostingIndexUtils.distinctKeysFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
-        );
-    }
-
     private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force) {
         try {
             keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
@@ -5634,9 +5581,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     openPartition(prevTimestamp, newTransientRowCount);
                     setAppendPosition(newTransientRowCount, false);
                 } else {
-                    partitionTimestampHi = index != 0
-                            ? txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp)
-                            : Long.MIN_VALUE;
+                    partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp);
                 }
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
@@ -5910,33 +5855,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             return Long.MAX_VALUE;
         }
-    }
-
-    private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
-        TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
-        int[] coveringCols = colMeta.getCoveringColumnIndices();
-        if (coveringCols == null || coveringCols.length == 0) {
-            return;
-        }
-        int coverCount = coveringCols.length;
-        String[] names = new String[coverCount];
-        long[] nameTxns = new long[coverCount];
-        long[] tops = new long[coverCount];
-        int[] shifts = new int[coverCount];
-        int[] indices = new int[coverCount];
-        int[] types = new int[coverCount];
-        for (int i = 0; i < coverCount; i++) {
-            int covCol = coveringCols[i];
-            names[i] = Chars.toString(metadata.getColumnName(covCol));
-            nameTxns[i] = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
-            tops[i] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
-            int covType = metadata.getColumnType(covCol);
-            types[i] = covType;
-            indices[i] = covCol;
-            shifts[i] = ColumnType.pow2SizeOf(covType);
-        }
-        indexer.configureCovering(names, nameTxns, tops, shifts, indices, types, coverCount,
-                metadata.getTimestampIndex());
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -6386,6 +6304,94 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isLastPartitionParquet() {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
+    }
+
+    /**
+     * Checks whether a partition already has a fully-sealed posting index for the given column.
+     *
+     * @param plen          path length. This is used to trim the shared path object to.
+     * @param columnName    column name
+     * @param columnNameTxn column name txn
+     * @return true if the posting index key file exists with a valid seqlock and genCount > 0
+     */
+    private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
+        keyFileName(IndexType.POSTING, path.trimTo(plen), columnName, columnNameTxn);
+        if (!ff.exists(path.$()) || ff.length(path.$()) < io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED) {
+            return false;
+        }
+        // Read the key file header to check seqlock validity and genCount.
+        // Use ddlMem for temporary read — it's not in use during indexing.
+        long fd = ff.openRO(path.$());
+        if (fd < 0) {
+            return false;
+        }
+        try {
+            long addr = ff.mmap(fd, io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
+            if (addr == -1) {
+                return false;
+            }
+            try {
+                // Check both pages, use the one with the higher valid sequence
+                long seqA = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                long seqEndA = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+                long seqB = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                long seqEndB = Unsafe.getUnsafe().getLong(addr + io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                long validA = (seqA == seqEndA) ? seqA : 0;
+                long validB = (seqB == seqEndB) ? seqB : 0;
+                long activePage = (validB > validA)
+                        ? io.questdb.cairo.idx.PostingIndexUtils.PAGE_B_OFFSET
+                        : io.questdb.cairo.idx.PostingIndexUtils.PAGE_A_OFFSET;
+                long activeSeq = Math.max(validA, validB);
+
+                if (activeSeq <= 0) {
+                    return false; // no valid page
+                }
+
+                int genCount = Unsafe.getUnsafe().getInt(addr + activePage + io.questdb.cairo.idx.PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+                return genCount > 0; // sealed if at least one generation exists
+            } finally {
+                ff.munmap(addr, io.questdb.cairo.idx.PostingIndexUtils.KEY_FILE_RESERVED, MemoryTag.MMAP_DEFAULT);
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    /**
+     * Hard-links auxiliary posting index files (sealed .pv.{txn}, sidecar .pci/.pc*,
+     * and distinct keys .pd) from the source partition directory to the destination.
+     * The .pk and base .pv are already linked by the caller.
+     */
+    private void linkPostingIndexAuxFiles(int srcDirLen, int dstDirLen, CharSequence columnName, long columnNameTxn) {
+        // Sealed value file: read VALUE_FILE_TXN from .pk metadata
+        long valueTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                ff, keyFileName(IndexType.POSTING, path.trimTo(dstDirLen), columnName, columnNameTxn)
+        );
+        if (valueTxn > 0 && valueTxn != columnNameTxn) {
+            linkFile(ff,
+                    IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), columnName, valueTxn),
+                    IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), columnName, valueTxn)
+            );
+        }
+        // Sidecar info file (.pci) and per-column data files (.pc0, .pc1, ...)
+        LPSZ pciSrc = PostingIndexUtils.coverInfoFileName(path.trimTo(srcDirLen), columnName, columnNameTxn);
+        if (ff.exists(pciSrc)) {
+            int coverCount = PostingIndexUtils.readCoverCountFromInfoFile(ff, pciSrc);
+            linkFile(ff, pciSrc,
+                    PostingIndexUtils.coverInfoFileName(other.trimTo(dstDirLen), columnName, columnNameTxn));
+            for (int c = 0; c < coverCount; c++) {
+                linkFile(ff,
+                        PostingIndexUtils.coverDataFileName(path.trimTo(srcDirLen), columnName, columnNameTxn, c),
+                        PostingIndexUtils.coverDataFileName(other.trimTo(dstDirLen), columnName, columnNameTxn, c)
+                );
+            }
+        }
+        // Distinct keys file (.pd)
+        linkFile(ff,
+                PostingIndexUtils.distinctKeysFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
+                PostingIndexUtils.distinctKeysFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
+        );
     }
 
     private void lock() {
@@ -9530,153 +9536,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return todo;
     }
 
-    private void sealPostingIndexesForO3Partitions() {
-        // O3 rebuilds posting indexes via pool IndexWriters that have no covering
-        // configuration and never seal (FD-based close skips seal). Re-open each
-        // affected partition's posting index, seal it (converting sparse gens to
-        // dense, creating a versioned .pv.{txn}), and for covering indexes also
-        // rebuild sidecar files.
-        if (o3PartitionUpdateSink == null) {
-            return;
-        }
-        boolean hasPostingIndex = false;
-        for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
-                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
-                hasPostingIndex = true;
-                break;
-            }
-        }
-        if (!hasPostingIndex) {
-            return;
-        }
-
-        long blockIndex = -1;
-        while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
-            long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
-            long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
-            if (partitionTimestamp == -1L) {
-                continue;
-            }
-
-            setStateForTimestamp(path, partitionTimestamp);
-            int plen = path.size();
-            // For new partitions created during O3, the partition directory may
-            // have a txn suffix that setStateForTimestamp doesn't resolve (the
-            // txWriter partition name txn hasn't been bumped yet for non-mutating
-            // new partitions). Check if the directory exists; if not, try with
-            // the current txn suffix.
-            if (!ff.exists(path.slash().$()) && PartitionBy.isPartitioned(partitionBy)) {
-                path.trimTo(pathSize);
-                setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, txWriter.getTxn());
-                plen = path.size();
-            }
-            try {
-                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                    if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
-                            || metadata.getColumnIndexType(colIdx) != IndexType.POSTING) {
-                        continue;
-                    }
-
-                    CharSequence colName = metadata.getColumnName(colIdx);
-                    long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
-                    long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, colIdx);
-                    ColumnIndexer indexer = indexers.getQuick(colIdx);
-                    if (indexer == null) {
-                        continue;
-                    }
-
-                    int[] coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
-                    boolean hasCovering = coveringCols != null && coveringCols.length > 0;
-
-                    if (hasCovering) {
-                        // Covering posting index: map covered columns and rebuild sidecars
-                        int coverCount = coveringCols.length;
-                        if (o3SealAddrs.length < coverCount) {
-                            o3SealAddrs = new long[coverCount];
-                            o3SealMappedSizes = new long[coverCount];
-                            o3SealTops = new long[coverCount];
-                            o3SealShifts = new int[coverCount];
-                            o3SealTypes = new int[coverCount];
-                        }
-                        boolean mapped = true;
-
-                        try {
-                            for (int c = 0; c < coverCount; c++) {
-                                o3SealAddrs[c] = 0;
-                                int covCol = coveringCols[c];
-                                int covType = metadata.getColumnType(covCol);
-                                o3SealTypes[c] = covType;
-                                o3SealShifts[c] = ColumnType.pow2SizeOf(covType);
-                                o3SealTops[c] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
-                                long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
-                                LPSZ colFile = TableUtils.dFile(path.trimTo(plen), metadata.getColumnName(covCol), covColNameTxn);
-                                long fd = ff.openRO(colFile);
-                                if (fd < 0) {
-                                    mapped = false;
-                                    break;
-                                }
-                                try {
-                                    long fileSize = ff.length(fd);
-                                    if (fileSize <= 0) {
-                                        mapped = false;
-                                        break;
-                                    }
-                                    long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-                                    o3SealAddrs[c] = addr;
-                                    o3SealMappedSizes[c] = fileSize;
-                                } finally {
-                                    ff.close(fd);
-                                }
-                            }
-
-                            if (mapped) {
-                                indexer.configureFollowerAndWriter(
-                                        path.trimTo(plen), colName, colNameTxn,
-                                        getPrimaryColumn(colIdx), columnTop
-                                );
-                                indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount);
-                                if (indexer.getWriter() instanceof PostingIndexWriter piw) {
-                                    piw.rebuildSidecars();
-                                }
-                            }
-                        } finally {
-                            for (int c = 0; c < coverCount; c++) {
-                                if (o3SealAddrs[c] != 0) {
-                                    ff.munmap(o3SealAddrs[c], o3SealMappedSizes[c], MemoryTag.MMAP_DEFAULT);
-                                    o3SealAddrs[c] = 0;
-                                }
-                            }
-                            // Clear the writer's reference to o3SealAddrs so that
-                            // a subsequent close() → seal() cannot dereference the
-                            // unmapped addresses. The seal would return early (gen0
-                            // is already dense), but this is a defensive measure.
-                            if (indexer.getWriter() instanceof PostingIndexWriter piw) {
-                                piw.clearCovering();
-                            }
-                        }
-                    } else {
-                        // Non-covering posting index: seal to convert sparse → dense.
-                        // The writer opens the .pk at the resolved partition path.
-                        // If the .pk is empty (genCount=0), this partition's data
-                        // lives in a different directory (O3 created it with a txn
-                        // suffix). Skip — the reader will find the correct .pk via
-                        // the partition name txn.
-                        indexer.configureFollowerAndWriter(
-                                path.trimTo(plen), colName, colNameTxn,
-                                getPrimaryColumn(colIdx), columnTop
-                        );
-                        if (indexer.getWriter() instanceof PostingIndexWriter piw) {
-                            piw.seal();
-                        }
-                    }
-                }
-            } finally {
-                path.trimTo(pathSize);
-            }
-        }
-    }
-
     private void rebuildAttachedPartitionColumnIndex(long partitionTimestamp, long partitionSize, CharSequence columnName) {
         if (attachIndexBuilder == null) {
             attachIndexBuilder = new IndexBuilder(configuration);
@@ -9956,6 +9815,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void removeCoveringIndexFiles(CharSequence columnName, long columnNameTxn, int plen) {
+        removeFileOrLog(ff, PostingIndexUtils.coverInfoFileName(path.trimTo(plen), columnName, columnNameTxn));
+        // Remove .pc0, .pc1, ... — try up to a reasonable limit
+        for (int c = 0; c < 64; c++) {
+            LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, columnNameTxn, c);
+            if (!ff.exists(pcFile)) {
+                break;
+            }
+            removeFileOrLog(ff, pcFile);
+        }
+    }
+
     private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
         setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
@@ -9968,18 +9839,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             removeCoveringIndexFiles(columnName, columnNameTxn, plen);
         }
         path.trimTo(pathSize);
-    }
-
-    private void removeCoveringIndexFiles(CharSequence columnName, long columnNameTxn, int plen) {
-        removeFileOrLog(ff, PostingIndexUtils.coverInfoFileName(path.trimTo(plen), columnName, columnNameTxn));
-        // Remove .pc0, .pc1, ... — try up to a reasonable limit
-        for (int c = 0; c < 64; c++) {
-            LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, columnNameTxn, c);
-            if (!ff.exists(pcFile)) {
-                break;
-            }
-            removeFileOrLog(ff, pcFile);
-        }
     }
 
     private void removeMetaFile() {
@@ -10489,6 +10348,153 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long timestamp = txWriter.getPartitionTimestampByIndex(i);
             long partitionTxn = txWriter.getPartitionNameTxn(i);
             partitionRemoveCandidates.add(timestamp, partitionTxn);
+        }
+    }
+
+    private void sealPostingIndexesForO3Partitions() {
+        // O3 rebuilds posting indexes via pool IndexWriters that have no covering
+        // configuration and never seal (FD-based close skips seal). Re-open each
+        // affected partition's posting index, seal it (converting sparse gens to
+        // dense, creating a versioned .pv.{txn}), and for covering indexes also
+        // rebuild sidecar files.
+        if (o3PartitionUpdateSink == null) {
+            return;
+        }
+        boolean hasPostingIndex = false;
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
+                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                hasPostingIndex = true;
+                break;
+            }
+        }
+        if (!hasPostingIndex) {
+            return;
+        }
+
+        long blockIndex = -1;
+        while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
+            long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
+            long partitionTimestamp = Unsafe.getUnsafe().getLong(blockAddress);
+            if (partitionTimestamp == -1L) {
+                continue;
+            }
+
+            setStateForTimestamp(path, partitionTimestamp);
+            int plen = path.size();
+            // For new partitions created during O3, the partition directory may
+            // have a txn suffix that setStateForTimestamp doesn't resolve (the
+            // txWriter partition name txn hasn't been bumped yet for non-mutating
+            // new partitions). Check if the directory exists; if not, try with
+            // the current txn suffix.
+            if (!ff.exists(path.slash().$()) && PartitionBy.isPartitioned(partitionBy)) {
+                path.trimTo(pathSize);
+                setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, txWriter.getTxn());
+                plen = path.size();
+            }
+            try {
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                            || metadata.getColumnIndexType(colIdx) != IndexType.POSTING) {
+                        continue;
+                    }
+
+                    CharSequence colName = metadata.getColumnName(colIdx);
+                    long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
+                    long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, colIdx);
+                    ColumnIndexer indexer = indexers.getQuick(colIdx);
+                    if (indexer == null) {
+                        continue;
+                    }
+
+                    int[] coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
+                    boolean hasCovering = coveringCols != null && coveringCols.length > 0;
+
+                    if (hasCovering) {
+                        // Covering posting index: map covered columns and rebuild sidecars
+                        int coverCount = coveringCols.length;
+                        if (o3SealAddrs.length < coverCount) {
+                            o3SealAddrs = new long[coverCount];
+                            o3SealMappedSizes = new long[coverCount];
+                            o3SealTops = new long[coverCount];
+                            o3SealShifts = new int[coverCount];
+                            o3SealTypes = new int[coverCount];
+                        }
+                        boolean mapped = true;
+
+                        try {
+                            for (int c = 0; c < coverCount; c++) {
+                                o3SealAddrs[c] = 0;
+                                int covCol = coveringCols[c];
+                                int covType = metadata.getColumnType(covCol);
+                                o3SealTypes[c] = covType;
+                                o3SealShifts[c] = ColumnType.pow2SizeOf(covType);
+                                o3SealTops[c] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
+                                long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
+                                LPSZ colFile = TableUtils.dFile(path.trimTo(plen), metadata.getColumnName(covCol), covColNameTxn);
+                                long fd = ff.openRO(colFile);
+                                if (fd < 0) {
+                                    mapped = false;
+                                    break;
+                                }
+                                try {
+                                    long fileSize = ff.length(fd);
+                                    if (fileSize <= 0) {
+                                        mapped = false;
+                                        break;
+                                    }
+                                    long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
+                                    o3SealAddrs[c] = addr;
+                                    o3SealMappedSizes[c] = fileSize;
+                                } finally {
+                                    ff.close(fd);
+                                }
+                            }
+
+                            if (mapped) {
+                                indexer.configureFollowerAndWriter(
+                                        path.trimTo(plen), colName, colNameTxn,
+                                        getPrimaryColumn(colIdx), columnTop
+                                );
+                                indexer.configureCovering(o3SealAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount);
+                                if (indexer.getWriter() instanceof PostingIndexWriter piw) {
+                                    piw.rebuildSidecars();
+                                }
+                            }
+                        } finally {
+                            for (int c = 0; c < coverCount; c++) {
+                                if (o3SealAddrs[c] != 0) {
+                                    ff.munmap(o3SealAddrs[c], o3SealMappedSizes[c], MemoryTag.MMAP_DEFAULT);
+                                    o3SealAddrs[c] = 0;
+                                }
+                            }
+                            // Clear the writer's reference to o3SealAddrs so that
+                            // a subsequent close() → seal() cannot dereference the
+                            // unmapped addresses. The seal would return early (gen0
+                            // is already dense), but this is a defensive measure.
+                            if (indexer.getWriter() instanceof PostingIndexWriter piw) {
+                                piw.clearCovering();
+                            }
+                        }
+                    } else {
+                        // Non-covering posting index: seal to convert sparse → dense.
+                        // The writer opens the .pk at the resolved partition path.
+                        // If the .pk is empty (genCount=0), this partition's data
+                        // lives in a different directory (O3 created it with a txn
+                        // suffix). Skip — the reader will find the correct .pk via
+                        // the partition name txn.
+                        indexer.configureFollowerAndWriter(
+                                path.trimTo(plen), colName, colNameTxn,
+                                getPrimaryColumn(colIdx), columnTop
+                        );
+                        if (indexer.getWriter() instanceof PostingIndexWriter piw) {
+                            piw.seal();
+                        }
+                    }
+                }
+            } finally {
+                path.trimTo(pathSize);
+            }
         }
     }
 
@@ -11479,10 +11485,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         releaseIndexerWriters();
     }
 
-    IndexWriter getIndexWriter(int columnIndex) {
-        return indexers.getQuick(columnIndex).getWriter();
-    }
-
     long getColumnTop(int columnIndex) {
         assert lastOpenPartitionTs != Long.MIN_VALUE;
         return columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, columnIndex);
@@ -11490,6 +11492,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     CairoConfiguration getConfiguration() {
         return configuration;
+    }
+
+    IndexWriter getIndexWriter(int columnIndex) {
+        return indexers.getQuick(columnIndex).getWriter();
     }
 
     Sequence getO3CopyPubSeq() {

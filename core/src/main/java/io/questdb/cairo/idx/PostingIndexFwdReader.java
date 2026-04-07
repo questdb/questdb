@@ -117,7 +117,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long constantDeltaValue;
         private int currentBlock;
         private int currentGen;
-        // Elias-Fano streaming state
         private int efHighWordIdx;
         private long efHighStart;
         private int efL;
@@ -192,7 +191,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
 
-                // EF mode: decode next chunk (one 64-bit word of high bits)
+                // EF mode: decode next chunk
                 if (isEFMode && efOutputCount < efTotalCount) {
                     decodeNextEFChunk();
                     continue;
@@ -426,35 +425,60 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             blockBufferEnd = count;
         }
 
-        /**
-         * Decodes the next chunk of EF values by processing one 64-bit word of high bits.
-         * Single-pass: extracts low bits inline, writes each value once.
-         */
         private void decodeNextEFChunk() {
-            while (efHighWordIdx < efNumHighWords && efOutputCount < efTotalCount) {
+            // Fused single-pass: extract low bits from a sliding 64-bit window
+            // while scanning high bits, writing each value in one store.
+            // Accumulates across multiple high-bits words to fill the buffer.
+            int totalBuf = 0;
+
+            // Load low-bits window at current position
+            long lowBitPos = (long) efOutputCount * efL;
+            long lowWordAddr = efLowStart + ((lowBitPos >>> 6) << 3);
+            int lowBitOffset = (int) (lowBitPos & 63);
+
+            while (efHighWordIdx < efNumHighWords && efOutputCount < efTotalCount && totalBuf < blockBufferCapacity) {
                 long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
-                if (word == 0) {
-                    efHighWordIdx++;
-                    continue;
+                if (word == 0) { efHighWordIdx++; continue; }
+                int chunkCount = Math.min(Long.bitCount(word), efTotalCount - efOutputCount);
+                if (chunkCount > blockBufferCapacity - totalBuf) {
+                    break;
                 }
-                int bufPos = 0;
+
                 long base = (long) efHighWordIdx * 64 - efOutputCount;
-                while (word != 0 && efOutputCount < efTotalCount) {
+                int bufPos = 0;
+                while (word != 0 && bufPos < chunkCount) {
                     int trail = Long.numberOfTrailingZeros(word);
-                    long low = PostingIndexUtils.readBitsWord(efLowStart, (long) efOutputCount * efL, efL) & efLowMask;
-                    Unsafe.getUnsafe().putLong(blockBufferAddr + (long) bufPos * Long.BYTES, ((base + trail) << efL) | low);
-                    bufPos++;
-                    efOutputCount++;
-                    base--;
+
+                    // Extract L low bits from the sliding window
+                    long low;
+                    if (efL == 0) {
+                        low = 0;
+                    } else {
+                        long lowWord = Unsafe.getUnsafe().getLong(lowWordAddr);
+                        low = (lowWord >>> lowBitOffset) & efLowMask;
+                        if (lowBitOffset + efL > 64) {
+                            // Spans two words — merge bits from next word
+                            low |= (Unsafe.getUnsafe().getLong(lowWordAddr + 8) << (64 - lowBitOffset)) & efLowMask;
+                        }
+                        lowBitOffset += efL;
+                        if (lowBitOffset >= 64) {
+                            lowWordAddr += 8;
+                            lowBitOffset -= 64;
+                        }
+                    }
+
+                    Unsafe.getUnsafe().putLong(
+                            blockBufferAddr + (long) (totalBuf + bufPos) * Long.BYTES,
+                            ((base + trail) << efL) | low);
+                    bufPos++; efOutputCount++; base--;
                     word &= word - 1;
                 }
+
+                totalBuf += chunkCount;
                 efHighWordIdx++;
-                blockBufferPos = 0;
-                blockBufferEnd = bufPos;
-                return;
             }
             blockBufferPos = 0;
-            blockBufferEnd = 0;
+            blockBufferEnd = totalBuf;
         }
 
         private void decodeNextFlatBatch() {
@@ -689,10 +713,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             long pos = encodedAddr;
             int firstWord = Unsafe.getUnsafe().getInt(pos);
-
-            // Elias-Fano format: set up streaming state, no delta blocks to parse
             if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
-                pos += 4; // skip sentinel
+                pos += 4;
                 efTotalCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
                 efL = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
                 long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
@@ -701,23 +723,17 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 int lowBytes = PostingIndexUtils.efLowBytesAligned(efTotalCount, efL);
                 efHighStart = pos + lowBytes;
                 efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
-                efHighWordIdx = 0;
-                efOutputCount = 0;
-                isEFMode = true;
-                encodedBlockCount = 0;
-                isFlatMode = false;
-                blockBufferPos = 0;
-                blockBufferEnd = 0;
-                constantDeltaRemaining = 0;
+                efHighWordIdx = 0; efOutputCount = 0;
+                isEFMode = true; encodedBlockCount = 0; isFlatMode = false;
+                blockBufferPos = 0; blockBufferEnd = 0; constantDeltaRemaining = 0;
                 return;
             }
-
             int blockCount = firstWord;
+            isEFMode = false;
             if (blockCount < 0 || blockCount > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
                 throw CairoException.critical(0).put("corrupt posting index: invalid block count [blockCount=")
                         .put(blockCount).put(", totalValues=").put(totalValueCount).put(']');
             }
-            isEFMode = false;
             pos += 4;
 
             srcValueCountsAddr = pos;
