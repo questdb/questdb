@@ -953,14 +953,19 @@ public class PostingIndexWriter implements IndexWriter {
         return switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE ->
                     CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+            case ColumnType.FLOAT ->
+                    CoveringCompressor.compressFloats(rawBuf, valueCount, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
             case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
                     CoveringCompressor.compressLongs(rawBuf, valueCount, destBuf);
-            case ColumnType.FLOAT, ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL,
+            case ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL,
                  ColumnType.DECIMAL32 ->
                     CoveringCompressor.compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+                    CoveringCompressor.compressShorts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+                    CoveringCompressor.compressBytes(rawBuf, valueCount, destBuf, longWorkspaceAddr);
             default -> {
-                // Raw copy for all other fixed-width types: BYTE, SHORT, CHAR, BOOLEAN,
-                // GEOBYTE, GEOSHORT, UUID, LONG256, DECIMAL8/16/128/256, etc.
+                // Raw copy for remaining fixed-width types: UUID, LONG256, DECIMAL128/256
                 Unsafe.getUnsafe().putInt(destBuf, valueCount);
                 Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
                 yield 4 + (valueCount << shift);

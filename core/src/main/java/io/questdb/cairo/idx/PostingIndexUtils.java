@@ -456,11 +456,20 @@ public final class PostingIndexUtils {
             return 4;
         }
         if (useEliasFano) {
+            // Copy values to deltasAddr for the EF trial encode, then use the
+            // Java array for delta-FoR (encodeKeyDeltaFoR reads from the array,
+            // not deltasAddr, avoiding aliasing issues).
             long srcAddr = ctx.deltasAddr;
             for (int i = 0; i < count; i++) {
                 Unsafe.getUnsafe().putLong(srcAddr + (long) i * Long.BYTES, values[i]);
             }
-            return encodeKeyEF(srcAddr, count, destAddr);
+            int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr);
+            int deltaSize = encodeKeyDeltaFoR(values, count, destAddr, ctx);
+            if (efSize < deltaSize) {
+                Unsafe.getUnsafe().copyMemory(ctx.efTrialAddr, destAddr, efSize);
+                return efSize;
+            }
+            return deltaSize;
         }
         return encodeKeyDeltaFoR(values, count, destAddr, ctx);
     }
@@ -617,9 +626,30 @@ public final class PostingIndexUtils {
             return 4;
         }
         if (useEliasFano) {
-            return encodeKeyEF(srcAddr, count, destAddr);
+            return encodeKeyNativeAdaptive(srcAddr, count, destAddr, ctx);
         }
         return encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
+    }
+
+    /**
+     * Encodes a key using the smaller of EF and delta-FoR.
+     * Trial-encodes with both codecs and picks the winner. The format sentinel
+     * (EF_FORMAT_SENTINEL for EF, positive blockCount for delta-FoR) allows the
+     * decoder to auto-detect the format, so mixed keys within a stride work
+     * transparently.
+     */
+    public static int encodeKeyNativeAdaptive(long srcAddr, int count, long destAddr, EncodeContext ctx) {
+        if (count == 0) {
+            Unsafe.getUnsafe().putInt(destAddr, 0);
+            return 4;
+        }
+        int efSize = encodeKeyEF(srcAddr, count, ctx.efTrialAddr);
+        int deltaSize = encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
+        if (efSize < deltaSize) {
+            Unsafe.getUnsafe().copyMemory(ctx.efTrialAddr, destAddr, efSize);
+            return efSize;
+        }
+        return deltaSize;
     }
 
     /**
@@ -1271,6 +1301,8 @@ public final class PostingIndexUtils {
         long blockValueCountsAddr;
         int deltaCapacity;
         long deltasAddr;
+        long efTrialAddr;
+        int efTrialCapacity;
         // Native residuals buffer for SIMD packing (BLOCK_CAPACITY * 8 bytes)
         long nativeResidualsAddr;
         long residualsAddr;
@@ -1300,6 +1332,11 @@ public final class PostingIndexUtils {
             }
             blockCapacity = 0;
             deltaCapacity = 0;
+            if (efTrialAddr != 0) {
+                Unsafe.free(efTrialAddr, efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
+                efTrialAddr = 0;
+                efTrialCapacity = 0;
+            }
             if (residualsAddr != 0) {
                 Unsafe.free(residualsAddr, (long) residualsCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 residualsAddr = 0;
@@ -1364,6 +1401,14 @@ public final class PostingIndexUtils {
             }
             if (nativeResidualsAddr == 0 && PostingIndexNative.isNativeAvailable()) {
                 nativeResidualsAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            long needed = computeMaxEncodedSize(count);
+            if (needed > efTrialCapacity) {
+                if (efTrialAddr != 0) {
+                    Unsafe.free(efTrialAddr, efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
+                }
+                efTrialCapacity = (int) needed;
+                efTrialAddr = Unsafe.malloc(efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
             }
         }
     }

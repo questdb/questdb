@@ -217,8 +217,9 @@ public class PostingIndexBenchmarkSuite {
                             sum += switch (s.columnType) {
                                 case "DOUBLE" -> (long) crc.getCoveredDouble(0);
                                 case "FLOAT" -> (long) crc.getCoveredFloat(0);
-                                case "LONG" -> crc.getCoveredLong(0);
-                                case "INT" -> crc.getCoveredInt(0);
+                                case "LONG", "DECIMAL64" -> crc.getCoveredLong(0);
+                                case "INT", "DECIMAL32" -> crc.getCoveredInt(0);
+                                case "SHORT" -> crc.getCoveredShort(0);
                                 default -> 0;
                             };
                         }
@@ -228,8 +229,9 @@ public class PostingIndexBenchmarkSuite {
                             sum += switch (s.columnType) {
                                 case "DOUBLE" -> (long) Unsafe.getUnsafe().getDouble(s.colAddr + rowId * 8);
                                 case "FLOAT" -> (long) Unsafe.getUnsafe().getFloat(s.colAddr + rowId * 4);
-                                case "LONG" -> Unsafe.getUnsafe().getLong(s.colAddr + rowId * 8);
-                                case "INT" -> Unsafe.getUnsafe().getInt(s.colAddr + rowId * 4);
+                                case "LONG", "DECIMAL64" -> Unsafe.getUnsafe().getLong(s.colAddr + rowId * 8);
+                                case "INT", "DECIMAL32" -> Unsafe.getUnsafe().getInt(s.colAddr + rowId * 4);
+                                case "SHORT" -> Unsafe.getUnsafe().getShort(s.colAddr + rowId * 2);
                                 default -> 0;
                             };
                         }
@@ -484,7 +486,7 @@ public class PostingIndexBenchmarkSuite {
         // --- Sidecar ---
         out.println("── Sidecar Compression (ops/s, higher=better) ────────────────────────────────────");
         out.printf("  %-8s %10s %10s %8s%n", "type", "baseline", "covering", "ratio");
-        for (String t : new String[]{"DOUBLE", "FLOAT", "LONG", "INT"}) {
+        for (String t : new String[]{"DOUBLE", "FLOAT", "LONG", "INT", "DECIMAL64", "DECIMAL32", "SHORT"}) {
             Double base = scores.get("sidecarRead/" + t + "/baseline");
             Double cov = scores.get("sidecarRead/" + t + "/covering");
             if (base != null && cov != null) {
@@ -973,7 +975,7 @@ public class PostingIndexBenchmarkSuite {
         static final int ROWS = KEYS * VPK;
         long colAddr;
         int colType, colShift, colSize;
-        @Param({"DOUBLE", "FLOAT", "LONG", "INT"})
+        @Param({"DOUBLE", "FLOAT", "LONG", "INT", "DECIMAL64", "DECIMAL32", "SHORT"})
         String columnType;
         CairoConfiguration config;
         String dir;
@@ -1004,6 +1006,21 @@ public class PostingIndexBenchmarkSuite {
                     colShift = 2;
                     colSize = 4;
                 }
+                case "DECIMAL64" -> {
+                    colType = ColumnType.DECIMAL64;
+                    colShift = 3;
+                    colSize = 8;
+                }
+                case "DECIMAL32" -> {
+                    colType = ColumnType.DECIMAL32;
+                    colShift = 2;
+                    colSize = 4;
+                }
+                case "SHORT" -> {
+                    colType = ColumnType.SHORT;
+                    colShift = 1;
+                    colSize = 2;
+                }
                 default -> throw new IllegalArgumentException(columnType);
             }
 
@@ -1023,6 +1040,13 @@ public class PostingIndexBenchmarkSuite {
                     case "LONG" ->
                             Unsafe.getUnsafe().putLong(colAddr + (long) i * 8, 1_700_000_000_000_000L + rng.nextInt(1_000_000));
                     case "INT" -> Unsafe.getUnsafe().putInt(colAddr + (long) i * 4, rng.nextInt(10_000));
+                    case "DECIMAL64" ->
+                            // Prices with scale=2: 100.00–1000.00 → unscaled 10_000–100_000
+                            Unsafe.getUnsafe().putLong(colAddr + (long) i * 8, 10_000L + rng.nextInt(90_000));
+                    case "DECIMAL32" ->
+                            // Prices with scale=2: 20.00–25.00 → unscaled 2_000–2_500
+                            Unsafe.getUnsafe().putInt(colAddr + (long) i * 4, 2_000 + rng.nextInt(500));
+                    case "SHORT" -> Unsafe.getUnsafe().putShort(colAddr + (long) i * 2, (short) rng.nextInt(1_000));
                 }
             }
 

@@ -426,23 +426,59 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         private void decodeNextEFChunk() {
-            while (efHighWordIdx < efNumHighWords && efOutputCount < efTotalCount) {
+            // Fused single-pass: extract low bits from a sliding 64-bit window
+            // while scanning high bits, writing each value in one store.
+            // Accumulates across multiple high-bits words to fill the buffer.
+            int totalBuf = 0;
+
+            // Load low-bits window at current position
+            long lowBitPos = (long) efOutputCount * efL;
+            long lowWordAddr = efLowStart + ((lowBitPos >>> 6) << 3);
+            int lowBitOffset = (int) (lowBitPos & 63);
+
+            while (efHighWordIdx < efNumHighWords && efOutputCount < efTotalCount && totalBuf < blockBufferCapacity) {
                 long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
                 if (word == 0) { efHighWordIdx++; continue; }
-                int bufPos = 0;
+                int chunkCount = Math.min(Long.bitCount(word), efTotalCount - efOutputCount);
+                if (chunkCount > blockBufferCapacity - totalBuf) {
+                    break;
+                }
+
                 long base = (long) efHighWordIdx * 64 - efOutputCount;
-                while (word != 0 && efOutputCount < efTotalCount) {
+                int bufPos = 0;
+                while (word != 0 && bufPos < chunkCount) {
                     int trail = Long.numberOfTrailingZeros(word);
-                    long low = PostingIndexUtils.readBitsWord(efLowStart, (long) efOutputCount * efL, efL) & efLowMask;
-                    Unsafe.getUnsafe().putLong(blockBufferAddr + (long) bufPos * Long.BYTES, ((base + trail) << efL) | low);
+
+                    // Extract L low bits from the sliding window
+                    long low;
+                    if (efL == 0) {
+                        low = 0;
+                    } else {
+                        long lowWord = Unsafe.getUnsafe().getLong(lowWordAddr);
+                        low = (lowWord >>> lowBitOffset) & efLowMask;
+                        if (lowBitOffset + efL > 64) {
+                            // Spans two words — merge bits from next word
+                            low |= (Unsafe.getUnsafe().getLong(lowWordAddr + 8) << (64 - lowBitOffset)) & efLowMask;
+                        }
+                        lowBitOffset += efL;
+                        if (lowBitOffset >= 64) {
+                            lowWordAddr += 8;
+                            lowBitOffset -= 64;
+                        }
+                    }
+
+                    Unsafe.getUnsafe().putLong(
+                            blockBufferAddr + (long) (totalBuf + bufPos) * Long.BYTES,
+                            ((base + trail) << efL) | low);
                     bufPos++; efOutputCount++; base--;
                     word &= word - 1;
                 }
+
+                totalBuf += chunkCount;
                 efHighWordIdx++;
-                blockBufferPos = 0; blockBufferEnd = bufPos;
-                return;
             }
-            blockBufferPos = 0; blockBufferEnd = 0;
+            blockBufferPos = 0;
+            blockBufferEnd = totalBuf;
         }
 
         private void decodeNextFlatBatch() {
