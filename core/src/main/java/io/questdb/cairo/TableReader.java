@@ -254,6 +254,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txFile);
             freeColumns();
             freeParquetPartitions();
+            Misc.free(parquetMetaReader);
             freeTempMem();
             Misc.free(txnScoreboard);
             Misc.free(path);

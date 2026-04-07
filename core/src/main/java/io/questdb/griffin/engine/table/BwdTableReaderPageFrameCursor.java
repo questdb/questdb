@@ -402,7 +402,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         while (targetGroup >= 0) {
             if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
                     targetGroup,
-                    reenterParquetDecoder,
+                    metadata,
                     filterList,
                     filterBufEnd
             )) {

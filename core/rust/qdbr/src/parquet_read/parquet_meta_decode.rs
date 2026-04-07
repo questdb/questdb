@@ -345,10 +345,11 @@ pub fn find_row_group_by_timestamp(
     Ok((2 * row_group_count + 1) as u64)
 }
 
-/// Row group filter pushdown using `_pm` metadata for statistics and
-/// the parquet file for bloom filters.
+/// Row group filter pushdown using `_pm` metadata for both statistics and
+/// bloom filters. Bloom filter bitsets are stored inline in the `_pm`
+/// out-of-line region, so this function reads everything from the
+/// `parquet_meta_reader` slice and never touches the parquet data file.
 pub fn can_skip_row_group(
-    _file_data: &[u8],
     parquet_meta_reader: &ParquetMetaReader,
     row_group_index: usize,
     filters: &[ColumnFilterPacked],
@@ -864,7 +865,7 @@ mod tests {
         let reader = ParquetMetaReader::new(&pm, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
-        assert!(can_skip_row_group(&[], &reader, 0, &[filter], 0)?);
+        assert!(can_skip_row_group(&reader, 0, &[filter], 0)?);
         Ok(())
     }
 
@@ -874,7 +875,7 @@ mod tests {
         let reader = ParquetMetaReader::new(&pm, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
-        assert!(!can_skip_row_group(&[], &reader, 0, &[filter], 0)?);
+        assert!(!can_skip_row_group(&reader, 0, &[filter], 0)?);
         Ok(())
     }
 
@@ -884,7 +885,7 @@ mod tests {
         let reader = ParquetMetaReader::new(&pm, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NOT_NULL, 0, ColumnTypeTag::Long as i32);
-        assert!(can_skip_row_group(&[], &reader, 0, &[filter], 0)?);
+        assert!(can_skip_row_group(&reader, 0, &[filter], 0)?);
         Ok(())
     }
 
@@ -894,7 +895,7 @@ mod tests {
         let reader = ParquetMetaReader::new(&pm, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NOT_NULL, 0, ColumnTypeTag::Long as i32);
-        assert!(!can_skip_row_group(&[], &reader, 0, &[filter], 0)?);
+        assert!(!can_skip_row_group(&reader, 0, &[filter], 0)?);
         Ok(())
     }
 
@@ -913,7 +914,7 @@ mod tests {
             ColumnTypeTag::Long as i32,
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
-        assert!(can_skip_row_group(&[], &reader, 0, &[filter], buf_end)?);
+        assert!(can_skip_row_group(&reader, 0, &[filter], buf_end)?);
         Ok(())
     }
 
@@ -932,7 +933,7 @@ mod tests {
             ColumnTypeTag::Long as i32,
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
-        assert!(!can_skip_row_group(&[], &reader, 0, &[filter], buf_end)?);
+        assert!(!can_skip_row_group(&reader, 0, &[filter], buf_end)?);
         Ok(())
     }
 
@@ -951,7 +952,7 @@ mod tests {
             ColumnTypeTag::Long as i32,
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
-        assert!(can_skip_row_group(&[], &reader, 0, &[filter], buf_end)?);
+        assert!(can_skip_row_group(&reader, 0, &[filter], buf_end)?);
         Ok(())
     }
 
@@ -970,7 +971,7 @@ mod tests {
             ColumnTypeTag::Long as i32,
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
-        assert!(can_skip_row_group(&[], &reader, 0, &[filter], buf_end)?);
+        assert!(can_skip_row_group(&reader, 0, &[filter], buf_end)?);
         Ok(())
     }
 
@@ -989,7 +990,7 @@ mod tests {
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
         // No stats → conservative, cannot skip.
-        assert!(!can_skip_row_group(&[], &reader, 0, &[filter], buf_end)?);
+        assert!(!can_skip_row_group(&reader, 0, &[filter], buf_end)?);
         Ok(())
     }
 
@@ -998,7 +999,7 @@ mod tests {
         let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)]).unwrap();
         let reader = ParquetMetaReader::new(&pm, fo).unwrap();
 
-        let err = can_skip_row_group(&[], &reader, 5, &[], 0);
+        let err = can_skip_row_group(&reader, 5, &[], 0);
         assert!(err.is_err());
         assert!(err
             .unwrap_err()
@@ -1013,7 +1014,7 @@ mod tests {
 
         // Column index 99 doesn't exist → filter is ignored, no skip.
         let filter = make_filter(99, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
-        assert!(!can_skip_row_group(&[], &reader, 0, &[filter], 0)?);
+        assert!(!can_skip_row_group(&reader, 0, &[filter], 0)?);
         Ok(())
     }
 
@@ -1022,7 +1023,7 @@ mod tests {
         let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)])?;
         let reader = ParquetMetaReader::new(&pm, fo)?;
 
-        assert!(!can_skip_row_group(&[], &reader, 0, &[], 0)?);
+        assert!(!can_skip_row_group(&reader, 0, &[], 0)?);
         Ok(())
     }
 
@@ -1327,7 +1328,7 @@ mod tests {
         );
         let buf_end = unsafe { filter_value.as_ptr().add(16) } as u64;
         assert!(
-            can_skip_row_group(&[], &reader, 0, &[filter], buf_end)?,
+            can_skip_row_group(&reader, 0, &[filter], buf_end)?,
             "should skip row group when filter value is outside OOL stat range"
         );
         Ok(())

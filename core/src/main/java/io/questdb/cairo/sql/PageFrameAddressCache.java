@@ -268,7 +268,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 }
             }
         } else {
-            parquetPartitionDecoders.setQuick(frameIndex, frame.getParquetPartitionDecoder());
+            parquetDecoders.setQuick(frameIndex, frame.getParquetDecoder());
         }
     }
 }

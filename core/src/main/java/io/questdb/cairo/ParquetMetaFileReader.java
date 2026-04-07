@@ -24,11 +24,32 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
 /**
  * Zero-allocation reader for _pm parquet metadata files.
  * Reads directly from mmaped memory via Unsafe offset arithmetic.
+ * <p>
+ * Implements {@link ParquetRowGroupSkipper} for filter-pushdown row group
+ * pruning. The first call to {@link #canSkipRowGroup} lazily allocates a
+ * native handle that caches the parsed {@code _pm} header/footer; the
+ * handle is reused across all subsequent skip calls and freed by
+ * {@link #close()} / {@link #clear()}.
+ * <p>
+ * <b>Lifecycle contract:</b> Callers MUST invoke {@link #close()} (or
+ * {@link #clear()}) BEFORE munmapping the underlying {@code _pm} file. The
+ * native handle borrows from the mmap and reading after unmap is undefined
+ * behaviour. {@code ShowPartitionsRecordCursorFactory.closeParquetMeta()}
+ * is the reference pattern: clear, then munmap.
+ * <p>
+ * <b>Thread safety:</b> Not thread-safe per instance. The lazy native
+ * handle initialization is racy if two threads enter {@link #canSkipRowGroup}
+ * concurrently. Each worker thread must hold its own reader instance.
  * <p>
  * Binary format (little-endian):
  * <pre>
@@ -56,7 +77,7 @@ import io.questdb.std.Unsafe;
  *   [..]  FOOTER_LENGTH          u32  (total bytes from footer start through CRC)
  * </pre>
  */
-public class ParquetMetaFileReader {
+public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietCloseable {
 
     private static final int EXPECTED_FORMAT_VERSION = 1;
 
@@ -109,23 +130,31 @@ public class ParquetMetaFileReader {
     private static final int COLUMN_CHUNK_MAX_STAT_OFF = 56;
 
     private long addr;
-    private long fileSize;
-    private long footerAddr;
     private int columnCount;
-    private int rowGroupCount;
-    private long featureFlags;
     // Address of the column tops section (valid only when FEATURE_COLUMN_TOPS is set).
     private long columnTopsAddr;
+    private long featureFlags;
+    private long fileSize;
+    private long footerAddr;
+    // Lazily allocated native handle to a JniParquetMetaReader. Created on
+    // the first canSkipRowGroup call and freed by clear()/close().
+    private long nativeReaderPtr;
+    private int rowGroupCount;
 
     /**
      * Initializes (or reinitializes) the reader with the given mmap address and file size.
      * The footer offset is derived from the 4-byte trailer at the end of the file.
+     * <p>
+     * Calls {@link #clear()} first so that any previously allocated native
+     * handle from a prior {@code of()} call is released before storing the
+     * new state.
      *
      * @param addr     base address of the mmaped _pm file
      * @param fileSize size of the mmaped file in bytes
      * @throws CairoException if the format version is unsupported or the file is too small
      */
     public void of(long addr, long fileSize) {
+        clear();
         if (fileSize < FOOTER_TRAILER_SIZE + FOOTER_FIXED_SIZE) {
             throw CairoException.critical(0)
                     .put("pm file too small [fileSize=").put(fileSize).put(']');
@@ -164,7 +193,24 @@ public class ParquetMetaFileReader {
         }
     }
 
+    @Override
+    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
+        assert addr != 0;
+        assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
+        if (nativeReaderPtr == 0) {
+            nativeReaderPtr = createNativeReader(addr, fileSize);
+        }
+        return canSkipRowGroup0(
+                nativeReaderPtr,
+                rowGroupIndex,
+                filters.getAddress(),
+                (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER),
+                filterBufEnd
+        );
+    }
+
     public void clear() {
+        close();
         this.addr = 0;
         this.fileSize = 0;
         this.footerAddr = 0;
@@ -172,6 +218,24 @@ public class ParquetMetaFileReader {
         this.rowGroupCount = 0;
         this.featureFlags = 0;
         this.columnTopsAddr = 0;
+    }
+
+    /**
+     * Releases the lazily-allocated native reader handle, if any. Does not
+     * touch the in-memory header/footer state — accessors keep returning
+     * whatever was last loaded. This makes {@code close()} safe to call
+     * defensively on long-lived field instances that get re-{@code of()}-ed
+     * for new partitions.
+     * <p>
+     * Use {@link #clear()} to also wipe the in-memory state when fully
+     * tearing down the reader.
+     */
+    @Override
+    public void close() {
+        if (nativeReaderPtr != 0) {
+            destroyNativeReader(nativeReaderPtr);
+            nativeReaderPtr = 0;
+        }
     }
 
     public long getAddr() {
@@ -397,6 +461,14 @@ public class ParquetMetaFileReader {
         return addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT);
     }
 
+    private static native boolean canSkipRowGroup0(
+            long ptr,
+            int rowGroupIndex,
+            long filtersPtr,
+            int filterCount,
+            long filterBufEnd
+    );
+
     /**
      * Computes the byte offset past the last name string entry.
      * Name entries are stored as raw UTF-8 bytes (length from descriptor's NAME_LENGTH).
@@ -414,5 +486,13 @@ public class ParquetMetaFileReader {
             }
         }
         return end;
+    }
+
+    private static native long createNativeReader(long addr, long fileSize);
+
+    private static native void destroyNativeReader(long ptr);
+
+    static {
+        Os.init();
     }
 }

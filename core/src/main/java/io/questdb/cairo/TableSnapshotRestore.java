@@ -614,8 +614,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             final long parquetSize;
-            {
-                ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+            try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
                 parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
                 parquetSize = parquetMetaReader.getParquetFileSize();
             }

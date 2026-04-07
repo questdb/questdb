@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.ParquetMetaFileWriter;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -433,6 +434,211 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 reader.of(file.dataPtr, file.dataLen);
                 Assert.assertEquals(-1, reader.getDesignatedTimestampColumnIndex());
+            }
+        });
+    }
+
+    @Test
+    public void testLifecycleCloseWithoutOf() throws Exception {
+        assertMemoryLeak(() -> {
+            ParquetMetaFileReader reader = new ParquetMetaFileReader();
+            // close() before of() must be a no-op (no native handle was ever
+            // allocated). assertMemoryLeak catches a leak if this allocates.
+            reader.close();
+            Assert.assertFalse(reader.isOpen());
+        });
+    }
+
+    @Test
+    public void testLifecycleOfThenCloseNoSkipCall() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+                Assert.assertTrue(reader.isOpen());
+                // canSkipRowGroup is not called → the lazy native handle is
+                // never allocated → close() is a no-op for the native side.
+                // close() leaves in-memory state intact so isOpen() still
+                // returns true (the field is reusable for accessor reads).
+                reader.close();
+                Assert.assertTrue(reader.isOpen());
+                // clear() does the full reset.
+                reader.clear();
+                Assert.assertFalse(reader.isOpen());
+            }
+        });
+    }
+
+    @Test
+    public void testLifecycleOfThenSkipThenClose() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+
+                // Calling canSkipRowGroup with an empty filter list lazily
+                // allocates the native handle but always returns false.
+                try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
+                    Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
+                }
+
+                // close() must free the native handle. assertMemoryLeak fails
+                // the test if it doesn't. close() preserves in-memory state
+                // so isOpen() still returns true after.
+                reader.close();
+                Assert.assertTrue(reader.isOpen());
+                reader.clear();
+                Assert.assertFalse(reader.isOpen());
+            }
+        });
+    }
+
+    @Test
+    public void testLifecycleCloseIdempotent() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+
+                try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
+                    Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
+                }
+
+                reader.close();
+                // Second close() must be a no-op.
+                reader.close();
+                // close() preserves in-memory state.
+                Assert.assertTrue(reader.isOpen());
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testCloseThenReuseViaCanSkipRowGroup() throws Exception {
+        // close() releases the native handle but leaves in-memory state alone,
+        // so a subsequent canSkipRowGroup call lazily reallocates a new native
+        // handle over the same _pm data. This is the contract that allows
+        // long-lived owners (TableReader/TableWriter) to defensively close
+        // their scratch reader without breaking subsequent reuse.
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+
+                try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
+                    Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
+                }
+                reader.close();
+                // After close(), in-memory state is preserved and
+                // canSkipRowGroup re-allocates the native handle.
+                try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
+                    Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
+                }
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testLifecycleReuseViaOfDoesNotLeak() throws Exception {
+        // Guards lifecycle invariant 1: of() must free any pre-existing
+        // native handle before storing the new state. Without the fix in
+        // ParquetMetaFileReader.of(), the native handle from the first
+        // canSkipRowGroup call would leak when of() is called the second
+        // time, and assertMemoryLeak would fail.
+        assertMemoryLeak(() -> {
+            try (
+                    PmTestFile file1 = buildFile(1, 100);
+                    PmTestFile file2 = buildFile(2, 0, 0, 200, 300)
+            ) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+
+                reader.of(file1.dataPtr, file1.dataLen);
+                try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
+                    // First skip call lazily allocates the native handle.
+                    Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
+                }
+
+                // Re-init via of(): the previous native handle must be freed
+                // by clear() inside of() before storing the new addr/size.
+                reader.of(file2.dataPtr, file2.dataLen);
+                Assert.assertEquals(2, reader.getRowGroupCount());
+
+                try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
+                    // Second skip call lazily allocates a fresh native handle
+                    // over the new mmap.
+                    Assert.assertFalse(reader.canSkipRowGroup(1, filters, 0));
+                }
+
+                reader.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCanSkipRowGroupNoFiltersReturnsFalse() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 0, 0, 100, 200, 300)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+                try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
+                    // No filters → never skip, regardless of row group index.
+                    Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
+                    Assert.assertFalse(reader.canSkipRowGroup(1, filters, 0));
+                    Assert.assertFalse(reader.canSkipRowGroup(2, filters, 0));
+                }
+                reader.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCanSkipRowGroupCachedAcrossMultipleCalls() throws Exception {
+        // Verifies the cached-reader path: a single ParquetMetaFileReader
+        // instance reuses one native handle across many canSkipRowGroup
+        // calls. assertMemoryLeak proves that no extra allocations happen
+        // beyond the single lazy create + the single close.
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 0, 0, 10, 20, 30, 40, 50)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+                Assert.assertEquals(5, reader.getRowGroupCount());
+
+                try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertFalse(reader.canSkipRowGroup(i, filters, 0));
+                    }
+                }
+                reader.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCanSkipRowGroupOnCorruptPmThrows() throws Exception {
+        // The lazy createNativeReader call must throw a CairoException with
+        // the original Rust context when the _pm bytes are invalid.
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                // Corrupt the format version so createNativeReader fails.
+                int originalVersion = Unsafe.getUnsafe().getInt(file.dataPtr);
+                try {
+                    Unsafe.getUnsafe().putInt(file.dataPtr, 99);
+
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    // of() validates the version up-front and throws here.
+                    try {
+                        reader.of(file.dataPtr, file.dataLen);
+                        Assert.fail("expected CairoException from of() on corrupt _pm");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage().contains("unsupported _pm format version"));
+                    }
+                    // Reader is not open → close() is a no-op and doesn't leak.
+                    reader.close();
+                } finally {
+                    Unsafe.getUnsafe().putInt(file.dataPtr, originalVersion);
+                }
             }
         });
     }

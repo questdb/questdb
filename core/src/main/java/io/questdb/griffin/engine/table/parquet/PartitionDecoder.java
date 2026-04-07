@@ -43,7 +43,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 
 
-public class PartitionDecoder implements ParquetDecoder, QuietCloseable {
+public class PartitionDecoder implements ParquetDecoder, ParquetRowGroupSkipper, QuietCloseable {
     private static final long COLUMNS_PTR_OFFSET;
     private static final long COLUMN_COUNT_OFFSET;
     private final static long COLUMN_IDS_OFFSET;
@@ -92,6 +92,7 @@ public class PartitionDecoder implements ParquetDecoder, QuietCloseable {
      * @param filterBufEnd  exclusive end address of the filter values buffer, used for native bounds checking
      * @return true if the row group can be safely skipped
      */
+    @Override
     public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
         assert ptr != 0;
         assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;

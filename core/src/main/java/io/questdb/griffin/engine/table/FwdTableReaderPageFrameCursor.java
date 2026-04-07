@@ -360,7 +360,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             if (partitionLo < rowGroupEndRow) {
                 if (filterBufEnd != -1 && ParquetRowGroupFilter.canSkipRowGroup(
                         i,
-                        reenterParquetDecoder,
+                        metadata,
                         filterList,
                         filterBufEnd
                 )) {

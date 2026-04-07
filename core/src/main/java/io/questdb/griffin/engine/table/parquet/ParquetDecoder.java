@@ -42,8 +42,11 @@ import io.questdb.std.DirectLongList;
  * <p>
  * The interface covers only the operations needed by the memory pool: row group
  * decoding, file identity checks, and column metadata for column-ID mapping.
+ * Row group skipping is intentionally not part of this interface — see
+ * {@link ParquetRowGroupSkipper} for the dedicated pruning contract.
  *
  * @see PageFrameMemoryPool
+ * @see ParquetRowGroupSkipper
  */
 public interface ParquetDecoder {
 
@@ -135,15 +138,4 @@ public interface ParquetDecoder {
      * @param columnIndex zero-based column index within the parquet file
      */
     int getColumnId(int columnIndex);
-
-    /**
-     * Returns {@code true} when the row group can be skipped entirely based on
-     * min/max statistics and bloom filter checks against the supplied filter list.
-     *
-     * @param rowGroupIndex zero-based row group index
-     * @param filters       encoded filter descriptors produced by
-     *                      {@code ParquetRowGroupFilter.prepareFilterList()}
-     * @param filterBufEnd  end pointer of the filter value buffer
-     */
-    boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd);
 }

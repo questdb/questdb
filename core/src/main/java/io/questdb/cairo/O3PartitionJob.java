@@ -128,8 +128,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            {
-                ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+            try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
                 parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize);
                 parquetSize = parquetMetaReader.getParquetFileSize();
             }

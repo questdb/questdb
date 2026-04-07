@@ -45,13 +45,12 @@ import io.questdb.std.Unsafe;
  */
 public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseable {
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+    private long allocator;
     private long decodeContextPtr;
     private long parquetAddr;
-    private long parquetSize;
     private long parquetMetaAddr;
     private long parquetMetaSize;
-    private long allocator;
-    private boolean owned;
+    private long parquetSize;
 
     public static boolean decodeNoNeedToDecodeFlag(long encodedIndex) {
         return (encodedIndex & 1) == 1;
@@ -78,26 +77,23 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         this.parquetSize = parquetSize;
         this.allocator = Unsafe.getNativeAllocator(memoryTag);
         this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
-        this.owned = true;
     }
 
     /**
-     * Creates a non-owning shallow copy that shares mmapped regions with the source.
-     * Each copy gets its own DecodeContext for thread-safe decoding.
-     * The source must remain valid for the lifetime of this instance.
+     * Creates a shallow copy that shares mmapped regions with the source.
+     * Each copy gets its own DecodeContext for thread-safe decoding and its
+     * own {@link ParquetMetaFileReader} (with its own lazy native handle).
+     * The source must remain valid for the lifetime of this instance — the
+     * underlying mmap must outlive both the source and the copy.
      */
     public void of(ParquetMetaPartitionDecoder other) {
+        destroy();
         this.parquetMetaAddr = other.parquetMetaAddr;
         this.parquetMetaSize = other.parquetMetaSize;
         this.parquetAddr = other.parquetAddr;
         this.parquetSize = other.parquetSize;
         this.allocator = other.allocator;
         this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
-        if (decodeContextPtr != 0) {
-            PartitionDecoder.destroyDecodeContext(decodeContextPtr);
-            decodeContextPtr = 0;
-        }
-        owned = false;
     }
 
     public ParquetMetaFileReader metadata() {
@@ -237,58 +233,6 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         );
     }
 
-    /**
-     * Check if a row group can be skipped based on min/max statistics and bloom
-     * filter conditions. Reads stats from _pm and bloom filters from the parquet file.
-     */
-    public boolean canSkipRowGroup(int rowGroupIndex, io.questdb.std.DirectLongList filters, long filterBufEnd) {
-        assert parquetMetaAddr != 0;
-        assert filters.size() % io.questdb.griffin.engine.table.ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
-        return canSkipRowGroup(
-                parquetAddr, parquetSize, parquetMetaAddr, parquetMetaSize,
-                rowGroupIndex,
-                filters.getAddress(),
-                (int) (filters.size() / io.questdb.griffin.engine.table.ParquetRowGroupFilter.LONGS_PER_FILTER),
-                filterBufEnd
-        );
-    }
-
-    /**
-     * Checks if all filter values are absent from a bloom filter for a column chunk.
-     *
-     * @return true if all values are absent (row group can be skipped)
-     */
-    public boolean checkBloomFilter(
-            int rowGroupIndex,
-            int columnIndex,
-            int physicalType,
-            int fixedByteLen,
-            long filterValuesPtr,
-            int filterCount,
-            long filterBufEnd,
-            boolean hasNulls,
-            boolean isDecimal,
-            int qdbColumnType
-    ) {
-        long bloomOffset = parquetMetaReader.getChunkBloomFilterOffset(rowGroupIndex, columnIndex);
-        if (bloomOffset == 0) {
-            return false;
-        }
-        return checkBloomFilter(
-                parquetAddr,
-                parquetSize,
-                bloomOffset,
-                physicalType,
-                fixedByteLen,
-                filterValuesPtr,
-                filterCount,
-                filterBufEnd,
-                hasNulls,
-                isDecimal,
-                qdbColumnType
-        );
-    }
-
     public long findRowGroupByTimestamp(
             long timestamp,
             long rowLo,
@@ -318,16 +262,12 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             PartitionDecoder.destroyDecodeContext(decodeContextPtr);
             decodeContextPtr = 0;
         }
-        if (owned) {
-            parquetMetaReader.clear();
-            parquetMetaAddr = 0;
-            parquetMetaSize = 0;
-            parquetAddr = 0;
-            parquetSize = 0;
-        }
+        parquetMetaReader.clear();
+        parquetMetaAddr = 0;
+        parquetMetaSize = 0;
+        parquetAddr = 0;
+        parquetSize = 0;
     }
-
-    // ── Native methods ─────────────────────────────────────────────────
 
     private static native int decodeRowGroup(
             long allocator,
@@ -343,20 +283,6 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             int rowLo,
             int rowHi
     ) throws CairoException;
-
-    private static native boolean checkBloomFilter(
-            long parquetFilePtr,
-            long parquetFileSize,
-            long bloomFilterOffset,
-            int physicalType,
-            int fixedByteLen,
-            long filterValuesPtr,
-            int filterCount,
-            long filterBufEnd,
-            boolean hasNulls,
-            boolean isDecimal,
-            int qdbColumnType
-    );
 
     private static native void decodeRowGroupWithRowFilter(
             long allocator,
@@ -392,17 +318,6 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             int rowHi,
             long filteredRowsPtr,
             long filteredRowsSize
-    ) throws CairoException;
-
-    private static native boolean canSkipRowGroup(
-            long parquetFilePtr,
-            long parquetFileSize,
-            long parquetMetaPtr,
-            long parquetMetaSize,
-            int rowGroupIndex,
-            long filtersPtr,
-            int filterCount,
-            long filterBufEnd
     ) throws CairoException;
 
     private static native long findRowGroupByTimestamp(

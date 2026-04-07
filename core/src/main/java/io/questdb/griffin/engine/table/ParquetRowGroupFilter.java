@@ -26,11 +26,11 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.MemoryCARWImpl;
-import io.questdb.cairo.ParquetMetaFileReader;
-import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -65,18 +65,18 @@ public final class ParquetRowGroupFilter {
      * Call {@link #prepareFilterList} once per partition before using this method.
      *
      * @param rowGroupIndex the row group index to check
-     * @param decoder       the Parquet partition decoder
+     * @param skipper       the row group skipper (typically backed by {@link ParquetMetaFileReader} or {@link PartitionDecoder})
      * @param filterList    filter descriptors prepared by {@link #prepareFilterList}
      * @return true if the row group can be safely skipped, false otherwise
      */
     public static boolean canSkipRowGroup(
             int rowGroupIndex,
-            ParquetDecoder decoder,
+            ParquetRowGroupSkipper skipper,
             DirectLongList filterList,
             long filterBufEnd
     ) {
         try {
-            boolean skip = decoder.canSkipRowGroup(rowGroupIndex, filterList, filterBufEnd);
+            boolean skip = skipper.canSkipRowGroup(rowGroupIndex, filterList, filterBufEnd);
             if (skip) {
                 rowGroupsSkipped.incrementAndGet();
             }

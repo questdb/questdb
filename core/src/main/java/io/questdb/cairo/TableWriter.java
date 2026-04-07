@@ -5486,6 +5486,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(dedupColumnCommitAddresses);
         Misc.free(bloomFilterIndexes);
         Misc.free(parquetDecoder);
+        Misc.free(parquetMetaReader);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
         Misc.free(walTxnDetails);
