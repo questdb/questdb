@@ -41,6 +41,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -361,13 +362,13 @@ public class QwpSymbolDecoderTest {
             // Row 0: "a"
             cursor.advanceRow();
             Assert.assertFalse(cursor.isNull());
-            Assert.assertEquals("a", cursor.getSymbolCharSequence());
+            Assert.assertEquals("a", Objects.toString(cursor.getSymbolCharSequence()));
             Assert.assertEquals(0, cursor.getSymbolIndex());
 
             // Row 1: "b"
             cursor.advanceRow();
             Assert.assertFalse(cursor.isNull());
-            Assert.assertEquals("b", cursor.getSymbolCharSequence());
+            Assert.assertEquals("b", Objects.toString(cursor.getSymbolCharSequence()));
             Assert.assertEquals(1, cursor.getSymbolIndex());
         } catch (QwpParseException e) {
             Assert.fail("Unexpected parse exception: " + e.getMessage());
@@ -446,7 +447,7 @@ public class QwpSymbolDecoderTest {
                                     table.isColumnNull(colIdx));
                             QwpSymbolColumnCursor cursor = table.getSymbolColumn(colIdx);
                             Assert.assertEquals("Row " + i + " value mismatch",
-                                    values[i], cursor.getSymbolCharSequence());
+                                    values[i], Objects.toString(cursor.getSymbolCharSequence()));
                         }
                     }
                     Assert.assertFalse(table.hasNextRow());
