@@ -33,10 +33,10 @@ import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.mp.Job;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -1171,93 +1171,6 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyQueryWithBindVariable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE ts_table (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO ts_table VALUES
-                    (1, '2024-01-01T00:00:00.000000Z'),
-                    (2, '2024-01-02T00:00:00.000000Z'),
-                    (3, '2024-01-03T00:00:00.000000Z')
-                    """);
-
-            bindVariableService.clear();
-            bindVariableService.setTimestamp(0, 1_704_153_600_000_000L); // 2024-01-02T00:00:00Z
-
-            CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID(
-                            "COPY (SELECT * FROM ts_table WHERE ts <= $1) TO 'bind_output' WITH FORMAT parquet PARTITION_BY DAY",
-                            sqlExecutionContext
-                    );
-
-            CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "bind_output" + File.separator + "\t2\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
-                                        x\tts
-                                        1\t2024-01-01T00:00:00.000000Z
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-01.parquet')"
-                        );
-                        assertSql("""
-                                        x\tts
-                                        2\t2024-01-02T00:00:00.000000Z
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-02.parquet')"
-                        );
-                        Assert.assertFalse("excluded partition should not exist",
-                                exportFileExists("bind_output" + File.separator + "2024-01-03"));
-                    });
-
-            testCopyExport(stmt, test);
-        });
-    }
-
-    @Test
-    public void testCopyQueryWithBindVariableStreaming() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE ts_table2 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO ts_table2 VALUES
-                    (1, '2024-01-01T00:00:00.000000Z'),
-                    (2, '2024-01-02T00:00:00.000000Z'),
-                    (3, '2024-01-03T00:00:00.000000Z')
-                    """);
-
-            bindVariableService.clear();
-            bindVariableService.setInt(0, 2);
-
-            CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID(
-                            "COPY (SELECT * FROM ts_table2 WHERE x <= $1) TO 'bind_streaming' WITH FORMAT parquet",
-                            sqlExecutionContext
-                    );
-
-            CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql(
-                                "export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "bind_streaming.parquet\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
-                        );
-                        assertSql("""
-                                        x\tts
-                                        1\t2024-01-01T00:00:00.000000Z
-                                        2\t2024-01-02T00:00:00.000000Z
-                                        """,
-                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_streaming.parquet') ORDER BY x"
-                        );
-                    });
-
-            testCopyExport(stmt, test);
-        });
-    }
-
-    @Test
     public void testCopyQueryToParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table source_table (id int, value double, name string)");
@@ -1371,6 +1284,93 @@ public class CopyExportTest extends AbstractCairoTest {
                                         31\t7.0\tc
                                         """,
                                 "SELECT * FROM read_parquet('" + exportRoot + File.separator + "arith_output.parquet') ORDER BY x_plus"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ts_table (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ts_table VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_153_600_000_000L); // 2024-01-02T00:00:00Z
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM ts_table WHERE ts <= $1) TO 'bind_output' WITH FORMAT parquet PARTITION_BY DAY",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bind_output" + File.separator + "\t2\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x\tts
+                                        1\t2024-01-01T00:00:00.000000Z
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-01.parquet')"
+                        );
+                        assertSql("""
+                                        x\tts
+                                        2\t2024-01-02T00:00:00.000000Z
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_output" + File.separator + "2024-01-02.parquet')"
+                        );
+                        Assert.assertFalse("excluded partition should not exist",
+                                exportFileExists("bind_output" + File.separator + "2024-01-03"));
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryWithBindVariableStreaming() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ts_table2 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ts_table2 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 2);
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM ts_table2 WHERE x <= $1) TO 'bind_streaming' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "bind_streaming.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        x\tts
+                                        1\t2024-01-01T00:00:00.000000Z
+                                        2\t2024-01-02T00:00:00.000000Z
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "bind_streaming.parquet') ORDER BY x"
                         );
                     });
 
@@ -2000,7 +2000,6 @@ public class CopyExportTest extends AbstractCairoTest {
         });
     }
 
-
     // Demonstration of proper copy export test pattern
     @Test
     public void testCopyTableToParquetWithExportLog() throws Exception {
@@ -2063,6 +2062,143 @@ public class CopyExportTest extends AbstractCairoTest {
                     6,
                     "table and column names that are SQL keywords have to be enclosed in double quotes, such as"
             );
+        });
+    }
+
+    @Test
+    public void testCopyVarcharInlinedTreatedAsNull() throws Exception {
+        // Bug: CopyExportRequestTask line 650 uses pageAddress==0 to detect
+        // column-top (all-null column).  For VARCHAR, short strings (<=9 bytes)
+        // are inlined in aux entries; the .d data file can be empty, making
+        // pageAddress 0.  The streaming writer then treats the entire column
+        // as null even though every row has a value.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_inl (
+                        ts TIMESTAMP,
+                        id INT,
+                        vc VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            // All values <=9 bytes ? inlined in aux entries ? .d file empty.
+            execute("""
+                    INSERT INTO vc_inl VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 'alpha'),
+                        ('2024-01-01T01:00:00.000000Z', 2, 'bravo'),
+                        ('2024-01-01T02:00:00.000000Z', 3, 'charlie')""");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM vc_inl) TO 'vc_inl_out' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_inl_out.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        ts\tid\tvc
+                                        2024-01-01T00:00:00.000000Z\t1\talpha
+                                        2024-01-01T01:00:00.000000Z\t2\tbravo
+                                        2024-01-01T02:00:00.000000Z\t3\tcharlie
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_inl_out.parquet') ORDER BY ts"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyVarcharMultiPartitionDictCorruption() throws Exception {
+        // Bug: the streaming Parquet writer merges multiple QuestDB partitions
+        // into a single row group.  Each partition emits its own DictPage for
+        // RLE_DICTIONARY-encoded VARCHAR columns, violating the Parquet spec
+        // (at most one dictionary page per column chunk).
+        //
+        // The reader decompresses each DictPage into a shared buffer.  The
+        // VarcharSlice decoder stores raw pointers into that buffer, so when
+        // a later DictPage overwrites it, aux entries from earlier DataPages
+        // point at the wrong strings.
+        //
+        // Observed: all rows return the *last* partition's values.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE vc_multi (
+                        ts TIMESTAMP,
+                        id INT,
+                        vc VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+
+            // Values >9 bytes ? split storage ? .d file non-empty ? avoids
+            // the inlined-null bug so we isolate the dict corruption.
+            //
+            // Partition 1: 3 entries, each 15 chars ? dict offsets 4, 23, 42
+            // Partition 2: 3 entries, each 25 chars ? dict offsets 4, 33, 62
+            // Partition 3: 1 entry,  15 chars       ? dict occupies 19 bytes
+            //
+            // After dict 3 is decompressed, the buffer holds:
+            //   [0..19)   = dict 3's data
+            //   [19..91)  = stale leftover from dict 2
+            //
+            // Partition 1's aux pointers (from dict 1) point at offsets
+            // 4, 23, 42 ? but the buffer now contains dict 3 + dict 2 leftovers.
+            // Offsets 23 and 42 land INSIDE dict 2's entries at misaligned
+            // byte positions (mid-string or on a length prefix), producing
+            // garbled/nonsensical strings.
+            execute("""
+                    INSERT INTO vc_multi VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1, 'alpha_partition1'),
+                        ('2024-01-01T01:00:00.000000Z', 2, 'bravo_partition1'),
+                        ('2024-01-01T02:00:00.000000Z', 3, 'chars_partition1')""");
+            execute("""
+                    INSERT INTO vc_multi VALUES
+                        ('2024-01-02T00:00:00.000000Z', 4, 'delta____longer_partition2'),
+                        ('2024-01-02T01:00:00.000000Z', 5, 'echo_____longer_partition2'),
+                        ('2024-01-02T02:00:00.000000Z', 6, 'foxtrot__longer_partition2')""");
+            execute("""
+                    INSERT INTO vc_multi VALUES
+                        ('2024-01-03T00:00:00.000000Z', 7, 'golf_partition03'),
+                        ('2024-01-03T01:00:00.000000Z', 8, 'golf_partition03'),
+                        ('2024-01-03T02:00:00.000000Z', 9, 'golf_partition03')""");
+
+            // DIRECT_PAGE_FRAME: one page frame per partition, all <100k rows
+            // so they accumulate and flush together in finishExport().
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (SELECT * FROM vc_multi) TO 'vc_multi_out' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "vc_multi_out.parquet\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertSql("""
+                                        ts\tid\tvc
+                                        2024-01-01T00:00:00.000000Z\t1\talpha_partition1
+                                        2024-01-01T01:00:00.000000Z\t2\tbravo_partition1
+                                        2024-01-01T02:00:00.000000Z\t3\tchars_partition1
+                                        2024-01-02T00:00:00.000000Z\t4\tdelta____longer_partition2
+                                        2024-01-02T01:00:00.000000Z\t5\techo_____longer_partition2
+                                        2024-01-02T02:00:00.000000Z\t6\tfoxtrot__longer_partition2
+                                        2024-01-03T00:00:00.000000Z\t7\tgolf_partition03
+                                        2024-01-03T01:00:00.000000Z\t8\tgolf_partition03
+                                        2024-01-03T02:00:00.000000Z\t9\tgolf_partition03
+                                        """,
+                                "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_multi_out.parquet') ORDER BY ts"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
         });
     }
 
