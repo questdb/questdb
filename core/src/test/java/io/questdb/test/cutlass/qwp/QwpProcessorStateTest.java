@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -38,9 +39,13 @@ import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpSchema;
+import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
+import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -85,6 +90,71 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 } finally {
                     Unsafe.free(ptr, 100, MemoryTag.NATIVE_HTTP_CONN);
                 }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testAddDataIgnoresZeroLengthInput() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // lo == hi → len=0 → early return
+                long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_HTTP_CONN);
+                try {
+                    state.addData(ptr, ptr);
+                    Assert.assertTrue(state.isOk());
+                } finally {
+                    Unsafe.free(ptr, 64, MemoryTag.NATIVE_HTTP_CONN);
+                }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCairoExceptionStatusReturnsInternalErrorForCriticalException() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Replace tudCache with one that throws a critical CairoException
+                Field tudCacheField = QwpProcessorState.class.getDeclaredField("tudCache");
+                tudCacheField.setAccessible(true);
+                Misc.free((QwpTudCache) tudCacheField.get(state));
+                DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+                tudCacheField.set(state, new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY) {
+                    @Override
+                    public WalTableUpdateDetails getTableUpdateDetails(
+                            SecurityContext secCtx, Utf8Sequence tableName,
+                            QwpColumnDef[] schema, QwpTableBlockCursor cursor, int maxTables) {
+                        throw CairoException.critical(0).put("simulated critical error");
+                    }
+                });
+
+                // Send a minimal valid QWP message (0 columns, 0 rows)
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0,    // rowCount=0
+                        0,    // columnCount=0
+                        0x00, // SCHEMA_MODE_FULL
+                        0     // schemaId=0
+                }));
+                state.processMessage();
+                Assert.assertEquals(QwpProcessorState.Status.INTERNAL_ERROR, state.getStatus());
+                Assert.assertTrue(state.getErrorText().contains("simulated critical error"));
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -646,6 +716,139 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOnErrorBlockedTransitionsToAckThenError() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // ACK blocked → RESUME_ACK (sendState=1)
+                state.onAckBlocked(5);
+                Assert.assertEquals(1, state.getSendState());
+
+                // Error blocked while in RESUME_ACK → RESUME_ACK_THEN_ERROR (sendState=3)
+                state.onErrorBlocked((byte) 1, 6, "test error");
+                Assert.assertEquals(3, state.getSendState());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testOnErrorBlockedWithNullMessage() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                state.onErrorBlocked((byte) 7, 42, null);
+
+                // sendState = SEND_STATE_RESUME_ERROR (2)
+                Assert.assertEquals(2, state.getSendState());
+                Assert.assertEquals(7, state.getDeferredErrorStatus());
+                Assert.assertEquals(42, state.getDeferredErrorSequence());
+                Assert.assertEquals(0, state.getDeferredErrorMessage().length());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testProcessMessageReturnsEarlyWhenBufferEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // No data added → bufferPosition==0 → early return
+                state.processMessage();
+                Assert.assertTrue(state.isOk());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testProcessMessageReturnsEarlyWhenRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                state.reject(QwpProcessorState.Status.PARSE_ERROR, "initial error", 1);
+                Assert.assertFalse(state.isOk());
+
+                // Add some data so bufferPosition > 0
+                long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_HTTP_CONN);
+                try {
+                    state.addData(ptr, ptr + 64);
+                } finally {
+                    Unsafe.free(ptr, 64, MemoryTag.NATIVE_HTTP_CONN);
+                }
+
+                // processMessage returns early because !isOk()
+                state.processMessage();
+                Assert.assertEquals("initial error", state.getErrorText());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testProcessMessageRejectsSchemaMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Pre-register schema 0 with 2 columns via reflection
+                Field decoderField = QwpProcessorState.class.getDeclaredField("streamingDecoder");
+                decoderField.setAccessible(true);
+                Object decoder = decoderField.get(state);
+                Field registryField = decoder.getClass().getDeclaredField("schemaRegistry");
+                registryField.setAccessible(true);
+                QwpSchemaRegistry registry = (QwpSchemaRegistry) registryField.get(decoder);
+                registry.put(0, QwpSchema.create(new QwpColumnDef[]{
+                        new QwpColumnDef("val", QwpConstants.TYPE_INT),
+                        new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP)
+                }));
+
+                // Reference schema 0 but declare 3 columns (mismatch with 2)
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        7, 's', 'm', '_', 't', 'e', 's', 't',
+                        0,                              // rowCount=0
+                        3,                              // columnCount=3 (schema has 2)
+                        0x01,                           // SCHEMA_MODE_REFERENCE
+                        0                               // schemaId=0
+                }));
+                state.processMessage();
+                Assert.assertEquals(QwpProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testRejectPreservesShortErrorMessage() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -689,11 +892,83 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRejectWithNullErrorText() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                state.reject(QwpProcessorState.Status.INTERNAL_ERROR, null, 1);
+                Assert.assertFalse(state.isOk());
+                Assert.assertEquals("(no error message)", state.getErrorText());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testShouldSendAckReturnsFalseWhenSending() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Set up sequences so the threshold IS met
+                state.setHighestProcessedSequence(10);
+                // lastAckedSequence defaults to -1, so gap=11 >= batchSize=1
+
+                // Block ACK → sendState != READY
+                state.onAckBlocked(5);
+                Assert.assertFalse(state.shouldSendAck(1));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    private static void addNativeData(QwpProcessorState state, byte[] data) {
+        long ptr = Unsafe.malloc(data.length, MemoryTag.NATIVE_HTTP_CONN);
+        try {
+            for (int i = 0; i < data.length; i++) {
+                Unsafe.getUnsafe().putByte(ptr + i, data[i]);
+            }
+            state.addData(ptr, ptr + data.length);
+        } finally {
+            Unsafe.free(ptr, data.length, MemoryTag.NATIVE_HTTP_CONN);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static int getCacheSize(QwpTudCache cache) throws Exception {
         Field field = QwpTudCache.class.getDeclaredField("tableUpdateDetails");
         field.setAccessible(true);
         return ((LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails>) field.get(cache)).size();
+    }
+
+    private static byte[] wrapQwpPayload(byte[] payload) {
+        byte[] message = new byte[12 + payload.length];
+        message[0] = 'Q';
+        message[1] = 'W';
+        message[2] = 'P';
+        message[3] = '1';
+        message[4] = 1; // version
+        message[5] = 0; // flags
+        message[6] = 1; // tableCount low byte
+        message[7] = 0; // tableCount high byte
+        message[8] = (byte) payload.length;
+        message[9] = (byte) (payload.length >>> 8);
+        message[10] = (byte) (payload.length >>> 16);
+        message[11] = (byte) (payload.length >>> 24);
+        System.arraycopy(payload, 0, message, 12, payload.length);
+        return message;
     }
 
     private static void replaceWriterWithFake(WalTableUpdateDetails tud, boolean isTableDropped) throws Exception {
