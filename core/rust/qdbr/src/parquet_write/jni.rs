@@ -1130,14 +1130,15 @@ fn create_partition_template(
     let mut col_names = unsafe {
         std::str::from_utf8_unchecked(slice::from_raw_parts(col_names_ptr, col_names_len))
     };
-    // SAFETY: JNI caller guarantees a valid pointer to `col_count * 2` elements of column metadata.
-    // The memory is backed by Java and remains valid for the JNI call duration.
-    let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count * 2) };
+    // SAFETY: JNI caller guarantees a valid pointer to `col_count * 3` elements of column metadata
+    // (name length, packed writer-index/type, parquet encoding config). The memory is backed by
+    // Java and remains valid for the JNI call duration.
+    let col_meta_datas = unsafe { slice::from_raw_parts(col_meta_data_ptr, col_count * 3) };
     let mut columns = vec![];
     let mut max_id: i32 = 0;
 
     for col_idx in 0..col_count {
-        let raw_idx = col_idx * 2;
+        let raw_idx = col_idx * 3;
         let col_name_size = col_meta_datas[raw_idx] as usize;
         if col_name_size > col_names.len() {
             return Err(fmt_err!(
@@ -1153,6 +1154,7 @@ fn create_partition_template(
         let packed = col_meta_datas[raw_idx + 1];
         let col_id = (packed >> 32) as i32;
         let col_type = (packed & 0xFFFFFFFF) as i32;
+        let parquet_encoding_config = col_meta_datas[raw_idx + 2] as i32;
         let designated_timestamp = col_idx as i32 == timestamp_index;
         let column = Column::from_raw_data(
             col_id,
@@ -1168,7 +1170,7 @@ fn create_partition_template(
             0,
             designated_timestamp,
             timestamp_descending == 0,
-            0,
+            parquet_encoding_config,
         )?;
 
         if col_id < 0 {

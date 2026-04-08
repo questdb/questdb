@@ -1,3 +1,18 @@
+//! Numeric primitive encoders, organized around the `SimdEncodable` trait.
+//!
+//! This file holds the leaf-level page encoders for SIMD-encodable types
+//! (i32, i64, f32, f64, plus widening helpers for Byte/Short/Char/IPv4/Geo*)
+//! and the matching decimal encoders. Both the Plain and DeltaBinaryPacked
+//! encoding paths route through here — `slice_to_page_simd` /
+//! `int_slice_to_page_*` take an `Encoding` parameter and dispatch internally.
+//!
+//! The dict-encoding helpers (`slice_to_dict_pages_simd`,
+//! `int_slice_to_dict_pages_*`, `decimal_slice_to_dict_pages`) below are no
+//! longer reachable from production code (the new
+//! `encoders/rle_dictionary.rs` owns its multi-partition global-dict logic).
+//! They remain here exclusively to back the single-partition micro-benchmarks
+//! in `benches/encode_page.rs`.
+
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;

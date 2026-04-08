@@ -51,3 +51,7 @@ harness = false
 [[bench]]
 name = "decode_rle"
 harness = false
+
+[[bench]]
+name = "bench_row_group"
+harness = false

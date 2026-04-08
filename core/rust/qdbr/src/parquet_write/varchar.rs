@@ -1,19 +1,12 @@
-use std::collections::HashSet;
-use std::mem;
+//! Varchar row-building helpers shared by the writer and reader sides.
+//!
+//! The encoder functions (`varchar_to_page`, `varchar_to_dict_pages`) live in
+//! `parquet_write/encoders/plain.rs`. This module retains the row-builder
+//! functions that the decoder side imports (`append_varchar*`,
+//! `is_column_ascii`, `SLICE_NULL_HEADER`) plus the constants they share.
 
-use super::util::ExactSizedIter;
 use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{
-    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, BinaryMaxMinStats,
-};
-use parquet2::bloom_filter::hash_byte;
-use parquet2::encoding::{delta_bitpacked, Encoding};
-use parquet2::page::Page;
-use parquet2::schema::types::PrimitiveType;
-use parquet2::write::DynIter;
-use rapidhash::RapidHashMap;
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;
 const HEADER_FLAG_ASCII: u8 = 1 << 1;
@@ -37,283 +30,6 @@ const VARCHAR_HEADER_FLAG_NULL: [u8; 10] = [
     0u8,
 ];
 
-#[repr(C, packed)]
-struct AuxEntryInlined {
-    header: u8,
-    chars: [u8; 9],
-    _offset: [u8; 6],
-}
-
-#[repr(C, packed)]
-struct AuxEntrySplit {
-    header: u32,
-    chars: [u8; 6],
-    offset_lo: u16,
-    offset_hi: u32,
-}
-
-pub fn varchar_to_page(
-    aux: &[[u8; 16]],
-    data: &[u8],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<Page> {
-    assert!(
-        mem::size_of::<AuxEntryInlined>() == 16 && mem::size_of::<AuxEntrySplit>() == 16,
-        "size_of(AuxEntryInlined) or size_of(AuxEntrySplit) is not 16"
-    );
-
-    let num_rows = column_top + aux.len();
-    let mut buffer = vec![];
-    let mut null_count = 0usize;
-
-    // SAFETY: `AuxEntryInlined` is `#[repr(C, packed)]` and exactly 16 bytes (asserted above).
-    // The source `&[[u8; 16]]` has compatible size and alignment 1.
-    let aux: &[AuxEntryInlined] = unsafe { mem::transmute(aux) };
-
-    let utf8_slices: Vec<Option<&[u8]>> = aux
-        .iter()
-        .map(|entry| {
-            if is_null(entry.header) {
-                null_count += 1;
-                Ok(None)
-            } else if is_inlined(entry.header) {
-                let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
-                Ok(Some(&entry.chars[..size]))
-            } else {
-                // SAFETY: Both `AuxEntryInlined` and `AuxEntrySplit` are `#[repr(C, packed)]` and 16 bytes.
-                // The header flag check above determines which interpretation is valid.
-                let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
-                let header = entry.header;
-                let size = (header >> HEADER_FLAGS_WIDTH) as usize;
-                let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
-                if offset + size > data.len() {
-                    return Err(fmt_err!(
-                        Layout,
-                        "data corruption in VARCHAR column: offset {} + size {} exceeds data length {}",
-                        offset,
-                        size,
-                        data.len()
-                    ));
-                }
-                Ok(Some(&data[offset..][..size]))
-            }
-        })
-        .collect::<ParquetResult<Vec<_>>>()?;
-
-    let deflevels_iter =
-        (0..num_rows).map(|i| i >= column_top && utf8_slices[i - column_top].is_some());
-    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
-
-    let definition_levels_byte_length = buffer.len();
-
-    let mut stats = BinaryMaxMinStats::new(&primitive_type);
-
-    match encoding {
-        Encoding::Plain => {
-            encode_plain(
-                &utf8_slices,
-                &mut buffer,
-                &mut stats,
-                bloom_hashes.as_deref_mut(),
-            );
-        }
-        Encoding::DeltaLengthByteArray => {
-            encode_delta(
-                &utf8_slices,
-                null_count,
-                &mut buffer,
-                &mut stats,
-                bloom_hashes,
-            );
-        }
-        _ => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported encoding {encoding:?} while writing a varchar column"
-            ));
-        }
-    };
-
-    let null_count = column_top + null_count;
-    build_plain_page(
-        buffer,
-        num_rows,
-        null_count,
-        definition_levels_byte_length,
-        if options.write_statistics {
-            Some(stats.into_parquet_stats(null_count))
-        } else {
-            None
-        },
-        primitive_type,
-        options,
-        encoding,
-        false,
-    )
-    .map(Page::Data)
-}
-
-pub fn varchar_to_dict_pages(
-    aux: &[[u8; 16]],
-    data: &[u8],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    let num_rows = column_top + aux.len();
-    // SAFETY: `AuxEntryInlined` is `#[repr(C, packed)]` and exactly 16 bytes (asserted above in `varchar_to_page`).
-    // The source `&[[u8; 16]]` has compatible size and alignment 1.
-    let aux: &[AuxEntryInlined] = unsafe { mem::transmute(aux) };
-
-    // Pass 1: decode aux entries into contiguous slice pointers.
-    let mut null_count = 0usize;
-    let utf8_slices: Vec<Option<&[u8]>> = aux
-        .iter()
-        .map(|entry| {
-            if is_null(entry.header) {
-                null_count += 1;
-                Ok(None)
-            } else if is_inlined(entry.header) {
-                let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
-                Ok(Some(&entry.chars[..size]))
-            } else {
-                // SAFETY: Both `AuxEntryInlined` and `AuxEntrySplit` are `#[repr(C, packed)]` and 16 bytes.
-                // The header flag check above determines which interpretation is valid.
-                let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
-                let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
-                let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
-                if offset + size > data.len() {
-                    return Err(fmt_err!(
-                        Layout,
-                        "data corruption in VARCHAR column: offset {} + size {} exceeds data length {}",
-                        offset,
-                        size,
-                        data.len()
-                    ));
-                }
-                Ok(Some(&data[offset..][..size]))
-            }
-        })
-        .collect::<ParquetResult<Vec<_>>>()?;
-
-    // Pass 2: deduplicate strings into dictionary.
-    let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<&[u8]> = Vec::new();
-    let mut keys = Vec::with_capacity(utf8_slices.len() - null_count);
-    let mut total_keys_bytes = 0usize;
-    for s in utf8_slices.iter().flatten() {
-        let next_id = u32::try_from(dict_entries.len())
-            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
-        let key = *dict_map.entry(s).or_insert_with(|| {
-            dict_entries.push(s);
-            total_keys_bytes += 4 + s.len(); // 4 bytes for length prefix
-            next_id
-        });
-        keys.push(key);
-    }
-
-    // Build dict buffer (length-prefixed UTF-8)
-    let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
-    let mut stats = if options.write_statistics {
-        Some(BinaryMaxMinStats::new(&primitive_type))
-    } else {
-        None
-    };
-    for &entry in &dict_entries {
-        dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
-        dict_buffer.extend_from_slice(entry);
-        if let Some(ref mut stats) = stats {
-            stats.update(entry);
-        }
-        if let Some(ref mut h) = bloom_hashes {
-            h.insert(hash_byte(entry));
-        }
-    }
-
-    // Encode data page: def levels + RLE-encoded keys
-    let mut data_buffer = Vec::with_capacity(num_rows / 4);
-    let total_null_count = column_top + null_count;
-
-    let def_levels =
-        (0..num_rows).map(|i| i >= column_top && utf8_slices[i - column_top].is_some());
-    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-    let definition_levels_byte_length = data_buffer.len();
-
-    let non_null_len = aux.len() - null_count;
-    let statistics = stats.map(|s| s.into_parquet_stats(total_null_count));
-
-    encode_dict_rle_pages(
-        dict_buffer,
-        dict_entries.len(),
-        keys,
-        non_null_len,
-        data_buffer,
-        definition_levels_byte_length,
-        num_rows,
-        total_null_count,
-        statistics,
-        primitive_type,
-        options,
-        false,
-    )
-}
-
-fn encode_plain(
-    utf8_slices: &[Option<&[u8]>],
-    buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMinStats,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) {
-    for utf8 in utf8_slices.iter().filter_map(|&option| option) {
-        let len = (utf8.len() as u32).to_le_bytes();
-        buffer.extend_from_slice(&len);
-        buffer.extend_from_slice(utf8);
-        stats.update(utf8);
-        if let Some(ref mut h) = bloom_hashes {
-            h.insert(hash_byte(utf8));
-        }
-    }
-}
-
-fn encode_delta(
-    utf8_slices: &[Option<&[u8]>],
-    null_count: usize,
-    buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMinStats,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) {
-    let lengths = utf8_slices
-        .iter()
-        .filter_map(|&option| option)
-        .map(|utf8| utf8.len() as i64);
-    let lengths = ExactSizedIter::new(lengths, utf8_slices.len() - null_count);
-    delta_bitpacked::encode(lengths, buffer);
-    for utf8 in utf8_slices.iter().filter_map(|&option| option) {
-        buffer.extend_from_slice(utf8);
-        stats.update(utf8);
-        if let Some(ref mut h) = bloom_hashes {
-            h.insert(hash_byte(utf8));
-        }
-    }
-}
-
-#[inline(always)]
-fn is_null(header: u8) -> bool {
-    (header & HEADER_FLAG_NULL) == HEADER_FLAG_NULL
-}
-
-#[inline(always)]
-fn is_inlined(header: u8) -> bool {
-    (header & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED
-}
-
-/// Check if all non-null varchar values in the aux vector have the ASCII flag set.
-/// Uses the per-value flags already stored in QuestDB's internal varchar format.
 pub fn is_column_ascii(aux: &[[u8; 16]]) -> bool {
     for entry in aux.iter() {
         let header = entry[0];
@@ -547,29 +263,11 @@ pub fn append_varchar_nulls(
 mod tests {
     use super::*;
     use crate::allocator::TestAllocatorState;
-    use parquet2::schema::types::PhysicalType;
 
     fn test_allocator() -> (TestAllocatorState, crate::allocator::QdbAllocator) {
         let state = TestAllocatorState::new();
         let alloc = state.allocator();
         (state, alloc)
-    }
-
-    fn test_write_options() -> WriteOptions {
-        WriteOptions {
-            write_statistics: true,
-            version: parquet2::write::Version::V2,
-            compression: parquet2::compression::CompressionOptions::Uncompressed,
-            row_group_size: None,
-            data_page_size: None,
-            raw_array_encoding: false,
-            bloom_filter_fpp: 0.05,
-            min_compression_ratio: 0.0,
-        }
-    }
-
-    fn test_primitive_type() -> PrimitiveType {
-        PrimitiveType::from_physical("test_col".to_string(), PhysicalType::ByteArray)
     }
 
     /// Build a 16-byte inlined aux entry for a short ASCII string (≤9 bytes).
@@ -583,70 +281,11 @@ mod tests {
         entry
     }
 
-    /// Build a 16-byte split aux entry for a longer string (>9 bytes).
-    /// `offset` is the byte offset into the data buffer where the full string starts.
-    fn make_split_entry(value: &[u8], offset: usize) -> [u8; 16] {
-        assert!(value.len() > VARCHAR_MAX_BYTES_FULLY_INLINED);
-        let mut entry = [0u8; 16];
-        let header: u32 = ((value.len() as u32) << HEADER_FLAGS_WIDTH) | HEADER_FLAG_ASCII_32;
-        entry[0..4].copy_from_slice(&header.to_le_bytes());
-        entry[4..10].copy_from_slice(&value[..VARCHAR_INLINED_PREFIX_BYTES]);
-        entry[10..12].copy_from_slice(&(offset as u16).to_le_bytes());
-        entry[12..16].copy_from_slice(&((offset >> 16) as u32).to_le_bytes());
-        entry
-    }
-
     /// Build a 16-byte null aux entry.
     fn make_null_entry() -> [u8; 16] {
         let mut entry = [0u8; 16];
         entry[0] = HEADER_FLAG_NULL;
         entry
-    }
-
-    #[test]
-    fn test_varchar_to_dict_pages() {
-        let short1 = b"hi";
-        let short2 = b"bye";
-        let long1 = b"hello world!!";
-
-        let mut data = Vec::new();
-        let long1_offset = 0usize;
-        data.extend_from_slice(long1);
-
-        let aux = vec![
-            make_inlined_entry(short1),
-            make_null_entry(),
-            make_split_entry(long1, long1_offset),
-            make_inlined_entry(short2),
-            make_inlined_entry(short1), // duplicate of short1
-        ];
-
-        let options = test_write_options();
-        let pt = test_primitive_type();
-
-        let result = varchar_to_dict_pages(&aux, &data, 0, options, pt, None);
-        assert!(result.is_ok());
-
-        let pages: Vec<_> = result.unwrap().collect();
-        assert_eq!(pages.len(), 2);
-        assert!(matches!(&pages[0], Ok(Page::Dict(_))));
-        assert!(matches!(&pages[1], Ok(Page::Data(_))));
-    }
-
-    #[test]
-    fn test_unsupported_encoding_error() {
-        let aux = vec![make_inlined_entry(b"abc")];
-        let data = vec![];
-        let options = test_write_options();
-        let pt = test_primitive_type();
-
-        let result = varchar_to_page(&aux, &data, 0, options, pt, Encoding::BitPacked, None);
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("unsupported encoding"),
-            "expected 'unsupported encoding' in: {err_msg}"
-        );
     }
 
     #[test]

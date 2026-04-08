@@ -52,6 +52,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1338,6 +1339,55 @@ public class CopyExportTest extends AbstractCairoTest {
                                         5\tworld
                                         """,
                                 "SELECT * FROM read_parquet('" + exportRoot + File.separator + "vc_output.parquet') ORDER BY id"
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyQueryPreservesDictionaryEncodingAcrossPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dict_copy_src (
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        total LONG PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_copy_src VALUES
+                        (10, 1000, '2020-01-01T00:00:00.000000Z'),
+                        (20, 2000, '2020-01-01T01:00:00.000000Z'),
+                        (10, 1000, '2020-01-02T00:00:00.000000Z'),
+                        (30, 3000, '2020-01-02T01:00:00.000000Z'),
+                        (20, 2000, '2020-01-03T00:00:00.000000Z'),
+                        (40, 4000, '2020-01-03T01:00:00.000000Z')
+                    """);
+
+            final String parquetPath = exportRoot + File.separator + "dict_copy_output.parquet";
+            final String query = "SELECT metric, total, ts FROM dict_copy_src";
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_copy_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertParquetMatchesQuery(query, parquetPath);
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                parquetPath,
+                                configuration.getFilesFacade(),
+                                0,
+                                1
                         );
                     });
 
@@ -2947,6 +2997,14 @@ public class CopyExportTest extends AbstractCairoTest {
                 workCount.countDown();
             }
         });
+    }
+
+    private void assertParquetMatchesQuery(String query, String parquetPath) throws Exception {
+        StringSink expectedSink = new StringSink();
+        StringSink actualSink = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
+        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
+        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     // Helper methods for copy export operations

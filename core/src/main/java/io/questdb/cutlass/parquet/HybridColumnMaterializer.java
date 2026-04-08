@@ -332,22 +332,32 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             if (baseColIdx >= 0) {
                 // Pass-through
                 computedBufferIdx.setQuick(i, -1);
+                TableColumnMetadata passThrough;
                 if (ColumnType.isSymbol(columnType)) {
                     // SYMBOL columns require the extended constructor
-                    adjustedMetadata.add(new TableColumnMetadata(
+                    passThrough = new TableColumnMetadata(
                             outputMeta.getColumnName(i),
                             columnType,
                             false,
                             0,
                             true,
                             null
-                    ));
+                    );
                 } else {
-                    adjustedMetadata.add(new TableColumnMetadata(
+                    passThrough = new TableColumnMetadata(
                             outputMeta.getColumnName(i),
                             columnType
-                    ));
+                    );
                 }
+                // Forward the per-column parquet encoding config from the source
+                // metadata so that user-specified PARQUET_ENCODING(...) overrides
+                // survive the hybrid pass-through path. Computed columns keep the
+                // default 0 because the encoding choice does not translate when
+                // the column type changes (e.g. SYMBOL -> STRING).
+                passThrough.setParquetEncodingConfig(
+                        priorityMetadata.getColumnMetadata(baseColIdx).getParquetEncodingConfig()
+                );
+                adjustedMetadata.add(passThrough);
             } else {
                 assert ColumnType.tagOf(columnType) != ColumnType.BINARY;
                 addComputedColumn(outputMeta, i, columnType);

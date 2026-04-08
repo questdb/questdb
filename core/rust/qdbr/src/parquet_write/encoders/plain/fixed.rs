@@ -1,10 +1,6 @@
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
-use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{
-    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels,
-};
 use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
@@ -12,9 +8,53 @@ use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
 use rapidhash::RapidHashMap;
 
-use super::util::BinaryMaxMinStats;
+use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet_write::encoders::helpers::rows_per_page;
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::schema::Column;
+use crate::parquet_write::util::{
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, transmute_slice,
+    BinaryMaxMinStats,
+};
 
-fn encode_plain_be<const N: usize>(
+use super::encode_per_partition;
+
+/// Encode a FixedLenByteArray column (UUID, Long128, Long256, Decimal FLBA)
+/// as Plain pages. `reverse` swaps endianness for UUID columns.
+pub fn encode_fixed_len_bytes<const N: usize>(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+    reverse: bool,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+) -> ParquetResult<Vec<Page>> {
+    let rpp = rows_per_page(&options, N);
+    encode_per_partition(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        rpp,
+        bloom_set,
+        |column, chunk, bloom| {
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
+            // page-aligned. The byte content represents valid `[u8; N]` values.
+            let data: &[[u8; N]] = unsafe { transmute_slice(column.primary_data) };
+            let slice = &data[chunk.lower_bound..chunk.upper_bound];
+            bytes_to_page::<N>(
+                slice,
+                reverse,
+                chunk.adjusted_column_top,
+                options,
+                primitive_type.clone(),
+                bloom,
+            )
+        },
+    )
+}
+
+fn encode_fixed_plain_be<const N: usize>(
     data: &[[u8; N]],
     buffer: &mut Vec<u8>,
     null_value: [u8; N],
@@ -34,7 +74,7 @@ fn encode_plain_be<const N: usize>(
     }
 }
 
-fn encode_plain<const N: usize>(
+fn encode_fixed_plain<const N: usize>(
     data: &[[u8; N]],
     buffer: &mut Vec<u8>,
     null_value: [u8; N],
@@ -50,6 +90,8 @@ fn encode_plain<const N: usize>(
     }
 }
 
+/// Encode a slice of `[u8; N]` values as a single FixedLenByteArray Plain
+/// data page. `reverse` toggles big-endian byte order (used for UUID).
 pub fn bytes_to_page<const N: usize>(
     data: &[[u8; N]],
     reverse: bool,
@@ -86,9 +128,9 @@ pub fn bytes_to_page<const N: usize>(
 
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     if reverse {
-        encode_plain_be(data, &mut buffer, null_value, &mut stats, bloom_hashes);
+        encode_fixed_plain_be(data, &mut buffer, null_value, &mut stats, bloom_hashes);
     } else {
-        encode_plain(data, &mut buffer, null_value, &mut stats, bloom_hashes);
+        encode_fixed_plain(data, &mut buffer, null_value, &mut stats, bloom_hashes);
     }
 
     let null_count = column_top + null_count;
@@ -110,6 +152,9 @@ pub fn bytes_to_page<const N: usize>(
     .map(Page::Data)
 }
 
+/// Single-partition fixed-length-bytes dict encoder. Production code goes
+/// through `encoders::rle_dictionary::encode_fixed_len_bytes`; this function
+/// remains for the bench module's micro-benchmarks.
 pub fn bytes_to_dict_pages<const N: usize>(
     data: &[[u8; N]],
     reverse: bool,
@@ -129,7 +174,6 @@ pub fn bytes_to_dict_pages<const N: usize>(
     };
     let mut null_count = 0;
 
-    // Build dictionary
     let mut dict_map: RapidHashMap<[u8; N], u32> = RapidHashMap::default();
     let mut dict_entries: Vec<[u8; N]> = Vec::new();
     let mut keys: Vec<u32> = Vec::with_capacity(data.len());
@@ -139,7 +183,6 @@ pub fn bytes_to_dict_pages<const N: usize>(
         if value == null_value {
             null_count += 1;
         } else {
-            // For dictionary, store the value as it will appear in the dict buffer
             let stored = if reverse {
                 let mut r = value;
                 r.reverse();
@@ -158,7 +201,6 @@ pub fn bytes_to_dict_pages<const N: usize>(
         }
     }
 
-    // Build dict buffer: N raw bytes per entry (FixedLenByteArray format)
     let mut dict_buffer = Vec::with_capacity(dict_entries.len() * N);
     for entry in &dict_entries {
         dict_buffer.extend_from_slice(entry);
@@ -167,7 +209,6 @@ pub fn bytes_to_dict_pages<const N: usize>(
         }
     }
 
-    // Encode data page
     let total_null_count = column_top + null_count;
     let mut data_buffer = Vec::new();
 

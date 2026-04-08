@@ -599,6 +599,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 } else {
                     columnMetadata.add((long) writerIdx << 32 | (columnType & 0xFFFFFFFFL));
                 }
+                // Per-column parquet encoding config (third long); the JNI side reads it
+                // and stores it in Column::parquet_encoding_config so the writer can honour
+                // PARQUET_ENCODING(...) overrides.
+                columnMetadata.add(meta.getColumnMetadata(i).getParquetEncodingConfig());
             }
 
             long bloomFilterIndexesPtr = 0;

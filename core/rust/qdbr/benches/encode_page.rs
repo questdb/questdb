@@ -10,14 +10,15 @@ use parquet2::write::Version;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::bench::{
     array_to_raw_page, binary_to_dict_pages, binary_to_page, boolean_to_page, bytes_to_dict_pages,
-    bytes_to_page, decimal_slice_to_dict_pages, int_slice_to_dict_pages_notnull,
-    int_slice_to_dict_pages_nullable, int_slice_to_page_notnull, int_slice_to_page_nullable,
-    slice_to_dict_pages_simd, slice_to_page_simd, string_to_dict_pages, string_to_page,
-    symbol_to_pages, varchar_to_dict_pages, varchar_to_page, WriteOptions,
+    bytes_to_page, decimal_slice_to_dict_pages, encode_column_chunk,
+    int_slice_to_dict_pages_notnull, int_slice_to_dict_pages_nullable, int_slice_to_page_notnull,
+    int_slice_to_page_nullable, slice_to_dict_pages_simd, slice_to_page_simd, string_to_dict_pages,
+    string_to_page, symbol_to_pages, varchar_to_dict_pages, varchar_to_page, Column, WriteOptions,
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
 use std::hint::black_box;
+use std::ptr::null;
 
 const ROW_COUNT: usize = 100_000;
 const NULL_PCTS: [u8; 2] = [0, 20];
@@ -697,6 +698,52 @@ fn make_dict_i64_data(
     data
 }
 
+fn dict_partition_shift(cardinality: usize) -> usize {
+    (cardinality / 4).max(1)
+}
+
+fn make_partitioned_dict_i32_data(
+    row_count: usize,
+    null_pct: u8,
+    null_value: i32,
+    cardinality: usize,
+    partition_idx: usize,
+) -> Vec<i32> {
+    let shift = dict_partition_shift(cardinality);
+    let offset = partition_idx * shift;
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            null_value
+        } else {
+            ((i % cardinality) + offset) as i32
+        };
+        data.push(v);
+    }
+    data
+}
+
+fn make_partitioned_dict_i64_data(
+    row_count: usize,
+    null_pct: u8,
+    null_value: i64,
+    cardinality: usize,
+    partition_idx: usize,
+) -> Vec<i64> {
+    let shift = dict_partition_shift(cardinality);
+    let offset = partition_idx * shift;
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        let v = if is_null_at(i, null_pct) {
+            null_value
+        } else {
+            ((i % cardinality) + offset) as i64
+        };
+        data.push(v);
+    }
+    data
+}
+
 fn make_dict_f32_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<f32> {
     let mut data = Vec::with_capacity(row_count);
     for i in 0..row_count {
@@ -794,6 +841,33 @@ fn make_dict_long128_data(row_count: usize, null_pct: u8, cardinality: usize) ->
     }
     let unique_values: Vec<[u8; 16]> = (0..cardinality)
         .map(|i| (i as u128).to_le_bytes())
+        .collect();
+    let mut data = Vec::with_capacity(row_count);
+    for i in 0..row_count {
+        if is_null_at(i, null_pct) {
+            data.push(null_value);
+        } else {
+            data.push(unique_values[i % cardinality]);
+        }
+    }
+    data
+}
+
+fn make_partitioned_dict_long128_data(
+    row_count: usize,
+    null_pct: u8,
+    cardinality: usize,
+    partition_idx: usize,
+) -> Vec<[u8; 16]> {
+    let mut null_value = [0u8; 16];
+    let null_bytes = i64::MIN.to_le_bytes();
+    for i in 0..16 {
+        null_value[i] = null_bytes[i % null_bytes.len()];
+    }
+    let shift = dict_partition_shift(cardinality);
+    let offset = partition_idx * shift;
+    let unique_values: Vec<[u8; 16]> = (0..cardinality)
+        .map(|i| ((i + offset) as u128).to_le_bytes())
         .collect();
     let mut data = Vec::with_capacity(row_count);
     for i in 0..row_count {
@@ -1795,7 +1869,178 @@ fn build_cases() -> Vec<EncodeBenchCase> {
     encode_decimal_flba_dict_cases!(cases, options, 16, 30usize, 4usize, "decimal_flba16_dec128");
     encode_decimal_flba_dict_cases!(cases, options, 32, 60usize, 6usize, "decimal_flba32_dec256");
 
+    // === Multi-partition RLE-dictionary cases ===
+    //
+    // 4 partitions × 25K rows = 100K rows total. Each partition has its own
+    // overlapping 256-value window, shifted by 64 values, so the global dict
+    // merge path must union partially-overlapping per-partition dictionaries.
+    // The bench measures end-to-end column-chunk encoding via
+    // `encode_column_chunk`.
+    add_multi_partition_dict_cases(&mut cases, options);
+
     cases
+}
+
+fn make_test_column<T>(name: &'static str, tag: ColumnTypeTag, data: &[T]) -> Column {
+    Column::from_raw_data(
+        0,
+        name,
+        ColumnType::new(tag, 0).code(),
+        0,
+        data.len(),
+        data.as_ptr() as *const u8,
+        data.len() * std::mem::size_of::<T>(),
+        null(),
+        0,
+        null(),
+        0,
+        false,
+        false,
+        0,
+    )
+    .expect("Column::from_raw_data")
+}
+
+fn add_multi_partition_dict_cases(cases: &mut Vec<EncodeBenchCase>, options: WriteOptions) {
+    const PARTITION_COUNT: usize = 4;
+    const PART_ROWS: usize = 25_000;
+    const CARDINALITY: usize = 256;
+
+    // Int dict — 4 partitions of 25K rows each, 256 unique values, 0% nulls.
+    {
+        let parts: Vec<Vec<i32>> = (0..PARTITION_COUNT)
+            .map(|part_idx| {
+                make_partitioned_dict_i32_data(PART_ROWS, 0, i32::MIN, CARDINALITY, part_idx)
+            })
+            .collect();
+        let column_type = ColumnType::new(ColumnTypeTag::Int, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        cases.push(EncodeBenchCase {
+            name: "int_dict_multi_partition_p4_n0".to_string(),
+            row_count: PART_ROWS * PARTITION_COUNT,
+            encode_fn: Box::new(move || {
+                let columns: Vec<Column> = parts
+                    .iter()
+                    .map(|d| make_test_column("col", ColumnTypeTag::Int, d))
+                    .collect();
+                let pages = encode_column_chunk(
+                    Encoding::RleDictionary,
+                    &parquet_type,
+                    &columns,
+                    0,
+                    PART_ROWS,
+                    options,
+                    None,
+                )
+                .expect("encode");
+                for page in pages {
+                    black_box(page);
+                }
+            }),
+        });
+    }
+
+    // Long dict
+    {
+        let parts: Vec<Vec<i64>> = (0..PARTITION_COUNT)
+            .map(|part_idx| {
+                make_partitioned_dict_i64_data(PART_ROWS, 0, i64::MIN, CARDINALITY, part_idx)
+            })
+            .collect();
+        let column_type = ColumnType::new(ColumnTypeTag::Long, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        cases.push(EncodeBenchCase {
+            name: "long_dict_multi_partition_p4_n0".to_string(),
+            row_count: PART_ROWS * PARTITION_COUNT,
+            encode_fn: Box::new(move || {
+                let columns: Vec<Column> = parts
+                    .iter()
+                    .map(|d| make_test_column("col", ColumnTypeTag::Long, d))
+                    .collect();
+                let pages = encode_column_chunk(
+                    Encoding::RleDictionary,
+                    &parquet_type,
+                    &columns,
+                    0,
+                    PART_ROWS,
+                    options,
+                    None,
+                )
+                .expect("encode");
+                for page in pages {
+                    black_box(page);
+                }
+            }),
+        });
+    }
+
+    // Long128 dict (FixedLenByteArray)
+    {
+        let parts: Vec<Vec<[u8; 16]>> = (0..PARTITION_COUNT)
+            .map(|part_idx| make_partitioned_dict_long128_data(PART_ROWS, 0, CARDINALITY, part_idx))
+            .collect();
+        let column_type = ColumnType::new(ColumnTypeTag::Long128, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        cases.push(EncodeBenchCase {
+            name: "long128_dict_multi_partition_p4_n0".to_string(),
+            row_count: PART_ROWS * PARTITION_COUNT,
+            encode_fn: Box::new(move || {
+                let columns: Vec<Column> = parts
+                    .iter()
+                    .map(|d| make_test_column("col", ColumnTypeTag::Long128, d))
+                    .collect();
+                let pages = encode_column_chunk(
+                    Encoding::RleDictionary,
+                    &parquet_type,
+                    &columns,
+                    0,
+                    PART_ROWS,
+                    options,
+                    None,
+                )
+                .expect("encode");
+                for page in pages {
+                    black_box(page);
+                }
+            }),
+        });
+    }
+
+    // UUID dict (FixedLenByteArray with reverse=true)
+    {
+        let parts: Vec<Vec<[u8; 16]>> = (0..PARTITION_COUNT)
+            .map(|part_idx| make_partitioned_dict_long128_data(PART_ROWS, 0, CARDINALITY, part_idx))
+            .collect();
+        let column_type = ColumnType::new(ColumnTypeTag::Uuid, 0);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
+        cases.push(EncodeBenchCase {
+            name: "uuid_dict_multi_partition_p4_n0".to_string(),
+            row_count: PART_ROWS * PARTITION_COUNT,
+            encode_fn: Box::new(move || {
+                let columns: Vec<Column> = parts
+                    .iter()
+                    .map(|d| make_test_column("col", ColumnTypeTag::Uuid, d))
+                    .collect();
+                let pages = encode_column_chunk(
+                    Encoding::RleDictionary,
+                    &parquet_type,
+                    &columns,
+                    0,
+                    PART_ROWS,
+                    options,
+                    None,
+                )
+                .expect("encode");
+                for page in pages {
+                    black_box(page);
+                }
+            }),
+        });
+    }
 }
 
 fn bench_encode_page(c: &mut Criterion) {

@@ -53,6 +53,7 @@ import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1584,6 +1585,53 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     // Verify data correctness
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length, 999);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFramePreservesDictionaryEncodingAcrossPartitions() throws Exception {
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE pageframe_dict_test (
+                                metric INT PARQUET(RLE_DICTIONARY),
+                                total LONG PARQUET(RLE_DICTIONARY),
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """, sqlExecutionContext);
+                    engine.execute("""
+                            INSERT INTO pageframe_dict_test VALUES
+                                (10, 1000, '2020-01-01T00:00:00.000000Z'),
+                                (20, 2000, '2020-01-01T01:00:00.000000Z'),
+                                (10, 1000, '2020-01-02T00:00:00.000000Z'),
+                                (30, 3000, '2020-01-02T01:00:00.000000Z'),
+                                (20, 2000, '2020-01-03T00:00:00.000000Z'),
+                                (40, 4000, '2020-01-03T01:00:00.000000Z')
+                            """, sqlExecutionContext);
+
+                    final String query =
+                            "SELECT metric, total, ts FROM pageframe_dict_test WHERE ts >= '2020-01-01T00:00:00.000000Z'";
+                    final String filename = "pageframe_dict_test.parquet";
+
+                    try (TestHttpClient testHttpClient = new TestHttpClient();
+                         var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        testHttpClient.setKeepConnection(true);
+                        HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                        req.GET().url("/exp");
+                        req.query("query", query);
+                        req.query("fmt", "parquet");
+                        req.query("rmode", "nodelay");
+                        testHttpClient.reqToSink(req, sink, null, null, null, null);
+
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, filename);
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                root + "/export/" + filename,
+                                engine.getConfiguration().getFilesFacade(),
+                                0,
+                                1
+                        );
+                    }
                 });
     }
 

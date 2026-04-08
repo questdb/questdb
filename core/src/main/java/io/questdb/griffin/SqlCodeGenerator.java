@@ -1420,7 +1420,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnSizeShifts.add(Numbers.msb(typeSize));
                     }
 
-                    queryMeta.add(new TableColumnMetadata(
+                    TableColumnMetadata columnMetadata = new TableColumnMetadata(
                             metadata.getColumnName(columnIndex),
                             type,
                             metadata.isColumnIndexed(columnIndex),
@@ -1432,7 +1432,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-                    ));
+                    );
+                    columnMetadata.setParquetEncodingConfig(
+                            metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig()
+                    );
+                    queryMeta.add(columnMetadata);
 
                     if (columnIndex == readerTimestampIndex) {
                         queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
@@ -1442,11 +1446,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // select timestamp when it is required but not already selected
                 if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
                     int timestampType = metadata.getColumnType(readerTimestampIndex);
-                    queryMeta.add(new TableColumnMetadata(
+                    TableColumnMetadata timestampColumnMetadata = new TableColumnMetadata(
                             metadata.getColumnName(readerTimestampIndex),
                             timestampType,
                             metadata.getMetadata(readerTimestampIndex)
-                    ));
+                    );
+                    timestampColumnMetadata.setParquetEncodingConfig(
+                            metadata.getColumnMetadata(readerTimestampIndex).getParquetEncodingConfig()
+                    );
+                    queryMeta.add(timestampColumnMetadata);
                     queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
 
                     if (columnIndexes != null) {
