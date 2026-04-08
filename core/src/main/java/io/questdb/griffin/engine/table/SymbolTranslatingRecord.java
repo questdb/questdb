@@ -75,6 +75,7 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
             caches[i] = new IntIntHashMap(16, 0.5);
         }
         this.columnToKeyIndex = new int[maxColumnCount];
+        Arrays.fill(this.columnToKeyIndex, -1);
     }
 
     /**
