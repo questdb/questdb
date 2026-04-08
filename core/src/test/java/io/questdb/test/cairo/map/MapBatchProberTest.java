@@ -293,6 +293,164 @@ public class MapBatchProberTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderedMapHashMatchesJava16B() throws Exception {
+        // Covers: case 16 in OrderedMap_hashAndPrefetch switch (hashMem64_16).
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.LONG).add(ColumnType.LONG);
+            try (
+                    OrderedMap map = new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 64, 0.8, Integer.MAX_VALUE);
+                    MapBatchProber prober = map.createBatchProber(256)
+            ) {
+                Assert.assertNotNull(prober);
+                prober.resetBatch();
+                prober.putLong(-1);
+                prober.putLong(Long.MAX_VALUE);
+                prober.putLong(0);
+                prober.putLong(0);
+                prober.hashAndPrefetch(2);
+
+                long keyBuf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putLong(keyBuf, -1);
+                    Unsafe.getUnsafe().putLong(keyBuf + 8, Long.MAX_VALUE);
+                    Assert.assertEquals(Hash.hashMem64(keyBuf, 16), prober.getHash(0));
+
+                    Unsafe.getUnsafe().putLong(keyBuf, 0);
+                    Unsafe.getUnsafe().putLong(keyBuf + 8, 0);
+                    Assert.assertEquals(Hash.hashMem64(keyBuf, 16), prober.getHash(1));
+                } finally {
+                    Unsafe.free(keyBuf, 16, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedMapHashMatchesJava1B() throws Exception {
+        // Covers: default branch in OrderedMap_hashAndPrefetch switch,
+        // and the byte-tail-only path in hashMem64 (len=1, no 8-byte or 4-byte chunks).
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.BYTE);
+            try (
+                    OrderedMap map = new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 64, 0.8, Integer.MAX_VALUE);
+                    MapBatchProber prober = map.createBatchProber(256)
+            ) {
+                Assert.assertNotNull(prober);
+                byte[] keys = {0, 1, -1, Byte.MIN_VALUE, Byte.MAX_VALUE, 42};
+                prober.resetBatch();
+                for (byte key : keys) {
+                    prober.putByte(key);
+                }
+                prober.hashAndPrefetch(keys.length);
+
+                long keyBuf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < keys.length; i++) {
+                        Unsafe.getUnsafe().putByte(keyBuf, keys[i]);
+                        long expected = Hash.hashMem64(keyBuf, 1);
+                        long actual = prober.getHash(i);
+                        Assert.assertEquals("hash mismatch for key " + keys[i], expected, actual);
+                    }
+                } finally {
+                    Unsafe.free(keyBuf, 1, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedMapHashMatchesJava20B() throws Exception {
+        // Covers: default branch (keySize=20), hashMem64 general with
+        // 8-byte loop (2 iterations) + 4-byte tail (1 int).
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes()
+                    .add(ColumnType.LONG).add(ColumnType.LONG).add(ColumnType.INT);
+            try (
+                    OrderedMap map = new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 64, 0.8, Integer.MAX_VALUE);
+                    MapBatchProber prober = map.createBatchProber(256)
+            ) {
+                Assert.assertNotNull(prober);
+                prober.resetBatch();
+                prober.putLong(1);
+                prober.putLong(2);
+                prober.putInt(3);
+                prober.hashAndPrefetch(1);
+
+                long keyBuf = Unsafe.malloc(20, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putLong(keyBuf, 1);
+                    Unsafe.getUnsafe().putLong(keyBuf + 8, 2);
+                    Unsafe.getUnsafe().putInt(keyBuf + 16, 3);
+                    Assert.assertEquals(Hash.hashMem64(keyBuf, 20), prober.getHash(0));
+                } finally {
+                    Unsafe.free(keyBuf, 20, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedMapHashMatchesJava2B() throws Exception {
+        // Covers: default branch (keySize=2), byte-tail with 2 remaining bytes.
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.SHORT);
+            try (
+                    OrderedMap map = new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 64, 0.8, Integer.MAX_VALUE);
+                    MapBatchProber prober = map.createBatchProber(256)
+            ) {
+                Assert.assertNotNull(prober);
+                short[] keys = {0, 1, -1, Short.MIN_VALUE, Short.MAX_VALUE, 1000};
+                prober.resetBatch();
+                for (short key : keys) {
+                    prober.putShort(key);
+                }
+                prober.hashAndPrefetch(keys.length);
+
+                long keyBuf = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < keys.length; i++) {
+                        Unsafe.getUnsafe().putShort(keyBuf, keys[i]);
+                        long expected = Hash.hashMem64(keyBuf, 2);
+                        long actual = prober.getHash(i);
+                        Assert.assertEquals("hash mismatch for key " + keys[i], expected, actual);
+                    }
+                } finally {
+                    Unsafe.free(keyBuf, 2, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedMapHashMatchesJava3B() throws Exception {
+        // Covers: default branch (keySize=3), hashMem64 general with
+        // byte-tail-only loop (3 iterations, no 8-byte or 4-byte chunks).
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes()
+                    .add(ColumnType.SHORT).add(ColumnType.BYTE);
+            try (
+                    OrderedMap map = new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 64, 0.8, Integer.MAX_VALUE);
+                    MapBatchProber prober = map.createBatchProber(256)
+            ) {
+                Assert.assertNotNull(prober);
+                prober.resetBatch();
+                prober.putShort((short) -1);
+                prober.putByte((byte) 127);
+                prober.hashAndPrefetch(1);
+
+                long keyBuf = Unsafe.malloc(3, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putShort(keyBuf, (short) -1);
+                    Unsafe.getUnsafe().putByte(keyBuf + 2, (byte) 127);
+                    Assert.assertEquals(Hash.hashMem64(keyBuf, 3), prober.getHash(0));
+                } finally {
+                    Unsafe.free(keyBuf, 3, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOrderedMapHashMatchesJava4B() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.INT);
@@ -318,6 +476,66 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     }
                 } finally {
                     Unsafe.free(keyBuf, 4, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedMapHashMatchesJava5B() throws Exception {
+        // Covers: default branch (keySize=5), hashMem64 general with
+        // 4-byte tail + 1-byte tail (no 8-byte loop).
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes()
+                    .add(ColumnType.INT).add(ColumnType.BYTE);
+            try (
+                    OrderedMap map = new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 64, 0.8, Integer.MAX_VALUE);
+                    MapBatchProber prober = map.createBatchProber(256)
+            ) {
+                Assert.assertNotNull(prober);
+                prober.resetBatch();
+                prober.putInt(-1);
+                prober.putByte((byte) 42);
+                prober.hashAndPrefetch(1);
+
+                long keyBuf = Unsafe.malloc(5, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putInt(keyBuf, -1);
+                    Unsafe.getUnsafe().putByte(keyBuf + 4, (byte) 42);
+                    Assert.assertEquals(Hash.hashMem64(keyBuf, 5), prober.getHash(0));
+                } finally {
+                    Unsafe.free(keyBuf, 5, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderedMapHashMatchesJava7B() throws Exception {
+        // Covers: default branch (keySize=7), hashMem64 general with
+        // 4-byte tail + 3-byte tail loop (no 8-byte loop).
+        TestUtils.assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes()
+                    .add(ColumnType.INT).add(ColumnType.SHORT).add(ColumnType.BYTE);
+            try (
+                    OrderedMap map = new OrderedMap(1024, keyTypes, new SingleColumnType(ColumnType.LONG), 64, 0.8, Integer.MAX_VALUE);
+                    MapBatchProber prober = map.createBatchProber(256)
+            ) {
+                Assert.assertNotNull(prober);
+                prober.resetBatch();
+                prober.putInt(100);
+                prober.putShort((short) -200);
+                prober.putByte((byte) 77);
+                prober.hashAndPrefetch(1);
+
+                long keyBuf = Unsafe.malloc(7, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putInt(keyBuf, 100);
+                    Unsafe.getUnsafe().putShort(keyBuf + 4, (short) -200);
+                    Unsafe.getUnsafe().putByte(keyBuf + 6, (byte) 77);
+                    Assert.assertEquals(Hash.hashMem64(keyBuf, 7), prober.getHash(0));
+                } finally {
+                    Unsafe.free(keyBuf, 7, MemoryTag.NATIVE_DEFAULT);
                 }
             }
         });
@@ -1303,6 +1521,44 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     long expected = mapKey.hash();
                     long actual = prober.getHash(i);
                     Assert.assertEquals("hash mismatch at index " + i, expected, actual);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnorderedVarcharMapHashMatchesJavaVarLengths() throws Exception {
+        // Covers: hashMem64 general function via UnorderedVarcharMap with key sizes
+        // exercising all tail paths: 0B (null), 1B, 3B, 4B, 5B, 7B, 8B, 9B, 15B, 16B.
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+            try (
+                    UnorderedVarcharMap map = new UnorderedVarcharMap(valueTypes, 64, 0.8, Integer.MAX_VALUE, 128 * 1024, 4 * Numbers.SIZE_1GB);
+                    DirectUtf8Sink sink = new DirectUtf8Sink(64);
+                    MapBatchProber prober = map.createBatchProber(256)
+            ) {
+                Assert.assertNotNull(prober);
+                // Keys of sizes: 1, 3, 4, 5, 7, 8, 9, 15, 16
+                String[] keys = {"a", "abc", "abcd", "abcde", "abcdefg", "abcdefgh",
+                        "abcdefghi", "abcdefghijklmno", "abcdefghijklmnop"};
+                prober.resetBatch();
+                for (String key : keys) {
+                    sink.clear();
+                    sink.put(key);
+                    prober.beginKey();
+                    prober.putVarchar(sink);
+                    prober.endKey();
+                }
+                prober.hashAndPrefetch(keys.length);
+
+                for (int i = 0; i < keys.length; i++) {
+                    sink.clear();
+                    sink.put(keys[i]);
+                    MapKey mapKey = map.withKey();
+                    mapKey.putVarchar(sink);
+                    long expected = mapKey.hash();
+                    long actual = prober.getHash(i);
+                    Assert.assertEquals("hash mismatch for key '" + keys[i] + "' (len=" + keys[i].length() + ")", expected, actual);
                 }
             }
         });

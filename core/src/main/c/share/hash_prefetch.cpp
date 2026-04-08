@@ -27,6 +27,15 @@
 #include <cstring>
 #include "util.h"
 
+// Prevent dead-code elimination of the accumulator without side effects.
+#if __GNUC__
+#define DO_NOT_ELIMINATE(x) asm volatile("" : "+r"(x))
+#else
+// MSVC: volatile write to a local is sufficient to prevent elimination.
+static volatile int64_t _dne_sink;
+#define DO_NOT_ELIMINATE(x) (_dne_sink = (x))
+#endif
+
 // Constants matching io.questdb.std.Hash
 static constexpr uint64_t M2 = 0x517cc1b727220a95ULL;
 static constexpr uint64_t FMIX_C1 = 0xff51afd7ed558ccdULL;
@@ -101,7 +110,7 @@ static inline uint64_t hashMem64(const uint8_t *p, int64_t len) {
     return fmix64(h);
 }
 
-// Hash + prefetch with offset list stride of 8 (OrderedMap layout).
+// Hash + demand-load with offset list stride of 8 (OrderedMap layout).
 template<uint64_t (*HashFn)(const uint8_t *)>
 static inline void hashAndPrefetchOffsetList(
         const uint8_t *keys,
@@ -111,15 +120,17 @@ static inline void hashAndPrefetchOffsetList(
         int32_t mask,
         int64_t *hashes
 ) {
+    int64_t acc = 0;
     for (int32_t i = 0; i < keyCount; i++) {
         const uint64_t h = HashFn(keys + (int64_t) i * keySize);
         hashes[i] = static_cast<int64_t>(h);
         const auto index = static_cast<int32_t>(h) & mask;
-        MM_PREFETCH_T2(offsets + ((int64_t) index << 3));
+        acc += *reinterpret_cast<const int64_t *>(offsets + ((int64_t) index << 3));
     }
+    DO_NOT_ELIMINATE(acc);
 }
 
-// Hash + prefetch with configurable entry stride (Unordered map layout).
+// Hash + demand-load with configurable entry stride (Unordered map layout).
 template<uint64_t (*HashFn)(const uint8_t *)>
 static inline void hashAndPrefetchEntries(
         const uint8_t *keys,
@@ -130,12 +141,14 @@ static inline void hashAndPrefetchEntries(
         int32_t mask,
         int64_t *hashes
 ) {
+    int64_t acc = 0;
     for (int32_t i = 0; i < keyCount; i++) {
         const uint64_t h = HashFn(keys + (int64_t) i * keySize);
         hashes[i] = static_cast<int64_t>(h);
         const auto index = static_cast<int32_t>(h) & mask;
-        MM_PREFETCH_T2(memStart + (int64_t) index * entrySize);
+        acc += *reinterpret_cast<const int64_t *>(memStart + (int64_t) index * entrySize);
     }
+    DO_NOT_ELIMINATE(acc);
 }
 
 extern "C" {
@@ -169,14 +182,17 @@ Java_io_questdb_cairo_map_OrderedMap_hashAndPrefetch(
         case 16:
             hashAndPrefetchOffsetList<hashMem64_16>(keys, keySize, keyCount, offsets, mask, hashes);
             break;
-        default:
+        default: {
+            int64_t acc = 0;
             for (int32_t i = 0; i < keyCount; i++) {
                 const uint64_t h = hashMem64(keys + (int64_t) i * keySize, keySize);
                 hashes[i] = static_cast<int64_t>(h);
                 const auto index = static_cast<int32_t>(h) & mask;
-                MM_PREFETCH_T2(offsets + ((int64_t) index << 3));
+                acc += *reinterpret_cast<const int64_t *>(offsets + ((int64_t) index << 3));
             }
+            DO_NOT_ELIMINATE(acc);
             break;
+        }
     }
 }
 
@@ -235,6 +251,7 @@ Java_io_questdb_cairo_map_OrderedMap_hashAndPrefetchVarSize(
     const auto *offsets = reinterpret_cast<const uint8_t *>(offsetsAddr);
     auto *hashes = reinterpret_cast<int64_t *>(hashesOut);
 
+    int64_t acc = 0;
     for (int32_t i = 0; i < keyCount; i++) {
         const uint8_t *keyStart = keys + keyOffsets[i];
         int32_t keyLen;
@@ -242,11 +259,12 @@ Java_io_questdb_cairo_map_OrderedMap_hashAndPrefetchVarSize(
         const uint64_t h = hashMem64(keyStart + 4, keyLen); // hash data portion
         hashes[i] = static_cast<int64_t>(h);
         const auto index = static_cast<int32_t>(h) & mask;
-        MM_PREFETCH_T2(offsets + ((int64_t) index << 3));
+        acc += *reinterpret_cast<const int64_t *>(offsets + ((int64_t) index << 3));
     }
+    DO_NOT_ELIMINATE(acc);
 }
 
-// UnorderedVarcharMap: pointer+size arrays, entry-based prefetch, hashMem64 semantics.
+// UnorderedVarcharMap: pointer+size arrays, entry-based demand-load, hashMem64 semantics.
 JNIEXPORT void JNICALL
 Java_io_questdb_cairo_map_UnorderedVarcharMap_hashAndPrefetch(
         JNIEnv *env,
@@ -264,6 +282,7 @@ Java_io_questdb_cairo_map_UnorderedVarcharMap_hashAndPrefetch(
     const auto *mem = reinterpret_cast<const uint8_t *>(memStart);
     auto *hashes = reinterpret_cast<int64_t *>(hashesOut);
 
+    int64_t acc = 0;
     for (int32_t i = 0; i < keyCount; i++) {
         // Mask out the unstable flag (MSB) to get the raw pointer.
         const auto *ptr = reinterpret_cast<const uint8_t *>(ptrs[i] & 0x7FFFFFFFFFFFFFFFL);
@@ -271,8 +290,9 @@ Java_io_questdb_cairo_map_UnorderedVarcharMap_hashAndPrefetch(
         const uint64_t h = hashMem64(ptr, sz);
         hashes[i] = static_cast<int64_t>(h);
         const auto index = static_cast<int32_t>(h) & mask;
-        MM_PREFETCH_T2(mem + (int64_t) index * entrySize);
+        acc += *reinterpret_cast<const int64_t *>(mem + (int64_t) index * entrySize);
     }
+    DO_NOT_ELIMINATE(acc);
 }
 
 } // extern "C"
