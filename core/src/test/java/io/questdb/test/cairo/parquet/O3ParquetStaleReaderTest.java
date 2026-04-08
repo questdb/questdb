@@ -33,29 +33,27 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Regression test for the `_pm` in-place full-rewrite stale-reader corruption.
+ * Regression test for stale-reader safety when `_pm` column tops change.
  *
  * <p>When a parquet partition's `_pm` header carries a non-zero column top
- * (e.g. a partition that pre-existed an `ALTER TABLE ADD COLUMN`), the next
- * O3 merge used to overwrite the existing `_pm` from offset 0 inside its
- * in-place update path. Any concurrent {@link TableReader} that still held
- * the partition's earlier {@code parquetMetaFileSize} would then read the
- * new bytes through the old logical EOF and decode garbage, throwing
- * {@code invalid _pm footer offset}.
+ * (e.g. a partition that pre-existed an `ALTER TABLE ADD COLUMN`), the next O3
+ * merge needs to zero the effective top because the merged parquet output now
+ * materializes the null prefix in page data. The `_pm` updater must express
+ * that change append-only so that any concurrent {@link TableReader} holding
+ * the earlier {@code parquetMetaFileSize} continues to resolve to a consistent
+ * older snapshot.
  *
- * <p>The fix escalates the merge to rewrite mode (new {@code nameTxn}
- * directory) whenever the existing `_pm` has any non-zero column top, so
- * the previous bytes are left untouched and the stale-reader contract is
- * preserved.
+ * <p>The fix appends a new footer-scoped column-top override instead of
+ * rewriting the existing `_pm` from offset 0. Older readers keep seeing the
+ * header-based snapshot, while fresh readers pick up the new footer snapshot.
  */
 public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testStaleReaderSurvivesO3MergeWithColumnTops() throws Exception {
         // Force the in-place update path to be the default by making rewrite
-        // thresholds permissive: the merge would land in the unsafe fallback
-        // pre-fix unless something else (e.g. our column-top check) forces
-        // rewrite mode.
+        // thresholds permissive. The merge must stay append-only even though
+        // effective column tops change across the snapshot boundary.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
@@ -139,12 +137,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 Assert.assertTrue("partition should have rows", sizeBefore > 0);
 
                 // O3 insert into the parquet partition with values for the
-                // newly-added column. Pre-fix this took the in-place update
-                // path, hit `column_tops_changed`, and rewrote the existing
-                // `_pm` from offset 0 — corrupting the bytes the staleReader
-                // would resolve through its earlier `parquetMetaFileSize`.
-                // Post-fix the merge escalates to rewrite mode, leaving the
-                // pre-merge file intact.
+                // newly-added column. The merge must zero the effective column
+                // top for the new column in the active `_pm` snapshot while
+                // leaving the old bytes intact for the stale reader.
                 execute(
                         """
                                 INSERT INTO x(a, newcol, ts) VALUES
@@ -155,11 +150,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 // Re-open the parquet partition through the held reader
-                // without refreshing its txn snapshot. Pre-fix the
-                // `parquetMetaReader.of(...)` call inside `openParquetMetadata`
-                // would throw `invalid _pm footer offset`. Post-fix the
-                // partition is read from the still-intact pre-merge directory
-                // and the assertion below holds.
+                // without refreshing its txn snapshot. The stale reader must
+                // keep reading the pre-merge `_pm` snapshot even though a fresh
+                // footer has been appended for the committed state.
                 staleReader.closePartitionByIndex(parquetIdx);
                 final long sizeAfter = staleReader.openPartition(parquetIdx);
                 Assert.assertEquals(

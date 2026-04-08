@@ -55,6 +55,17 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     private static PmTestFile buildFile(int columnCount, long parquetFooterOff, int parquetFooterLen, long... rowGroupSizes) {
+        return buildFile(columnCount, null, null, parquetFooterOff, parquetFooterLen, rowGroupSizes);
+    }
+
+    private static PmTestFile buildFile(
+            int columnCount,
+            long[] headerTops,
+            long[] footerTops,
+            long parquetFooterOff,
+            int parquetFooterLen,
+            long... rowGroupSizes
+    ) {
         long writerPtr = ParquetMetaFileWriter.create();
         try {
             ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, -1);
@@ -62,6 +73,16 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                 try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
                     name.put("col_").put(i);
                     ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), i, 5, 0, 0, 0, 0, 0);
+                }
+            }
+            if (headerTops != null) {
+                for (int i = 0; i < headerTops.length; i++) {
+                    ParquetMetaFileWriter.setColumnTop(writerPtr, i, headerTops[i]);
+                }
+            }
+            if (footerTops != null) {
+                for (int i = 0; i < footerTops.length; i++) {
+                    ParquetMetaFileWriter.setFooterColumnTop(writerPtr, i, footerTops[i]);
                 }
             }
             for (long numRows : rowGroupSizes) {
@@ -184,6 +205,32 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testColumnTopHeaderSection() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(2, new long[]{42, 0}, null, 0, 0, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+
+                Assert.assertEquals(42, reader.getColumnTop(0));
+                Assert.assertEquals(0, reader.getColumnTop(1));
+            }
+        });
+    }
+
+    @Test
+    public void testFooterColumnTopOverridePreferred() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(2, new long[]{42, 0}, new long[]{0, 9}, 0, 0, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+
+                Assert.assertEquals(0, reader.getColumnTop(0));
+                Assert.assertEquals(9, reader.getColumnTop(1));
+            }
+        });
+    }
+
     // ── Edge case tests ─────────────────────────────────────────────────
 
     @Test
@@ -287,6 +334,21 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("invalid _pm footer offset"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTruncatedFooterColumnTopSection() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(2, new long[]{1, 0}, new long[]{7}, 0, 0, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                try {
+                    reader.of(file.dataPtr, file.dataLen);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage().contains("truncated _pm footer column tops section"));
                 }
             }
         });

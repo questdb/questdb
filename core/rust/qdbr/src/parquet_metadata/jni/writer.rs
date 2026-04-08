@@ -140,6 +140,32 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_setColumnTop(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *mut JniParquetMetaWriter,
+    index: jint,
+    top: u64,
+) {
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
+    let wrapper = unsafe { &mut *ptr };
+    wrapper.writer.set_column_top(index as usize, top);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_setFooterColumnTop(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *mut JniParquetMetaWriter,
+    index: jint,
+    top: u64,
+) {
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
+    let wrapper = unsafe { &mut *ptr };
+    wrapper.writer.set_footer_column_top(index as usize, top);
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addSortingColumn(
     mut env: JNIEnv,
     _class: JClass,

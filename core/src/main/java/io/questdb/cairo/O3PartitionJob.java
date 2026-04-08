@@ -181,23 +181,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
                 assert rowGroupCount > 0;
 
-                // Detect existing non-zero column tops in the _pm header. The
-                // Rust _pm updater's incremental path cannot rewrite the header
-                // where column tops live, so it would fall back to overwriting
-                // the file from offset 0 — which corrupts stale readers.
-                // Escalate to rewrite mode instead so the new file lands in a
-                // new nameTxn directory. The Rust caller invariant is that O3
-                // merges produce top == 0 for every column, so a single
-                // rewrite-mode merge zeroes all column tops and subsequent
-                // merges fall through to the safe append path.
-                boolean hasNonZeroColumnTop = false;
-                for (int i = 0; i < parquetColumnCount; i++) {
-                    if (parquetMeta.getColumnTop(i) != 0) {
-                        hasNonZeroColumnTop = true;
-                        break;
-                    }
-                }
-
                 final int timestampIndex = tableWriterMetadata.getTimestampIndex();
                 final int timestampColumnType = tableWriterMetadata.getColumnType(timestampIndex);
                 assert ColumnType.isTimestamp(timestampColumnType);
@@ -221,14 +204,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // mode, untouched row groups would retain the old column layout while
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
-                // Non-zero column tops also force rewrite: the in-place updater's
-                // append path cannot modify the header, so it would otherwise
-                // overwrite the existing _pm file from offset 0 and corrupt stale
-                // readers.
                 final long unusedBytes = partitionDecoder.metadata().getUnusedBytes();
                 isRewrite = hasSchemaChange
                         || rowGroupCount == 1
-                        || hasNonZeroColumnTop
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
                         || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
 
@@ -239,7 +217,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .$(", unusedBytes=").$size(unusedBytes)
                             .$(", unusedPct=").$(parquetSize > 0 ? (100.0 * unusedBytes / parquetSize) : 0)
                             .$(", hasSchemaChange=").$(hasSchemaChange)
-                            .$(", hasNonZeroColumnTop=").$(hasNonZeroColumnTop)
                             .I$();
                 }
 

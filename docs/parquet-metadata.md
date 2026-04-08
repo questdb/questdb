@@ -133,11 +133,13 @@ A single feature can span multiple bits (e.g., a presence bit and a storage-mode
 
 #### Defined feature flags
 
-| bit | name        | header section            | footer section | description                                   |
-| --- | ----------- | ------------------------- | -------------- | --------------------------------------------- |
-| 0   | COLUMN_TOPS | `[u64; column_count]`     | none           | `column_top` per column (row where valid data starts) |
+| bit | name        | header section        | footer section        | description                                   |
+| --- | ----------- | --------------------- | --------------------- | --------------------------------------------- |
+| 0   | COLUMN_TOPS | `[u64; column_count]` | `[u64; column_count]` | `column_top` per column (row where valid data starts) |
 
-When `COLUMN_TOPS` is set, the header section contains one `u64` per column giving the row number where valid data begins (rows before that are null). When unset, all tops are 0. The section is only written when at least one column has a non-zero top.
+When `COLUMN_TOPS` is set, the header section contains one `u64` per column giving the row number where valid data begins (rows before that are null). Legacy files only use this header section. Newer footers may also carry a footer-scoped `COLUMN_TOPS` section for the active snapshot; when present, readers must prefer the footer values over the header values. On files that use footer feature sections and have `COLUMN_TOPS` set, this footer override section is written first in the footer feature area. When unset, all tops are 0. The header section is only written when at least one column has a non-zero top.
+
+Because the feature bit lives in the header, append-only updates cannot introduce `COLUMN_TOPS` to a file that never advertised it. They can, however, append a footer-scoped override on files whose header already has the bit set, which is how O3 merges zero or otherwise update effective tops without rewriting the file from offset 0.
 
 ### File header
 

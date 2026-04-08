@@ -133,6 +133,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private int columnCount;
     // Address of the column tops section (valid only when FEATURE_COLUMN_TOPS is set).
     private long columnTopsAddr;
+    // Address of the footer-scoped column tops override section in the active footer.
+    private long footerColumnTopsAddr;
     private long featureFlags;
     private long fileSize;
     private long footerAddr;
@@ -191,6 +193,29 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         } else {
             this.columnTopsAddr = 0;
         }
+
+        this.footerColumnTopsAddr = 0;
+        final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
+        final long footerLengthUnsigned = Integer.toUnsignedLong(footerLength);
+        if (footerLengthUnsigned < baseFooterLength) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm footer length [footerLength=").put(footerLengthUnsigned)
+                    .put(", min=").put(baseFooterLength)
+                    .put(']');
+        }
+        final long footerExtra = footerLengthUnsigned - baseFooterLength;
+        if ((featureFlags & FEATURE_COLUMN_TOPS) != 0) {
+            final long footerColumnTopsSize = (long) columnCount * Long.BYTES;
+            if (footerExtra != 0) {
+                if (footerExtra < footerColumnTopsSize) {
+                    throw CairoException.critical(0)
+                            .put("truncated _pm footer column tops section [available=").put(footerExtra)
+                            .put(", required=").put(footerColumnTopsSize)
+                            .put(']');
+                }
+                this.footerColumnTopsAddr = this.footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES;
+            }
+        }
     }
 
     @Override
@@ -218,6 +243,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.rowGroupCount = 0;
         this.featureFlags = 0;
         this.columnTopsAddr = 0;
+        this.footerColumnTopsAddr = 0;
     }
 
     /**
@@ -336,10 +362,14 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
     /**
      * Returns the column top for the given column.
-     * Reads from the column tops feature section when the FEATURE_COLUMN_TOPS
-     * flag is set. Returns 0 otherwise (all columns start at row 0).
+     * Prefers the footer-scoped column tops override from the active footer
+     * snapshot, then falls back to the legacy header section. Returns 0
+     * otherwise (all columns start at row 0).
      */
     public long getColumnTop(int columnIndex) {
+        if (footerColumnTopsAddr != 0) {
+            return Unsafe.getUnsafe().getLong(footerColumnTopsAddr + (long) columnIndex * 8);
+        }
         if (columnTopsAddr != 0) {
             return Unsafe.getUnsafe().getLong(columnTopsAddr + (long) columnIndex * 8);
         }

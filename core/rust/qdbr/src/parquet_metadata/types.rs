@@ -85,7 +85,8 @@ impl HeaderFeatureFlags {
         Self(u64::from_le_bytes(bytes))
     }
 
-    /// Column tops are stored in a file-level section (`[u64; column_count]`).
+    /// Column tops are stored in a legacy header section and may also appear in
+    /// a footer-scoped override section for the active snapshot.
     pub const fn has_column_tops(self) -> bool {
         self.0 & Self::COLUMN_TOPS_BIT != 0
     }

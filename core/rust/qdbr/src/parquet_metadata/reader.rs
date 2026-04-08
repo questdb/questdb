@@ -57,6 +57,14 @@ impl<'a> ParquetMetaReader<'a> {
                 file_size
             )
         })?;
+        let file_data = data.get(..file_size_usize).ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "file size {} exceeds available data {}",
+                file_size,
+                data.len()
+            )
+        })?;
         if file_size_usize < FOOTER_TRAILER_SIZE {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
@@ -64,7 +72,7 @@ impl<'a> ParquetMetaReader<'a> {
                 file_size
             ));
         }
-        let trailer = data
+        let trailer = file_data
             .get(file_size_usize - FOOTER_TRAILER_SIZE..file_size_usize)
             .ok_or_else(|| {
                 parquet_meta_err!(
@@ -86,7 +94,7 @@ impl<'a> ParquetMetaReader<'a> {
                     file_size
                 )
             })?;
-        Self::new(data, footer_offset)
+        Self::new(file_data, footer_offset)
     }
 
     /// Creates a reader over the given byte slice.
@@ -130,7 +138,12 @@ impl<'a> ParquetMetaReader<'a> {
                 .expect("slice is 4 bytes"),
         );
 
-        let footer = Footer::new(footer_data, footer_length)?;
+        let footer = Footer::new(
+            footer_data,
+            footer_length,
+            header.feature_flags(),
+            header.column_count(),
+        )?;
 
         Ok(Self { data, header, footer, footer_offset })
     }
@@ -189,6 +202,9 @@ impl<'a> ParquetMetaReader<'a> {
     /// Returns the column top for the column at `index`.
     /// Returns 0 when the FEATURE_COLUMN_TOPS flag is not set.
     pub fn column_top(&self, index: usize) -> ParquetResult<u64> {
+        if let Some(top) = self.footer.column_top(index)? {
+            return Ok(top);
+        }
         self.header.column_top(index)
     }
 
@@ -231,6 +247,14 @@ impl<'a> ParquetMetaReader<'a> {
 
     pub fn unused_bytes(&self) -> u64 {
         self.footer.unused_bytes()
+    }
+
+    pub fn feature_flags(&self) -> crate::parquet_metadata::types::HeaderFeatureFlags {
+        self.header.feature_flags()
+    }
+
+    pub fn has_footer_column_tops_override(&self) -> bool {
+        self.footer.has_column_tops_override()
     }
 
     /// Returns the raw file data slice.
@@ -494,6 +518,37 @@ mod tests {
 
         assert_eq!(reader.column_top(0).unwrap(), 256);
         assert_eq!(reader.column_top(1).unwrap(), 0);
+    }
+
+    #[test]
+    fn footer_column_tops_override_header_values() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_column_top(0, 256);
+        w.set_footer_column_tops(&[0, 9]);
+
+        let (bytes, footer_offset) = w.finish().unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+
+        assert!(reader.feature_flags().has_column_tops());
+        assert!(reader.has_footer_column_tops_override());
+        assert_eq!(reader.column_top(0).unwrap(), 0);
+        assert_eq!(reader.column_top(1).unwrap(), 9);
+    }
+
+    #[test]
+    fn footer_column_tops_can_enable_feature_without_nonzero_header_tops() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_footer_column_tops(&[5]);
+
+        let (bytes, footer_offset) = w.finish().unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+
+        assert!(reader.feature_flags().has_column_tops());
+        assert!(reader.has_footer_column_tops_override());
+        assert_eq!(reader.column_top(0).unwrap(), 5);
     }
 
     #[test]

@@ -27,6 +27,7 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::footer::{Footer, FooterBuilder};
+use crate::parquet_metadata::header::FileHeader;
 use crate::parquet_metadata::header::FileHeaderBuilder;
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::{
@@ -52,6 +53,7 @@ pub struct ParquetMetaWriter {
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     unused_bytes: u64,
+    footer_column_tops: Option<Vec<u64>>,
 }
 
 impl Default for ParquetMetaWriter {
@@ -68,6 +70,7 @@ impl ParquetMetaWriter {
             parquet_footer_offset: 0,
             parquet_footer_length: 0,
             unused_bytes: 0,
+            footer_column_tops: None,
         }
     }
 
@@ -103,6 +106,22 @@ impl ParquetMetaWriter {
 
     pub fn set_column_top(&mut self, index: usize, top: u64) -> &mut Self {
         self.header_builder.set_column_top(index, top);
+        self
+    }
+
+    pub fn set_footer_column_tops(&mut self, column_tops: &[u64]) -> &mut Self {
+        self.footer_column_tops = Some(column_tops.to_vec());
+        self.header_builder.enable_column_tops_feature();
+        self
+    }
+
+    pub fn set_footer_column_top(&mut self, index: usize, top: u64) -> &mut Self {
+        let footer_column_tops = self.footer_column_tops.get_or_insert_with(Vec::new);
+        if footer_column_tops.len() <= index {
+            footer_column_tops.resize(index + 1, 0);
+        }
+        footer_column_tops[index] = top;
+        self.header_builder.enable_column_tops_feature();
         self
     }
 
@@ -151,6 +170,9 @@ impl ParquetMetaWriter {
         for &offset in &block_offsets {
             fb.add_row_group_offset(offset)?;
         }
+        if let Some(column_tops) = &self.footer_column_tops {
+            fb.set_column_tops(column_tops);
+        }
         let footer_offset = fb.write_to(&mut buf) as u64;
 
         // Compute and write CRC32 over [0, checksum_field_offset).
@@ -178,6 +200,7 @@ pub struct ParquetMetaUpdateWriter<'a> {
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     unused_bytes: u64,
+    footer_column_tops: Option<Vec<u64>>,
 }
 
 enum RowGroupEntry {
@@ -190,6 +213,7 @@ enum RowGroupEntry {
 impl<'a> ParquetMetaUpdateWriter<'a> {
     /// Creates an update writer from the existing file data and its footer offset.
     pub fn new(existing: &'a [u8], existing_footer_offset: u64) -> ParquetResult<Self> {
+        let header = FileHeader::new(existing)?;
         let footer_usize = usize::try_from(existing_footer_offset).map_err(|_| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
@@ -204,13 +228,32 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             )
         })?;
         let footer_length = Self::read_footer_length(existing)?;
-        let footer = Footer::new(footer_data, footer_length)?;
+        let footer = Footer::new(
+            footer_data,
+            footer_length,
+            header.feature_flags(),
+            header.column_count(),
+        )?;
 
         // Initialize entries with existing row group offsets.
         let mut entries = Vec::with_capacity(footer.row_group_count() as usize);
         for i in 0..footer.row_group_count() as usize {
             entries.push(RowGroupEntry::Existing(footer.row_group_block_offset(i)?));
         }
+
+        let footer_column_tops = if footer.has_column_tops_override() {
+            let mut tops = Vec::with_capacity(header.column_count() as usize);
+            for i in 0..header.column_count() as usize {
+                tops.push(
+                    footer
+                        .column_top(i)?
+                        .expect("footer override reported present but value missing"),
+                );
+            }
+            Some(tops)
+        } else {
+            None
+        };
 
         Ok(Self {
             existing,
@@ -219,6 +262,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             parquet_footer_offset: footer.parquet_footer_offset(),
             parquet_footer_length: footer.parquet_footer_length(),
             unused_bytes: footer.unused_bytes(),
+            footer_column_tops,
         })
     }
 
@@ -255,6 +299,11 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
     pub fn parquet_footer(&mut self, offset: u64, length: u32) -> &mut Self {
         self.parquet_footer_offset = offset;
         self.parquet_footer_length = length;
+        self
+    }
+
+    pub fn set_footer_column_tops(&mut self, column_tops: &[u64]) -> &mut Self {
+        self.footer_column_tops = Some(column_tops.to_vec());
         self
     }
 
@@ -327,6 +376,9 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         fb.unused_bytes(self.unused_bytes);
         for &offset in &final_offsets {
             fb.add_row_group_offset(offset)?;
+        }
+        if let Some(column_tops) = &self.footer_column_tops {
+            fb.set_column_tops(column_tops);
         }
         let footer_rel_start = fb.write_to(&mut append_buf);
         let new_footer_offset = (append_start + footer_rel_start) as u64;

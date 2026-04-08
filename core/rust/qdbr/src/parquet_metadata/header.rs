@@ -366,6 +366,7 @@ pub struct FileHeaderBuilder {
     columns: Vec<ColumnEntry>,
     sorting_columns: Vec<u32>,
     column_tops: Vec<u64>,
+    force_column_tops_feature: bool,
 }
 
 impl FileHeaderBuilder {
@@ -375,6 +376,7 @@ impl FileHeaderBuilder {
             columns: Vec::new(),
             sorting_columns: Vec::new(),
             column_tops: Vec::new(),
+            force_column_tops_feature: false,
         }
     }
 
@@ -411,6 +413,11 @@ impl FileHeaderBuilder {
         self
     }
 
+    pub fn enable_column_tops_feature(&mut self) -> &mut Self {
+        self.force_column_tops_feature = true;
+        self
+    }
+
     pub fn add_sorting_column(&mut self, index: u32) -> &mut Self {
         self.sorting_columns.push(index);
         self
@@ -423,7 +430,8 @@ impl FileHeaderBuilder {
         let sorting_count = self.sorting_columns.len() as u32;
 
         // Compute feature flags.
-        let has_column_tops = self.column_tops.iter().any(|&t| t != 0);
+        let has_column_tops =
+            self.force_column_tops_feature || self.column_tops.iter().any(|&t| t != 0);
         let mut feature_flags = HeaderFeatureFlags::new();
         if has_column_tops {
             feature_flags = feature_flags.with_column_tops();
