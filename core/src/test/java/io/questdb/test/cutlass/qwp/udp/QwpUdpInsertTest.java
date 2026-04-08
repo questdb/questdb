@@ -189,6 +189,58 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDatagramTriggeredCommitResetsUncommittedDatagramCount() throws Exception {
+        final QwpUdpReceiverConfiguration conf = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public long getCommitInterval() {
+                return TimeUnit.SECONDS.toMillis(5);
+            }
+
+            @Override
+            public int getMaxUncommittedDatagrams() {
+                return 2;
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            execute("create table datagram_trigger_reset (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=2, o3MaxLag=1s");
+
+            try (InspectingQwpUdpReceiver receiver = new InspectingQwpUdpReceiver(conf, engine)) {
+                sendSingleRow("datagram_trigger_reset", 1L, 1_000_000L);
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertSql("count\n0\n", "SELECT count() FROM datagram_trigger_reset");
+                Assert.assertEquals(1, receiver.getTotalCount());
+
+                sendSingleRow("datagram_trigger_reset", 2L, 2_000_000L);
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                Assert.assertEquals(0, receiver.getTotalCount());
+
+                sendSingleRow("datagram_trigger_reset", 3L, 3_000_000L);
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                Assert.assertEquals(1, receiver.getTotalCount());
+            }
+
+            drainWalQueue();
+            assertSql("count\n3\n", "SELECT count() FROM datagram_trigger_reset");
+        });
+    }
+
+    @Test
     public void testAutoFlushMultipleSplitsValueCorrectness() throws Exception {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
@@ -1033,6 +1085,25 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
     private static QwpUdpSender newSender(int maxDatagramSize) {
         return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0, maxDatagramSize);
+    }
+
+    private static void sendSingleRow(String table, long value, long timestampMicros) {
+        try (QwpUdpSender sender = newSender()) {
+            sender.table(table)
+                    .longColumn("v", value)
+                    .at(timestampMicros, ChronoUnit.MICROS);
+            sender.flush();
+        }
+    }
+
+    private static class InspectingQwpUdpReceiver extends QwpUdpReceiver {
+        private InspectingQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine) {
+            super(configuration, engine);
+        }
+
+        private long getTotalCount() {
+            return totalCount;
+        }
     }
 
     @FunctionalInterface

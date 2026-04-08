@@ -561,6 +561,13 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testQwpUdpCommitIntervalRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_COMMIT_INTERVAL);
+    }
+
+    @Test
     public void testQwpUdpMaxUncommittedDatagramsUsesOwnProperty() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -569,6 +576,50 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath(), "123");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(123, configuration.getQwpUdpReceiverConfiguration().getMaxUncommittedDatagrams());
+    }
+
+    @Test
+    public void testQwpUdpMaxUncommittedDatagramsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS);
+    }
+
+    @Test
+    public void testQwpUdpMsgBufferSizeRejectsValuesBelowHeaderSize() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_MSG_BUFFER_SIZE.getPropertyPath(), Integer.toString(QwpConstants.HEADER_SIZE - 1));
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MSG_BUFFER_SIZE);
+    }
+
+    @Test
+    public void testQwpUdpMsgCountRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_MSG_COUNT.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_MSG_COUNT);
+    }
+
+    @Test
+    public void testQwpUdpReceiveBufferSizeRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath(), "0");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE);
+    }
+
+    @Test
+    public void testQwpUdpReceiveBufferSizeUsesSentinelMinusOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath(), "-1");
+
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(-1, configuration.getQwpUdpReceiverConfiguration().getReceiveBufferSize());
+    }
+
+    @Test
+    public void testQwpUdpOwnThreadAffinityRejectsValuesBelowMinusOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY.getPropertyPath(), "-2");
+        assertInvalidConfiguration(properties, PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY);
     }
 
     @Test
@@ -2190,6 +2241,15 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(10 * Numbers.SIZE_1MB, configuration.getWalMaxLagSize());
         Assert.assertEquals(50, configuration.getWalMaxSegmentFileDescriptorsCache());
+    }
+
+    private void assertInvalidConfiguration(Properties properties, PropertyKey key) throws Exception {
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), key.getPropertyPath());
+        }
     }
 
     private PropServerConfiguration.ValidationResult validate(Properties properties) {
