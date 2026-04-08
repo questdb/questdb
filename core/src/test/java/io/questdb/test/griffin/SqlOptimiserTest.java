@@ -2404,6 +2404,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     SelectedRecord
                                         Hash Join Light
                                           condition: t2.s=t1.s
+                                          symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
