@@ -95,6 +95,10 @@ public interface SecurityContext extends Mutable {
 
     void authorizeLineTcp();
 
+    void authorizeLiveViewCreate();
+
+    void authorizeLiveViewDrop(TableToken tableToken);
+
     void authorizeMatViewCreate();
 
     void authorizeMatViewDrop(TableToken tableToken);

@@ -4330,6 +4330,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private boolean executeCreateLiveView(CreateLiveViewOperation op, SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getSecurityContext().authorizeLiveViewCreate();
         // validate base table exists and is WAL
         final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
         if (baseTableToken == null) {
@@ -4355,6 +4356,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             throw SqlException.$(op.getEntityNamePosition(), "live view does not exist [name=").put(name).put(']');
         }
+        executionContext.getSecurityContext().authorizeLiveViewDrop(tableToken);
         engine.dropLiveView(name);
         return true;
     }
@@ -4456,7 +4458,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (!tableToken.isSystem()) {
                 final String tableName = tableToken.getTableName();
                 try {
-                    if (tableToken.isView()) {
+                    if (tableToken.isLiveView()) {
+                        securityContext.authorizeLiveViewDrop(tableToken);
+                    } else if (tableToken.isView()) {
                         securityContext.authorizeViewDrop(tableToken);
                     } else if (tableToken.isMatView()) {
                         securityContext.authorizeMatViewDrop(tableToken);
