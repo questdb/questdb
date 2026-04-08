@@ -5326,6 +5326,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             addSupportedConversion(ColumnType.SHORT, i);
             addSupportedConversion(ColumnType.INT, i);
             addSupportedConversion(ColumnType.LONG, i);
+            addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
+            addSupportedConversion(ColumnType.STRING, i);
+            addSupportedConversion(ColumnType.VARCHAR, i);
         }
         //endregion
 
