@@ -1454,8 +1454,8 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             double hiY;
             if (frameLoBounded && !frameIncludesCurrentValue) {
                 long hiSlot = (loIdx + frameSize - 1) % bufferSize;
-                hiX = buffer.getDouble((long) hiSlot * SLOT_SIZE);
-                hiY = buffer.getDouble((long) hiSlot * SLOT_SIZE + Double.BYTES);
+                hiX = buffer.getDouble(hiSlot * SLOT_SIZE);
+                hiY = buffer.getDouble(hiSlot * SLOT_SIZE + Double.BYTES);
             } else if (!frameLoBounded && !frameIncludesCurrentValue) {
                 hiX = buffer.getDouble((long) (loIdx % bufferSize) * SLOT_SIZE);
                 hiY = buffer.getDouble((long) (loIdx % bufferSize) * SLOT_SIZE + Double.BYTES);

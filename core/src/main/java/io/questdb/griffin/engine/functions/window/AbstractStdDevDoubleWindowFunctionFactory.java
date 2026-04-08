@@ -226,7 +226,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
-                    return new StdDevOverCurrentRowFunction(args.get(0), isSample, isSqrt, name);
+                    return new StdDevOverCurrentRowFunction(args.get(0), isSample, name);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(
@@ -313,7 +313,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     return new StdDevOverUnboundedRowsFrameFunction(args.get(0), isSample, isSqrt, name);
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
-                    return new StdDevOverCurrentRowFunction(args.get(0), isSample, isSqrt, name);
+                    return new StdDevOverCurrentRowFunction(args.get(0), isSample, name);
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     return new StdDevOverWholeResultSetFunction(args.get(0), isSample, isSqrt, name);
@@ -345,14 +345,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
     // Population stddev of a single value is 0; sample stddev is undefined (NaN).
     static class StdDevOverCurrentRowFunction extends BaseWindowFunction implements WindowDoubleFunction {
         private final boolean isSample;
-        private final boolean isSqrt;
         private final String name;
         private double value;
 
-        StdDevOverCurrentRowFunction(Function arg, boolean isSample, boolean isSqrt, String name) {
+        StdDevOverCurrentRowFunction(Function arg, boolean isSample, String name) {
             super(arg);
             this.isSample = isSample;
-            this.isSqrt = isSqrt;
             this.name = name;
         }
 

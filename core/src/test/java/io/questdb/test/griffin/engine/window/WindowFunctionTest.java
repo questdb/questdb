@@ -10781,12 +10781,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // partition + rows frame
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
-                            "  functions: [stddev_pop(val) over (partition by [i] rows between 3 preceding and current row)]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
+                    """
+                            QUERY PLAN
+                            Window
+                              functions: [stddev_pop(val) over (partition by [i] rows between 3 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
                     "explain select ts, i, stddev_pop(val) over (partition by i order by ts rows between 3 preceding and current row) from tab"
             );
 
@@ -10803,12 +10805,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // no partition + rows frame
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
-                            "  functions: [stddev_pop(val) over (rows between 3 preceding and current row)]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
+                    """
+                            QUERY PLAN
+                            Window
+                              functions: [stddev_pop(val) over (rows between 3 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
                     "explain select ts, stddev_pop(val) over (order by ts rows between 3 preceding and current row) from tab"
             );
 
@@ -10825,12 +10829,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // unbounded preceding to current row (Welford path)
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
-                            "  functions: [stddev_pop(val) over (partition by [i] rows between unbounded preceding and current row)]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
+                    """
+                            QUERY PLAN
+                            Window
+                              functions: [stddev_pop(val) over (partition by [i] rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
                     "explain select ts, i, stddev_pop(val) over (partition by i order by ts) from tab"
             );
         });
@@ -11674,23 +11680,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // partition + rows frame
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
-                            "  functions: [covar_pop(y,x) over (partition by [i] rows between 3 preceding and current row)]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
+                    """
+                            QUERY PLAN
+                            Window
+                              functions: [covar_pop(y,x) over (partition by [i] rows between 3 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
                     "explain select ts, i, covar_pop(y, x) over (partition by i order by ts rows between 3 preceding and current row) from tab"
             );
 
             // no partition + rows frame
             assertSql(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
-                            "  functions: [covar_pop(y,x) over (rows between 3 preceding and current row)]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
+                    """
+                            QUERY PLAN
+                            Window
+                              functions: [covar_pop(y,x) over (rows between 3 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """,
                     "explain select ts, covar_pop(y, x) over (order by ts rows between 3 preceding and current row) from tab"
             );
         });
@@ -14329,11 +14339,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     private String replacePlanTimestamp(String expected) {
-        return timestampType == TestTimestampType.NANO ? expected.replaceAll("10000000", "10000000000") : expected;
+        return timestampType == TestTimestampType.NANO ? expected.replace("10000000", "10000000000") : expected;
     }
 
     private String replaceTimestampSuffix(String expected) {
-        return timestampType == TestTimestampType.NANO ? expected.replaceAll("Z\t", "000Z\t").replaceAll("Z\n", "000Z\n") : expected;
+        return timestampType == TestTimestampType.NANO ? expected.replace("Z\t", "000Z\t").replace("Z\n", "000Z\n") : expected;
     }
 
     private String replaceTimestampSuffix1(String expected) {
