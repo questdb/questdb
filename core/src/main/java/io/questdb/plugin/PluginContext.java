@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.Job;
 
 /**
  * Context provided to {@link PluginLifecycle#onLoad(PluginContext)}.
@@ -152,6 +153,36 @@ public interface PluginContext {
      * @see io.questdb.cairo.security.PrincipalContext
      */
     SecurityContextFactory getSecurityContextFactory();
+
+    /**
+     * Registers a {@link Job} to run on the server's shared worker pool.
+     * <p>
+     * The job's {@link Job#run(int, Job.RunStatus)} method will be polled
+     * alongside other engine jobs (mat view refresh, WAL apply, etc.) using
+     * QuestDB's adaptive sleep/backoff worker loop.
+     * <p>
+     * <b>Threading:</b> the job will be called from multiple worker threads
+     * concurrently. If the job should execute on only one worker at a time,
+     * use a CAS-based latch (see {@code SynchronizedJob}) or an
+     * {@code AtomicBoolean} guard inside the job.
+     * <p>
+     * <b>Lifecycle:</b> jobs are automatically removed when the plugin is
+     * unloaded. The plugin's {@link PluginLifecycle#onUnload()} method
+     * <em>must</em> cause registered jobs to return {@code false} promptly
+     * (e.g., by setting a volatile shutdown flag) because a worker thread may
+     * still be executing the job when unload proceeds.
+     * <p>
+     * Example — a plugin that runs periodic export work:
+     * <pre>
+     *   context.registerJob((workerId, runStatus) -&gt; {
+     *       if (runStatus.isTerminating() || shuttingDown) return false;
+     *       return doExportCycleIfReady();
+     *   });
+     * </pre>
+     *
+     * @param job the job to register; must not be null
+     */
+    void registerJob(Job job);
 
     /**
      * Returns a plugin configuration property, or {@code defaultValue} if not set.

@@ -378,6 +378,12 @@ public class ServerMain implements Closeable {
                         sharedPoolWrite.assign(telemetryJob);
                     }
 
+                    // plugin jobs
+                    final Job pluginJob = engine.getPluginJob();
+                    if (pluginJob != null) {
+                        sharedPoolWrite.assign(pluginJob);
+                    }
+
                 } catch (Throwable thr) {
                     throw new Bootstrap.BootstrapException(thr);
                 }

@@ -113,6 +113,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.Job;
 import io.questdb.mp.NoOpQueue;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
@@ -896,6 +897,18 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();
+    }
+
+    /**
+     * Returns a {@link Job} that delegates to all jobs registered by plugins
+     * via {@link io.questdb.plugin.PluginContext#registerJob(Job)}, or {@code null}
+     * if the engine does not support plugins.
+     * <p>
+     * The returned job should be registered on a worker pool before it is started.
+     * Overridden by enterprise engine to provide the plugin job coordinator.
+     */
+    public Job getPluginJob() {
+        return null;
     }
 
     public QueryRegistry getQueryRegistry() {
