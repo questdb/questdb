@@ -584,6 +584,279 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return packedHashAndSize == 0;
     }
 
+    @Override
+    public MapBatchProber createBatchProber(int batchSize) {
+        return new BatchProber(batchSize);
+    }
+
+    private static native void hashAndPrefetch(long ptrsAddr, long sizesAddr, int keyCount, long memStart, int entrySize, int mask, long hashesOut);
+
+    class BatchProber implements MapBatchProber {
+        private static final int INITIAL_COPY_BUF_SIZE = 128;
+
+        private final int batchSize;
+        private long copyAppendAddr;
+        private long copyBufAddr;
+        private long copyBufCapacity;
+        private long flagsAddr;
+        private long hashesAddr;
+        private int keyCount;
+        private long ptrsAddr;
+        private long sizesAddr;
+
+        BatchProber(int batchSize) {
+            this.batchSize = batchSize;
+            ptrsAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            sizesAddr = Unsafe.malloc((long) batchSize * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            flagsAddr = Unsafe.malloc(batchSize, MemoryTag.NATIVE_DEFAULT);
+            hashesAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            copyBufCapacity = (long) batchSize * INITIAL_COPY_BUF_SIZE;
+            copyBufAddr = Unsafe.malloc(copyBufCapacity, MemoryTag.NATIVE_DEFAULT);
+            copyAppendAddr = copyBufAddr;
+        }
+
+        @Override
+        public void close() {
+            if (ptrsAddr != 0) {
+                Unsafe.free(ptrsAddr, (long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                ptrsAddr = 0;
+            }
+            if (sizesAddr != 0) {
+                Unsafe.free(sizesAddr, (long) batchSize * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                sizesAddr = 0;
+            }
+            if (flagsAddr != 0) {
+                Unsafe.free(flagsAddr, batchSize, MemoryTag.NATIVE_DEFAULT);
+                flagsAddr = 0;
+            }
+            if (hashesAddr != 0) {
+                Unsafe.free(hashesAddr, (long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                hashesAddr = 0;
+            }
+            if (copyBufAddr != 0) {
+                Unsafe.free(copyBufAddr, copyBufCapacity, MemoryTag.NATIVE_DEFAULT);
+                copyBufAddr = 0;
+            }
+            copyAppendAddr = 0;
+        }
+
+        @Override
+        public long getHash(int index) {
+            return Unsafe.getUnsafe().getLong(hashesAddr + (long) index * Long.BYTES);
+        }
+
+        @Override
+        public void hashAndPrefetch(int keyCount) {
+            UnorderedVarcharMap.hashAndPrefetch(ptrsAddr, sizesAddr, keyCount, memStart, (int) entrySize, (int) mask, hashesAddr);
+        }
+
+        @Override
+        public MapValue probeWithHash(int index) {
+            long ptrWithFlag = Unsafe.getUnsafe().getLong(ptrsAddr + (long) index * Long.BYTES);
+            int keySize = Unsafe.getUnsafe().getInt(sizesAddr + (long) index * Integer.BYTES);
+            byte flags = Unsafe.getUnsafe().getByte(flagsAddr + index);
+            long hash = Unsafe.getUnsafe().getLong(hashesAddr + (long) index * Long.BYTES);
+            long keyPtr = ptrWithFlag & PTR_MASK;
+
+            long hsf = packHashSizeFlags(hash, keySize, flags);
+            long startAddress = getStartAddress(hash & mask);
+            long loaded = Unsafe.getUnsafe().getLong(startAddress);
+
+            if (loaded == 0) {
+                return asNew(startAddress, hash, ptrWithFlag, keySize, hsf, value);
+            }
+            if (makePackComparable(loaded) == makePackComparable(hsf)) {
+                long entryPtr = Unsafe.getUnsafe().getLong(startAddress + 8) & PTR_MASK;
+                if (Vect.memeq(entryPtr, keyPtr, keySize)) {
+                    return valueOf(startAddress, false, value);
+                }
+            }
+            return probe0(startAddress, hash, ptrWithFlag, keySize, hsf, value);
+        }
+
+        @Override
+        public void putArray(ArrayView view) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putBin(BinarySequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putBool(boolean value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putByte(byte value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putChar(char value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDate(long value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal128(Decimal128 value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDecimal256(Decimal256 value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDouble(double value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putFloat(float value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putIPv4(int value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putInt(int value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putInterval(Interval value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong(long value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong128(long lo, long hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256(Long256 value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putRecord(Record value) {
+            // no-op
+        }
+
+        @Override
+        public void putShort(short value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putStr(CharSequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putStr(CharSequence value, int lo, int hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putTimestamp(long value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            long ptrOff = (long) keyCount * Long.BYTES;
+            long sizeOff = (long) keyCount * Integer.BYTES;
+            if (value == null) {
+                Unsafe.getUnsafe().putLong(ptrsAddr + ptrOff, 0);
+                Unsafe.getUnsafe().putInt(sizesAddr + sizeOff, 0);
+                Unsafe.getUnsafe().putByte(flagsAddr + keyCount, (byte) (FLAG_IS_NULL | FLAG_IS_ASCII));
+            } else {
+                int sz = value.size();
+                if (value.isStable()) {
+                    // Stable pointer (e.g. mmap) — valid for map's lifetime.
+                    Unsafe.getUnsafe().putLong(ptrsAddr + ptrOff, value.ptr());
+                } else {
+                    // Unstable pointer — copy to batch buffer.
+                    ensureCopyBufCapacity(sz);
+                    long ptr = value.ptr();
+                    if (ptr != -1) {
+                        Vect.memcpy(copyAppendAddr, ptr, sz);
+                    } else {
+                        for (int i = 0; i < sz; i++) {
+                            Unsafe.getUnsafe().putByte(copyAppendAddr + i, value.byteAt(i));
+                        }
+                    }
+                    Unsafe.getUnsafe().putLong(ptrsAddr + ptrOff, copyAppendAddr | PTR_UNSTABLE_MASK);
+                    copyAppendAddr += sz;
+                }
+                Unsafe.getUnsafe().putInt(sizesAddr + sizeOff, sz);
+                Unsafe.getUnsafe().putByte(flagsAddr + keyCount, value.isAscii() ? FLAG_IS_ASCII : 0);
+            }
+        }
+
+        @Override
+        public void reopen() {
+            if (ptrsAddr == 0) {
+                ptrsAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                sizesAddr = Unsafe.malloc((long) batchSize * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                flagsAddr = Unsafe.malloc(batchSize, MemoryTag.NATIVE_DEFAULT);
+                hashesAddr = Unsafe.malloc((long) batchSize * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                copyBufCapacity = (long) batchSize * INITIAL_COPY_BUF_SIZE;
+                copyBufAddr = Unsafe.malloc(copyBufCapacity, MemoryTag.NATIVE_DEFAULT);
+            }
+            copyAppendAddr = copyBufAddr;
+            keyCount = 0;
+        }
+
+        @Override
+        public void resetBatch() {
+            copyAppendAddr = copyBufAddr;
+            keyCount = 0;
+        }
+
+        @Override
+        public void skip(int bytes) {
+            // no-op
+        }
+
+        @Override
+        public void endKey() {
+            keyCount++;
+        }
+
+        private void ensureCopyBufCapacity(long required) {
+            long used = copyAppendAddr - copyBufAddr;
+            if (used + required > copyBufCapacity) {
+                long newCapacity = Math.max(copyBufCapacity << 1, used + required);
+                copyBufAddr = Unsafe.realloc(copyBufAddr, copyBufCapacity, newCapacity, MemoryTag.NATIVE_DEFAULT);
+                copyBufCapacity = newCapacity;
+                copyAppendAddr = copyBufAddr + used;
+            }
+        }
+    }
+
     class Key implements MapKey {
         private byte flags;
         private long ptrWithUnstableFlag;

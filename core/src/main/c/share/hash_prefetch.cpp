@@ -246,4 +246,33 @@ Java_io_questdb_cairo_map_OrderedMap_hashAndPrefetchVarSize(
     }
 }
 
+// UnorderedVarcharMap: pointer+size arrays, entry-based prefetch, hashMem64 semantics.
+JNIEXPORT void JNICALL
+Java_io_questdb_cairo_map_UnorderedVarcharMap_hashAndPrefetch(
+        JNIEnv *env,
+        jclass cl,
+        jlong ptrsAddr,
+        jlong sizesAddr,
+        jint keyCount,
+        jlong memStart,
+        jint entrySize,
+        jint mask,
+        jlong hashesOut
+) {
+    const auto *ptrs = reinterpret_cast<const int64_t *>(ptrsAddr);
+    const auto *sizes = reinterpret_cast<const int32_t *>(sizesAddr);
+    const auto *mem = reinterpret_cast<const uint8_t *>(memStart);
+    auto *hashes = reinterpret_cast<int64_t *>(hashesOut);
+
+    for (int32_t i = 0; i < keyCount; i++) {
+        // Mask out the unstable flag (MSB) to get the raw pointer.
+        const auto *ptr = reinterpret_cast<const uint8_t *>(ptrs[i] & 0x7FFFFFFFFFFFFFFFL);
+        const int32_t sz = sizes[i];
+        const uint64_t h = hashMem64(ptr, sz);
+        hashes[i] = static_cast<int64_t>(h);
+        const auto index = static_cast<int32_t>(h) & mask;
+        MM_PREFETCH_T2(mem + (int64_t) index * entrySize);
+    }
+}
+
 } // extern "C"
