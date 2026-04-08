@@ -8332,6 +8332,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
+                                      symbolKeyJoin: true
                                         Hash Join Light
                                           condition: t2.t1_id=t1.id
                                             Async JIT Filter workers: 1

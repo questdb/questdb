@@ -65,6 +65,18 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     private SymbolTableSource masterSource;
     private SymbolTableSource slaveSource;
 
+    public SymbolTranslatingRecord(int maxColumnCount, int joinKeyCount) {
+        this.caches = new IntIntHashMap[joinKeyCount];
+        this.masterSymbolTableCache = new SymbolTable[joinKeyCount];
+        this.slaveSymbolTableCache = new StaticSymbolTable[joinKeyCount];
+        this.masterColumnIndices = new int[joinKeyCount];
+        this.slaveColumnIndices = new int[joinKeyCount];
+        for (int i = 0; i < joinKeyCount; i++) {
+            caches[i] = new IntIntHashMap(16, 0.5);
+        }
+        this.columnToKeyIndex = new int[maxColumnCount];
+    }
+
     /**
      * @param masterColumnCount            total number of columns in the master record metadata
      * @param masterSymbolKeyColumnIndices master column indices for symbol key columns used in join
@@ -150,6 +162,25 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         Misc.freeIfCloseable(slaveSymbolTableCache);
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
+    }
+
+    /**
+     * Set symbol table sources and reconfigure column index mappings.
+     * Used by hash joins where the build/probe direction may change at runtime due to swap.
+     */
+    public void initSources(SymbolTableSource masterSource, SymbolTableSource slaveSource,
+                            int[] masterCols, int[] slaveCols) {
+        clear();
+        Misc.freeIfCloseable(masterSymbolTableCache);
+        Misc.freeIfCloseable(slaveSymbolTableCache);
+        this.masterSource = masterSource;
+        this.slaveSource = slaveSource;
+        Arrays.fill(columnToKeyIndex, -1);
+        System.arraycopy(masterCols, 0, this.masterColumnIndices, 0, masterCols.length);
+        System.arraycopy(slaveCols, 0, this.slaveColumnIndices, 0, slaveCols.length);
+        for (int i = 0; i < masterCols.length; i++) {
+            columnToKeyIndex[masterCols[i]] = i;
+        }
     }
 
     /**
