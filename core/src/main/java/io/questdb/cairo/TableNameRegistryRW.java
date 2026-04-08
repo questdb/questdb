@@ -112,7 +112,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         }
 
         // This is most unsafe, can throw, run it first.
-        if (!tableToken.isView() && !tableToken.isLiveView()) {
+        if (!tableToken.isView()) {
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(tableToken);
             }

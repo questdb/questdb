@@ -7,8 +7,10 @@ import io.questdb.std.Mutable;
 public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     private String baseTableName;
     private boolean ignoreIfExists;
-    private long lagMicros;
-    private long retentionMicros;
+    private char lagUnit;
+    private long lagValue;
+    private char retentionUnit;
+    private long retentionValue;
     private QueryModel selectModel;
     private String selectSql;
     private String viewName;
@@ -20,8 +22,10 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
                 viewNamePosition,
                 baseTableName,
                 selectSql,
-                lagMicros,
-                retentionMicros,
+                lagValue,
+                lagUnit,
+                retentionValue,
+                retentionUnit,
                 ignoreIfExists
         );
     }
@@ -30,8 +34,10 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     public void clear() {
         baseTableName = null;
         ignoreIfExists = false;
-        lagMicros = 0;
-        retentionMicros = 0;
+        lagValue = 0;
+        lagUnit = 0;
+        retentionValue = 0;
+        retentionUnit = 0;
         selectModel = null;
         selectSql = null;
         viewName = null;
@@ -60,12 +66,20 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
         this.ignoreIfExists = ignoreIfExists;
     }
 
-    public void setLagMicros(long lagMicros) {
-        this.lagMicros = lagMicros;
+    public void setLagUnit(char lagUnit) {
+        this.lagUnit = lagUnit;
     }
 
-    public void setRetentionMicros(long retentionMicros) {
-        this.retentionMicros = retentionMicros;
+    public void setLagValue(long lagValue) {
+        this.lagValue = lagValue;
+    }
+
+    public void setRetentionUnit(char retentionUnit) {
+        this.retentionUnit = retentionUnit;
+    }
+
+    public void setRetentionValue(long retentionValue) {
+        this.retentionValue = retentionValue;
     }
 
     public void setSelectModel(QueryModel selectModel) {

@@ -410,6 +410,128 @@ public class LiveViewTest extends AbstractCairoTest {
         execute("DROP LIVE VIEW live_rn");
     }
 
+    @Test
+    public void testExplainLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertSql(
+                "QUERY PLAN\n" +
+                        "LiveView\n" +
+                        "  name: live_rn\n",
+                "EXPLAIN SELECT * FROM live_rn"
+        );
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testInformationSchemaTablesLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertSql(
+                "table_type\n" +
+                        "LIVE VIEW\n",
+                "SELECT table_type FROM information_schema.tables() WHERE table_name = 'live_rn'"
+        );
+        assertSql(
+                "is_insertable_into\n" +
+                        "false\n",
+                "SELECT is_insertable_into FROM information_schema.tables() WHERE table_name = 'live_rn'"
+        );
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testLiveViewsFunction() throws Exception {
+        createBaseTableAndLiveView();
+        assertSql(
+                "view_name\tbase_table_name\tlag\tlag_unit\tretention\tretention_unit\tview_status\tinvalidation_reason\tview_sql\n" +
+                        "live_rn\ttrades\t0\t\t0\t\tvalid\t\tSELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn FROM trades\n",
+                "SELECT * FROM live_views()"
+        );
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testLiveViewsFunctionWithLagAndRetention() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv_lr LAG 5s RETENTION 10m AS" +
+                " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades");
+
+        assertSql(
+                "view_name\tlag\tlag_unit\tretention\tretention_unit\n" +
+                        "lv_lr\t5\tSECOND\t10\tMINUTE\n",
+                "SELECT view_name, lag, lag_unit, retention, retention_unit FROM live_views()"
+        );
+        execute("DROP LIVE VIEW lv_lr");
+    }
+
+    @Test
+    public void testPgClassRelkindLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertSql(
+                "relkind\n" +
+                        "v\n",
+                "SELECT relkind FROM pg_class() WHERE relname = 'live_rn'"
+        );
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testShowColumnsLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertSql(
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\n" +
+                        "symbol\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                        "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n" +
+                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\n" +
+                        "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\n",
+                "SHOW COLUMNS FROM live_rn"
+        );
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testShowCreateLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertSql(
+                "ddl\n" +
+                        "CREATE LIVE VIEW 'live_rn' AS (\n" +
+                        "SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn FROM trades\n" +
+                        ");\n",
+                "SHOW CREATE LIVE VIEW live_rn"
+        );
+        execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testShowCreateLiveViewWithLagAndRetention() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+        execute("CREATE LIVE VIEW lv_lr LAG 5s RETENTION 10m AS" +
+                " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades");
+
+        assertSql(
+                "ddl\n" +
+                        "CREATE LIVE VIEW 'lv_lr' LAG 5s RETENTION 10m AS (\n" +
+                        "SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades\n" +
+                        ");\n",
+                "SHOW CREATE LIVE VIEW lv_lr"
+        );
+        execute("DROP LIVE VIEW lv_lr");
+    }
+
+    @Test
+    public void testTablesTypeLiveView() throws Exception {
+        createBaseTableAndLiveView();
+        assertSql(
+                "table_type\n" +
+                        "L\n",
+                "SELECT table_type FROM tables() WHERE table_name = 'live_rn'"
+        );
+        execute("DROP LIVE VIEW live_rn");
+    }
+
     private static void drainLiveViewQueue() {
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(engine)) {
             //noinspection StatementWithEmptyBody

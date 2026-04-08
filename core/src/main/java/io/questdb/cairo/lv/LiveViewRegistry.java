@@ -30,6 +30,16 @@ public class LiveViewRegistry implements QuietCloseable {
     }
 
     /**
+     * Collects all live view instances into the given sink.
+     */
+    public void getViews(ObjList<LiveViewInstance> sink) {
+        sink.clear();
+        for (LiveViewInstance instance : viewsByName.values()) {
+            sink.add(instance);
+        }
+    }
+
+    /**
      * Collects all live view instances that depend on the given base table.
      * Linear scan — acceptable for the V1 draft.
      */

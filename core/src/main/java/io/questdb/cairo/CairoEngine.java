@@ -707,8 +707,10 @@ public class CairoEngine implements Closeable, WriterSource {
                     op.getSelectSql(),
                     op.getBaseTableName(),
                     baseTableToken,
-                    op.getLagMicros(),
-                    op.getRetentionMicros(),
+                    op.getLagValue(),
+                    op.getLagUnit(),
+                    op.getRetentionValue(),
+                    op.getRetentionUnit(),
                     metadata
             );
             LiveViewDefinition.append(definition, blockFileWriter);

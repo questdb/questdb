@@ -1287,14 +1287,18 @@ public class SqlParser {
         tok = tok(lexer, "'lag' or 'retention' or 'as'");
         if (isLagKeyword(tok)) {
             CharSequence lagTok = tok(lexer, "lag duration");
-            builder.setLagMicros(SqlUtil.expectMicros(lagTok, lexer.lastTokenPosition()));
+            int lagPos = lexer.lastTokenPosition();
+            builder.setLagValue(SqlUtil.expectIntervalValue(lagTok, lagPos));
+            builder.setLagUnit(SqlUtil.expectIntervalUnit(lagTok, lagPos));
             tok = tok(lexer, "'retention' or 'as'");
         }
 
         // optional RETENTION duration
         if (isRetentionKeyword(tok)) {
             CharSequence retTok = tok(lexer, "retention duration");
-            builder.setRetentionMicros(SqlUtil.expectMicros(retTok, lexer.lastTokenPosition()));
+            int retPos = lexer.lastTokenPosition();
+            builder.setRetentionValue(SqlUtil.expectIntervalValue(retTok, retPos));
+            builder.setRetentionUnit(SqlUtil.expectIntervalUnit(retTok, retPos));
             tok = tok(lexer, "'as'");
         }
 
@@ -2581,11 +2585,15 @@ public class SqlParser {
                         expectTok(lexer, "view");
                         parseTableName(lexer, model);
                         showKind = QueryModel.SHOW_CREATE_MAT_VIEW;
+                    } else if (tok != null && isLiveKeyword(tok)) {
+                        expectTok(lexer, "view");
+                        parseTableName(lexer, model);
+                        showKind = QueryModel.SHOW_CREATE_LIVE_VIEW;
                     } else if (tok != null && isViewKeyword(tok)) {
                         parseTableName(lexer, model);
                         showKind = QueryModel.SHOW_CREATE_VIEW;
                     } else {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW'");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'LIVE VIEW'");
                     }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);

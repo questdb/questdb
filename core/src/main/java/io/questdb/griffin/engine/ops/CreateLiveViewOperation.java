@@ -11,8 +11,10 @@ import org.jetbrains.annotations.Nullable;
 public class CreateLiveViewOperation implements Operation {
     private final String baseTableName;
     private final boolean ignoreIfExists;
-    private final long lagMicros;
-    private final long retentionMicros;
+    private final char lagUnit;
+    private final long lagValue;
+    private final char retentionUnit;
+    private final long retentionValue;
     private final String selectSql;
     private final String viewName;
     private final int viewNamePosition;
@@ -22,16 +24,20 @@ public class CreateLiveViewOperation implements Operation {
             int viewNamePosition,
             String baseTableName,
             String selectSql,
-            long lagMicros,
-            long retentionMicros,
+            long lagValue,
+            char lagUnit,
+            long retentionValue,
+            char retentionUnit,
             boolean ignoreIfExists
     ) {
         this.viewName = viewName;
         this.viewNamePosition = viewNamePosition;
         this.baseTableName = baseTableName;
         this.selectSql = selectSql;
-        this.lagMicros = lagMicros;
-        this.retentionMicros = retentionMicros;
+        this.lagValue = lagValue;
+        this.lagUnit = lagUnit;
+        this.retentionValue = retentionValue;
+        this.retentionUnit = retentionUnit;
         this.ignoreIfExists = ignoreIfExists;
     }
 
@@ -52,8 +58,12 @@ public class CreateLiveViewOperation implements Operation {
         return baseTableName;
     }
 
-    public long getLagMicros() {
-        return lagMicros;
+    public char getLagUnit() {
+        return lagUnit;
+    }
+
+    public long getLagValue() {
+        return lagValue;
     }
 
     @Override
@@ -66,8 +76,12 @@ public class CreateLiveViewOperation implements Operation {
         return ImmutableDoneOperationFuture.INSTANCE;
     }
 
-    public long getRetentionMicros() {
-        return retentionMicros;
+    public char getRetentionUnit() {
+        return retentionUnit;
+    }
+
+    public long getRetentionValue() {
+        return retentionValue;
     }
 
     public String getSelectSql() {

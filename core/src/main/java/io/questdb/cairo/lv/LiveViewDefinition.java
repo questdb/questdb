@@ -2,6 +2,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
@@ -19,9 +20,11 @@ public class LiveViewDefinition {
 
     private final String baseTableName;
     private final TableToken baseTableToken;
-    private final long lagMicros;
+    private final char lagUnit;
+    private final long lagValue;
     private final GenericRecordMetadata metadata;
-    private final long retentionMicros;
+    private final char retentionUnit;
+    private final long retentionValue;
     private final String viewName;
     private final String viewSql;
 
@@ -30,16 +33,20 @@ public class LiveViewDefinition {
             String viewSql,
             String baseTableName,
             TableToken baseTableToken,
-            long lagMicros,
-            long retentionMicros,
+            long lagValue,
+            char lagUnit,
+            long retentionValue,
+            char retentionUnit,
             GenericRecordMetadata metadata
     ) {
         this.viewName = viewName;
         this.viewSql = viewSql;
         this.baseTableName = baseTableName;
         this.baseTableToken = baseTableToken;
-        this.lagMicros = lagMicros;
-        this.retentionMicros = retentionMicros;
+        this.lagValue = lagValue;
+        this.lagUnit = lagUnit;
+        this.retentionValue = retentionValue;
+        this.retentionUnit = retentionUnit;
         this.metadata = metadata;
     }
 
@@ -47,10 +54,25 @@ public class LiveViewDefinition {
         final AppendableBlock block = writer.append();
         block.putStr(definition.viewSql);
         block.putStr(definition.baseTableName);
-        block.putLong(definition.lagMicros);
-        block.putLong(definition.retentionMicros);
+        block.putLong(definition.lagValue);
+        block.putChar(definition.lagUnit);
+        block.putLong(definition.retentionValue);
+        block.putChar(definition.retentionUnit);
         block.commit(LIVE_VIEW_DEFINITION_FORMAT_MSG_TYPE);
         writer.commit();
+    }
+
+    public static long toMicros(long value, char unit) {
+        if (value == 0) {
+            return 0;
+        }
+        return switch (unit) {
+            case 's' -> MicrosTimestampDriver.INSTANCE.fromSeconds(value);
+            case 'm' -> MicrosTimestampDriver.INSTANCE.fromMinutes((int) value);
+            case 'h' -> MicrosTimestampDriver.INSTANCE.fromHours((int) value);
+            case 'd' -> MicrosTimestampDriver.INSTANCE.fromDays((int) value);
+            default -> value;
+        };
     }
 
     /**
@@ -103,17 +125,23 @@ public class LiveViewDefinition {
                 offset += Vm.getStorageLength(baseTableNameCs);
                 String baseTableName = Chars.toString(baseTableNameCs);
 
-                long lagMicros = block.getLong(offset);
+                long lagValue = block.getLong(offset);
                 offset += Long.BYTES;
-                long retentionMicros = block.getLong(offset);
+                char lagUnit = block.getChar(offset);
+                offset += Character.BYTES;
+                long retentionValue = block.getLong(offset);
+                offset += Long.BYTES;
+                char retentionUnit = block.getChar(offset);
 
                 return new LiveViewDefinition(
                         liveViewToken.getTableName(),
                         viewSql,
                         baseTableName,
                         baseTableToken,
-                        lagMicros,
-                        retentionMicros,
+                        lagValue,
+                        lagUnit,
+                        retentionValue,
+                        retentionUnit,
                         metadata
                 );
             }
@@ -131,7 +159,15 @@ public class LiveViewDefinition {
     }
 
     public long getLagMicros() {
-        return lagMicros;
+        return toMicros(lagValue, lagUnit);
+    }
+
+    public char getLagUnit() {
+        return lagUnit;
+    }
+
+    public long getLagValue() {
+        return lagValue;
     }
 
     public GenericRecordMetadata getMetadata() {
@@ -139,7 +175,15 @@ public class LiveViewDefinition {
     }
 
     public long getRetentionMicros() {
-        return retentionMicros;
+        return toMicros(retentionValue, retentionUnit);
+    }
+
+    public char getRetentionUnit() {
+        return retentionUnit;
+    }
+
+    public long getRetentionValue() {
+        return retentionValue;
     }
 
     public String getViewName() {
