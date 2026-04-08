@@ -25,7 +25,9 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -34,8 +36,11 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
+import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
+import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -118,6 +123,38 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 // clear() should catch the exception, enter the distressed
                 // code path, free the TUD, and clear the map.
                 cache.clear();
+                Assert.assertEquals(0, getCacheSize(cache));
+            }
+        });
+    }
+
+    @Test
+    public void testClearSkipsRollbackWhenDistressed() throws Exception {
+        // When the cache is already distressed, clear() should skip
+        // rollback and go straight to freeing all TUDs and clearing
+        // the map.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE distressed_clear (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("distressed_clear"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Mark cache as distressed before calling clear().
+                cache.setDistressed();
+                cache.clear();
+                Assert.assertEquals(0, getCacheSize(cache));
             }
         });
     }
@@ -139,35 +176,110 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCloseFreesWalWriterOnConstructorFailure() throws Exception {
-        // Reproduces the pattern in QwpTudCache.getTableUpdateDetails() where
-        // engine.getWalWriter() is passed inline to the WalTableUpdateDetails
-        // constructor. If the constructor throws, the writer leaks.
-        // The fix acquires the writer into a local variable and closes it
-        // in a catch block.
+    public void testCommitAllBestEffortHandlesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE test_leak (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            TableToken tableToken = engine.verifyTableName("test_leak");
+            execute("CREATE TABLE be_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            TableWriterAPI walWriter = engine.getWalWriter(tableToken);
-            try {
-                // Passing null engine causes NPE in the TableUpdateDetails
-                // constructor before the writer is stored, simulating any
-                // constructor failure after the writer has been acquired.
-                new WalTableUpdateDetails(
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("be_drop"),
                         null,
                         null,
-                        walWriter,
-                        null,
-                        new Utf8String("test_leak"),
-                        null,
-                        -1,
-                        false,
-                        Long.MAX_VALUE
+                        1
                 );
-                Assert.fail("should have thrown NullPointerException");
-            } catch (Throwable th) {
-                Misc.free(walWriter);
+                Assert.assertNotNull(tud);
+
+                replaceWriterWithFake(tud, true);
+                Assert.assertEquals(1, getCacheSize(cache));
+
+                // Should catch the table-dropped CommitFailedException,
+                // mark the TUD as dropped, remove it, and free it.
+                cache.commitAllBestEffort();
+                Assert.assertEquals(0, getCacheSize(cache));
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllBestEffortNonDropCommitFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE be_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("be_fail"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                replaceWriterWithFake(tud, false);
+
+                // Should log the error and continue without throwing.
+                cache.commitAllBestEffort();
+
+                // TUD stays in the cache (not removed on non-drop failure)
+                // and its writer is marked as being in error state.
+                Assert.assertEquals(1, getCacheSize(cache));
+                Assert.assertTrue(tud.isWriterInError());
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllBestEffortSkipsAlreadyDroppedTud() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE be_skip_1 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE be_skip_2 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud1 = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("be_skip_1"),
+                        null,
+                        null,
+                        2
+                );
+                Assert.assertNotNull(tud1);
+
+                WalTableUpdateDetails tud2 = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("be_skip_2"),
+                        null,
+                        null,
+                        2
+                );
+                Assert.assertNotNull(tud2);
+
+                // Mark one TUD as already dropped before calling
+                // commitAllBestEffort(). The loop should skip its
+                // commit, remove it, and continue to the other TUD.
+                Assert.assertEquals(2, getCacheSize(cache));
+                tud1.setIsDropped();
+
+                cache.commitAllBestEffort();
+
+                // Only the non-dropped TUD remains in the cache.
+                Assert.assertEquals(1, getCacheSize(cache));
+                Assert.assertFalse(tud2.isDropped());
             }
         });
     }
@@ -201,6 +313,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
 
                 // commitAll() should catch the CommitFailedException, mark
                 // the TUD as dropped, remove it from the cache, and free it.
+                Assert.assertEquals(1, getCacheSize(cache));
                 try {
                     cache.commitAll();
                 } catch (Exception e) {
@@ -208,6 +321,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 } catch (Throwable t) {
                     throw new AssertionError("unexpected throwable", t);
                 }
+                Assert.assertEquals(0, getCacheSize(cache));
             }
         });
     }
@@ -252,6 +366,55 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllSkipsAlreadyDroppedTud() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE skip_1 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE skip_2 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud1 = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("skip_1"),
+                        null,
+                        null,
+                        2
+                );
+                Assert.assertNotNull(tud1);
+
+                WalTableUpdateDetails tud2 = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("skip_2"),
+                        null,
+                        null,
+                        2
+                );
+                Assert.assertNotNull(tud2);
+
+                // Mark one TUD as already dropped before calling
+                // commitAll(). The loop should skip its commit,
+                // remove it, and continue to the other TUD.
+                Assert.assertEquals(2, getCacheSize(cache));
+                tud1.setIsDropped();
+
+                try {
+                    cache.commitAll();
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable", t);
+                }
+
+                // Only the non-dropped TUD remains in the cache.
+                Assert.assertEquals(1, getCacheSize(cache));
+                Assert.assertFalse(tud2.isDropped());
+            }
+        });
+    }
+
+    @Test
     public void testDoubleCloseIsSafe() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -263,6 +426,222 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             // LocalValueMap.set(key, null) which calls Misc.freeIfCloseable().
             state.close();
             state.close();
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsAutoCreatesTableWithTimestampNanos() throws Exception {
+        // Exercises the TYPE_TIMESTAMP_NANOS branch in the
+        // QwpTableStructureAdapter constructor's designated-timestamp
+        // detection loop.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                QwpColumnDef[] schema = {
+                        new QwpColumnDef("val", QwpConstants.TYPE_INT),
+                        new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP_NANOS)
+                };
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("ts_nanos_test"),
+                        schema,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                // Verify the created table's designated timestamp column
+                // is TIMESTAMP_NANO (not plain TIMESTAMP).
+                try (TableReader reader = engine.getReader("ts_nanos_test")) {
+                    int tsIndex = reader.getMetadata().getTimestampIndex();
+                    Assert.assertTrue(tsIndex >= 0);
+                    Assert.assertEquals(
+                            ColumnType.TIMESTAMP_NANO,
+                            reader.getMetadata().getColumnType(tsIndex)
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsFreesWriterOnFailure() throws Exception {
+        // Exercises the catch(Throwable) block in QwpTudCache.getTableUpdateDetails()
+        // that frees the WAL writer when the try block fails after the writer
+        // has been acquired. We inject a map subclass that throws from putAt(),
+        // which fires after the WalTableUpdateDetails is successfully constructed
+        // but before it is returned.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tud_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                // Replace the internal map with one whose putAt() always throws.
+                // keyIndex() still works (read-only), so the production code
+                // reaches the try block, creates the TUD and WAL writer, then
+                // crashes on putAt(). The catch block must free the TUD (and
+                // its writer) to avoid a native memory leak.
+                Field mapField = QwpTudCache.class.getDeclaredField("tableUpdateDetails");
+                mapField.setAccessible(true);
+                mapField.set(cache, new LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails>() {
+                    @Override
+                    public boolean putAt(int index, Utf8String key, WalTableUpdateDetails value) {
+                        throw new RuntimeException("simulated map failure");
+                    }
+                });
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String("tud_fail"),
+                            null,
+                            null,
+                            10
+                    );
+                    Assert.fail("should have thrown RuntimeException");
+                } catch (RuntimeException e) {
+                    Assert.assertEquals("simulated map failure", e.getMessage());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsReturnsNullForInvalidColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                QwpColumnDef[] schema = {
+                        new QwpColumnDef("inv?lid", QwpConstants.TYPE_INT),
+                        new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP)
+                };
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("invalid_col_test"),
+                        schema,
+                        null,
+                        1
+                );
+                Assert.assertNull(tud);
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsReturnsNullForInvalidTableName() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                // ".." is an invalid table name (starts with a dot)
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String(".."),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNull(tud);
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsReturnsNullForMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE mv_base (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv_target AS (SELECT ts, count() cnt FROM mv_base SAMPLE BY 1h)");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("mv_target"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNull(tud);
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsReturnsNullWhenAutoCreateColumnsDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            // autoCreateNewColumns=false, autoCreateNewTables=true
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, false, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("nonexistent_table"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNull(tud);
+            }
+        });
+    }
+
+    @Test
+    public void testGetTableUpdateDetailsThrowsWhenMaxTablesExceeded() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE max_tbl (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("max_tbl"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String("another_table"),
+                            null,
+                            null,
+                            1
+                    );
+                    Assert.fail("should have thrown CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage().contains("too many distinct tables"));
+                }
+            }
         });
     }
 
@@ -308,6 +687,13 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 state.close();
             }
         });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int getCacheSize(QwpTudCache cache) throws Exception {
+        Field field = QwpTudCache.class.getDeclaredField("tableUpdateDetails");
+        field.setAccessible(true);
+        return ((LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails>) field.get(cache)).size();
     }
 
     private static void replaceWriterWithFake(WalTableUpdateDetails tud, boolean isTableDropped) throws Exception {
