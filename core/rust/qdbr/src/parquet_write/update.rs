@@ -873,10 +873,12 @@ impl ParquetUpdater {
                     self.result_unused_bytes,
                 )?;
 
-                // Write: append after existing data, or full rewrite from offset 0.
-                let write_offset = if result.is_append { existing_size } else { 0 };
+                // The append-only invariant: write after the existing trailer
+                // so previously committed `parquetMetaFileSize` snapshots stay
+                // valid for stale readers. update_parquet_metadata returns an
+                // error rather than producing a full-rewrite buffer.
                 parquet_meta_file
-                    .seek(SeekFrom::Start(write_offset))
+                    .seek(SeekFrom::Start(existing_size))
                     .map_err(ParquetError::from)?;
                 parquet_meta_file
                     .write_all(&result.bytes)

@@ -657,15 +657,17 @@ pub struct ParquetMetaColumnInfo<'a> {
 }
 
 /// Result of an incremental `_pm` update.
+///
+/// `bytes` is always append-only: the caller seeks to the existing file size
+/// and writes them after the previous trailer. The previous bytes (including
+/// the previous trailer) are left untouched, preserving the stale-reader
+/// invariant that any earlier committed `parquetMetaFileSize` continues to
+/// resolve to a consistent older snapshot.
 pub struct ParquetMetaUpdateResult {
-    /// Bytes to write. For incremental updates these are append-only bytes;
-    /// for full creates (fallback) these are the entire file.
+    /// Bytes to append at the existing file size.
     pub bytes: Vec<u8>,
-    /// Total `_pm` file size after writing.
+    /// Total `_pm` file size after the append.
     pub new_file_size: u64,
-    /// If true, `bytes` should be appended at `existing_file_size`.
-    /// If false, `bytes` should be written from offset 0 (full rewrite).
-    pub is_append: bool,
 }
 
 /// Generates a complete `_pm` file from scratch.
@@ -739,9 +741,15 @@ pub fn generate_parquet_metadata(
 /// Compares the new parquet row groups against the existing `_pm` to determine
 /// which row groups are unchanged, changed, or new. Unchanged row groups keep
 /// their original offsets (no data rewritten). Only new/changed blocks and a
-/// new footer are appended.
+/// new footer are appended after the existing trailer, leaving the previous
+/// bytes intact so that any older committed `parquetMetaFileSize` continues
+/// to resolve to a consistent older snapshot.
 ///
-/// Returns a `ParquetMetaUpdateResult` describing what to write and where.
+/// Returns the bytes the caller must append at `existing_pm_file_size` and
+/// the resulting file size. Returns an error when the update cannot be
+/// represented as a pure append (column_tops changed or row group count
+/// shrank); the Java caller must escalate to rewrite mode (new `nameTxn`
+/// directory) instead.
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_pm: &[u8],
@@ -776,7 +784,7 @@ pub fn update_parquet_metadata(
     }
 
     // If any column_top in the existing header differs from the requested
-    // columns, fall back to full create. The incremental update path only
+    // columns, the in-place updater cannot proceed. The incremental path only
     // appends row group blocks and a new footer; it cannot modify the header
     // where column_tops are stored. After an O3 merge the caller zeroes all
     // column_tops because merged row groups embed null sentinels in their
@@ -789,33 +797,35 @@ pub fn update_parquet_metadata(
             .unwrap_or(false)
     });
 
-    // If the new file has fewer row groups (compaction) or column_tops
-    // changed, fall back to full create. The incremental writer can only
-    // add/replace row group blocks, not modify the header.
+    // Surface a clear error when the update cannot be represented by the
+    // current append-only path:
+    //
+    // - `column_tops_changed`: column tops live in the header at the start of
+    //   the file. Append-only updates cannot rewrite the header, so a changed
+    //   column top has no representation here. The Java pre-check in
+    //   `O3PartitionJob.processParquetPartition()` should already catch this
+    //   before we get here; this branch is the defence-in-depth backstop.
+    //
+    // - `thrift_row_groups.len() < existing_rg_count`: compaction is
+    //   *conceptually* representable as an append (write a new footer that
+    //   references fewer row groups, leaving the dropped blocks as dead
+    //   space), but the current `ParquetMetaUpdateWriter` only exposes
+    //   replace/add and has no remove operation. None of the existing Java
+    //   callers shrink the row group count, so this branch is currently
+    //   unreachable in production — it stays as a defensive guard.
+    //
+    // Either case must escalate to rewrite mode (new `nameTxn` directory)
+    // because rewriting the existing `_pm` in place would overwrite bytes
+    // that an older committed `parquetMetaFileSize` could resolve to,
+    // corrupting any stale reader.
     if thrift_row_groups.len() < existing_rg_count || column_tops_changed {
-        let designated_ts = existing_reader
-            .designated_timestamp()
-            .map(|i| i as i32)
-            .unwrap_or(-1);
-        let mut sorting_indices = Vec::new();
-        for i in 0..existing_reader.sorting_column_count() as usize {
-            if let Ok(idx) = existing_reader.sorting_column(i) {
-                sorting_indices.push(idx);
-            }
-        }
-        let (bytes, _) = generate_parquet_metadata(
-            columns,
-            schema_columns,
-            thrift_row_groups,
-            designated_ts,
-            &sorting_indices,
-            parquet_footer_offset,
-            parquet_footer_length,
-            bloom_bitsets,
-            unused_bytes,
-        )?;
-        let new_file_size = bytes.len() as u64;
-        return Ok(ParquetMetaUpdateResult { bytes, new_file_size, is_append: false });
+        return Err(parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "_pm in-place update is not representable by the append-only path (row_group_count: {} -> {}, column_tops_changed: {}); caller must escalate to rewrite mode (new nameTxn directory)",
+            existing_rg_count,
+            thrift_row_groups.len(),
+            column_tops_changed
+        ));
     }
 
     // Build the update writer from existing data.
@@ -872,11 +882,7 @@ pub fn update_parquet_metadata(
     let (append_bytes, _new_footer_offset) = updater.finish()?;
     let new_file_size = existing_pm_file_size + append_bytes.len() as u64;
 
-    Ok(ParquetMetaUpdateResult {
-        bytes: append_bytes,
-        new_file_size,
-        is_append: true,
-    })
+    Ok(ParquetMetaUpdateResult { bytes: append_bytes, new_file_size })
 }
 
 /// Builds a `RowGroupBlockBuilder` directly from a thrift `RowGroup` struct
@@ -2427,7 +2433,6 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result.is_append, "should be an incremental append");
         assert!(!result.bytes.is_empty(), "should have append bytes");
 
         // Build the full file: initial + append.
@@ -2446,6 +2451,196 @@ mod tests {
             ParquetMetaReader::from_file_size(&full_file[..initial_size as usize], initial_size)
                 .unwrap();
         assert_eq!(old_reader.row_group_count(), 1);
+    }
+
+    /// Builds a `Vec<ParquetMetaColumnInfo>` from the given parquet schema and
+    /// optional `QdbMeta`, with `top == 0` for every column. The caller can
+    /// stamp non-zero tops onto specific entries afterwards.
+    fn col_infos_from_schema<'a>(
+        schema_columns: &'a [parquet2::metadata::ColumnDescriptor],
+        qdb_meta: Option<&'a QdbMeta>,
+    ) -> Vec<ParquetMetaColumnInfo<'a>> {
+        schema_columns
+            .iter()
+            .enumerate()
+            .map(|(i, col_desc)| {
+                let field_info = col_desc.base_type.get_field_info();
+                let cm = qdb_meta.and_then(|m| m.schema.get(i));
+                let col_type_tag = cm.map(|c| c.column_type.tag()).or_else(|| {
+                    crate::parquet_read::meta::infer_column_type(col_desc).map(|ct| ct.tag())
+                });
+                let mut flags = ColumnFlags::new();
+                flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
+                ParquetMetaColumnInfo {
+                    name: &field_info.name,
+                    top: 0,
+                    col_type_code: cm.map(|c| c.column_type.code()).unwrap_or(-1),
+                    col_type_tag,
+                    id: field_info.id.unwrap_or(-1),
+                    flags,
+                    fixed_byte_len: match col_desc.descriptor.primitive_type.physical_type {
+                        PhysicalType::FixedLenByteArray(len) => len as i32,
+                        _ => 0,
+                    },
+                    physical_type: physical_type_to_u8(
+                        col_desc.descriptor.primitive_type.physical_type,
+                    ),
+                    max_rep_level: col_desc.descriptor.max_rep_level as u8,
+                    max_def_level: col_desc.descriptor.max_def_level as u8,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn update_with_nonzero_column_top_returns_error() {
+        // Build an initial `_pm` whose first column carries a non-zero
+        // column top, then call `update_parquet_metadata` with the same
+        // columns but `top == 0`. The updater cannot rewrite the header,
+        // so it must surface a clear error rather than silently overwrite
+        // the existing file.
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+
+        // Initial _pm: column 0 has a non-zero column top.
+        let mut col_infos_with_top = col_infos_from_schema(schema_columns, qdb_meta.as_ref());
+        col_infos_with_top[0].top = 42;
+
+        let (initial_pm, _) = generate_parquet_metadata(
+            &col_infos_with_top,
+            schema_columns,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            0,
+        )
+        .unwrap();
+        let initial_size = initial_pm.len() as u64;
+
+        // Sanity check: the existing _pm now reports top == 42 for column 0.
+        let initial_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
+        assert_eq!(initial_reader.column_top(0).unwrap(), 42);
+
+        // Build the update request with the SAME row groups but top == 0
+        // for every column (mirroring the O3 merge invariant).
+        let col_infos_zeroed = col_infos_from_schema(schema_columns, qdb_meta.as_ref());
+
+        let result = update_parquet_metadata(
+            &initial_pm,
+            initial_size,
+            &col_infos_zeroed,
+            schema_columns,
+            &thrift_meta.row_groups,
+            100,
+            50,
+            &[],
+            0,
+        );
+
+        let err = match result {
+            Ok(_) => panic!("update should fail when column tops change"),
+            Err(e) => e,
+        };
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("column_tops_changed: true"),
+            "expected 'column_tops_changed: true' in error, got: {msg}"
+        );
+        assert!(
+            msg.contains("escalate to rewrite mode"),
+            "expected escalation hint in error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn update_with_decreasing_row_group_count_returns_error() {
+        // Build an initial `_pm` with 3 row groups, then call
+        // `update_parquet_metadata` with only 2. The updater can grow or
+        // replace row groups but cannot drop one, so it must error.
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let thrift_meta = metadata.into_thrift();
+
+        let mut cursor2 = Cursor::new(&parquet_data);
+        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
+        let schema_columns = metadata2.schema_descr.columns();
+
+        let col_infos = col_infos_from_schema(schema_columns, qdb_meta.as_ref());
+
+        // Build 3 row groups by cloning the first one with shifted page offsets.
+        let mut three_rgs = thrift_meta.row_groups.clone();
+        let mut second_rg = three_rgs[0].clone();
+        for col in &mut second_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000;
+            }
+        }
+        let mut third_rg = three_rgs[0].clone();
+        for col in &mut third_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 20_000;
+            }
+        }
+        three_rgs.push(second_rg);
+        three_rgs.push(third_rg);
+        assert_eq!(three_rgs.len(), 3);
+
+        let (initial_pm, _) = generate_parquet_metadata(
+            &col_infos,
+            schema_columns,
+            &three_rgs,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            0,
+        )
+        .unwrap();
+        let initial_size = initial_pm.len() as u64;
+
+        let initial_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
+        assert_eq!(initial_reader.row_group_count(), 3);
+
+        // Drop the third row group and ask for an update with only 2.
+        let two_rgs = three_rgs[..2].to_vec();
+        let result = update_parquet_metadata(
+            &initial_pm,
+            initial_size,
+            &col_infos,
+            schema_columns,
+            &two_rgs,
+            100,
+            50,
+            &[],
+            0,
+        );
+
+        let err = match result {
+            Ok(_) => panic!("update should fail when row groups shrink"),
+            Err(e) => e,
+        };
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("row_group_count: 3 -> 2"),
+            "expected 'row_group_count: 3 -> 2' in error, got: {msg}"
+        );
+        assert!(
+            msg.contains("escalate to rewrite mode"),
+            "expected escalation hint in error, got: {msg}"
+        );
     }
 
     #[test]
