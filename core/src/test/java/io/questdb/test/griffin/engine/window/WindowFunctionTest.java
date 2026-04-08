@@ -10934,6 +10934,81 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStdDevPopOverNonPartitionedRowsWithLargeFrameRandomData() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, j long, d double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, rnd_long(1, 100_000, 5), rnd_double(0) * 100_000 from long_sequence(100_000)");
+
+            // Cross-validate stddev_pop against sqrt(avg(x²) - avg(x)²) over a large sliding window
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 6) max_diff " +
+                            "from (" +
+                            "select " +
+                            "stddev_pop(d) over (order by ts rows between 999 preceding and current row) sd, " +
+                            "sqrt(avg(d * d) over (order by ts rows between 999 preceding and current row) - " +
+                            "avg(d) over (order by ts rows between 999 preceding and current row) * " +
+                            "avg(d) over (order by ts rows between 999 preceding and current row)) sd_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testStdDevPopOverPartitionedRangeWithLargeFrameRandomData() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, d double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select (100_000 + x)::timestamp, rnd_long(1, 20, 0), rnd_double(0) * 1000 from long_sequence(100_000)");
+
+            String rangeVal = timestampType == TestTimestampType.MICRO ? "10000" : "10000000";
+
+            // Cross-validate stddev_pop over partitioned range frame
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when sd is null and sd_ref is null then 0.0 when sd is null or sd_ref is null then 1.0 else abs(sd - sd_ref) end), 6) max_diff " +
+                            "from (" +
+                            "select " +
+                            "stddev_pop(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) sd, " +
+                            "sqrt(avg(d * d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) - " +
+                            "avg(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row) * " +
+                            "avg(d) over (partition by i order by ts range between " + rangeVal + " preceding and current row)) sd_ref " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
+    public void testVarPopOverNonPartitionedRowsWithLargeFrameRandomData() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, d double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, rnd_double(0) * 100_000 from long_sequence(50_000)");
+
+            // Cross-validate var_pop = stddev_pop²
+            assertSql(
+                    """
+                            max_diff
+                            0.0
+                            """,
+                    "select round(max(case when vr is null and sd is null then 0.0 when vr is null or sd is null then 1.0 else abs(vr - sd * sd) end), 6) max_diff " +
+                            "from (" +
+                            "select " +
+                            "var_pop(d) over (order by ts rows between 999 preceding and current row) vr, " +
+                            "stddev_pop(d) over (order by ts rows between 999 preceding and current row) sd " +
+                            "from tab" +
+                            ")"
+            );
+        });
+    }
+
+    @Test
     public void testStdDevResolvesToGroupByWithoutOver() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j double) timestamp(ts)", timestampType.getTypeName());
