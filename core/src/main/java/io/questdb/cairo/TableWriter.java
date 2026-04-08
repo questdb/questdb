@@ -139,9 +139,9 @@ import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
@@ -2497,17 +2497,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean contextAllowsAnyStructureChanges) {
         if (cmd.getTableId() == getMetadata().getTableId()) {
-            switch (cmd.getType()) {
-                case CMD_ALTER_TABLE:
-                    processAsyncWriterCommand(alterOp, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
-                    break;
-                case CMD_UPDATE_TABLE:
-                    processAsyncWriterCommand(cmd.getAsyncWriterCommand(), cmd, cursor, commandSubSeq, false);
-                    break;
-                default:
+            if (cmd.getType() == CMD_ALTER_TABLE) {
+                processAsyncWriterCommand(alterOp, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
+            } else {
+                final AsyncWriterCommand asyncCmd = cmd.getAsyncWriterCommand();
+                if (asyncCmd != null) {
+                    processAsyncWriterCommand(asyncCmd, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
+                } else {
                     LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
-                    // Don't block the queue even if the command is unknown
                     commandSubSeq.done(cursor);
+                }
             }
         } else {
             LOG.info()
