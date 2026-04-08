@@ -36,7 +36,7 @@ import io.questdb.std.Unsafe;
  * For integer column types (BYTE, SHORT, INT, LONG), uses plain FoR bitpacking
  * without ALP transformation.
  * <p>
- * Based on "ALP: Adaptive Lossless floating-Point Compression" (Afroozeh &
+ * Based on "ALP: Adaptive Lossless floating-Point Compression" (Afroozeh &amp;
  * Boncz, SIGMOD 2024).
  */
 public class CoveringCompressor {
