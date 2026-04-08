@@ -157,6 +157,10 @@ public class SqlParser {
     private boolean createTableMode = false;
     private boolean createViewMode = false;
     private int digit;
+    // Last start offset captured by parseViewSql(). Reflects the position of the
+    // first token of the view body (after stripping a leading '(' if present),
+    // so callers can align their selectSqlPosition with the returned string.
+    private int lastViewSqlStartPosition;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
 
@@ -1355,10 +1359,14 @@ public class SqlParser {
         // Reuse the regular query parser (matches CREATE VIEW). This accepts
         // both bare SELECT and WITH ... SELECT (CTEs), and rejects trailing
         // garbage after a parenthesised query.
-        int selectSqlPosition = lexer.getPosition();
         final String selectSql = parseViewSql(lexer, sqlParserCallback);
         builder.setSelectSql(selectSql);
-        builder.setSelectSqlPosition(selectSqlPosition);
+        // Use the start offset that parseViewSql actually used for its returned
+        // string. For a parenthesised body parseViewSql skips the leading '('
+        // before capturing, so the offset is one (or more) past where we'd
+        // otherwise see it. Without this, error positions reported by
+        // validateTransformSql would be misaligned for `AS (SELECT ...)` bodies.
+        builder.setSelectSqlPosition(lastViewSqlStartPosition);
         return builder;
     }
 
@@ -5522,6 +5530,7 @@ public class SqlParser {
             startOfQuery = lexer.getPosition();
             tok = tok(lexer, "'with' or 'select'");
         }
+        lastViewSqlStartPosition = startOfQuery;
 
         // Parse SELECT for the sake of basic SQL validation.
         // It'll be compiled and optimized later, at the execution phase.

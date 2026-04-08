@@ -243,6 +243,75 @@ public class IngestEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testIngestDeclareOverrideInsideCte() throws Exception {
+        // Regression: a DECLARE OVERRIDABLE inside a CTE body must still see the
+        // caller-supplied URL override. Without parseWith / parseWithClauses /
+        // parseAsSubQueryAndExpectClosingBrace threading the overrideDeclare flag,
+        // the WITH-driven path silently fell back to the inline DECLARE default.
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM cte_override
+                        INTO readings
+                        AS WITH params AS (
+                                DECLARE OVERRIDABLE @sensor_name := 'default_sensor'
+                                SELECT @sensor_name AS sensor
+                            )
+                            SELECT
+                                now() AS ts,
+                                params.sensor AS sensor,
+                                json_extract(payload(), '$.value')::DOUBLE AS value
+                            FROM params
+                        """);
+
+                assertIngestSuccess(engine, "/ingest?transform=cte_override&sensor_name=cte_custom", "{\"value\":7.0}");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "cte_custom\t7.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testIngestDeclareOverrideTopLevelWith() throws Exception {
+        // Companion regression: when the transform body starts with WITH ... SELECT
+        // (top-level CTE form, not just bare SELECT), the override flag must be
+        // threaded through parseWith. Before the fix, the bare-SELECT entry point
+        // got the flag but the WITH entry point dropped it.
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root)) {
+                serverMain.start();
+                final CairoEngine engine = serverMain.getEngine();
+
+                engine.execute("CREATE TABLE readings (ts TIMESTAMP, sensor STRING, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                engine.execute("""
+                        CREATE PAYLOAD TRANSFORM top_with_override
+                        INTO readings
+                        AS DECLARE OVERRIDABLE @sensor_name := 'default_top'
+                            WITH src AS (SELECT @sensor_name AS sensor)
+                            SELECT now() AS ts, src.sensor AS sensor, json_extract(payload(), '$.value')::DOUBLE AS value
+                            FROM src
+                        """);
+
+                assertIngestSuccess(engine, "/ingest?transform=top_with_override&sensor_name=top_custom", "{\"value\":11.0}");
+
+                assertSqlEventually(engine,
+                        "SELECT sensor, value FROM readings",
+                        "sensor\tvalue\n" +
+                                "top_custom\t11.0\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testIngestDeclareOverrideNonOverridable() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root)) {

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.pt;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pt.PayloadTransformDefinition;
 import io.questdb.cairo.pt.PayloadTransformStore;
@@ -160,6 +161,32 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreatePayloadTransformIdentifiersSurviveLexerReuse() throws Exception {
+        // Regression for lexer aliasing: if the parser stored raw lexer flyweights
+        // for the transform name / target table / DLQ table, subsequent lexing of
+        // the PARTITION BY / TTL / AS tokens would mutate the underlying buffer
+        // and the built operation would end up holding wrong identifiers. Use
+        // distinctive names so any aliasing surfaces as a wrong-name comparison.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE distinctive_target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE PAYLOAD TRANSFORM distinctive_xform INTO distinctive_target " +
+                    "DLQ distinctive_dlq PARTITION BY DAY TTL 3 DAYS AS " + VALID_SELECT);
+            drainWalQueue();
+
+            PayloadTransformStore store = engine.getPayloadTransformStore();
+            PayloadTransformDefinition def = new PayloadTransformDefinition();
+            def = store.lookupTransform(sqlExecutionContext, "distinctive_xform", def);
+            Assert.assertNotNull(def);
+            Assert.assertEquals("distinctive_xform", def.getName());
+            Assert.assertEquals("distinctive_target", def.getTargetTable());
+            Assert.assertEquals("distinctive_dlq", def.getDlqTable());
+            Assert.assertEquals(PartitionBy.DAY, def.getDlqPartitionBy());
+            Assert.assertEquals(3, def.getDlqTtlValue());
+            Assert.assertEquals("DAYS", def.getDlqTtlUnit());
+        });
+    }
+
+    @Test
     public void testCreatePayloadTransformWithDlq() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -171,6 +198,7 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
             def = store.lookupTransform(sqlExecutionContext, "my_transform", def);
             Assert.assertNotNull(def);
             Assert.assertEquals("my_dlq", def.getDlqTable());
+            Assert.assertEquals(PartitionBy.DAY, def.getDlqPartitionBy());
             Assert.assertEquals(7, def.getDlqTtlValue());
             Assert.assertEquals("DAYS", def.getDlqTtlUnit());
         });
@@ -334,12 +362,14 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
                         error VARCHAR
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
+            final String sql = "CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT;
             try {
-                execute("CREATE PAYLOAD TRANSFORM bad INTO target DLQ bad_dlq PARTITION BY DAY AS " + VALID_SELECT);
+                execute(sql);
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "DLQ table missing column [column=transform_name");
-                Assert.assertEquals("error should point at DLQ table name", 45, e.getPosition());
+                Assert.assertEquals("error should point at DLQ table name",
+                        sql.indexOf("bad_dlq"), e.getPosition());
             }
         });
     }
@@ -551,6 +581,126 @@ public class PayloadTransformDdlTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "payload transform must not reference tables");
             }
+        });
+    }
+
+    @Test
+    public void testAllowCteReferenceFromInnerSubquery() throws Exception {
+        // Regression for the CTE-scope check in validateNoTableReferences: a
+        // nested subquery that references an outer-scope CTE name must NOT be
+        // mis-classified as a table reference.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE PAYLOAD TRANSFORM nested_cte INTO target AS " +
+                    "WITH cte AS (SELECT now() AS ts, 'x' AS sym, 1.0 AS price) " +
+                    "SELECT * FROM (SELECT ts, sym, price FROM cte) sub");
+            drainWalQueue();
+            Assert.assertTrue(engine.getPayloadTransformStore().hasTransform(sqlExecutionContext, "nested_cte"));
+        });
+    }
+
+    @Test
+    public void testRejectTableHiddenInsideCte() throws Exception {
+        // Regression for validateNoTableReferences CTE recursion: a table reference
+        // hidden inside a CTE body must be detected, not just references at the
+        // outer SELECT level.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE other_table (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target AS WITH cte AS (SELECT * FROM other_table) SELECT * FROM cte");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "payload transform must not reference tables");
+                TestUtils.assertContains(e.getMessage(), "other_table");
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDuplicateOutputAlias() throws Exception {
+        // Two SELECT columns aliased to the same name must be rejected. QuestDB's
+        // regular SELECT parser enforces unique output column names, so the
+        // rejection happens at parse time rather than inside validateTransformSql -
+        // this test pins that behaviour so a future change to the parser cannot
+        // silently let two source expressions map to the same target column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT now() AS ts, 'x' AS sym, 1.0 AS price, 2.0 AS price");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "Duplicate column");
+                TestUtils.assertContains(e.getMessage(), "price");
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDuplicateOutputAliasCaseInsensitive() throws Exception {
+        // Mixed-case duplicates must also be rejected - the parser's column-name
+        // check is case-insensitive, matching target column matching semantics.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE PAYLOAD TRANSFORM bad INTO target AS SELECT now() AS ts, 'x' AS sym, 1.0 AS Price, 2.0 AS PRICE");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "Duplicate column");
+            }
+        });
+    }
+
+    @Test
+    public void testIntoStripsPublicSchema() throws Exception {
+        // Regression for INTO/DLQ name normalisation: a leading public. prefix
+        // must be stripped (matching CREATE TABLE / CREATE MAT VIEW behaviour)
+        // so the persisted target_table is the bare name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE PAYLOAD TRANSFORM stripped INTO public.target AS " + VALID_SELECT);
+            drainWalQueue();
+
+            PayloadTransformStore store = engine.getPayloadTransformStore();
+            PayloadTransformDefinition def = new PayloadTransformDefinition();
+            def = store.lookupTransform(sqlExecutionContext, "stripped", def);
+            Assert.assertNotNull(def);
+            Assert.assertEquals("target", def.getTargetTable());
+        });
+    }
+
+    @Test
+    public void testCreateOrReplaceLeavesOriginalLiveOnValidationFailure() throws Exception {
+        // Regression for the non-destructive CREATE OR REPLACE fix: if the
+        // replacement body fails validation, the previous definition must
+        // remain live and unchanged - the live ingest path must not be taken
+        // offline by a bad DDL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE target (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE PAYLOAD TRANSFORM live_xform INTO target AS " + VALID_SELECT);
+            drainWalQueue();
+
+            PayloadTransformStore store = engine.getPayloadTransformStore();
+            PayloadTransformDefinition before = store.lookupTransform(sqlExecutionContext, "live_xform", new PayloadTransformDefinition());
+            Assert.assertNotNull(before);
+            final String beforeSql = before.getSelectSql();
+
+            // Attempt OR REPLACE with a body that references a column that does
+            // not exist in the target table - this fails inside validateTransformSql
+            // which used to run AFTER the early dropTransform.
+            try {
+                execute("CREATE OR REPLACE PAYLOAD TRANSFORM live_xform INTO target AS " +
+                        "SELECT now() AS ts, 'x' AS sym, 1.0 AS price, 99.0 AS not_a_column");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "column not found in target table");
+            }
+            drainWalQueue();
+
+            // Original transform must still be live AND unchanged.
+            PayloadTransformDefinition after = store.lookupTransform(sqlExecutionContext, "live_xform", new PayloadTransformDefinition());
+            Assert.assertNotNull("original transform must still be live after failed REPLACE", after);
+            Assert.assertEquals(beforeSql, after.getSelectSql());
         });
     }
 

@@ -176,6 +176,13 @@ public class PayloadTransformStore implements Closeable {
                         ") TIMESTAMP(ts) PARTITION BY MONTH WAL",
                 executionContext
         );
+        // Seed lastWriteTimestamp from the high-water mark of the persisted system
+        // table. Without this, after a process restart (or after the in-memory state
+        // is cleared) nextTimestamp() falls back to the wall clock; if the wall clock
+        // ever moves backwards (NTP correction, clock skew, manual change) a fresh
+        // CREATE/DROP row could land with a ts smaller than the latest persisted row
+        // and be silently shadowed by LATEST ON ts PARTITION BY name.
+        restoreLastWriteTimestamp(executionContext);
         isInitialized = true;
         LOG.info().$("payload transform system table initialized [table=").$(tableName).$(']').$();
     }
@@ -273,6 +280,39 @@ public class PayloadTransformStore implements Closeable {
             next = Math.max(now, last + 1);
         } while (!lastWriteTimestamp.compareAndSet(last, next));
         return next;
+    }
+
+    /**
+     * Read the high-water-mark ts from the persisted system table and seed
+     * {@link #lastWriteTimestamp}. Called from {@link #init} so that the
+     * monotonic timestamp generator survives process restarts and clock skew.
+     * Failure to read is logged and ignored: an unreadable system table at
+     * startup must not block the rest of the engine from coming up.
+     */
+    private void restoreLastWriteTimestamp(SqlExecutionContext executionContext) {
+        final String sql = "SELECT max(ts) FROM \"" + tableName + "\"";
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.query().$(sql).compile(executionContext).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(executionContext)
+        ) {
+            if (cursor.hasNext()) {
+                final long maxTs = cursor.getRecord().getTimestamp(0);
+                if (maxTs != Long.MIN_VALUE) {
+                    // Use updateAndGet rather than set so we never move the watermark
+                    // backwards if another writer raced ahead between the SELECT and here.
+                    lastWriteTimestamp.updateAndGet(current -> Math.max(current, maxTs));
+                    LOG.info().$("restored payload transform timestamp watermark [ts=").$(maxTs).$(']').$();
+                }
+            }
+        } catch (Throwable e) {
+            // Defensive: any failure here (SQL compile error, IO error, broken
+            // table state) must not block engine startup. The store will fall
+            // back to the wall clock for the very first nextTimestamp() call,
+            // which is a regression to pre-fix behaviour but never worse.
+            LOG.error().$("failed to restore payload transform timestamp watermark [msg=")
+                    .$safe(e.getMessage()).$(']').$();
+        }
     }
 
     private void ensureInitialized(SqlExecutionContext executionContext) throws SqlException {

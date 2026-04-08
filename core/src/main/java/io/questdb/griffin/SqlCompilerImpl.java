@@ -5334,7 +5334,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void validateTransformSql(SqlExecutionContext executionContext, CreatePayloadTransformOperation op, TableToken targetToken) throws SqlException {
         lexer.of(op.getSelectSql());
-        clear();
+        // Use clearExceptSqlText() rather than clear() so that any caller-supplied
+        // override snapshot (rawOverrideValues) is preserved across the inner
+        // recompile. Today executeCreatePayloadTransform is only reached from
+        // plain compile() (CREATE statements never go through compileWithOverrides),
+        // so the snapshot is empty in practice - but if a future caller wires an
+        // override-aware path here we don't want validation to silently diverge
+        // from runtime by dropping the overrides.
+        clearExceptSqlText();
 
         SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         if (!circuitBreaker.isTimerSet()) {
@@ -5361,11 +5368,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             queryModel = optimiser.optimise(queryModel, executionContext, this);
             try (RecordCursorFactory factory = generateSelectWithRetries(queryModel, null, executionContext, false)) {
                 // Validate that every output column exists in the target table and types are convertible.
-                // Reject duplicate output aliases that map to the same target column - the name-based
-                // mapping contract requires each target column to be assigned at most once.
+                // Note: duplicate SELECT aliases (e.g. SELECT 1 AS price, 2 AS price) are already
+                // rejected by the regular SELECT parser before reaching this point, so the loop
+                // does not need its own duplicate check. See testRejectDuplicateOutputAlias for
+                // the regression that pins that behaviour.
                 RecordMetadata cursorMetadata = factory.getMetadata();
                 try (TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(targetToken)) {
-                    final LowerCaseCharSequenceHashSet seenTargetColumns = new LowerCaseCharSequenceHashSet();
                     for (int i = 0, n = cursorMetadata.getColumnCount(); i < n; i++) {
                         CharSequence colName = cursorMetadata.getColumnName(i);
                         int writerIndex = writerMetadata.getColumnIndexQuiet(colName);
@@ -5375,20 +5383,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     "column not found in target table [column="
                             ).put(colName).put(", table=").put(targetToken.getTableName()).put(']');
                         }
-                        final CharSequence writerColName = writerMetadata.getColumnName(writerIndex);
-                        if (!seenTargetColumns.add(writerColName)) {
-                            throw SqlException.$(
-                                    queryModel.getBottomUpColumns().getQuick(i).getAst().position,
-                                    "duplicate output alias maps to the same target column [column="
-                            ).put(writerColName).put(']');
-                        }
                         int fromType = cursorMetadata.getColumnType(i);
                         int toType = writerMetadata.getColumnType(writerIndex);
                         if (!ColumnType.isConvertibleFrom(fromType, toType)) {
                             throw SqlException.inconvertibleTypes(
                                     queryModel.getBottomUpColumns().getQuick(i).getAst().position,
                                     fromType, colName,
-                                    toType, writerColName
+                                    toType, writerMetadata.getColumnName(writerIndex)
                             );
                         }
                     }
