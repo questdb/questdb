@@ -1785,6 +1785,63 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinTwoSymbolKeysCrossColumnIndices() throws Exception {
+        assertMemoryLeak(() -> {
+            // Master: sym1 at col 0, sym2 at col 1
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym1 SYMBOL,
+                                sym2 SYMBOL,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym2 SYMBOL,
+                                sym1 SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', 'X', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', 'Y', 2.0, '2024-01-02T10:00:00.000000Z'),
+                        ('B', 'X', 3.0, '2024-01-03T10:00:00.000000Z'),
+                        ('B', 'Y', 4.0, '2024-01-04T10:00:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('Y', 'B', 40.0, '2024-01-01T09:00:00.000000Z'),
+                        ('X', 'B', 30.0, '2024-01-02T09:00:00.000000Z'),
+                        ('Y', 'A', 20.0, '2024-01-02T09:30:00.000000Z'),
+                        ('X', 'A', 10.0, '2024-01-03T09:00:00.000000Z')
+                    """);
+
+            String expected = """
+                    sym1	sym2	val	sym21	sym11
+                    A	X	1.0	\t	
+                    A	Y	2.0	Y	A
+                    B	X	3.0	X	B
+                    B	Y	4.0	Y	B
+                    """;
+
+            String queryBody = "m.sym1, m.sym2, m.val, s.sym2, s.sym1 FROM master m ASOF JOIN slave s ON (m.sym1 = s.sym1 AND m.sym2 = s.sym2)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
     public void testAsOfJoinTwoSymbolKeysEmptyMaster() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
