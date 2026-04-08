@@ -787,7 +787,7 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void incrementColumnRefCount(CharSequence alias, int refCount) {
-        throw new UnsupportedOperationException();
+        delegate.incrementColumnRefCount(alias, refCount);
     }
 
     @Override
