@@ -4352,7 +4352,7 @@ mod tests {
             column_top as i64,
             data.len(),
             data.as_ptr() as *const u8,
-            data.len() * size_of::<T>(),
+            std::mem::size_of_val(data),
             null(),
             0,
             null(),

@@ -128,7 +128,6 @@ mod tests {
     use parquet2::schema::types::PhysicalType;
     use parquet2::write::Version;
     use qdb_core::col_type::ColumnTypeTag;
-    use std::mem::size_of;
 
     fn write_options() -> WriteOptions {
         WriteOptions {
@@ -161,7 +160,7 @@ mod tests {
             column_top as i64,
             keys.len(),
             keys.as_ptr() as *const u8,
-            keys.len() * size_of::<i32>(),
+            std::mem::size_of_val(keys),
             chars.as_ptr(),
             chars.len(),
             offsets.as_ptr(),
@@ -206,6 +205,38 @@ mod tests {
         assert!(matches!(pages[0], Page::Dict(_)));
         assert!(matches!(pages[1], Page::Data(_)));
         assert!(matches!(pages[2], Page::Data(_)));
+    }
+
+    #[test]
+    fn symbol_emits_bloom_hashes_when_set_present() {
+        // Pass a non-None bloom set to exercise the Some branch of
+        // lock_bloom_set inside symbol::encode and the bloom.insert path
+        // inside build_symbol_dict_page. The set should end up populated
+        // with one hash per distinct symbol value across all partitions.
+        let (chars, offsets) = serialize_as_symbols(vec!["foo", "bar", "baz"]);
+        let keys1: Vec<i32> = vec![0, 1, 2];
+        let keys2: Vec<i32> = vec![1, 2];
+        let col1 = make_symbol_column(&keys1, &chars, &offsets, 0);
+        let col2 = make_symbol_column(&keys2, &chars, &offsets, 0);
+
+        let bloom = Arc::new(Mutex::new(HashSet::<u64>::new()));
+        let pages = encode(
+            &[col1, col2],
+            0,
+            keys2.len(),
+            &primitive_type(),
+            write_options(),
+            Some(bloom.clone()),
+        )
+        .expect("encode");
+
+        // Sanity-check the page layout (1 dict + 2 data) hasn't drifted.
+        assert_eq!(pages.len(), 3);
+
+        // The bloom set is populated from the *union* of all referenced
+        // dict entries — three symbols total.
+        let set = bloom.lock().expect("bloom lock");
+        assert_eq!(set.len(), 3, "expected one hash per distinct symbol");
     }
 
     #[test]

@@ -1889,7 +1889,7 @@ fn make_test_column<T>(name: &'static str, tag: ColumnTypeTag, data: &[T]) -> Co
         0,
         data.len(),
         data.as_ptr() as *const u8,
-        data.len() * std::mem::size_of::<T>(),
+        std::mem::size_of_val(data),
         null(),
         0,
         null(),

@@ -819,3 +819,45 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
 ) -> usize {
     offset_of!(ColumnChunkStats, max_value_size)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::questdb_encoding_id_to_parquet_encoding;
+    use crate::parquet::error::ParquetErrorReason;
+
+    #[test]
+    fn encoding_id_to_parquet_encoding_maps_known_ids() {
+        // Each QuestDB encoding id maps to a specific parquet2 encoding byte.
+        // The bytes follow parquet's thrift Encoding enum: PLAIN=0,
+        // RLE_DICTIONARY=8, DELTA_LENGTH_BYTE_ARRAY=6, DELTA_BINARY_PACKED=5,
+        // BYTE_STREAM_SPLIT=9.
+        assert_eq!(questdb_encoding_id_to_parquet_encoding(1).unwrap(), 0);
+        assert_eq!(questdb_encoding_id_to_parquet_encoding(2).unwrap(), 8);
+        assert_eq!(questdb_encoding_id_to_parquet_encoding(3).unwrap(), 6);
+        assert_eq!(questdb_encoding_id_to_parquet_encoding(4).unwrap(), 5);
+        assert_eq!(questdb_encoding_id_to_parquet_encoding(5).unwrap(), 9);
+    }
+
+    #[test]
+    fn encoding_id_to_parquet_encoding_rejects_unknown() {
+        for bad_id in [0, 6, 99, -1, i32::MIN, i32::MAX] {
+            let err = questdb_encoding_id_to_parquet_encoding(bad_id)
+                .err()
+                .unwrap_or_else(|| panic!("expected error for encoding id {bad_id}"));
+            assert!(
+                matches!(err.reason(), ParquetErrorReason::InvalidType),
+                "expected InvalidType for encoding id {bad_id}, got {:?}",
+                err.reason()
+            );
+            let msg = err.to_string();
+            assert!(
+                msg.contains("unsupported parquet encoding id"),
+                "error message should mention 'unsupported parquet encoding id', got: {msg}"
+            );
+            assert!(
+                msg.contains(&bad_id.to_string()),
+                "error message should include the rejected id {bad_id}, got: {msg}"
+            );
+        }
+    }
+}

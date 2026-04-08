@@ -150,6 +150,37 @@ where
     )
 }
 
+fn encode_per_partition<F>(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    rows_per_page: usize,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+    mut emit: F,
+) -> ParquetResult<Vec<Page>>
+where
+    F: FnMut(&Column, ChunkSlice, Option<&mut HashSet<u64>>) -> ParquetResult<Page>,
+{
+    let num_partitions = columns.len();
+    let mut pages = Vec::with_capacity(num_partitions);
+    for (part_idx, column) in columns.iter().enumerate() {
+        let (chunk_offset, chunk_length) = partition_slice_range(
+            part_idx,
+            num_partitions,
+            column.row_count,
+            first_partition_start,
+            last_partition_end,
+        );
+        for chunk in PartitionPageSlices::new(column, chunk_offset, chunk_length, rows_per_page) {
+            let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
+            let bloom = bloom_guard.as_deref_mut();
+            let page = emit(column, chunk, bloom)?;
+            pages.push(page);
+        }
+    }
+    Ok(pages)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,35 +429,4 @@ mod tests {
         assert_eq!(num_values, 4);
         assert_eq!(num_nulls, 1);
     }
-}
-
-fn encode_per_partition<F>(
-    columns: &[Column],
-    first_partition_start: usize,
-    last_partition_end: usize,
-    rows_per_page: usize,
-    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
-    mut emit: F,
-) -> ParquetResult<Vec<Page>>
-where
-    F: FnMut(&Column, ChunkSlice, Option<&mut HashSet<u64>>) -> ParquetResult<Page>,
-{
-    let num_partitions = columns.len();
-    let mut pages = Vec::with_capacity(num_partitions);
-    for (part_idx, column) in columns.iter().enumerate() {
-        let (chunk_offset, chunk_length) = partition_slice_range(
-            part_idx,
-            num_partitions,
-            column.row_count,
-            first_partition_start,
-            last_partition_end,
-        );
-        for chunk in PartitionPageSlices::new(column, chunk_offset, chunk_length, rows_per_page) {
-            let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
-            let bloom = bloom_guard.as_deref_mut();
-            let page = emit(column, chunk, bloom)?;
-            pages.push(page);
-        }
-    }
-    Ok(pages)
 }

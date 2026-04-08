@@ -166,6 +166,7 @@ fn unsupported(encoding: Encoding, tag: ColumnTypeTag, physical: &str) -> Parque
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_boolean_dispatch(
     encoding: Encoding,
     pt: &PrimitiveType,
@@ -189,6 +190,7 @@ fn encode_boolean_dispatch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_int32_dispatch(
     encoding: Encoding,
     pt: &PrimitiveType,
@@ -429,6 +431,7 @@ fn encode_int32_dispatch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_int64_dispatch(
     encoding: Encoding,
     pt: &PrimitiveType,
@@ -578,6 +581,7 @@ fn encode_int64_dispatch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_float_dispatch(
     encoding: Encoding,
     pt: &PrimitiveType,
@@ -610,6 +614,7 @@ fn encode_float_dispatch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_double_dispatch(
     encoding: Encoding,
     pt: &PrimitiveType,
@@ -642,6 +647,7 @@ fn encode_double_dispatch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_byte_array_dispatch(
     encoding: Encoding,
     pt: &PrimitiveType,
@@ -789,6 +795,7 @@ fn encode_array_raw(
     Ok(pages)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn encode_fixed_len_dispatch(
     encoding: Encoding,
     pt: &PrimitiveType,
@@ -1368,5 +1375,319 @@ mod tests {
                 tag
             );
         }
+    }
+
+    /// Build a 5-row String column whose UTF-16 payload sits in `data_buf`
+    /// and whose i64 offsets sit in `offsets`. Returns the column plus boxed
+    /// owners that the caller must keep alive for the duration of the column.
+    fn build_string_column() -> (Column, Box<dyn std::any::Any>) {
+        let strings = ["alpha", "beta", "gamma", "delta", "epsilon"];
+        let mut data: Vec<u8> = Vec::new();
+        let mut offsets: Vec<i64> = Vec::new();
+        for s in strings {
+            let utf16: Vec<u16> = s.encode_utf16().collect();
+            offsets.push(data.len() as i64);
+            data.extend_from_slice(&(utf16.len() as i32).to_le_bytes());
+            // SAFETY: contiguous &[u16] reinterpreted as &[u8] for serialisation.
+            let bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    utf16.as_ptr() as *const u8,
+                    utf16.len() * std::mem::size_of::<u16>(),
+                )
+            };
+            data.extend_from_slice(bytes);
+        }
+        let col = Column::from_raw_data(
+            0,
+            "col",
+            ColumnType::new(ColumnTypeTag::String, 0).code(),
+            0,
+            offsets.len(),
+            data.as_ptr(),
+            data.len(),
+            offsets.as_ptr() as *const u8,
+            offsets.len() * std::mem::size_of::<i64>(),
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+        (col, Box::new((data, offsets)))
+    }
+
+    /// Build a 5-row Binary column. Layout matches QuestDB's binary aux/data
+    /// pair: an i64 length header followed by raw bytes.
+    fn build_binary_column() -> (Column, Box<dyn std::any::Any>) {
+        let values: [&[u8]; 5] = [b"abc", b"defgh", b"ij", b"k", b"lmnop"];
+        let mut data: Vec<u8> = Vec::new();
+        let mut offsets: Vec<i64> = Vec::new();
+        for v in values {
+            offsets.push(data.len() as i64);
+            data.extend_from_slice(&(v.len() as i64).to_le_bytes());
+            data.extend_from_slice(v);
+        }
+        let col = Column::from_raw_data(
+            0,
+            "col",
+            ColumnType::new(ColumnTypeTag::Binary, 0).code(),
+            0,
+            offsets.len(),
+            data.as_ptr(),
+            data.len(),
+            offsets.as_ptr() as *const u8,
+            offsets.len() * std::mem::size_of::<i64>(),
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+        (col, Box::new((data, offsets)))
+    }
+
+    /// Build a 5-row Varchar column with three inlined entries.
+    fn build_varchar_column() -> (Column, Box<dyn std::any::Any>) {
+        fn inlined(value: &[u8]) -> [u8; 16] {
+            assert!(value.len() <= 9);
+            let mut entry = [0u8; 16];
+            entry[0] = ((value.len() as u8) << 4) | 0b11;
+            entry[1..1 + value.len()].copy_from_slice(value);
+            entry
+        }
+        let aux: Vec<[u8; 16]> = vec![
+            inlined(b"hi"),
+            inlined(b"world"),
+            inlined(b"abcdefghi"),
+            inlined(b"q"),
+            inlined(b"zz"),
+        ];
+        let data: Vec<u8> = Vec::new();
+        let col = Column::from_raw_data(
+            0,
+            "col",
+            ColumnType::new(ColumnTypeTag::Varchar, 0).code(),
+            0,
+            aux.len(),
+            data.as_ptr(),
+            data.len(),
+            aux.as_ptr() as *const u8,
+            aux.len() * 16,
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+        (col, Box::new((data, aux)))
+    }
+
+    /// Build a 5-row Symbol column. Symbol columns store i32 keys in
+    /// `primary_data`, the symbol char data in `secondary_data`, and the
+    /// symbol offsets table in `symbol_offsets`.
+    fn build_symbol_column() -> (Column, Box<dyn std::any::Any>) {
+        let keys: Vec<i32> = vec![0, 1, 2, 1, 0];
+        let mut chars: Vec<u8> = Vec::new();
+        let mut offsets: Vec<u64> = Vec::new();
+        for sym in ["foo", "bar", "baz"] {
+            let utf16: Vec<u16> = sym.encode_utf16().collect();
+            offsets.push(chars.len() as u64);
+            chars.extend_from_slice(&(utf16.len() as u32).to_le_bytes());
+            // SAFETY: contiguous &[u16] reinterpreted as &[u8] for serialisation.
+            let bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    utf16.as_ptr() as *const u8,
+                    utf16.len() * std::mem::size_of::<u16>(),
+                )
+            };
+            chars.extend_from_slice(bytes);
+        }
+        let col = Column::from_raw_data(
+            0,
+            "col",
+            ColumnType::new(ColumnTypeTag::Symbol, 0).code(),
+            0,
+            keys.len(),
+            keys.as_ptr() as *const u8,
+            keys.len() * std::mem::size_of::<i32>(),
+            chars.as_ptr(),
+            chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+        (col, Box::new((keys, chars, offsets)))
+    }
+
+    fn assert_byte_array_dispatch_supported(encoding: Encoding, tag: ColumnTypeTag, col: Column) {
+        let parquet_type = parquet_type_for(tag);
+        let pages =
+            encode_column_chunk(encoding, &parquet_type, &[col], 0, 5, write_options(), None)
+                .unwrap_or_else(|e| panic!("dispatch ({:?}, {:?}) failed: {:?}", encoding, tag, e));
+        assert!(
+            !pages.is_empty(),
+            "dispatch ({:?}, {:?}) returned no pages",
+            encoding,
+            tag
+        );
+    }
+
+    #[test]
+    fn encode_column_chunk_byte_array_dispatch() {
+        // Cover the byte-array dispatch arms that the primitive-only
+        // dispatch_table test cannot reach (String, Binary, Varchar, Symbol).
+        // Each constructor is called fresh per case so the column owns its
+        // own buffers.
+        for &encoding in &[
+            Encoding::Plain,
+            Encoding::DeltaLengthByteArray,
+            Encoding::RleDictionary,
+        ] {
+            // String
+            let (col, _own) = build_string_column();
+            assert_byte_array_dispatch_supported(encoding, ColumnTypeTag::String, col);
+            let _own = _own;
+
+            // Binary
+            let (col, _own) = build_binary_column();
+            assert_byte_array_dispatch_supported(encoding, ColumnTypeTag::Binary, col);
+            let _own = _own;
+
+            // Varchar
+            let (col, _own) = build_varchar_column();
+            assert_byte_array_dispatch_supported(encoding, ColumnTypeTag::Varchar, col);
+            let _own = _own;
+        }
+
+        // Symbol only supports RleDictionary on the dispatch.
+        let (col, _own) = build_symbol_column();
+        assert_byte_array_dispatch_supported(Encoding::RleDictionary, ColumnTypeTag::Symbol, col);
+        let _own = _own;
+    }
+
+    #[test]
+    fn encode_column_chunk_empty_columns_errors() {
+        // The dispatch must reject an empty columns slice; downstream code
+        // would otherwise panic on indexing.
+        let parquet_type = parquet_type_for(ColumnTypeTag::Int);
+        let result = encode_column_chunk(
+            Encoding::Plain,
+            &parquet_type,
+            &[],
+            0,
+            0,
+            write_options(),
+            None,
+        );
+        let err = result.expect_err("expected error");
+        assert!(
+            matches!(
+                err.reason(),
+                crate::parquet::error::ParquetErrorReason::InvalidLayout
+            ),
+            "expected InvalidLayout, got {:?}",
+            err.reason()
+        );
+        assert!(err.to_string().contains("cannot be empty"), "got: {err}");
+    }
+
+    #[test]
+    fn encode_column_chunk_int96_unsupported() {
+        // Int96 has no write-side encoder; the dispatch should report
+        // Unsupported rather than fall through to a panic.
+        let pt = PrimitiveType::from_physical("col".to_string(), PhysicalType::Int96);
+        let parquet_type = ParquetType::PrimitiveType(pt);
+        // Build any column - the dispatch errors before touching it.
+        let (col, _own) = build_column(ColumnTypeTag::Long);
+        let result = encode_column_chunk(
+            Encoding::Plain,
+            &parquet_type,
+            &[col],
+            0,
+            100,
+            write_options(),
+            None,
+        );
+        let err = result.expect_err("expected error");
+        assert!(
+            matches!(
+                err.reason(),
+                crate::parquet::error::ParquetErrorReason::Unsupported
+            ),
+            "expected Unsupported, got {:?}",
+            err.reason()
+        );
+        assert!(err.to_string().contains("Int96"), "got: {err}");
+    }
+
+    #[test]
+    fn encode_column_chunk_group_non_array_errors() {
+        // The group dispatch only knows how to handle Array columns.
+        // Hand it a non-Array column inside a synthetic GroupType to
+        // exercise the InvalidType error arm.
+        use parquet2::schema::Repetition;
+        let inner_pt = PrimitiveType::from_physical("element".to_string(), PhysicalType::Int32);
+        let group = ParquetType::from_group(
+            "col".to_string(),
+            Repetition::Optional,
+            None,
+            None,
+            vec![ParquetType::PrimitiveType(inner_pt)],
+            None,
+        );
+        let (col, _own) = build_column(ColumnTypeTag::Int);
+        let result = encode_column_chunk(
+            Encoding::Plain,
+            &group,
+            &[col],
+            0,
+            100,
+            write_options(),
+            None,
+        );
+        let err = result.expect_err("expected error");
+        assert!(
+            matches!(
+                err.reason(),
+                crate::parquet::error::ParquetErrorReason::InvalidType
+            ),
+            "expected InvalidType, got {:?}",
+            err.reason()
+        );
+        assert!(
+            err.to_string().contains("unsupported group type"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn array_primitive_type_multi_field_returns_none() {
+        // The traversal should bail with None as soon as it sees a group
+        // with more than one child field, since multi-field groups can't be
+        // unambiguously projected to a primitive Array element type.
+        use parquet2::schema::Repetition;
+        let f1 = ParquetType::PrimitiveType(PrimitiveType::from_physical(
+            "f1".to_string(),
+            PhysicalType::Int32,
+        ));
+        let f2 = ParquetType::PrimitiveType(PrimitiveType::from_physical(
+            "f2".to_string(),
+            PhysicalType::Int32,
+        ));
+        let group = ParquetType::from_group(
+            "g".to_string(),
+            Repetition::Optional,
+            None,
+            None,
+            vec![f1, f2],
+            None,
+        );
+        assert!(super::array_primitive_type(&group).is_none());
     }
 }

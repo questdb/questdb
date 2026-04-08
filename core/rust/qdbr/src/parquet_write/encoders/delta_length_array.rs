@@ -137,6 +137,37 @@ pub fn encode_varchar(
     )
 }
 
+fn encode_per_partition<F>(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    rows_per_page: usize,
+    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
+    mut emit: F,
+) -> ParquetResult<Vec<Page>>
+where
+    F: FnMut(&Column, ChunkSlice, Option<&mut HashSet<u64>>) -> ParquetResult<Page>,
+{
+    let num_partitions = columns.len();
+    let mut pages = Vec::with_capacity(num_partitions);
+    for (part_idx, column) in columns.iter().enumerate() {
+        let (chunk_offset, chunk_length) = partition_slice_range(
+            part_idx,
+            num_partitions,
+            column.row_count,
+            first_partition_start,
+            last_partition_end,
+        );
+        for chunk in PartitionPageSlices::new(column, chunk_offset, chunk_length, rows_per_page) {
+            let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
+            let bloom = bloom_guard.as_deref_mut();
+            let page = emit(column, chunk, bloom)?;
+            pages.push(page);
+        }
+    }
+    Ok(pages)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,7 +321,7 @@ mod tests {
 
     #[test]
     fn encode_varchar_delta_round_trip() {
-        let aux = vec![
+        let aux = [
             make_varchar_aux_inlined(b"hi"),
             make_varchar_aux_split(b"hello world!!", 0),
             make_varchar_aux_inlined(b"bye"),
@@ -376,7 +407,7 @@ mod tests {
     #[test]
     fn encode_varchar_delta_with_column_top() {
         // 10 column-top rows + 3 data rows = 13 logical rows.
-        let aux = vec![
+        let aux = [
             make_varchar_aux_inlined(b"a"),
             make_varchar_aux_inlined(b"b"),
             make_varchar_aux_inlined(b"c"),
@@ -414,35 +445,4 @@ mod tests {
     fn _ensure_make_column_with_top_used() {
         let _ = make_column_with_top::<u8>("col", ColumnTypeTag::Boolean, &[], 0, 0);
     }
-}
-
-fn encode_per_partition<F>(
-    columns: &[Column],
-    first_partition_start: usize,
-    last_partition_end: usize,
-    rows_per_page: usize,
-    bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
-    mut emit: F,
-) -> ParquetResult<Vec<Page>>
-where
-    F: FnMut(&Column, ChunkSlice, Option<&mut HashSet<u64>>) -> ParquetResult<Page>,
-{
-    let num_partitions = columns.len();
-    let mut pages = Vec::with_capacity(num_partitions);
-    for (part_idx, column) in columns.iter().enumerate() {
-        let (chunk_offset, chunk_length) = partition_slice_range(
-            part_idx,
-            num_partitions,
-            column.row_count,
-            first_partition_start,
-            last_partition_end,
-        );
-        for chunk in PartitionPageSlices::new(column, chunk_offset, chunk_length, rows_per_page) {
-            let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
-            let bloom = bloom_guard.as_deref_mut();
-            let page = emit(column, chunk, bloom)?;
-            pages.push(page);
-        }
-    }
-    Ok(pages)
 }

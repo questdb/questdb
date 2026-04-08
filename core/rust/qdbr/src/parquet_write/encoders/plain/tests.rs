@@ -1,10 +1,12 @@
 use super::*;
+use crate::parquet::error::ParquetErrorReason;
 use crate::parquet::tests::ColumnTypeTagExt;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::column_type_to_parquet_type;
 use crate::parquet_write::tests::make_column_with_top;
 use parquet2::compression::CompressionOptions;
-use parquet2::page::DataPageHeader;
+use parquet2::encoding::Encoding;
+use parquet2::page::{DataPageHeader, Page};
 use parquet2::schema::types::{ParquetType, PrimitiveType};
 use parquet2::write::Version;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
@@ -318,7 +320,7 @@ fn encode_binary_basic_round_trip() {
 
 #[test]
 fn encode_varchar_inlined_and_split() {
-    let aux = vec![
+    let aux = [
         make_varchar_aux_inlined(b"hi"),
         make_varchar_aux_inlined(b"abcdefghi"),
         make_varchar_aux_split(b"hello world!!", 0),
@@ -432,3 +434,355 @@ fn make_varchar_aux_null() -> [u8; 16] {
     entry[0] = 0b100;
     entry
 }
+
+// Parquet thrift Encoding enum bytes that the writer emits.
+const ENC_PLAIN: i32 = 0;
+const ENC_DELTA_LENGTH_BYTE_ARRAY: i32 = 6;
+
+#[test]
+fn binary_to_page_delta_round_trip() {
+    let bytes = [b"abc".as_ref(), b"defgh".as_ref(), b"ij".as_ref()];
+    let (data_buf, offsets) = make_binary_aux(&bytes);
+    let pt = primitive_type_for(ColumnTypeTag::Binary);
+    let page = binary_to_page(
+        &offsets,
+        &data_buf,
+        0,
+        write_options(),
+        pt,
+        Encoding::DeltaLengthByteArray,
+        None,
+    )
+    .expect("encode");
+    let (num_values, num_nulls, enc) = v2_header(&page);
+    assert_eq!(num_values, 3);
+    assert_eq!(num_nulls, 0);
+    assert_eq!(enc, ENC_DELTA_LENGTH_BYTE_ARRAY);
+}
+
+#[test]
+fn string_to_page_delta_round_trip() {
+    let strings = ["hello", "world", "rust"];
+    let (data_buf, offsets) = make_string_aux(&strings);
+    let pt = primitive_type_for(ColumnTypeTag::String);
+    let page = string_to_page(
+        &offsets,
+        &data_buf,
+        0,
+        write_options(),
+        pt,
+        Encoding::DeltaLengthByteArray,
+        None,
+    )
+    .expect("encode");
+    let (num_values, num_nulls, enc) = v2_header(&page);
+    assert_eq!(num_values, 3);
+    assert_eq!(num_nulls, 0);
+    assert_eq!(enc, ENC_DELTA_LENGTH_BYTE_ARRAY);
+}
+
+#[test]
+fn varchar_to_page_delta_round_trip() {
+    let aux = vec![
+        make_varchar_aux_inlined(b"hi"),
+        make_varchar_aux_inlined(b"abcdefghi"),
+        make_varchar_aux_split(b"hello world!!", 0),
+        make_varchar_aux_null(),
+    ];
+    let mut data = Vec::new();
+    data.extend_from_slice(b"hello world!!");
+    let pt = primitive_type_for(ColumnTypeTag::Varchar);
+    let page = varchar_to_page(
+        &aux,
+        &data,
+        0,
+        write_options(),
+        pt,
+        Encoding::DeltaLengthByteArray,
+        None,
+    )
+    .expect("encode");
+    let (num_values, num_nulls, enc) = v2_header(&page);
+    assert_eq!(num_values, 4);
+    assert_eq!(num_nulls, 1);
+    assert_eq!(enc, ENC_DELTA_LENGTH_BYTE_ARRAY);
+}
+
+#[test]
+fn binary_to_page_with_null_entries() {
+    // A negative i64 length header marks the entry as null.
+    let mut data = Vec::new();
+    let mut offsets = Vec::new();
+    // Row 0: real value "abc"
+    offsets.push(data.len() as i64);
+    data.extend_from_slice(&3i64.to_le_bytes());
+    data.extend_from_slice(b"abc");
+    // Row 1: null
+    offsets.push(data.len() as i64);
+    data.extend_from_slice(&(-1i64).to_le_bytes());
+    // Row 2: real value "z"
+    offsets.push(data.len() as i64);
+    data.extend_from_slice(&1i64.to_le_bytes());
+    data.extend_from_slice(b"z");
+
+    let pt = primitive_type_for(ColumnTypeTag::Binary);
+    for encoding in [Encoding::Plain, Encoding::DeltaLengthByteArray] {
+        let page = binary_to_page(
+            &offsets,
+            &data,
+            0,
+            write_options(),
+            pt.clone(),
+            encoding,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 1, "encoding {encoding:?}");
+    }
+}
+
+#[test]
+fn binary_to_dict_pages_round_trip() {
+    // ["a", "b", "a", "c", "b"] -> 3 dict entries, 5 keys.
+    let bytes = [
+        b"a".as_ref(),
+        b"b".as_ref(),
+        b"a".as_ref(),
+        b"c".as_ref(),
+        b"b".as_ref(),
+    ];
+    let (data_buf, offsets) = make_binary_aux(&bytes);
+    let pt = primitive_type_for(ColumnTypeTag::Binary);
+    let pages: Vec<Page> = binary_to_dict_pages(&offsets, &data_buf, 0, write_options(), pt, None)
+        .expect("encode")
+        .collect::<crate::parquet::error::ParquetResult<Vec<_>>>()
+        .expect("collect pages");
+    let dict_pages: Vec<_> = pages
+        .iter()
+        .filter_map(|p| if let Page::Dict(d) = p { Some(d) } else { None })
+        .collect();
+    let data_pages: Vec<_> = pages
+        .iter()
+        .filter_map(|p| if let Page::Data(d) = p { Some(d) } else { None })
+        .collect();
+    assert_eq!(dict_pages.len(), 1);
+    assert_eq!(dict_pages[0].num_values, 3, "3 unique values in the dict");
+    assert_eq!(data_pages.len(), 1);
+    let h = match &data_pages[0].header {
+        DataPageHeader::V2(h) => h,
+        _ => panic!("expected V2 header"),
+    };
+    assert_eq!(h.num_values, 5);
+    assert_eq!(h.num_nulls, 0);
+}
+
+#[test]
+fn string_to_dict_pages_round_trip() {
+    let strings = ["alpha", "beta", "alpha", "gamma", "beta"];
+    let (data_buf, offsets) = make_string_aux(&strings);
+    let pt = primitive_type_for(ColumnTypeTag::String);
+    let pages: Vec<Page> = string_to_dict_pages(&offsets, &data_buf, 0, write_options(), pt, None)
+        .expect("encode")
+        .collect::<crate::parquet::error::ParquetResult<Vec<_>>>()
+        .expect("collect pages");
+    let dict_count = pages.iter().filter(|p| matches!(p, Page::Dict(_))).count();
+    let data_count = pages.iter().filter(|p| matches!(p, Page::Data(_))).count();
+    assert_eq!(dict_count, 1);
+    assert_eq!(data_count, 1);
+    if let Page::Dict(d) = &pages[0] {
+        assert_eq!(d.num_values, 3, "3 unique strings");
+    } else {
+        panic!("expected dict page first");
+    }
+}
+
+#[test]
+fn varchar_to_dict_pages_round_trip() {
+    // Two duplicates, one inlined-null, one split, one inlined.
+    let aux = vec![
+        make_varchar_aux_inlined(b"x"),
+        make_varchar_aux_inlined(b"x"),
+        make_varchar_aux_null(),
+        make_varchar_aux_split(b"hello world!!", 0),
+        make_varchar_aux_inlined(b"yz"),
+    ];
+    let mut data = Vec::new();
+    data.extend_from_slice(b"hello world!!");
+    let pt = primitive_type_for(ColumnTypeTag::Varchar);
+    let pages: Vec<Page> = varchar_to_dict_pages(&aux, &data, 0, write_options(), pt, None)
+        .expect("encode")
+        .collect::<crate::parquet::error::ParquetResult<Vec<_>>>()
+        .expect("collect pages");
+    let dict_pages: Vec<_> = pages
+        .iter()
+        .filter_map(|p| if let Page::Dict(d) = p { Some(d) } else { None })
+        .collect();
+    let data_pages: Vec<_> = pages
+        .iter()
+        .filter_map(|p| if let Page::Data(d) = p { Some(d) } else { None })
+        .collect();
+    assert_eq!(dict_pages.len(), 1);
+    // 3 unique non-null values: "x", "hello world!!", "yz"
+    assert_eq!(dict_pages[0].num_values, 3);
+    assert_eq!(data_pages.len(), 1);
+    let h = match &data_pages[0].header {
+        DataPageHeader::V2(h) => h,
+        _ => panic!("expected V2 header"),
+    };
+    assert_eq!(h.num_values, 5);
+    assert_eq!(h.num_nulls, 1);
+}
+
+#[test]
+fn binary_to_page_negative_offset_errors() {
+    // A negative offset can never be a valid index into the data buffer.
+    let data = vec![0u8; 16];
+    let offsets: Vec<i64> = vec![-1];
+    let pt = primitive_type_for(ColumnTypeTag::Binary);
+    let result = binary_to_page(
+        &offsets,
+        &data,
+        0,
+        write_options(),
+        pt,
+        Encoding::Plain,
+        None,
+    );
+    let err = result.expect_err("expected error");
+    assert!(
+        matches!(err.reason(), ParquetErrorReason::Layout),
+        "expected Layout, got {:?}",
+        err.reason()
+    );
+    assert!(
+        err.to_string().contains("invalid offset"),
+        "error should mention 'invalid offset', got: {err}"
+    );
+}
+
+#[test]
+fn string_to_page_truncated_header_errors() {
+    // The header for a String entry is `i32` (4 bytes). If the offset
+    // points within 3 bytes of the buffer end the header is truncated.
+    let data = vec![0u8; 2];
+    let offsets: Vec<i64> = vec![0];
+    let pt = primitive_type_for(ColumnTypeTag::String);
+    let err = string_to_page(
+        &offsets,
+        &data,
+        0,
+        write_options(),
+        pt,
+        Encoding::Plain,
+        None,
+    )
+    .expect_err("expected error");
+    assert!(
+        matches!(err.reason(), ParquetErrorReason::Layout),
+        "expected Layout, got {:?}",
+        err.reason()
+    );
+    assert!(
+        err.to_string()
+            .contains("not enough bytes for string header"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn varchar_to_page_split_out_of_bounds_errors() {
+    // A split varchar entry whose `offset + size` exceeds `data.len()`
+    // must be rejected as a corrupt aux entry.
+    let aux = vec![make_varchar_aux_split(b"hello world!!", 1_000_000)];
+    let data: Vec<u8> = vec![];
+    let pt = primitive_type_for(ColumnTypeTag::Varchar);
+    let err = varchar_to_page(&aux, &data, 0, write_options(), pt, Encoding::Plain, None)
+        .expect_err("expected error");
+    assert!(
+        matches!(err.reason(), ParquetErrorReason::Layout),
+        "expected Layout, got {:?}",
+        err.reason()
+    );
+    assert!(
+        err.to_string().contains("data corruption in VARCHAR"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn binary_to_page_unsupported_encoding_errors() {
+    // The Plain page builder rejects encodings other than Plain and
+    // DeltaLengthByteArray (the dict path lives elsewhere).
+    let bytes = [b"abc".as_ref()];
+    let (data_buf, offsets) = make_binary_aux(&bytes);
+    let pt = primitive_type_for(ColumnTypeTag::Binary);
+    let err = binary_to_page(
+        &offsets,
+        &data_buf,
+        0,
+        write_options(),
+        pt,
+        Encoding::RleDictionary,
+        None,
+    )
+    .expect_err("expected error");
+    assert!(
+        matches!(err.reason(), ParquetErrorReason::Unsupported),
+        "expected Unsupported, got {:?}",
+        err.reason()
+    );
+    assert!(
+        err.to_string().contains("unsupported encoding"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn string_to_page_unsupported_encoding_errors() {
+    let strings = ["abc"];
+    let (data_buf, offsets) = make_string_aux(&strings);
+    let pt = primitive_type_for(ColumnTypeTag::String);
+    let err = string_to_page(
+        &offsets,
+        &data_buf,
+        0,
+        write_options(),
+        pt,
+        Encoding::RleDictionary,
+        None,
+    )
+    .expect_err("expected error");
+    assert!(
+        matches!(err.reason(), ParquetErrorReason::Unsupported),
+        "expected Unsupported, got {:?}",
+        err.reason()
+    );
+}
+
+#[test]
+fn varchar_to_page_unsupported_encoding_errors() {
+    let aux = vec![make_varchar_aux_inlined(b"abc")];
+    let data: Vec<u8> = vec![];
+    let pt = primitive_type_for(ColumnTypeTag::Varchar);
+    let err = varchar_to_page(
+        &aux,
+        &data,
+        0,
+        write_options(),
+        pt,
+        Encoding::RleDictionary,
+        None,
+    )
+    .expect_err("expected error");
+    assert!(
+        matches!(err.reason(), ParquetErrorReason::Unsupported),
+        "expected Unsupported, got {:?}",
+        err.reason()
+    );
+}
+
+// Suppress dead-code warning on ENC_PLAIN; it's a documentary constant kept
+// alongside ENC_DELTA_LENGTH_BYTE_ARRAY for parity.
+const _: i32 = ENC_PLAIN;

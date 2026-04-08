@@ -134,6 +134,18 @@ pub fn binary_to_page(
     encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
+    // Validate offsets upfront so the deflevels iterator below can safely
+    // cast each `i64` offset to `usize`. The iterator can't return an error,
+    // and a negative offset would otherwise overflow the usize add downstream.
+    for &off in offsets {
+        if off < 0 {
+            return Err(fmt_err!(
+                Layout,
+                "invalid offset value in binary aux column: {off}"
+            ));
+        }
+    }
+
     let num_rows = column_top + offsets.len();
     let mut buffer = vec![];
     let mut null_count = 0;

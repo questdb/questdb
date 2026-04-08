@@ -1,4 +1,5 @@
 use super::*;
+use crate::parquet::error::{ParquetErrorReason, ParquetResult};
 use crate::parquet::tests::ColumnTypeTagExt;
 use crate::parquet_write::decimal::{
     Decimal128, Decimal16, Decimal256, Decimal32, Decimal64, Decimal8,
@@ -6,6 +7,7 @@ use crate::parquet_write::decimal::{
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::{column_type_to_parquet_type, Column};
 use crate::parquet_write::tests::make_column_with_top;
+use crate::parquet_write::util::transmute_slice;
 use parquet2::compression::CompressionOptions;
 use parquet2::page::{DataPageHeader, Page};
 use parquet2::schema::types::{ParquetType, PrimitiveType};
@@ -621,7 +623,7 @@ fn build_decimal_column<T>(data: &[T], ct: ColumnType) -> Column {
         0,
         data.len(),
         data.as_ptr() as *const u8,
-        data.len() * std::mem::size_of::<T>(),
+        std::mem::size_of_val(data),
         std::ptr::null(),
         0,
         std::ptr::null(),
@@ -631,4 +633,256 @@ fn build_decimal_column<T>(data: &[T], ct: ColumnType) -> Column {
         0,
     )
     .unwrap()
+}
+
+fn build_string_column_raw(data: &[u8], offsets: &[i64]) -> Column {
+    Column::from_raw_data(
+        0,
+        "col",
+        ColumnTypeTag::String.into_type().code(),
+        0,
+        offsets.len(),
+        data.as_ptr(),
+        data.len(),
+        offsets.as_ptr() as *const u8,
+        std::mem::size_of_val(offsets),
+        std::ptr::null(),
+        0,
+        false,
+        false,
+        0,
+    )
+    .unwrap()
+}
+
+fn build_binary_column_raw(data: &[u8], offsets: &[i64]) -> Column {
+    Column::from_raw_data(
+        0,
+        "col",
+        ColumnTypeTag::Binary.into_type().code(),
+        0,
+        offsets.len(),
+        data.as_ptr(),
+        data.len(),
+        offsets.as_ptr() as *const u8,
+        std::mem::size_of_val(offsets),
+        std::ptr::null(),
+        0,
+        false,
+        false,
+        0,
+    )
+    .unwrap()
+}
+
+#[test]
+fn dict_string_with_null_value() {
+    // Layout: one valid UTF-16 string ("hi") followed by an entry whose
+    // i32 length header is -1 (the QuestDB null sentinel).
+    let mut data: Vec<u8> = Vec::new();
+    let mut offsets: Vec<i64> = Vec::new();
+
+    // Row 0: real string "hi"
+    offsets.push(data.len() as i64);
+    let hi_utf16: Vec<u16> = "hi".encode_utf16().collect();
+    data.extend_from_slice(&(hi_utf16.len() as i32).to_le_bytes());
+    let bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            hi_utf16.as_ptr() as *const u8,
+            hi_utf16.len() * std::mem::size_of::<u16>(),
+        )
+    };
+    data.extend_from_slice(bytes);
+
+    // Row 1: null
+    offsets.push(data.len() as i64);
+    data.extend_from_slice(&(-1i32).to_le_bytes());
+
+    // Row 2: real string "yo"
+    offsets.push(data.len() as i64);
+    let yo_utf16: Vec<u16> = "yo".encode_utf16().collect();
+    data.extend_from_slice(&(yo_utf16.len() as i32).to_le_bytes());
+    let bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(
+            yo_utf16.as_ptr() as *const u8,
+            yo_utf16.len() * std::mem::size_of::<u16>(),
+        )
+    };
+    data.extend_from_slice(bytes);
+
+    let col = build_string_column_raw(&data, &offsets);
+    let pt = primitive_type_for(ColumnTypeTag::String);
+    let pages =
+        encode_string(&[col], 0, offsets.len(), &pt, write_options(), None).expect("encode");
+
+    // 1 dict page (with 2 unique non-null entries) + 1 data page (with 1 null).
+    let dicts = dict_pages(&pages);
+    assert_eq!(dicts.len(), 1);
+    assert_eq!(dicts[0].num_values, 2);
+    let datas = data_pages(&pages);
+    assert_eq!(datas.len(), 1);
+    let h = page_v2_header(datas[0]);
+    assert_eq!(h.num_values, 3);
+    assert_eq!(h.num_nulls, 1);
+}
+
+#[test]
+fn dict_binary_corrupt_offset_errors() {
+    // Build a Binary entry whose i64 length header decodes to a value
+    // larger than the remaining data, exercising the value bounds check.
+    let mut data: Vec<u8> = Vec::new();
+    data.extend_from_slice(&100i64.to_le_bytes());
+    data.extend_from_slice(b"abc"); // only 3 bytes after the header
+    let offsets: Vec<i64> = vec![0];
+
+    let col = build_binary_column_raw(&data, &offsets);
+    let pt = primitive_type_for(ColumnTypeTag::Binary);
+    let err = encode_binary(&[col], 0, offsets.len(), &pt, write_options(), None)
+        .expect_err("expected error");
+    assert!(
+        matches!(
+            err.reason(),
+            crate::parquet::error::ParquetErrorReason::Layout
+        ),
+        "expected Layout, got {:?}",
+        err.reason()
+    );
+    assert!(
+        err.to_string().contains("invalid offset and length"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn dict_binary_offset_header_out_of_bounds_errors() {
+    // The offset points past the buffer; the header read must fail.
+    let data: Vec<u8> = vec![0u8; 4];
+    let offsets: Vec<i64> = vec![100]; // way out of range
+
+    let col = build_binary_column_raw(&data, &offsets);
+    let pt = primitive_type_for(ColumnTypeTag::Binary);
+    let err = encode_binary(&[col], 0, offsets.len(), &pt, write_options(), None)
+        .expect_err("expected error");
+    assert!(
+        matches!(
+            err.reason(),
+            crate::parquet::error::ParquetErrorReason::Layout
+        ),
+        "expected Layout, got {:?}",
+        err.reason()
+    );
+    assert!(err.to_string().contains("invalid offset"), "got: {err}");
+}
+
+#[test]
+fn dict_string_offset_out_of_bounds_errors() {
+    // Offset past the buffer; the data slice lookup must fail.
+    let data: Vec<u8> = vec![0u8; 4];
+    let offsets: Vec<i64> = vec![100];
+
+    let col = build_string_column_raw(&data, &offsets);
+    let pt = primitive_type_for(ColumnTypeTag::String);
+    let err = encode_string(&[col], 0, offsets.len(), &pt, write_options(), None)
+        .expect_err("expected error");
+    assert!(
+        matches!(
+            err.reason(),
+            crate::parquet::error::ParquetErrorReason::Layout
+        ),
+        "expected Layout, got {:?}",
+        err.reason()
+    );
+    assert!(err.to_string().contains("out of bounds"), "got: {err}");
+}
+
+#[test]
+fn dict_string_negative_offset_errors() {
+    // A negative i64 offset cannot be a valid index.
+    let data: Vec<u8> = vec![0u8; 16];
+    let offsets: Vec<i64> = vec![-1];
+    let col = build_string_column_raw(&data, &offsets);
+    let pt = primitive_type_for(ColumnTypeTag::String);
+    let err = encode_string(&[col], 0, offsets.len(), &pt, write_options(), None)
+        .expect_err("expected error");
+    assert!(
+        matches!(
+            err.reason(),
+            crate::parquet::error::ParquetErrorReason::Layout
+        ),
+        "expected Layout, got {:?}",
+        err.reason()
+    );
+    assert!(err.to_string().contains("invalid offset"), "got: {err}");
+}
+
+// The two tests below call the private `encode_primitive` helper directly so
+// the defensive Required+null and Required+missing-default arms can be
+// exercised — the public callers (encode_int_notnull) hardcode is_null=false
+// and column_top_default=Some(...), so neither arm can be reached from them.
+
+#[test]
+fn encode_primitive_required_with_null_in_slice_errors() {
+    let data: Vec<i8> = vec![1, 2, i8::MIN, 3];
+    let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
+    let pt = primitive_type_for(ColumnTypeTag::Byte);
+
+    let result = encode_primitive::<i8, i32, _, _>(
+        &[col],
+        0,
+        data.len(),
+        &pt,
+        write_options(),
+        None,
+        Repetition::Required,
+        Some(0i32),
+        |column| -> ParquetResult<&[i8]> { Ok(unsafe { transmute_slice(column.primary_data) }) },
+        |v: i8| v == i8::MIN,
+        |v: i8| v as i32,
+    );
+
+    let err = result.expect_err("expected error");
+    assert!(
+        matches!(err.reason(), ParquetErrorReason::Layout),
+        "expected Layout, got {:?}",
+        err.reason()
+    );
+    assert!(
+        err.to_string().contains("null value in Required column"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn encode_primitive_required_with_column_top_no_default_errors() {
+    // Required + non-zero column_top + None default must error rather than
+    // silently emit unknown bytes for the column-top rows.
+    let data: Vec<i8> = vec![1, 2, 3];
+    let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 4, 0);
+    let pt = primitive_type_for(ColumnTypeTag::Byte);
+
+    let result = encode_primitive::<i8, i32, _, _>(
+        &[col],
+        0,
+        7, // 4 column-top rows + 3 data rows
+        &pt,
+        write_options(),
+        None,
+        Repetition::Required,
+        None, // intentionally missing default
+        |column| -> ParquetResult<&[i8]> { Ok(unsafe { transmute_slice(column.primary_data) }) },
+        |_v: i8| false,
+        |v: i8| v as i32,
+    );
+
+    let err = result.expect_err("expected error");
+    assert!(
+        matches!(err.reason(), ParquetErrorReason::Layout),
+        "expected Layout, got {:?}",
+        err.reason()
+    );
+    assert!(
+        err.to_string()
+            .contains("Required column has column top but no default"),
+        "got: {err}"
+    );
 }
