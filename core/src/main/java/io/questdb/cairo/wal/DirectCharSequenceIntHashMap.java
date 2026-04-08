@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.Chars;
@@ -68,6 +69,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
     private int mapCapacity;
     // mask over the current capacity of the map
     private int mask;
+    private int size;
 
     /**
      * Creates the map with a default initial capacity.
@@ -128,10 +130,12 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         if ((long) currentOffset << 3 < kvCapacity) {
             final long oldCapacity = kvCapacity;
             // We only shrink the capacity by 2 to avoid unnecessary grow-back later
-            kvCapacity >>= 1;
-            kvAddress = Unsafe.realloc(kvAddress, oldCapacity, kvCapacity, MemoryTag.NATIVE_DEFAULT);
+            long newKvCapacity = kvCapacity >> 1;
+            kvAddress = Unsafe.realloc(kvAddress, oldCapacity, newKvCapacity, MemoryTag.NATIVE_DEFAULT);
+            kvCapacity = newKvCapacity;
         }
         free = mapCapacity;
+        size = 0;
         Vect.memset(address, capacity, 0);
         this.currentOffset = 0;
     }
@@ -293,17 +297,22 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * Doubles the backing hash-table capacity and reassigns existing keys.
      */
     public void rehash() {
-        int size = mapCapacity - free;
-        mapCapacity = mapCapacity << 1;
-        free = mapCapacity - size;
+        int newMapCapacity = mapCapacity << 1;
+        int newFree = newMapCapacity - size;
 
-        final int len = Numbers.ceilPow2((int) (this.mapCapacity / loadFactor));
-        mask = len - 1;
+        final int len = Numbers.ceilPow2((int) (newMapCapacity / loadFactor));
+        int newMask = len - 1;
 
         long oldCapacity = capacity;
         long oldAddress = address;
-        capacity = (long) len << 3;
-        address = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
+        long newCapacity = (long) len << 3;
+        long newAddress = Unsafe.malloc(newCapacity, MemoryTag.NATIVE_DEFAULT);
+
+        mapCapacity = newMapCapacity;
+        free = newFree;
+        mask = newMask;
+        capacity = newCapacity;
+        address = newAddress;
         Vect.memset(address, capacity, 0);
 
         for (int i = (int) (oldCapacity >> 3) - 1; i > -1; i--) {
@@ -325,7 +334,7 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
      * @return number of stored keys.
      */
     public int size() {
-        return mapCapacity - free;
+        return size;
     }
 
     /**
@@ -402,8 +411,14 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         final long ptr = address + ((long) index << 3);
         Unsafe.getUnsafe().putInt(ptr, offset + 1);
         Unsafe.getUnsafe().putInt(ptr + 4L, hashCode);
+        size++;
         if (--free == 0) {
-            rehash();
+            try {
+                rehash();
+            } catch (CairoException e) {
+                free = 1;
+                throw e;
+            }
         }
     }
 
@@ -412,8 +427,9 @@ public class DirectCharSequenceIntHashMap implements Closeable, Mutable {
         int requiredCapacity = ((key.length() << 1) + 11) & ~3;
         if (kvCapacity < ((long) currentOffset << 2) + requiredCapacity) {
             final long oldSize = kvCapacity;
-            kvCapacity = Numbers.ceilPow2(kvCapacity + (long) requiredCapacity);
-            kvAddress = Unsafe.realloc(kvAddress, oldSize, kvCapacity, MemoryTag.NATIVE_DEFAULT);
+            long newKvCapacity = Numbers.ceilPow2(kvCapacity + (long) requiredCapacity);
+            kvAddress = Unsafe.realloc(kvAddress, oldSize, newKvCapacity, MemoryTag.NATIVE_DEFAULT);
+            kvCapacity = newKvCapacity;
         }
         final long lo = kvAddress + ((long) currentOffset << 2);
         Unsafe.getUnsafe().putInt(lo, value);
