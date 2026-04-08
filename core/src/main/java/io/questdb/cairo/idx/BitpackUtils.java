@@ -31,7 +31,7 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 /**
- * Constants and encoding/decoding utilities for Frame of Reference (FOR) bitmap index.
+ * Constants and encoding/decoding utilities for Frame of Reference (FOR) bitpacking.
  * <p>
  * FOR compression stores row IDs in fixed-size blocks. Each block contains:
  * - A minimum value (reference frame)

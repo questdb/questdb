@@ -34,8 +34,8 @@ import java.io.Closeable;
 /**
  * Interface for column index writers.
  * <p>
- * Different index types (SYMBOL, DELTA, FOR, etc.) have different writer implementations
- * that all conform to this interface.
+ * Different index types (BITMAP, POSTING, POSTING DELTA) have different writer
+ * implementations that all conform to this interface.
  */
 public interface IndexWriter extends Closeable, Mutable {
 

@@ -62,8 +62,8 @@ import java.util.concurrent.TimeUnit;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 /**
- * Combined JMH benchmark suite for posting and covering indices.
- * Preserves all 7 index-comparison scenarios plus decode, sidecar, SQL, and write benchmarks.
+ * JMH benchmark suite for posting and covering indices.
+ * Covers index-comparison, decode, sidecar, SQL, and write benchmarks.
  * Designed to complete in ~5 minutes with {@code @Fork(0)}.
  *
  * <pre>

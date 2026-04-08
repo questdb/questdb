@@ -30,8 +30,9 @@ import io.questdb.std.Unsafe;
 
 /**
  * ALP (Adaptive Lossless floating-Point) compression for covering index
- * sidecar data. Encodes doubles/floats by finding a decimal exponent that
- * converts values to integers, then bitpacks those integers with FoR.
+ * sidecar data. Encodes doubles/floats by finding a decimal exponent (e) and
+ * correction factor (f) that convert values to integers, then bitpacks those
+ * integers with FoR.
  * <p>
  * For integer column types (BYTE, SHORT, INT, LONG), uses plain FoR bitpacking
  * without ALP transformation.

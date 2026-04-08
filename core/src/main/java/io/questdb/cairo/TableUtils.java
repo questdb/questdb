@@ -329,11 +329,6 @@ public final class TableUtils {
         return checksum;
     }
 
-    // todo: check if it is used
-    public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir) {
-        cleanupDirQuiet(ff, dir, LOG);
-    }
-
     public static void cleanupDirQuiet(FilesFacade ff, Utf8Sequence dir, Log log) {
         try {
             Path dirPath = Path.getThreadLocal(dir);
