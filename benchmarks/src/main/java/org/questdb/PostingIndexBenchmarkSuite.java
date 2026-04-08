@@ -88,8 +88,8 @@ public class PostingIndexBenchmarkSuite {
     private static DefaultCairoConfiguration benchConfig(String root) {
         return new DefaultCairoConfiguration(root) {
             @Override
-            public boolean isPostingIndexEliasFanoEnabled() {
-                return !IS_DELTA;
+            public byte getPostingIndexRowIdEncoding() {
+                return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
             }
         };
     }
@@ -1113,8 +1113,8 @@ public class PostingIndexBenchmarkSuite {
                 }
 
                 @Override
-                public boolean isPostingIndexEliasFanoEnabled() {
-                    return !IS_DELTA;
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
                 }
             };
             engine = new CairoEngine(config);
@@ -1259,8 +1259,8 @@ public class PostingIndexBenchmarkSuite {
                 }
 
                 @Override
-                public boolean isPostingIndexEliasFanoEnabled() {
-                    return !IS_DELTA;
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
                 }
             };
             engine = new CairoEngine(config);

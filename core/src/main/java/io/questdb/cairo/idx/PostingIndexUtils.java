@@ -158,6 +158,9 @@ public final class PostingIndexUtils {
     // the blob uses Elias-Fano format. Otherwise, it is the legacy delta-FoR format.
     // Safe because delta-FoR's leading blockCount is always a small positive integer.
     public static final int EF_FORMAT_SENTINEL = Integer.MIN_VALUE; // 0x80000000
+    public static final byte ENCODING_ADAPTIVE = 0;
+    public static final byte ENCODING_DELTA = 1;
+    public static final byte ENCODING_EF = 2;
     // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
     static final int EF_HEADER_SIZE = 17;
     public static final int FORMAT_VERSION = 1;
@@ -617,18 +620,19 @@ public final class PostingIndexUtils {
      * @return number of bytes written
      */
     public static int encodeKeyNative(long srcAddr, int count, long destAddr, EncodeContext ctx) {
-        return encodeKeyNative(srcAddr, count, destAddr, ctx, true);
+        return encodeKeyNative(srcAddr, count, destAddr, ctx, ENCODING_ADAPTIVE);
     }
 
-    public static int encodeKeyNative(long srcAddr, int count, long destAddr, EncodeContext ctx, boolean useEliasFano) {
+    public static int encodeKeyNative(long srcAddr, int count, long destAddr, EncodeContext ctx, byte encoding) {
         if (count == 0) {
             Unsafe.getUnsafe().putInt(destAddr, 0);
             return 4;
         }
-        if (useEliasFano) {
-            return encodeKeyNativeAdaptive(srcAddr, count, destAddr, ctx);
-        }
-        return encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
+        return switch (encoding) {
+            case ENCODING_EF -> encodeKeyEF(srcAddr, count, destAddr);
+            case ENCODING_DELTA -> encodeKeyNativeDeltaFoR(srcAddr, count, destAddr, ctx);
+            default -> encodeKeyNativeAdaptive(srcAddr, count, destAddr, ctx);
+        };
     }
 
     /**
@@ -1302,7 +1306,7 @@ public final class PostingIndexUtils {
         int deltaCapacity;
         long deltasAddr;
         long efTrialAddr;
-        int efTrialCapacity;
+        long efTrialCapacity;
         // Native residuals buffer for SIMD packing (BLOCK_CAPACITY * 8 bytes)
         long nativeResidualsAddr;
         long residualsAddr;
@@ -1407,7 +1411,7 @@ public final class PostingIndexUtils {
                 if (efTrialAddr != 0) {
                     Unsafe.free(efTrialAddr, efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
                 }
-                efTrialCapacity = (int) needed;
+                efTrialCapacity = needed;
                 efTrialAddr = Unsafe.malloc(efTrialCapacity, MemoryTag.NATIVE_INDEX_READER);
             }
         }

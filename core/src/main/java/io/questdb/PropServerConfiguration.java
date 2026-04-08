@@ -34,6 +34,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.http.HttpContextConfiguration;
@@ -394,7 +395,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropPGWireConcurrentCacheConfiguration pgWireConcurrentCacheConfiguration = new PropPGWireConcurrentCacheConfiguration();
     private final int poolSegmentSize;
     private final boolean postingIndexAutoIncludeTimestamp;
-    private final boolean postingIndexEliasFanoEnabled;
+    private final byte postingIndexRowIdEncoding;
     private final String posthogApiKey;
     private final boolean posthogEnabled;
     private final int preferencesStringPoolCapacity;
@@ -1526,7 +1527,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.workStealTimeoutNanos = getNanos(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
             this.parallelIndexingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARALLEL_INDEXING_ENABLED, true);
             this.postingIndexAutoIncludeTimestamp = getBoolean(properties, env, PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, true);
-            this.postingIndexEliasFanoEnabled = !"delta".equals(getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "ef"));
+            this.postingIndexRowIdEncoding = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "adaptive")) {
+                case "ef" -> PostingIndexUtils.ENCODING_EF;
+                case "delta" -> PostingIndexUtils.ENCODING_DELTA;
+                default -> PostingIndexUtils.ENCODING_ADAPTIVE;
+            };
             this.sqlJoinMetadataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 16384);
             this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, Integer.MAX_VALUE);
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
@@ -4723,8 +4728,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isPostingIndexEliasFanoEnabled() {
-            return postingIndexEliasFanoEnabled;
+        public byte getPostingIndexRowIdEncoding() {
+            return postingIndexRowIdEncoding;
         }
 
         @Override

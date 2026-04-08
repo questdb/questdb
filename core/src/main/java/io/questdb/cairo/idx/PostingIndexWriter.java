@@ -72,7 +72,7 @@ public class PostingIndexWriter implements IndexWriter {
     private final PostingIndexUtils.DecodeContext decodeCtx = new PostingIndexUtils.DecodeContext();
     private final PostingIndexUtils.EncodeContext encodeCtx = new PostingIndexUtils.EncodeContext();
     private final FilesFacade ff;
-    private final boolean isEliasFanoEnabled;
+    private final byte rowIdEncoding;
     private final MemoryMARW keyMem = Vm.getCMARWInstance();
     private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
     private final int[] strideBpKeySizes = new int[PostingIndexUtils.DENSE_STRIDE];
@@ -130,14 +130,14 @@ public class PostingIndexWriter implements IndexWriter {
     private long valueMemSize;
 
     public PostingIndexWriter(CairoConfiguration configuration) {
-        this(configuration, configuration.isPostingIndexEliasFanoEnabled());
+        this(configuration, configuration.getPostingIndexRowIdEncoding());
     }
 
-    public PostingIndexWriter(CairoConfiguration configuration, boolean isEliasFanoEnabled) {
+    public PostingIndexWriter(CairoConfiguration configuration, byte rowIdEncoding) {
         this.alignedBitWidthThreshold = configuration.getPostingIndexAlignedBitWidthThreshold();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
-        this.isEliasFanoEnabled = isEliasFanoEnabled;
+        this.rowIdEncoding = rowIdEncoding;
     }
 
     @TestOnly
@@ -1236,7 +1236,7 @@ public class PostingIndexWriter implements IndexWriter {
             if (count > 0) {
                 long keyAddr = mergedValuesAddr + keyOffsets[j] * Long.BYTES;
                 encodeCtx.ensureCapacity(count);
-                bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, isEliasFanoEnabled);
+                bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, rowIdEncoding);
             } else {
                 bpKeySizes[j] = 0;
             }
@@ -1244,6 +1244,12 @@ public class PostingIndexWriter implements IndexWriter {
         }
 
         // Compute per-stride base value (min across all values in stride)
+        if (cumOffset > Integer.MAX_VALUE) {
+            // Too many values in a single stride for flat mode — force delta mode
+            int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
+            writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes, localHeaderBuf);
+            return;
+        }
         int totalStrideValues = (int) cumOffset;
         long strideMinValue = Long.MAX_VALUE;
         long strideMaxValue = Long.MIN_VALUE;
@@ -1516,7 +1522,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // No spill — encode directly from pending buffer
                 long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
                 encodeCtx.ensureCapacity(count);
-                bytesWritten = PostingIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx, isEliasFanoEnabled);
+                bytesWritten = PostingIndexUtils.encodeKeyNative(keyValuesAddr, count, destAddr, encodeCtx, rowIdEncoding);
 
                 if (pendingCount > 0) {
                     long lastVal = Unsafe.getUnsafe().getLong(keyValuesAddr + (long) (pendingCount - 1) * Long.BYTES);
@@ -1550,7 +1556,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // Encode from the spill buffer (which now holds all values in order)
                 long spillAddr = Unsafe.getUnsafe().getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
                 encodeCtx.ensureCapacity(count);
-                bytesWritten = PostingIndexUtils.encodeKeyNative(spillAddr, count, destAddr, encodeCtx, isEliasFanoEnabled);
+                bytesWritten = PostingIndexUtils.encodeKeyNative(spillAddr, count, destAddr, encodeCtx, rowIdEncoding);
 
                 long lastVal = Unsafe.getUnsafe().getLong(
                         spillAddr + (long) (count - 1) * Long.BYTES);
@@ -1592,6 +1598,7 @@ public class PostingIndexWriter implements IndexWriter {
         Unsafe.getUnsafe().copyMemory(flushHeaderBuf, headerAddr, headerSize);
 
         // Write per-gen sidecar data: raw covered column values in posting order
+        assert totalValues <= Integer.MAX_VALUE : "totalValues overflow: " + totalValues;
         int sidecarOffset = writeSidecarGenData((int) totalValues);
 
         genCount++;
@@ -2365,7 +2372,7 @@ public class PostingIndexWriter implements IndexWriter {
                                     if (count > 0) {
                                         long keyAddr = allValuesAddr + keyOffsets[j] * Long.BYTES;
                                         encodeCtx.ensureCapacity(count);
-                                        bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, isEliasFanoEnabled);
+                                        bpKeySizes[j] = PostingIndexUtils.encodeKeyNative(keyAddr, count, bpTrialBuf + bpDataTotal, encodeCtx, rowIdEncoding);
                                     } else {
                                         bpKeySizes[j] = 0;
                                     }
@@ -2377,12 +2384,12 @@ public class PostingIndexWriter implements IndexWriter {
                                 int deltaSize = deltaHeaderSize + bpDataTotal;
 
                                 // Count total values in stride and find per-stride min/max for flat size
-                                int totalStrideValues = 0;
+                                long totalStrideValuesL = 0;
                                 long strideMinValue = Long.MAX_VALUE;
                                 long strideMaxValue = Long.MIN_VALUE;
                                 for (int j = 0; j < ks; j++) {
                                     int count = keyCounts[j];
-                                    totalStrideValues += count;
+                                    totalStrideValuesL += count;
                                     long keyAddr = allValuesAddr + keyOffsets[j] * Long.BYTES;
                                     for (int i = 0; i < count; i++) {
                                         long val = Unsafe.getUnsafe().getLong(keyAddr + (long) i * Long.BYTES);
@@ -2390,50 +2397,54 @@ public class PostingIndexWriter implements IndexWriter {
                                         if (val > strideMaxValue) strideMaxValue = val;
                                     }
                                 }
-                                if (totalStrideValues == 0) {
+                                if (totalStrideValuesL == 0) {
                                     strideMinValue = 0;
                                     strideMaxValue = 0;
                                 }
-                                long strideRange = strideMaxValue - strideMinValue;
-                                int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
-                                int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
 
+                                boolean useFlat;
+                                int localBitWidth = 0;
+                                int flatDataSize = 0;
+                                int flatSize = 0;
                                 int flatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(ks);
-                                int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
-                                int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
 
-                                int localBitWidth;
-                                int flatDataSize;
-                                int flatSize;
-                                if (alignedBitWidth != naturalBitWidth) {
-                                    int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
-                                    int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
-                                    if (alignedFlatSize < deltaSize) {
-                                        localBitWidth = alignedBitWidth;
-                                        flatDataSize = alignedFlatDataSize;
-                                        flatSize = alignedFlatSize;
-                                    } else if (naturalFlatSize < deltaSize) {
-                                        localBitWidth = naturalBitWidth;
-                                        flatDataSize = naturalFlatDataSize;
-                                        flatSize = naturalFlatSize;
+                                if (totalStrideValuesL > Integer.MAX_VALUE) {
+                                    // Too many values for flat mode — force delta
+                                    useFlat = false;
+                                } else {
+                                    int totalStrideValues = (int) totalStrideValuesL;
+                                    long strideRange = strideMaxValue - strideMinValue;
+                                    int naturalBitWidth = strideRange <= 0 ? 1 : BitpackUtils.bitsNeeded(strideRange);
+                                    int alignedBitWidth = maybeAlignBitWidth(naturalBitWidth, alignedBitWidthThreshold);
+                                    int naturalFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, naturalBitWidth);
+                                    int naturalFlatSize = flatHeaderSize + naturalFlatDataSize;
+
+                                    if (alignedBitWidth != naturalBitWidth) {
+                                        int alignedFlatDataSize = BitpackUtils.packedDataSize(totalStrideValues, alignedBitWidth);
+                                        int alignedFlatSize = flatHeaderSize + alignedFlatDataSize;
+                                        if (alignedFlatSize < deltaSize) {
+                                            localBitWidth = alignedBitWidth;
+                                            flatDataSize = alignedFlatDataSize;
+                                            flatSize = alignedFlatSize;
+                                        } else {
+                                            localBitWidth = naturalBitWidth;
+                                            flatDataSize = naturalFlatDataSize;
+                                            flatSize = naturalFlatSize;
+                                        }
                                     } else {
                                         localBitWidth = naturalBitWidth;
                                         flatDataSize = naturalFlatDataSize;
                                         flatSize = naturalFlatSize;
                                     }
-                                } else {
-                                    localBitWidth = naturalBitWidth;
-                                    flatDataSize = naturalFlatDataSize;
-                                    flatSize = naturalFlatSize;
+                                    useFlat = flatSize < deltaSize;
                                 }
 
-                                boolean useFlat = flatSize < deltaSize;
                                 LOG.debug().$("reencode stride [s=").$(s)
                                         .$(", deltaSize=").$(deltaSize)
                                         .$(", flatSize=").$(flatSize)
-                                        .$(", natBW=").$(naturalBitWidth)
+                                        .$(", natBW=").$(0)
                                         .$(", alnBW=").$(localBitWidth)
-                                        .$(", totalVals=").$(totalStrideValues)
+                                        .$(", totalVals=").$(totalStrideValuesL)
                                         .$(", useFlat=").$(useFlat)
                                         .$(']').$();
 
@@ -2450,8 +2461,9 @@ public class PostingIndexWriter implements IndexWriter {
                                 }
 
                                 // Write sidecar covered values for this stride
+                                int totalStrideValues = (int) Math.min(totalStrideValuesL, Integer.MAX_VALUE);
                                 if (coverCount > 0 && sidecarMems != null && totalStrideValues > 0) {
-                                    long neededBuf = (long) totalStrideValues * maxCoveredValueSize();
+                                    long neededBuf = totalStrideValuesL * maxCoveredValueSize();
                                     if (neededBuf > sidecarBufSize) {
                                         if (sidecarBuf != 0) {
                                             Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);

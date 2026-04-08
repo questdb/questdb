@@ -152,7 +152,7 @@ public final class IndexFactory {
         return switch (indexType) {
             case IndexType.BITMAP -> new BitmapIndexWriter(configuration);
             case IndexType.POSTING -> new PostingIndexWriter(configuration);
-            case IndexType.POSTING_DELTA -> new PostingIndexWriter(configuration, false);
+            case IndexType.POSTING_DELTA -> new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_DELTA);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create writer for index type NONE");
             default -> throw CairoException.critical(0)

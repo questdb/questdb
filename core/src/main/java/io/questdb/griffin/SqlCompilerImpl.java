@@ -2376,7 +2376,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         ObjList<CharSequence> coveringColumnNames = null;
 
                         if (tok != null && !isSemicolon(tok)) {
-                            // ADD INDEX TYPE POSTING
+                            // ADD INDEX TYPE POSTING [DELTA|EF]
                             if (isTypeKeyword(tok)) {
                                 tok = expectToken(lexer, "index type name");
                                 byte parsedType = IndexType.valueOf(tok);
@@ -2385,10 +2385,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 }
                                 indexType = parsedType;
                                 tok = SqlUtil.fetchNext(lexer);
+                                // Handle sub-tokens DELTA and EF for POSTING index type
+                                if (tok != null && IndexType.isPosting(indexType)) {
+                                    if (SqlKeywords.isDeltaKeyword(tok)) {
+                                        indexType = IndexType.POSTING_DELTA;
+                                        tok = SqlUtil.fetchNext(lexer);
+                                    } else if (SqlKeywords.isEfKeyword(tok)) {
+                                        indexType = IndexType.POSTING;
+                                        tok = SqlUtil.fetchNext(lexer);
+                                    }
+                                }
                             }
                             // tok might be INCLUDE, CAPACITY, semicolon, or null
                             if (tok != null && !isSemicolon(tok) && SqlKeywords.isIncludeKeyword(tok)) {
-                                if (indexType != IndexType.POSTING) {
+                                if (!IndexType.isPosting(indexType)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "INCLUDE is only supported for POSTING index type");
                                 }
                                 coveringColumnNames = new ObjList<>();

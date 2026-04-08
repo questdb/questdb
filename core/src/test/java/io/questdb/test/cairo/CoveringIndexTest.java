@@ -5542,11 +5542,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilteredIndexScanWithArrayColumnParquet() throws Exception {
-        java.io.File parquetFile = new java.io.File("/tmp/entqdbroot/import/commodities_market_data.parquet");
-        org.junit.Assume.assumeTrue("parquet file not available", parquetFile.exists());
-        // Set sql.copy.input.root so read_parquet can find the file
-        inputRoot = parquetFile.getParent();
+    public void testFilteredIndexScanWithArrayColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE commodities_market_data (
@@ -5560,18 +5556,30 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         best_ask DOUBLE
                     ) TIMESTAMP(timestamp) PARTITION BY HOUR BYPASS WAL
                     """);
-            execute("INSERT INTO commodities_market_data SELECT * FROM read_parquet('commodities_market_data.parquet')");
+            execute("""
+                    INSERT INTO commodities_market_data
+                    SELECT
+                        dateadd('m', x::INT * 5, '2024-01-01T00:00:00.000000Z'),
+                        rnd_symbol('CL','GC','SI','HG'),
+                        rnd_symbol('NYMEX','COMEX'),
+                        rnd_symbol('Energy','Metals'),
+                        ARRAY[[rnd_double() * 100, rnd_double() * 100], [rnd_double() * 100, rnd_double() * 100]],
+                        ARRAY[[rnd_double() * 100, rnd_double() * 100], [rnd_double() * 100, rnd_double() * 100]],
+                        rnd_double() * 100,
+                        rnd_double() * 100
+                    FROM long_sequence(200)
+                    """);
             engine.releaseAllWriters();
 
             // Full query with array access — verify no crash
             try (var factory = select("""
                     SELECT timestamp, symbol,
-                        first(best_bid) as open,
-                        max(best_bid) as high,
-                        min(best_bid) as low,
-                        last(best_bid) as close,
-                        avg(best_bid) as avgr,
-                        sum(bids[2][1]) as volume
+                        first(best_bid) AS open,
+                        max(best_bid) AS high,
+                        min(best_bid) AS low,
+                        last(best_bid) AS close,
+                        avg(best_bid) AS avgr,
+                        sum(bids[2][1]) AS volume
                     FROM commodities_market_data
                     WHERE symbol = 'CL' AND exchange = 'NYMEX'
                     SAMPLE BY 15m
@@ -5584,10 +5592,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilteredIndexScanWithArrayColumnParquetBitmap() throws Exception {
-        java.io.File parquetFile = new java.io.File("/tmp/entqdbroot/import/commodities_market_data.parquet");
-        org.junit.Assume.assumeTrue("parquet file not available", parquetFile.exists());
-        inputRoot = parquetFile.getParent();
+    public void testFilteredIndexScanWithArrayColumnBitmap() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE cmd_bitmap (
@@ -5601,18 +5606,30 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         best_ask DOUBLE
                     ) TIMESTAMP(timestamp) PARTITION BY HOUR BYPASS WAL
                     """);
-            execute("INSERT INTO cmd_bitmap SELECT * FROM read_parquet('commodities_market_data.parquet')");
+            execute("""
+                    INSERT INTO cmd_bitmap
+                    SELECT
+                        dateadd('m', x::INT * 5, '2024-01-01T00:00:00.000000Z'),
+                        rnd_symbol('CL','GC','SI','HG'),
+                        rnd_symbol('NYMEX','COMEX'),
+                        rnd_symbol('Energy','Metals'),
+                        ARRAY[[rnd_double() * 100, rnd_double() * 100], [rnd_double() * 100, rnd_double() * 100]],
+                        ARRAY[[rnd_double() * 100, rnd_double() * 100], [rnd_double() * 100, rnd_double() * 100]],
+                        rnd_double() * 100,
+                        rnd_double() * 100
+                    FROM long_sequence(200)
+                    """);
             engine.releaseAllWriters();
 
-            // Just verify the query doesn't crash — any result is fine
+            // Verify the query doesn't crash — any result is fine
             try (var factory = select("""
                     SELECT timestamp, symbol,
-                        first(best_bid) as open,
-                        max(best_bid) as high,
-                        min(best_bid) as low,
-                        last(best_bid) as close,
-                        avg(best_bid) as avgr,
-                        sum(bids[2][1]) as volume
+                        first(best_bid) AS open,
+                        max(best_bid) AS high,
+                        min(best_bid) AS low,
+                        last(best_bid) AS close,
+                        avg(best_bid) AS avgr,
+                        sum(bids[2][1]) AS volume
                     FROM cmd_bitmap
                     WHERE symbol = 'CL' AND exchange = 'NYMEX'
                     SAMPLE BY 15m
@@ -7130,9 +7147,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
     public void testPostingIndexRowIdsMatchBitmap() throws Exception {
-        java.io.File parquetFile = new java.io.File("/tmp/entqdbroot/import/commodities_market_data.parquet");
-        org.junit.Assume.assumeTrue("parquet file not available", parquetFile.exists());
-        inputRoot = parquetFile.getParent();
         assertMemoryLeak(() -> {
             // Create two tables — same data, different index types
             execute("""
@@ -7155,9 +7169,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         best_ask DOUBLE
                     ) TIMESTAMP(timestamp) PARTITION BY HOUR BYPASS WAL
                     """);
-            // No array columns — just fixed-width to avoid the crash
-            execute("INSERT INTO cmd_posting SELECT timestamp, symbol, exchange, commodity_class, best_bid, best_ask FROM read_parquet('commodities_market_data.parquet')");
-            execute("INSERT INTO cmd_bitmap2 SELECT timestamp, symbol, exchange, commodity_class, best_bid, best_ask FROM read_parquet('commodities_market_data.parquet')");
+            // Generate identical data into both tables
+            execute("""
+                    INSERT INTO cmd_posting
+                    SELECT
+                        dateadd('m', x::INT * 5, '2024-01-01T00:00:00.000000Z'),
+                        rnd_symbol('CL','GC','SI','HG'),
+                        rnd_symbol('NYMEX','COMEX'),
+                        rnd_symbol('Energy','Metals'),
+                        rnd_double() * 100,
+                        rnd_double() * 100
+                    FROM long_sequence(500)
+                    """);
+            execute("INSERT INTO cmd_bitmap2 SELECT * FROM cmd_posting");
             engine.releaseAllWriters();
 
             // Compare row counts — both index types must return the same count

@@ -132,7 +132,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private boolean isFlatMode;
         private int flatRemaining;
         private int flatStartIdx;
-        private int genSidecarValueCount;
         private int lookupEnd;
         private int lookupPos;
         private long maxValue;
@@ -558,7 +557,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 this.flatRemaining = effectiveCount - batch;
                 // Set sidecar ordinal to just past the end so first hasNext decrement lands correctly
                 this.sidecarOrdinal = effectiveCount;
-                this.genSidecarValueCount = effectiveCount;
                 return;
             }
 
@@ -587,7 +585,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
             // Set sidecar ordinal to just past the end for reverse iteration
             this.sidecarOrdinal = totalValueCount;
-            this.genSidecarValueCount = totalValueCount;
 
             readDeltaBlockMetadata(encodedAddr, totalValueCount);
         }
@@ -630,7 +627,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 this.sidecarOrdinal = totalValueCount;
             }
-            this.genSidecarValueCount = totalValueCount;
 
             readDeltaBlockMetadata(encodedAddr, totalValueCount);
         }
@@ -697,7 +693,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } else {
                 this.sidecarOrdinal = totalValueCount;
             }
-            this.genSidecarValueCount = totalValueCount;
 
             readDeltaBlockMetadata(encodedAddr, totalValueCount);
         }
@@ -802,7 +797,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     trailingTrimmedCount += Unsafe.getUnsafe().getByte(srcValueCountsAddr + b) & 0xFF;
                 }
                 this.sidecarOrdinal -= trailingTrimmedCount;
-                this.genSidecarValueCount -= trailingTrimmedCount;
             }
 
             this.encodedBlockCount = endBlock;

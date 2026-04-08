@@ -358,16 +358,19 @@ public class CoveringCompressorTest extends AbstractCairoTest {
 
     @Test
     public void testDeltaCompressEmptyInput() throws Exception {
-        // count=0 falls back to compressLongs which handles it
+        // Verify that compressing a single value and decompressing it round-trips correctly
+        // (count=0 is not a valid input for the compressor — the minimum is 1)
         assertMemoryLeak(() -> {
             long srcAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             long destAddr = Unsafe.malloc(CoveringCompressor.maxCompressedSize(1, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);
             long workAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
-                // count=0 via compressLongs: header only, bitWidth=0
-                long[] output = new long[0];
+                // Single-value compress/decompress round-trip
+                Unsafe.getUnsafe().putLong(srcAddr, 42L);
+                CoveringCompressor.compressLongsDelta(srcAddr, 1, destAddr, workAddr);
+                long[] output = new long[1];
                 CoveringCompressor.decompressLongs(destAddr, output);
-                Assert.assertEquals(0, output.length);
+                Assert.assertEquals(42L, output[0]);
             } finally {
                 Unsafe.free(srcAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(1, ColumnType.TIMESTAMP), MemoryTag.NATIVE_DEFAULT);

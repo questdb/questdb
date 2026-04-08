@@ -477,12 +477,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         private long alpCacheAddr;
         private long alpCacheBlockAddr;
         private int alpCacheCapacity;
-        private int alpCacheCount;
         private int alpCacheIncludeIdx = -1;
         private long floatCacheAddr;
         private long floatCacheBlockAddr;
         private int floatCacheCapacity;
-        private int floatCacheCount;
         private int floatCacheIncludeIdx = -1;
         protected final BorrowedArray arrayView = new BorrowedArray();
         protected final DirectBinarySequence binView = new DirectBinarySequence();
@@ -598,7 +596,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     alpCacheAddr = Unsafe.malloc((long) count * Double.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 }
                 ensureDecodeWorkspaceCapacity(count);
-                alpCacheCount = CoveringCompressor.decompressDoublesToAddr(blockAddr, alpCacheAddr, decodeWorkspaceAddr);
+                CoveringCompressor.decompressDoublesToAddr(blockAddr, alpCacheAddr, decodeWorkspaceAddr);
                 alpCacheBlockAddr = blockAddr;
                 alpCacheIncludeIdx = includeIdx;
             }
@@ -631,7 +629,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     floatCacheAddr = Unsafe.malloc((long) count * Float.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 }
                 ensureDecodeWorkspaceCapacity(count);
-                floatCacheCount = CoveringCompressor.decompressFloatsToAddr(blockAddr, floatCacheAddr, decodeWorkspaceAddr);
+                CoveringCompressor.decompressFloatsToAddr(blockAddr, floatCacheAddr, decodeWorkspaceAddr);
                 floatCacheBlockAddr = blockAddr;
                 floatCacheIncludeIdx = includeIdx;
             }
@@ -812,7 +810,6 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             }
             alpCacheBlockAddr = 0;
             alpCacheIncludeIdx = -1;
-            alpCacheCount = 0;
             if (floatCacheAddr != 0) {
                 Unsafe.free(floatCacheAddr, (long) floatCacheCapacity * Float.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 floatCacheAddr = 0;
@@ -820,7 +817,6 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             }
             floatCacheBlockAddr = 0;
             floatCacheIncludeIdx = -1;
-            floatCacheCount = 0;
             if (decodeWorkspaceAddr != 0) {
                 Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
                 decodeWorkspaceAddr = 0;
@@ -988,10 +984,8 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             this.isCurrentGenDense = false;
             this.alpCacheBlockAddr = 0;
             this.alpCacheIncludeIdx = -1;
-            this.alpCacheCount = 0;
             this.floatCacheBlockAddr = 0;
             this.floatCacheIncludeIdx = -1;
-            this.floatCacheCount = 0;
         }
 
         protected int sidecarValueIdx() {
@@ -1543,7 +1537,18 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         long prevSeqStartB = Long.MIN_VALUE;
         while (true) {
             Unsafe.getUnsafe().loadFence();
+            // Use actual file length (not mapped size) to avoid accessing pages
+            // beyond the physical file, which causes SIGBUS/SIGSEGV on truncated files.
             long memSize = keyMem.size();
+            if (ff != null) {
+                long fd = keyMem.getFd();
+                if (fd > 0) {
+                    long fileLen = ff.length(fd);
+                    if (fileLen >= 0 && fileLen < memSize) {
+                        memSize = fileLen;
+                    }
+                }
+            }
             long seqStartA = memSize >= PostingIndexUtils.PAGE_SIZE ? keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
             long seqStartB = memSize >= PostingIndexUtils.KEY_FILE_RESERVED ? keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) : 0;
 
@@ -1552,6 +1557,9 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
             for (int attempt = 0; attempt < 2; attempt++) {
                 long tryPage = (attempt == 0) ? bestPage : otherPage;
+                if (tryPage == PostingIndexUtils.PAGE_B_OFFSET && memSize < PostingIndexUtils.KEY_FILE_RESERVED) {
+                    continue;
+                }
 
                 long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
                 Unsafe.getUnsafe().loadFence();
@@ -1597,9 +1605,8 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             }
             Os.pause();
         }
-        this.keyFileSequence = 0;
-        this.valueMemSize = 0;
-        this.keyCount = 0;
-        this.genCount = 0;
+        // Don't zero state on failure — preserve the last successfully read
+        // snapshot so that concurrent readers keep serving stale-but-valid data
+        // instead of returning empty results.
     }
 }

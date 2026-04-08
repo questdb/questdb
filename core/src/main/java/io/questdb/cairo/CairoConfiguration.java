@@ -31,6 +31,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
@@ -496,8 +497,8 @@ public interface CairoConfiguration {
         return true;
     }
 
-    default boolean isPostingIndexEliasFanoEnabled() {
-        return true;
+    default byte getPostingIndexRowIdEncoding() {
+        return PostingIndexUtils.ENCODING_ADAPTIVE;
     }
 
     int getPreferencesStringPoolCapacity();

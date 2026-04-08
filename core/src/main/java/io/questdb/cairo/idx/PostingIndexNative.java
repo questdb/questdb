@@ -102,6 +102,7 @@ public final class PostingIndexNative {
 
         for (int i = 0; i < count; i++) {
             long offset = Unsafe.getUnsafe().getLong(valuesAddr + (long) i * Long.BYTES) - minValue;
+            int oldBufferBits = bufferBits;
             buffer |= (offset << bufferBits);
             bufferBits += bitWidth;
 
@@ -110,6 +111,14 @@ public final class PostingIndexNative {
                 buffer >>>= 8;
                 bufferBits -= 8;
                 destOffset++;
+            }
+
+            // When the shift overflows 64 bits, the high bits of offset were
+            // lost by (offset << oldBufferBits). Recover them into the residual buffer.
+            if (oldBufferBits + bitWidth > 64) {
+                int loBitsStored = 64 - oldBufferBits;
+                buffer = offset >>> loBitsStored;
+                bufferBits = bitWidth - loBitsStored;
             }
         }
 

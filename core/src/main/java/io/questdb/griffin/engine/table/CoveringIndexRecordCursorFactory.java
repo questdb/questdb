@@ -85,11 +85,9 @@ import org.jetbrains.annotations.Nullable;
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
-    private final IntList columnSizeShifts;
 
     private final CoveringCursor cursor;
     private final PartitionFrameCursorFactory dfcFactory;
-    private final boolean hasVarSizeColumns;
     private final int indexColumnIndex;
     private final int keyQueryPosition;
     private final ObjList<Function> keyValueFuncs;
@@ -152,9 +150,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.latestByFilter = latestByFilter;
         this.keyValueFuncs = null;
         this.resolvedKeys = null;
-        this.columnSizeShifts = columnSizeShifts;
+
         this.queryColToIncludeIdx = queryColToIncludeIdx;
-        this.hasVarSizeColumns = hasAnyVarSizeIncludeColumn(queryColToIncludeIdx, metadata);
+
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
         this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0, symInclCols, columnIndexes, latestBy, metadata);
         this.pageFrameCursor = !latestBy
@@ -219,9 +217,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
-        this.columnSizeShifts = columnSizeShifts;
+
         this.queryColToIncludeIdx = queryColToIncludeIdx;
-        this.hasVarSizeColumns = hasAnyVarSizeIncludeColumn(queryColToIncludeIdx, metadata);
+
         this.keyValueFuncs = keyValueFuncs;
         this.resolvedKeys = keyValueFuncs != null ? new IntList(keyValueFuncs.size()) : null;
         int multiKeyCapacity = 0;
@@ -506,7 +504,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return frameCursor.getSymbolTable(columnIndex);
+            return frameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
         @Override
@@ -538,7 +536,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return frameCursor.newSymbolTable(columnIndex);
+            return frameCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
         @Override
@@ -1128,7 +1126,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     if (count >= capacity) {
                         capacity = growFrameBuffers(addrs, varDataAddrs, varDataCap, count, capacity);
                     }
-                    writeColumnRow(addrs, count, rowId, colBase);
+                    writeColumnRow(addrs, varDataAddrs, varDataPos, varDataCap, count, rowId, colBase);
                     count++;
                 }
             }
@@ -1283,7 +1281,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
-        private void writeColumnRow(long[] addrs, int count, long rowId, int colBase) {
+        private void writeColumnRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
+                                     int count, long rowId, int colBase) {
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] < 0) continue;
                 long addr = addrs[q];
@@ -1294,14 +1293,32 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             addr + (long) count * Double.BYTES, mem.getDouble(rowId * Double.BYTES));
                     case ColumnType.FLOAT -> Unsafe.getUnsafe().putFloat(
                             addr + (long) count * Float.BYTES, mem.getFloat(rowId * Float.BYTES));
-                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG ->
+                    case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG,
+                         ColumnType.DECIMAL64 ->
                             Unsafe.getUnsafe().putLong(addr + (long) count * Long.BYTES, mem.getLong(rowId * Long.BYTES));
-                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL ->
+                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL,
+                         ColumnType.DECIMAL32 ->
                             Unsafe.getUnsafe().putInt(addr + (long) count * Integer.BYTES, mem.getInt(rowId * Integer.BYTES));
-                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT ->
+                    case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
                             Unsafe.getUnsafe().putShort(addr + (long) count * Short.BYTES, mem.getShort(rowId * Short.BYTES));
-                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
+                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                             Unsafe.getUnsafe().putByte(addr + count, mem.getByte(rowId));
+                    case ColumnType.UUID, ColumnType.DECIMAL128 -> {
+                        long off128 = (long) count * 16;
+                        Unsafe.getUnsafe().putLong(addr + off128, mem.getLong(rowId * 16));
+                        Unsafe.getUnsafe().putLong(addr + off128 + 8, mem.getLong(rowId * 16 + 8));
+                    }
+                    case ColumnType.LONG256, ColumnType.DECIMAL256 -> {
+                        long off256 = (long) count * 32;
+                        Unsafe.getUnsafe().putLong(addr + off256, mem.getLong(rowId * 32));
+                        Unsafe.getUnsafe().putLong(addr + off256 + 8, mem.getLong(rowId * 32 + 8));
+                        Unsafe.getUnsafe().putLong(addr + off256 + 16, mem.getLong(rowId * 32 + 16));
+                        Unsafe.getUnsafe().putLong(addr + off256 + 24, mem.getLong(rowId * 32 + 24));
+                    }
+                    case ColumnType.VARCHAR ->
+                            writeVarcharToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, null);
+                    case ColumnType.STRING ->
+                            writeStringToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, null);
                     default -> {
                     }
                 }
