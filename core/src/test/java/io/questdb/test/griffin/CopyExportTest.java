@@ -1477,6 +1477,59 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyQueryCursorBackedPreservesDictionaryEncodingAcrossPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE dict_copy_cursor_src (
+                        metric INT PARQUET(RLE_DICTIONARY),
+                        total LONG PARQUET(RLE_DICTIONARY),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO dict_copy_cursor_src VALUES
+                        (10, 1000, '2020-01-01T00:00:00.000000Z'),
+                        (20, 2000, '2020-01-01T01:00:00.000000Z'),
+                        (10, 1000, '2020-01-02T00:00:00.000000Z'),
+                        (30, 3000, '2020-01-02T01:00:00.000000Z'),
+                        (20, 2000, '2020-01-03T00:00:00.000000Z'),
+                        (40, 4000, '2020-01-03T01:00:00.000000Z')
+                    """);
+
+            final String parquetPath = exportRoot + File.separator + "dict_copy_cursor_output.parquet";
+            final String query = """
+                    SELECT metric, total, ts, metric + 1 AS computed_metric
+                    FROM dict_copy_cursor_src
+                    CROSS JOIN long_sequence(1)
+                    """;
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID(
+                            "COPY (" + query + ") TO 'dict_copy_cursor_output' WITH FORMAT parquet",
+                            sqlExecutionContext
+                    );
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertSql(
+                                "export_path\tnum_exported_files\tstatus\n" +
+                                        parquetPath + "\t1\tfinished\n",
+                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"
+                        );
+                        assertParquetMatchesQuery(query, parquetPath);
+                        ParquetTestUtils.assertColumnsUseDictionaryEncoding(
+                                parquetPath,
+                                configuration.getFilesFacade(),
+                                0,
+                                1
+                        );
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyQueryWithArithmeticExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (x LONG, y DOUBLE, name STRING)");
