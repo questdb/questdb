@@ -25,7 +25,6 @@
 package io.questdb.test.std.histogram.org.HdrHistogram;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.std.Rnd;
