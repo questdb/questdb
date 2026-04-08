@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
@@ -332,6 +333,10 @@ public class ServerMain implements Closeable {
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
                                 setupWalApplyJob(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
                             }
+
+                            final LiveViewRefreshJob liveViewRefreshJob = new LiveViewRefreshJob(engine);
+                            sharedPoolWrite.assign(liveViewRefreshJob);
+                            sharedPoolWrite.freeOnExit(liveViewRefreshJob);
                         }
 
                         // text import
