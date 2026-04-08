@@ -1282,7 +1282,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private void writeColumnRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
-                                     int count, long rowId, int colBase) {
+                                    int count, long rowId, int colBase) {
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] < 0) continue;
                 long addr = addrs[q];

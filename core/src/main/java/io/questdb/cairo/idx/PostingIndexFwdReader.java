@@ -438,7 +438,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             while (efHighWordIdx < efNumHighWords && efOutputCount < efTotalCount && totalBuf < blockBufferCapacity) {
                 long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
-                if (word == 0) { efHighWordIdx++; continue; }
+                if (word == 0) {
+                    efHighWordIdx++;
+                    continue;
+                }
                 int chunkCount = Math.min(Long.bitCount(word), efTotalCount - efOutputCount);
                 if (chunkCount > blockBufferCapacity - totalBuf) {
                     break;
@@ -470,7 +473,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     Unsafe.getUnsafe().putLong(
                             blockBufferAddr + (long) (totalBuf + bufPos) * Long.BYTES,
                             ((base + trail) << efL) | low);
-                    bufPos++; efOutputCount++; base--;
+                    bufPos++;
+                    efOutputCount++;
+                    base--;
                     word &= word - 1;
                 }
 
@@ -715,17 +720,25 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int firstWord = Unsafe.getUnsafe().getInt(pos);
             if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
                 pos += 4;
-                efTotalCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
-                efL = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
-                long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
+                efTotalCount = Unsafe.getUnsafe().getInt(pos);
+                pos += 4;
+                efL = Unsafe.getUnsafe().getByte(pos) & 0xFF;
+                pos += 1;
+                long u = Unsafe.getUnsafe().getLong(pos);
+                pos += 8;
                 efLowMask = (efL < 64) ? (1L << efL) - 1 : -1L;
                 efLowStart = pos;
                 int lowBytes = PostingIndexUtils.efLowBytesAligned(efTotalCount, efL);
                 efHighStart = pos + lowBytes;
                 efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
-                efHighWordIdx = 0; efOutputCount = 0;
-                isEFMode = true; encodedBlockCount = 0; isFlatMode = false;
-                blockBufferPos = 0; blockBufferEnd = 0; constantDeltaRemaining = 0;
+                efHighWordIdx = 0;
+                efOutputCount = 0;
+                isEFMode = true;
+                encodedBlockCount = 0;
+                isFlatMode = false;
+                blockBufferPos = 0;
+                blockBufferEnd = 0;
+                constantDeltaRemaining = 0;
                 return;
             }
             int blockCount = firstWord;

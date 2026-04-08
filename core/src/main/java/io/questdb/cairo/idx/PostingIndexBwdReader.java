@@ -425,7 +425,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private void decodeNextEFChunkReverse() {
             while (efHighWordIdx >= 0) {
                 long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
-                if (word == 0) { efHighWordIdx--; continue; }
+                if (word == 0) {
+                    efHighWordIdx--;
+                    continue;
+                }
                 int rankBefore = Unsafe.getUnsafe().getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
                 int bufIdx = 0;
                 long w = word;
@@ -702,9 +705,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int firstWord = Unsafe.getUnsafe().getInt(pos);
             if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
                 pos += 4;
-                efTotalCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
-                efL = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
-                long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
+                efTotalCount = Unsafe.getUnsafe().getInt(pos);
+                pos += 4;
+                efL = Unsafe.getUnsafe().getByte(pos) & 0xFF;
+                pos += 1;
+                long u = Unsafe.getUnsafe().getLong(pos);
+                pos += 8;
                 efLowMask = (efL < 64) ? (1L << efL) - 1 : -1L;
                 efLowStart = pos;
                 int lowBytes = PostingIndexUtils.efLowBytesAligned(efTotalCount, efL);
@@ -724,8 +730,11 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     cumulative += Long.bitCount(Unsafe.getUnsafe().getLong(efHighStart + (long) w * 8));
                 }
                 efHighWordIdx = efNumHighWords - 1;
-                isEFMode = true; encodedBlockCount = 0; isFlatMode = false;
-                currentBlock = -1; blockBufferPos = -1;
+                isEFMode = true;
+                encodedBlockCount = 0;
+                isFlatMode = false;
+                currentBlock = -1;
+                blockBufferPos = -1;
                 return;
             }
             int blockCount = firstWord;

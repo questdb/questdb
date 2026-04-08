@@ -58,7 +58,8 @@ public final class IndexFactory {
     public static LPSZ keyFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
         return switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
-            case IndexType.POSTING, IndexType.POSTING_DELTA -> PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            case IndexType.POSTING, IndexType.POSTING_DELTA ->
+                    PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
             default -> throw CairoException.critical(0)
                     .put("unsupported index type for key file: ").put(IndexType.nameOf(indexType));
         };
@@ -76,7 +77,8 @@ public final class IndexFactory {
     public static LPSZ valueFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
         return switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
-            case IndexType.POSTING, IndexType.POSTING_DELTA -> PostingIndexUtils.valueFileName(path, columnName, columnNameTxn);
+            case IndexType.POSTING, IndexType.POSTING_DELTA ->
+                    PostingIndexUtils.valueFileName(path, columnName, columnNameTxn);
             default -> throw CairoException.critical(0)
                     .put("unsupported index type for value file: ").put(IndexType.nameOf(indexType));
         };

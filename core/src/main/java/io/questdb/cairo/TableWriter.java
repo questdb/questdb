@@ -4568,12 +4568,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Creates index files for a column. This method uses primary column instance as a temporary tool to
      * append index data. Therefore, it must be called before the primary column is initialized.
      *
-     * @param columnName             column name
-     * @param columnNameTxn          column name txn
+     * @param columnName              column name
+     * @param columnNameTxn           column name txn
      * @param indexValueBlockCapacity value block capacity for the index
-     * @param indexType              type of index to create
-     * @param plen                   path length. This is used to trim the shared path object to.
-     * @param force                  when true, recreates the index file even if it already exists
+     * @param indexType               type of index to create
+     * @param plen                    path length. This is used to trim the shared path object to.
+     * @param force                   when true, recreates the index file even if it already exists
      */
     private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force) {
         try {

@@ -1073,9 +1073,12 @@ public final class PostingIndexUtils {
      */
     public static void decodeKeyEF(long srcAddr, long[] dest) {
         long pos = srcAddr + 4; // skip sentinel
-        int n = Unsafe.getUnsafe().getInt(pos); pos += 4;
-        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
-        long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
+        int n = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF;
+        pos += 1;
+        long u = Unsafe.getUnsafe().getLong(pos);
+        pos += 8;
 
         long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
         long lowStart = pos;
@@ -1104,9 +1107,12 @@ public final class PostingIndexUtils {
      */
     public static void decodeKeyEFToNative(long srcAddr, long destAddr) {
         long pos = srcAddr + 4; // skip sentinel
-        int n = Unsafe.getUnsafe().getInt(pos); pos += 4;
-        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
-        long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
+        int n = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF;
+        pos += 1;
+        long u = Unsafe.getUnsafe().getLong(pos);
+        pos += 8;
 
         long lowStart = pos;
         int lowBytes = efLowBytesAligned(n, L);
@@ -1148,10 +1154,14 @@ public final class PostingIndexUtils {
         long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
 
         long pos = destAddr;
-        Unsafe.getUnsafe().putInt(pos, EF_FORMAT_SENTINEL); pos += 4;
-        Unsafe.getUnsafe().putInt(pos, count); pos += 4;
-        Unsafe.getUnsafe().putByte(pos, (byte) L); pos += 1;
-        Unsafe.getUnsafe().putLong(pos, u); pos += 8;
+        Unsafe.getUnsafe().putInt(pos, EF_FORMAT_SENTINEL);
+        pos += 4;
+        Unsafe.getUnsafe().putInt(pos, count);
+        pos += 4;
+        Unsafe.getUnsafe().putByte(pos, (byte) L);
+        pos += 1;
+        Unsafe.getUnsafe().putLong(pos, u);
+        pos += 8;
 
         long lowStart = pos;
         int lowBytes = efLowBytesAligned(count, L);
@@ -1190,7 +1200,9 @@ public final class PostingIndexUtils {
     // Elias-Fano support methods for readers
     // ==================================================================================
 
-    /** O(1) point access to value at given index in an EF-encoded key. */
+    /**
+     * O(1) point access to value at given index in an EF-encoded key.
+     */
     public static long efAccessValue(long encodedAddr, long rankDirAddr, int numHighWords, int index) {
         long pos = encodedAddr + 4;
         int L = Unsafe.getUnsafe().getByte(pos + 4) & 0xFF;
@@ -1204,12 +1216,17 @@ public final class PostingIndexUtils {
         return ((selectPos - index) << L) | low;
     }
 
-    /** Builds rank directory from high bits of an EF-encoded key. */
+    /**
+     * Builds rank directory from high bits of an EF-encoded key.
+     */
     public static int efBuildRankDirectory(long encodedAddr, long rankDirAddr) {
         long pos = encodedAddr + 4;
-        int n = Unsafe.getUnsafe().getInt(pos); pos += 4;
-        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF; pos += 1;
-        long u = Unsafe.getUnsafe().getLong(pos); pos += 8;
+        int n = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF;
+        pos += 1;
+        long u = Unsafe.getUnsafe().getLong(pos);
+        pos += 8;
         int lowBytes = efLowBytesAligned(n, L);
         long highStart = pos + lowBytes;
         int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
@@ -1221,12 +1238,16 @@ public final class PostingIndexUtils {
         return numHighWords;
     }
 
-    /** Computes 8-byte-aligned size for the EF low bits region. */
+    /**
+     * Computes 8-byte-aligned size for the EF low bits region.
+     */
     static int efLowBytesAligned(int n, int L) {
         return (int) ((((long) n * L + 63) >>> 6) << 3);
     }
 
-    /** Finds position of k-th set bit in high bit array via rank directory. */
+    /**
+     * Finds position of k-th set bit in high bit array via rank directory.
+     */
     static long efSelect(long highStart, long rankDirAddr, int numWords, int k) {
         int lo = 0, hi = numWords - 1;
         while (lo < hi) {
@@ -1242,7 +1263,9 @@ public final class PostingIndexUtils {
     // Bit manipulation helpers for Elias-Fano
     // ==================================================================================
 
-    /** Reads numBits starting at bitPos using 64-bit aligned loads. */
+    /**
+     * Reads numBits starting at bitPos using 64-bit aligned loads.
+     */
     static long readBitsWord(long baseAddr, long bitPos, int numBits) {
         if (numBits == 0) return 0;
         long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
@@ -1255,19 +1278,42 @@ public final class PostingIndexUtils {
         return (numBits < 64) ? value & ((1L << numBits) - 1) : value;
     }
 
-    /** Finds position of k-th set bit (0-indexed) within a 64-bit word. */
+    /**
+     * Finds position of k-th set bit (0-indexed) within a 64-bit word.
+     */
     static int selectInWord(long word, int k) {
         int pos = 0;
         long lo32 = word & 0xFFFFFFFFL;
         int c = Long.bitCount(lo32);
-        if (k >= c) { word >>>= 32; pos += 32; k -= c; } else { word = lo32; }
+        if (k >= c) {
+            word >>>= 32;
+            pos += 32;
+            k -= c;
+        } else {
+            word = lo32;
+        }
         long lo16 = word & 0xFFFFL;
         c = Long.bitCount(lo16);
-        if (k >= c) { word >>>= 16; pos += 16; k -= c; } else { word = lo16; }
+        if (k >= c) {
+            word >>>= 16;
+            pos += 16;
+            k -= c;
+        } else {
+            word = lo16;
+        }
         long lo8 = word & 0xFFL;
         c = Long.bitCount(lo8);
-        if (k >= c) { word >>>= 8; pos += 8; k -= c; } else { word = lo8; }
-        while (k > 0) { word &= word - 1; k--; }
+        if (k >= c) {
+            word >>>= 8;
+            pos += 8;
+            k -= c;
+        } else {
+            word = lo8;
+        }
+        while (k > 0) {
+            word &= word - 1;
+            k--;
+        }
         return pos + Long.numberOfTrailingZeros(word);
     }
 

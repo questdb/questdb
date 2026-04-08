@@ -175,12 +175,15 @@ public class CoveringCompressor {
 
         // Write header
         long pos = destAddr;
-        Unsafe.getUnsafe().putInt(pos, count); pos += 4;
+        Unsafe.getUnsafe().putInt(pos, count);
+        pos += 4;
         Unsafe.getUnsafe().putByte(pos++, (byte) e);
         Unsafe.getUnsafe().putByte(pos++, (byte) f);
         Unsafe.getUnsafe().putByte(pos++, (byte) bw);
-        Unsafe.getUnsafe().putInt(pos, excCount); pos += 4;
-        Unsafe.getUnsafe().putInt(pos, forBase); pos += 4;
+        Unsafe.getUnsafe().putInt(pos, excCount);
+        pos += 4;
+        Unsafe.getUnsafe().putInt(pos, forBase);
+        pos += 4;
 
         // Pack encoded values (widen ints to longs in-place for BitpackUtils)
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
@@ -197,7 +200,8 @@ public class CoveringCompressor {
         // Exception positions and values
         for (int i = 0; i < count; i++) {
             if (Unsafe.getUnsafe().getByte(exceptionAddr + i) != 0) {
-                Unsafe.getUnsafe().putInt(pos, i); pos += 4;
+                Unsafe.getUnsafe().putInt(pos, i);
+                pos += 4;
             }
         }
         for (int i = 0; i < count; i++) {
@@ -211,12 +215,15 @@ public class CoveringCompressor {
 
     public static int decompressFloatsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
         long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int count = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
         int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        int excCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
-        int forBase = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int excCount = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int forBase = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
 
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
         if (bw > 0) {
@@ -1163,8 +1170,10 @@ public class CoveringCompressor {
         int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        int excCount = Unsafe.getUnsafe().getInt(pos); pos += 4;
-        int forBase = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int excCount = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int forBase = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
 
         int packedBytes = BitpackUtils.packedDataSize(count, bw);
         long excPosAddr = pos + packedBytes;
@@ -1194,9 +1203,11 @@ public class CoveringCompressor {
         int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
 
         long pos = destAddr;
-        Unsafe.getUnsafe().putInt(pos, count); pos += 4;
+        Unsafe.getUnsafe().putInt(pos, count);
+        pos += 4;
         Unsafe.getUnsafe().putByte(pos++, (byte) bw);
-        Unsafe.getUnsafe().putShort(pos, (short) forBase); pos += 2;
+        Unsafe.getUnsafe().putShort(pos, (short) forBase);
+        pos += 2;
 
         if (bw > 0) {
             for (int i = 0; i < count; i++) {
@@ -1222,7 +1233,8 @@ public class CoveringCompressor {
         int bw = (range == 0) ? 0 : 64 - Long.numberOfLeadingZeros(range);
 
         long pos = destAddr;
-        Unsafe.getUnsafe().putInt(pos, count); pos += 4;
+        Unsafe.getUnsafe().putInt(pos, count);
+        pos += 4;
         Unsafe.getUnsafe().putByte(pos++, (byte) bw);
         Unsafe.getUnsafe().putByte(pos++, (byte) forBase);
 
@@ -1239,9 +1251,11 @@ public class CoveringCompressor {
 
     public static int decompressShortsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
         long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int count = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
-        long forBase = Unsafe.getUnsafe().getShort(pos); pos += 2; // sign-extend
+        long forBase = Unsafe.getUnsafe().getShort(pos);
+        pos += 2; // sign-extend
 
         if (bw > 0) {
             BitpackUtils.unpackAllValues(pos, count, bw, forBase, workspaceAddr);
@@ -1259,7 +1273,8 @@ public class CoveringCompressor {
 
     public static int decompressBytesToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
         long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos); pos += 4;
+        int count = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         long forBase = Unsafe.getUnsafe().getByte(pos++); // sign-extend
 

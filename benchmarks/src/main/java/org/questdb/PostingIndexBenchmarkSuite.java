@@ -1041,10 +1041,10 @@ public class PostingIndexBenchmarkSuite {
                             Unsafe.getUnsafe().putLong(colAddr + (long) i * 8, 1_700_000_000_000_000L + rng.nextInt(1_000_000));
                     case "INT" -> Unsafe.getUnsafe().putInt(colAddr + (long) i * 4, rng.nextInt(10_000));
                     case "DECIMAL64" ->
-                            // Prices with scale=2: 100.00–1000.00 → unscaled 10_000–100_000
+                        // Prices with scale=2: 100.00–1000.00 → unscaled 10_000–100_000
                             Unsafe.getUnsafe().putLong(colAddr + (long) i * 8, 10_000L + rng.nextInt(90_000));
                     case "DECIMAL32" ->
-                            // Prices with scale=2: 20.00–25.00 → unscaled 2_000–2_500
+                        // Prices with scale=2: 20.00–25.00 → unscaled 2_000–2_500
                             Unsafe.getUnsafe().putInt(colAddr + (long) i * 4, 2_000 + rng.nextInt(500));
                     case "SHORT" -> Unsafe.getUnsafe().putShort(colAddr + (long) i * 2, (short) rng.nextInt(1_000));
                 }
