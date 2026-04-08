@@ -1176,6 +1176,122 @@ public class CreateTableTest extends AbstractCairoTest {
         assertSymbolParameters(parameters);
     }
 
+    @Test
+    public void testCreateTableInlinePostingIndexWithInclude() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (
+                        ts TIMESTAMP,
+                        s SYMBOL INDEX TYPE POSTING INCLUDE (v),
+                        v DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingCapacityFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING CAPACITY 64) TIMESTAMP(ts) PARTITION BY DAY",
+                64,
+                "CAPACITY is only supported for BITMAP index type"
+        );
+    }
+
+    @Test
+    public void testCreateTablePostingDelta() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING DELTA, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_DELTA, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTablePostingEf() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL INDEX TYPE POSTING EF, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                // EF is the default POSTING encoding, maps to IndexType.POSTING
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingDelta() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING DELTA) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_DELTA, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableOutOfLinePostingEf() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP), INDEX(s TYPE POSTING EF) TIMESTAMP(ts) PARTITION BY DAY");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingCapacityFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertException(
+                    "ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE POSTING CAPACITY 256",
+                    54,
+                    "CAPACITY is only supported for BITMAP index type"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexPostingDelta() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE POSTING DELTA");
+            try (TableReader r = engine.getReader("tab")) {
+                int colIndex = r.getMetadata().getColumnIndex("s");
+                assertEquals(IndexType.POSTING_DELTA, r.getMetadata().getColumnIndexType(colIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableUnknownIndexTypeFails() throws Exception {
+        assertException(
+                "CREATE TABLE tab (s SYMBOL INDEX TYPE FOOBAR, ts TIMESTAMP) TIMESTAMP(ts)",
+                38,
+                "unknown index type"
+        );
+    }
+
+    @Test
+    public void testAlterTableAddIndexUnknownTypeFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertException(
+                    "ALTER TABLE tab ALTER COLUMN s ADD INDEX TYPE FOOBAR",
+                    46,
+                    "unknown index type"
+            );
+        });
+    }
+
     private record SymbolParameters(Integer symbolCapacity, boolean isCached, boolean isIndexed,
                                     Integer indexBlockCapacity) {
     }

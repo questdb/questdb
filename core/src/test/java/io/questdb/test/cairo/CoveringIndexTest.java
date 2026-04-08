@@ -7582,6 +7582,50 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowColumnsWithPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_show_cols (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            // Verify indexType and indexInclude columns are present for POSTING index
+            assertSql("""
+                    column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                    ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse
+                    sym\tSYMBOL\ttrue\t256\tPOSTING\t\ttrue\t128\t0\tfalse\tfalse
+                    price\tDOUBLE\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
+                    qty\tINT\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
+                    """, "SHOW COLUMNS FROM t_show_cols");
+        });
+    }
+
+    @Test
+    public void testShowColumnsWithBitmapIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_show_bmp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX CAPACITY 256,
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+
+            // BITMAP index should show indexType=BITMAP and empty indexInclude
+            assertSql("""
+                    column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                    ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse
+                    sym\tSYMBOL\ttrue\t256\tBITMAP\t\ttrue\t128\t0\tfalse\tfalse
+                    val\tDOUBLE\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
+                    """, "SHOW COLUMNS FROM t_show_bmp");
+        });
+    }
+
+    @Test
     public void testStringPageFrameDataCorrectness() throws Exception {
         // STRING columns also go through the page frame path now
         assertMemoryLeak(() -> {
@@ -8450,6 +8494,225 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     99.9\thello
                     77.7\ttest
                     """, "SELECT uncovered1, uncovered3 FROM t_partial WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testLatestByAllColumnTypes() throws Exception {
+        // LATEST BY through CoveringRecord — exercises every type accessor
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_all (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
+                            v_byte, v_short, v_int, v_long, v_float, v_double,
+                            v_bool, v_date, v_uuid, v_ipv4,
+                            v_varchar, v_string
+                        ),
+                        v_byte BYTE,
+                        v_short SHORT,
+                        v_int INT,
+                        v_long LONG,
+                        v_float FLOAT,
+                        v_double DOUBLE,
+                        v_bool BOOLEAN,
+                        v_date DATE,
+                        v_uuid UUID,
+                        v_ipv4 IPv4,
+                        v_varchar VARCHAR,
+                        v_string STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_all VALUES
+                    ('2024-01-01T00:00:00', 'A', 1, 100, 1000, 10_000, 1.5, 2.5, true,  '2024-06-01T00:00:00.000Z', '11111111-1111-1111-1111-111111111111', '1.2.3.4', 'hello', 'world'),
+                    ('2024-01-02T00:00:00', 'A', 2, 200, 2000, 20_000, 2.5, 3.5, false, '2024-07-01T00:00:00.000Z', '22222222-2222-2222-2222-222222222222', '5.6.7.8', 'bye',   'earth'),
+                    ('2024-01-02T12:00:00', 'B', 3, 300, 3000, 30_000, 3.5, 4.5, true,  '2024-08-01T00:00:00.000Z', '33333333-3333-3333-3333-333333333333', '9.0.1.2', 'foo',   'bar')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    v_byte\tv_short\tv_int\tv_long\tv_float\tv_double\tv_bool\tv_date\tv_uuid\tv_ipv4\tv_varchar\tv_string
+                    2\t200\t2000\t20000\t2.5\t3.5\tfalse\t2024-07-01T00:00:00.000Z\t22222222-2222-2222-2222-222222222222\t5.6.7.8\tbye\tearth
+                    """, """
+                    SELECT v_byte, v_short, v_int, v_long, v_float, v_double,
+                           v_bool, v_date, v_uuid, v_ipv4, v_varchar, v_string
+                    FROM t_latest_all WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
+    public void testLatestByDecimalAndLong256() throws Exception {
+        // LATEST BY for DECIMAL128 and LONG256 through CoveringRecord
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_dec (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d128, hash),
+                        d128 DECIMAL(38, 10),
+                        hash LONG256
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_dec VALUES
+                    ('2024-01-01T00:00:00', 'A', '123.4567890000'::DECIMAL(38, 10), 0x01),
+                    ('2024-01-02T00:00:00', 'A', '999.9999999999'::DECIMAL(38, 10), 0x0f)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    d128\thash
+                    999.9999999999\t0x0f
+                    """, """
+                    SELECT d128, hash
+                    FROM t_latest_dec WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
+    public void testLatestByBinaryColumn() throws Exception {
+        // LATEST BY with BINARY covered column through CoveringRecord
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_bin (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (data),
+                        data BINARY
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_latest_bin VALUES ('2024-01-01T00:00:00', 'A', rnd_bin(10, 10, 0))");
+            execute("INSERT INTO t_latest_bin VALUES ('2024-01-02T00:00:00', 'A', rnd_bin(10, 10, 0))");
+            engine.releaseAllWriters();
+
+            // Just verify the query runs without errors and returns a row
+            assertSql("""
+                    count
+                    1
+                    """, """
+                    SELECT count(*) AS count
+                    FROM t_latest_bin WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
+    public void testLatestByArrayColumn() throws Exception {
+        // LATEST BY with ARRAY covered column through CoveringRecord
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_arr (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals),
+                        vals DOUBLE[]
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_arr VALUES
+                    ('2024-01-01T00:00:00', 'A', ARRAY[1.0, 2.0]),
+                    ('2024-01-02T00:00:00', 'A', ARRAY[3.0, 4.0])
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    vals
+                    [3.0,4.0]
+                    """, """
+                    SELECT vals
+                    FROM t_latest_arr WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
+    public void testLatestByMultiKeyAllTypes() throws Exception {
+        // LATEST BY multi-key with diverse types through CoveringRecord
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_multi (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v_float, v_short, v_byte),
+                        v_float FLOAT,
+                        v_short SHORT,
+                        v_byte BYTE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_multi VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.5, 10, 1),
+                    ('2024-01-02T00:00:00', 'A', 2.5, 20, 2),
+                    ('2024-01-01T12:00:00', 'B', 3.5, 30, 3),
+                    ('2024-01-02T12:00:00', 'B', 4.5, 40, 4)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    sym\tv_float\tv_short\tv_byte
+                    A\t2.5\t20\t2
+                    B\t4.5\t40\t4
+                    """, """
+                    SELECT sym, v_float, v_short, v_byte
+                    FROM t_latest_multi
+                    WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
+    public void testLatestByNullValues() throws Exception {
+        // LATEST BY with NULL values in various types
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_nulls (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v_int, v_double, v_varchar),
+                        v_int INT,
+                        v_double DOUBLE,
+                        v_varchar VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_nulls VALUES
+                    ('2024-01-01T00:00:00', 'A', 1, 1.0, 'ok'),
+                    ('2024-01-02T00:00:00', 'A', NULL, NaN, NULL)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    v_int\tv_double\tv_varchar
+                    null\tnull\t
+                    """, """
+                    SELECT v_int, v_double, v_varchar
+                    FROM t_latest_nulls WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
+    public void testPageFrameAggregationUuidIpv4() throws Exception {
+        // Page frame aggregation for UUID and IPv4 types
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_uuid (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (id, addr),
+                        id UUID,
+                        addr IPv4
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_uuid VALUES
+                    ('2024-01-01T00:00:00', 'A', '11111111-1111-1111-1111-111111111111', '1.2.3.4'),
+                    ('2024-01-01T01:00:00', 'A', '22222222-2222-2222-2222-222222222222', '5.6.7.8'),
+                    ('2024-01-01T02:00:00', 'B', '33333333-3333-3333-3333-333333333333', '9.0.1.2')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    count
+                    2
+                    """, "SELECT count(*) AS count FROM t_pf_uuid WHERE sym = 'A'");
         });
     }
 

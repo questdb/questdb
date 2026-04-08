@@ -95,7 +95,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final Function latestByFilter;
     private final RecordMetadata metadata;
     private final CoveringPageFrameCursor pageFrameCursor;
-    private final PageFrameScanCursor pageFrameScanCursor;
     private final int[] queryColToIncludeIdx;
     private final IntList resolvedKeys;
     private final Function symbolFunction;
@@ -157,9 +156,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, 0, symInclCols, columnIndexes, latestBy, metadata);
         this.pageFrameCursor = !latestBy
                 ? new CoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, metadata, columnIndexes)
-                : null;
-        this.pageFrameScanCursor = pageFrameCursor != null
-                ? new PageFrameScanCursor(pageFrameCursor, queryColToIncludeIdx, metadata)
                 : null;
     }
 
@@ -236,9 +232,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.cursor = new CoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, multiKeyCapacity, symInclCols, columnIndexes, latestBy, metadata);
         this.pageFrameCursor = !latestBy
                 ? new CoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, metadata, columnIndexes)
-                : null;
-        this.pageFrameScanCursor = pageFrameCursor != null
-                ? new PageFrameScanCursor(pageFrameCursor, queryColToIncludeIdx, metadata)
                 : null;
     }
 
@@ -1831,136 +1824,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
-     * Record that reads fixed-width column values directly from page frame
-     * native addresses. Zero virtual calls per value — just Unsafe reads.
-     */
-    private static class DirectRecord implements Record {
-        private final int[] columnSizeBytes;
-        private final int[] columnTypeTags;
-        private final boolean[] isSymbolColumn;
-        private final int queryColCount;
-        private final int[] queryColToIncludeIdx;
-        private long[] pageAddresses;
-        private long rowIndex;
-        private SymbolTable[] symbolTables; // per-column symbol tables
-
-        DirectRecord(int[] queryColToIncludeIdx, RecordMetadata metadata) {
-            this.queryColToIncludeIdx = queryColToIncludeIdx;
-            this.queryColCount = queryColToIncludeIdx.length;
-            this.columnSizeBytes = new int[queryColCount];
-            this.columnTypeTags = new int[queryColCount];
-            this.isSymbolColumn = new boolean[queryColCount];
-            for (int q = 0; q < queryColCount; q++) {
-                int colType = metadata.getColumnType(q);
-                this.columnTypeTags[q] = ColumnType.tagOf(colType);
-                this.isSymbolColumn[q] = ColumnType.tagOf(colType) == ColumnType.SYMBOL;
-                this.columnSizeBytes[q] = queryColToIncludeIdx[q] >= 0
-                        ? ColumnType.sizeOf(colType)
-                        : Integer.BYTES;
-            }
-        }
-
-        @Override
-        public boolean getBool(int col) {
-            return getByte(col) != 0;
-        }
-
-        @Override
-        public byte getByte(int col) {
-            long addr = pageAddresses[col];
-            return addr != 0 ? Unsafe.getUnsafe().getByte(addr + rowIndex) : 0;
-        }
-
-        @Override
-        public char getChar(int col) {
-            return (char) getShort(col);
-        }
-
-        @Override
-        public long getDate(int col) {
-            return getLong(col);
-        }
-
-        @Override
-        public double getDouble(int col) {
-            long addr = pageAddresses[col];
-            return addr != 0 ? Unsafe.getUnsafe().getDouble(addr + rowIndex * Double.BYTES) : Double.NaN;
-        }
-
-        @Override
-        public float getFloat(int col) {
-            long addr = pageAddresses[col];
-            return addr != 0 ? Unsafe.getUnsafe().getFloat(addr + rowIndex * Float.BYTES) : Float.NaN;
-        }
-
-        @Override
-        public int getIPv4(int col) {
-            long addr = pageAddresses[col];
-            return addr != 0 ? Unsafe.getUnsafe().getInt(addr + rowIndex * Integer.BYTES) : Numbers.IPv4_NULL;
-        }
-
-        @Override
-        public int getInt(int col) {
-            long addr = pageAddresses[col];
-            return addr != 0 ? Unsafe.getUnsafe().getInt(addr + rowIndex * Integer.BYTES) : Integer.MIN_VALUE;
-        }
-
-        @Override
-        public long getLong(int col) {
-            long addr = pageAddresses[col];
-            return addr != 0 ? Unsafe.getUnsafe().getLong(addr + rowIndex * Long.BYTES) : Long.MIN_VALUE;
-        }
-
-        @Override
-        public long getRowId() {
-            return rowIndex;
-        }
-
-        @Override
-        public short getShort(int col) {
-            long addr = pageAddresses[col];
-            return addr != 0 ? Unsafe.getUnsafe().getShort(addr + rowIndex * Short.BYTES) : 0;
-        }
-
-        @Override
-        public CharSequence getSymA(int col) {
-            long addr = pageAddresses[col];
-            if (addr != 0 && symbolTables != null && symbolTables[col] != null) {
-                int key = Unsafe.getUnsafe().getInt(addr + rowIndex * Integer.BYTES);
-                return symbolTables[col].valueOf(key);
-            }
-            return null;
-        }
-
-        @Override
-        public CharSequence getSymB(int col) {
-            long addr = pageAddresses[col];
-            if (addr != 0 && symbolTables != null && symbolTables[col] != null) {
-                int key = Unsafe.getUnsafe().getInt(addr + rowIndex * Integer.BYTES);
-                return symbolTables[col].valueBOf(key);
-            }
-            return null;
-        }
-
-        @Override
-        public long getTimestamp(int col) {
-            return getLong(col);
-        }
-
-        void of(CoveringPageFrame frame) {
-            this.pageAddresses = frame.pageAddresses;
-        }
-
-        void setRowIndex(long rowIndex) {
-            this.rowIndex = rowIndex;
-        }
-
-        void setSymbolTables(SymbolTable[] symbolTables) {
-            this.symbolTables = symbolTables;
-        }
-    }
-
-    /**
      * Fallback record that reads covered column values from column files via
      * TableReader when sidecar data is unavailable (unsealed partitions).
      * Zero per-row branching — the cursor swaps between CoveringRecord and
@@ -2275,96 +2138,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         void setSymbolTable(SymbolTable symbolTable) {
             this.symbolTable = symbolTable;
-        }
-    }
-
-    /**
-     * Wraps CoveringPageFrameCursor as a RecordCursor for plain scans.
-     * Reads column values directly from page frame native addresses
-     * using Unsafe — no per-value virtual calls.
-     */
-    private static class PageFrameScanCursor implements RecordCursor {
-        private final CoveringPageFrameCursor pfCursor;
-        private final DirectRecord record;
-        private CoveringPageFrame currentFrame;
-        private long rowCount;
-        private long rowIndex;
-
-        PageFrameScanCursor(CoveringPageFrameCursor pfCursor, int[] queryColToIncludeIdx, RecordMetadata metadata) {
-            this.pfCursor = pfCursor;
-            this.record = new DirectRecord(queryColToIncludeIdx, metadata);
-        }
-
-        @Override
-        public void close() {
-            // pfCursor lifecycle managed by the factory
-        }
-
-        @Override
-        public Record getRecord() {
-            return record;
-        }
-
-        @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return pfCursor.getSymbolTable(columnIndex);
-        }
-
-        @Override
-        public boolean hasNext() {
-            while (true) {
-                if (rowIndex < rowCount) {
-                    record.setRowIndex(rowIndex++);
-                    return true;
-                }
-                PageFrame frame = pfCursor.next();
-                if (frame == null) {
-                    return false;
-                }
-                currentFrame = (CoveringPageFrame) frame;
-                record.of(currentFrame);
-                rowIndex = 0;
-                rowCount = currentFrame.partitionHi - currentFrame.partitionLo;
-            }
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return pfCursor.newSymbolTable(columnIndex);
-        }
-
-        @Override
-        public long preComputedStateSize() {
-            return 0;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long size() {
-            return -1;
-        }
-
-        @Override
-        public void toTop() {
-            pfCursor.toTop();
-            currentFrame = null;
-            rowIndex = 0;
-            rowCount = 0;
-        }
-
-        void of() {
-            currentFrame = null;
-            rowIndex = 0;
-            rowCount = 0;
         }
     }
 }

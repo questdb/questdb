@@ -94,7 +94,7 @@ public final class PostingIndexNative {
     private static native void packValues0(long valuesAddr, int count, long minValue,
                                            int bitWidth, long destAddr);
 
-    private static void packValuesNativeFallback(long valuesAddr, int count, long minValue,
+    public static void packValuesNativeFallback(long valuesAddr, int count, long minValue,
                                                  int bitWidth, long destAddr) {
         long buffer = 0;
         int bufferBits = 0;
@@ -130,7 +130,7 @@ public final class PostingIndexNative {
     private static native void unpackAllValues0(long srcAddr, int valueCount, int bitWidth,
                                                 long minValue, long destAddr);
 
-    private static void unpackAllValuesNativeFallback(long srcAddr, int valueCount, int bitWidth,
+    public static void unpackAllValuesNativeFallback(long srcAddr, int valueCount, int bitWidth,
                                                       long minValue, long destAddr) {
         long buffer = 0;
         int bufferBits = 0;

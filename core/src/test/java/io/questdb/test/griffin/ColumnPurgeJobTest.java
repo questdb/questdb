@@ -1095,6 +1095,79 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         assertIndexFilesExist(path, up_part, partition, colSuffix, exist);
     }
 
+    @Test
+    public void testDropPostingIndex() throws Exception {
+        // Exercises ColumnPurgeOperator.couldNotRemoveIndexFiles(),
+        // existsIndexFile(), and removeSidecarFiles() for POSTING index type.
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("CREATE TABLE t_posting AS" +
+                        " (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampType.getTypeName() + " ts," +
+                        " x," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym" +
+                        " FROM long_sequence(5))" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+                execute("ALTER TABLE t_posting ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (x)");
+
+                // Hold a reader open so the purge job can't clean up immediately
+                try (TableReader rdr1 = getReader("t_posting")) {
+                    execute("INSERT INTO t_posting" +
+                            " SELECT timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
+                            " x," +
+                            " rnd_symbol('A', 'B', 'C', 'D') sym" +
+                            " FROM long_sequence(3)");
+
+                    try (TableReader ignored = getReader("t_posting")) {
+                        update("ALTER TABLE t_posting ALTER COLUMN sym DROP INDEX");
+                        // Purge job runs but can't delete because reader is open
+                        runPurgeJob(purgeJob);
+                        setCurrentMicros(currentMicros + 1);
+                    }
+                    rdr1.openPartition(0);
+                }
+
+                // Now all readers are closed — purge should clean up posting index files
+                runPurgeJob(purgeJob);
+
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+
+                // Verify the table is still queryable after purge
+                assertSql("""
+                        count
+                        8
+                        """, "SELECT count() AS count FROM t_posting WHERE x > 0");
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWithPostingIndex() throws Exception {
+        // Exercises ColumnPurgeOperator posting index cleanup via UPDATE
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("CREATE TABLE t_posting_upd AS" +
+                        " (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L)::" + timestampType.getTypeName() + " ts," +
+                        " x," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym" +
+                        " FROM long_sequence(5))" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+                execute("ALTER TABLE t_posting_upd ALTER COLUMN sym ADD INDEX TYPE POSTING");
+
+                try (TableReader ignored = getReader("t_posting_upd")) {
+                    update("UPDATE t_posting_upd SET x = 100 WHERE ts >= '1970-01-03'");
+                    runPurgeJob(purgeJob);
+                    setCurrentMicros(currentMicros + 1);
+                }
+
+                runPurgeJob(purgeJob);
+
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
     private void assertIndexFilesExist(String[] partitions, Path path, String tableName, String colSuffix, boolean exist) {
         for (int i = 0; i < partitions.length; i++) {
             String partition = partitions[i];

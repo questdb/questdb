@@ -102,30 +102,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         this.command = DO_NOTHING;
     }
 
-    public static AlterOperation deepCloneOf(AlterOperation other) {
-        LongList extraInfo = new LongList(other.extraInfo);
-        ObjList<CharSequence> charSequenceObjList = new ObjList<>(other.extraStrInfo.size());
-        for (int i = 0, n = other.extraStrInfo.size(); i < n; i++) {
-            charSequenceObjList.add(Chars.toString(other.extraStrInfo.getStrA(i)));
-        }
-
-        AlterOperation alterOperation = new AlterOperation(extraInfo, charSequenceObjList);
-        alterOperation.command = other.command;
-        alterOperation.tableToken = other.tableToken;
-        alterOperation.tableNamePosition = other.tableNamePosition;
-
-        if (other.activeExtraStrInfo == other.extraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.extraStrInfo;
-        } else if (other.activeExtraStrInfo == other.directExtraStrInfo) {
-            alterOperation.activeExtraStrInfo = alterOperation.directExtraStrInfo;
-        } else {
-            assert false;
-        }
-        alterOperation.init(other.getCmdType(), other.getCommandName(), other.tableToken, other.getTableId(), other.getTableVersion(), other.tableNamePosition);
-
-        return alterOperation;
-    }
-
     public static long getFlags(byte indexType, boolean dedupKey) {
         long flags = indexType & INDEX_TYPE_MASK;
         if (dedupKey) {
