@@ -164,6 +164,7 @@ public class TableUpdateDetails implements Closeable {
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = commitInterval;
         this.nextCommitTime = millisecondClock.getTicks() + this.commitInterval;
+        //noinspection resource
         this.localDetailsArray = new ThreadLocalDetails[]{new ThreadLocalDetails(symbolCachePool)};
         this.tableNameUtf8 = tableNameUtf8;
     }

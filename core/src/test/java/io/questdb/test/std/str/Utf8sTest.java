@@ -712,7 +712,6 @@ public class Utf8sTest {
     @Test
     public void testEqualsRangeLengthMismatch() {
         Utf8Sequence s = utf8("abc");
-        Utf8Sequence t = utf8("abcdef");
         // Length mismatch via equalsAscii(CharSequence, Utf8Sequence, rLo, rHi)
         Assert.assertFalse(Utf8s.equalsAscii("ab", s, 0, 3));
         // Length mismatch via equalsAscii(CharSequence, lLo, lHi, Utf8Sequence, rLo, rHi)

@@ -1777,7 +1777,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnType,
             boolean isDesignated,
             long serverTimestamp
-    ) throws QwpParseException {
+    ) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);

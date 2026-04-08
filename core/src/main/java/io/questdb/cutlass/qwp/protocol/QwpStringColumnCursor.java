@@ -55,6 +55,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     private long nullBitmapAddress;
     private long offsetArrayAddress;
     private long stringDataAddress;
+    private int totalStringDataLength;
     // Configuration
     private byte typeCode;
 
@@ -76,16 +77,18 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) currentValueIndex * 4);
         int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
 
-        if (startOffset < 0 || endOffset < startOffset) {
+        if (startOffset < 0 || endOffset < startOffset || endOffset > totalStringDataLength) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
                     .put("invalid QWP string offset array: offset[")
+                    .put(currentValueIndex)
+                    .put("]=")
+                    .put(startOffset)
+                    .put(", offset[")
                     .put(currentValueIndex + 1)
                     .put("]=")
                     .put(endOffset)
-                    .put(" < offset[")
-                    .put(currentValueIndex)
-                    .put("]=")
-                    .put(startOffset);
+                    .put(", totalStringDataLength=")
+                    .put(totalStringDataLength);
         }
 
         // Update flyweight to point to this string's bytes - NO ALLOCATION!
@@ -104,6 +107,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         nullBitmapAddress = 0;
         offsetArrayAddress = 0;
         stringDataAddress = 0;
+        totalStringDataLength = 0;
         resetRowPosition();
     }
 
@@ -198,6 +202,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
             );
         }
         this.stringDataAddress = dataAddress + offset;
+        this.totalStringDataLength = lastOffset;
         offset += lastOffset;
 
         resetRowPosition();
