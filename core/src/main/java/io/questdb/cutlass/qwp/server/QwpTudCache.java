@@ -68,9 +68,11 @@ public class QwpTudCache implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(QwpTudCache.class);
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
+    private final long commitInterval;
     private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultPartitionBy;
     private final CairoEngine engine;
+    private final long maxUncommittedRows;
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
@@ -86,6 +88,26 @@ public class QwpTudCache implements QuietCloseable {
             DefaultColumnTypes defaultColumnTypes,
             int defaultPartitionBy
     ) {
+        this(
+                engine,
+                autoCreateNewColumns,
+                autoCreateNewTables,
+                defaultColumnTypes,
+                defaultPartitionBy,
+                -1,
+                Long.MAX_VALUE
+        );
+    }
+
+    public QwpTudCache(
+            CairoEngine engine,
+            boolean autoCreateNewColumns,
+            boolean autoCreateNewTables,
+            DefaultColumnTypes defaultColumnTypes,
+            int defaultPartitionBy,
+            long commitInterval,
+            long maxUncommittedRows
+    ) {
         try {
             this.ddlMem = Vm.getCMARWInstance();
             this.path = new Path();
@@ -93,8 +115,10 @@ public class QwpTudCache implements QuietCloseable {
             this.telemetry = engine.getTelemetry();
             this.autoCreateNewColumns = autoCreateNewColumns;
             this.autoCreateNewTables = autoCreateNewTables;
+            this.commitInterval = commitInterval;
             this.defaultColumnTypes = defaultColumnTypes;
             this.defaultPartitionBy = defaultPartitionBy;
+            this.maxUncommittedRows = maxUncommittedRows;
             this.symbolCachePool = new WeakClosableObjectPool<>(
                     () -> new SymbolCache(engine.getConfiguration().getMicrosecondClock(), 10_000),
                     5
@@ -212,6 +236,44 @@ public class QwpTudCache implements QuietCloseable {
         } while (droppedTableFound);
     }
 
+    public long commitWalTables(long wallClockMillis) {
+        long minTableNextCommitTime = Long.MAX_VALUE;
+        boolean droppedTableFound;
+        do {
+            droppedTableFound = false;
+            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                Utf8Sequence tableName = tableUpdateDetails.keys().get(i);
+                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+                try {
+                    if (!tud.isDropped()) {
+                        long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
+                        wallClockMillis = tud.getMillisecondClock().getTicks();
+                        if (tableNextCommitTime < minTableNextCommitTime) {
+                            minTableNextCommitTime = tableNextCommitTime;
+                        }
+                    }
+                } catch (CommitFailedException e) {
+                    if (e.isTableDropped()) {
+                        tud.setIsDropped();
+                    } else {
+                        LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
+                    }
+                } catch (Throwable t) {
+                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
+                }
+
+                if (tud.isDropped()) {
+                    tableUpdateDetails.remove(tableName);
+                    Misc.free(tud);
+                    droppedTableFound = true;
+                    break;
+                }
+            }
+        } while (droppedTableFound);
+        return minTableNextCommitTime;
+    }
+
     public WalTableUpdateDetails getTableUpdateDetails(
             SecurityContext securityContext,
             Utf8Sequence tableNameUtf8,
@@ -256,9 +318,9 @@ public class QwpTudCache implements QuietCloseable {
                     defaultColumnTypes,
                     tableNameCopy,
                     symbolCachePool,
-                    -1,
+                    commitInterval,
                     false,
-                    Long.MAX_VALUE
+                    maxUncommittedRows
             );
             tableUpdateDetails.putAt(key, tableNameCopy, tud);
             return tud;

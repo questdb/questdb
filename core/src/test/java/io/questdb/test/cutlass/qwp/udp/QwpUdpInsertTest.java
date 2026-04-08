@@ -35,6 +35,7 @@ import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -53,7 +54,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     private static final int PORT = 19_002;
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
-        public int getCommitRate() {
+        public int getMaxUncommittedDatagrams() {
             return 1;
         }
 
@@ -69,8 +70,29 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     };
     private static final QwpUdpReceiverConfiguration RCVR_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
-        public int getCommitRate() {
+        public int getMaxUncommittedDatagrams() {
             return 10;
+        }
+
+        @Override
+        public int getPort() {
+            return PORT;
+        }
+
+        @Override
+        public boolean isOwnThread() {
+            return false;
+        }
+    };
+    private static final QwpUdpReceiverConfiguration TIMER_COMMIT_CONF = new DefaultQwpUdpReceiverConfiguration() {
+        @Override
+        public long getCommitInterval() {
+            return 50;
+        }
+
+        @Override
+        public int getMaxUncommittedDatagrams() {
+            return Integer.MAX_VALUE;
         }
 
         @Override
@@ -137,6 +159,32 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                             """,
                     "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp DESC LIMIT 1"
             );
+        });
+    }
+
+    @Test
+    public void testCommitIntervalDelaysSparseDatagramCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table timer_commit (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=1000, o3MaxLag=1s");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(TIMER_COMMIT_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("timer_commit")
+                            .longColumn("v", 1)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                Assert.assertTrue(receiver.runSerially());
+                drainWalQueue();
+                assertSql("count\n0\n", "SELECT count() FROM timer_commit");
+
+                TestUtils.assertEventually(() -> {
+                    receiver.runSerially();
+                    drainWalQueue();
+                    assertSql("count\n1\n", "SELECT count() FROM timer_commit");
+                }, 5);
+            }
         });
     }
 

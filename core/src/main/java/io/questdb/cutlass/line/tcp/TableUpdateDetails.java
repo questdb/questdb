@@ -259,6 +259,10 @@ public class TableUpdateDetails implements Closeable {
         return networkIOOwnerCount;
     }
 
+    public long getNextCommitTime() {
+        return nextCommitTime;
+    }
+
     public String getTableNameUtf16() {
         return tableToken.getTableName();
     }
@@ -303,6 +307,10 @@ public class TableUpdateDetails implements Closeable {
 
     public boolean isWriterInError() {
         return writerInError;
+    }
+
+    public void markMeasurement() {
+        lastMeasurementMillis = millisecondClock.getTicks();
     }
 
     public void removeReference(int workerId) {
@@ -362,7 +370,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
+    public long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
@@ -380,7 +388,7 @@ public class TableUpdateDetails implements Closeable {
         return nextCommitTime;
     }
 
-    void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
+    public void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
         final long rowsSinceCommit = writerAPI.getUncommittedRowCount();
         if (rowsSinceCommit < getMetaMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {

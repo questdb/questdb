@@ -67,28 +67,34 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
             return false;
         }
         boolean ran = false;
-        boolean committed = false;
         int count;
         while ((count = nf.recvmmsgRaw(fd, msgVec, msgCount)) > 0) {
             long p = msgVec;
             for (int i = 0; i < count; i++) {
-                processDatagram(nf.getMMsgBuf(p), (int) nf.getMMsgBufLen(p));
+                int datagramState = processDatagram(nf.getMMsgBuf(p), (int) nf.getMMsgBufLen(p));
                 processedCount++;
+                if ((datagramState & DATAGRAM_TRIGGERED_COMMIT) != 0) {
+                    totalCount = 0;
+                }
+                if ((datagramState & DATAGRAM_LEFT_UNCOMMITTED_ROWS) != 0) {
+                    totalCount++;
+                }
                 p += Net.MMSGHDR_SIZE;
             }
 
             ran = true;
-            totalCount += count;
-
-            if (totalCount >= commitRate) {
+            if (totalCount >= maxUncommittedDatagrams) {
                 totalCount = 0;
-                tudCache.commitAllBestEffort();
-                committed = true;
-                break;
+                forceCommitAll();
+                return true;
             }
         }
-        if (!committed && ran) {
-            tudCache.commitAllBestEffort();
+        if (nextCommitTime != Long.MAX_VALUE) {
+            long wallClockMillis = millisecondClock.getTicks();
+            if (wallClockMillis >= nextCommitTime) {
+                nextCommitTime = tudCache.commitWalTables(wallClockMillis);
+                return true;
+            }
         }
         return ran;
     }

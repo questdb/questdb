@@ -405,7 +405,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
-    private final int qwpUdpCommitRate;
+    private final long qwpUdpCommitInterval;
+    private final int qwpUdpMaxUncommittedDatagrams;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
     private final int qwpUdpMsgBufferSize;
@@ -1792,7 +1793,18 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be at least 1"
                 );
             }
-            this.qwpUdpCommitRate = getInt(properties, env, PropertyKey.QWP_UDP_COMMIT_RATE, 1_048_576);
+            long qwpUdpCommitInterval = getMillis(properties, env, PropertyKey.QWP_UDP_COMMIT_INTERVAL, COMMIT_INTERVAL_DEFAULT);
+            if (qwpUdpCommitInterval < 1L) {
+                log.info().$("invalid QWP UDP commit interval [value=").$(qwpUdpCommitInterval).$("], will use ").$(COMMIT_INTERVAL_DEFAULT).$();
+                qwpUdpCommitInterval = COMMIT_INTERVAL_DEFAULT;
+            }
+            this.qwpUdpCommitInterval = qwpUdpCommitInterval;
+            int qwpUdpMaxUncommittedDatagrams = getInt(properties, env, PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS, 1_048_576);
+            if (qwpUdpMaxUncommittedDatagrams < 1) {
+                log.info().$("invalid QWP UDP max uncommitted datagrams [value=").$(qwpUdpMaxUncommittedDatagrams).$("], will use 1048576").$();
+                qwpUdpMaxUncommittedDatagrams = 1_048_576;
+            }
+            this.qwpUdpMaxUncommittedDatagrams = qwpUdpMaxUncommittedDatagrams;
             this.qwpUdpMsgBufferSize = getIntSize(properties, env, PropertyKey.QWP_UDP_MSG_BUFFER_SIZE, 65_536);
             this.qwpUdpMsgCount = getInt(properties, env, PropertyKey.QWP_UDP_MSG_COUNT, 10_000);
             this.qwpUdpReceiveBufferSize = getIntSize(properties, env, PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE, -1);
@@ -6456,8 +6468,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getCommitRate() {
-            return qwpUdpCommitRate;
+        public long getCommitInterval() {
+            return qwpUdpCommitInterval;
+        }
+
+        @Override
+        public int getMaxUncommittedDatagrams() {
+            return qwpUdpMaxUncommittedDatagrams;
         }
 
         @Override

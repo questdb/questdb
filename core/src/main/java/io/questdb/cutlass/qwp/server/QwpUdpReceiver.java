@@ -49,6 +49,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
@@ -59,9 +60,12 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
 
 public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(QwpUdpReceiver.class);
+    protected static final int DATAGRAM_LEFT_UNCOMMITTED_ROWS = 1;
+    protected static final int DATAGRAM_TRIGGERED_COMMIT = 2;
 
     protected final int bufLen;
-    protected final int commitRate;
+    protected final long commitInterval;
+    protected final int maxUncommittedDatagrams;
     protected final NetworkFacade nf;
     protected final QwpTudCache tudCache;
     private final long buf;
@@ -69,11 +73,13 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private final SOCountDownLatch halted = new SOCountDownLatch(1);
     private final QwpMessageCursor messageCursor;
     private final QwpMessageHeader messageHeader;
+    protected final MillisecondClock millisecondClock;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
     private final QwpWalAppender walAppender;
 
     protected long fd;
+    protected long nextCommitTime = Long.MAX_VALUE;
     protected long processedCount;
     protected long totalCount;
     private volatile boolean closed;
@@ -92,7 +98,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.bufLen = configuration.getMsgBufferSize();
-        this.commitRate = configuration.getCommitRate();
+        this.commitInterval = configuration.getCommitInterval();
+        this.maxUncommittedDatagrams = configuration.getMaxUncommittedDatagrams();
+        this.millisecondClock = engine.getConfiguration().getMillisecondClock();
 
         fd = nf.socketUdp();
         if (fd < 0) {
@@ -145,7 +153,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                     configuration.isAutoCreateNewColumns(),
                     configuration.isAutoCreateNewTables(),
                     defaultColumnTypes,
-                    configuration.getDefaultPartitionBy()
+                    configuration.getDefaultPartitionBy(),
+                    commitInterval,
+                    engine.getConfiguration().getMaxUncommittedRows()
             );
 
             this.messageHeader = new QwpMessageHeader();
@@ -244,22 +254,29 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             return false;
         }
         boolean ran = false;
-        boolean committed = false;
         int count;
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
             ran = true;
-            processDatagram(buf, count);
+            int datagramState = processDatagram(buf, count);
             processedCount++;
-            totalCount++;
-            if (totalCount >= commitRate) {
+            if ((datagramState & DATAGRAM_TRIGGERED_COMMIT) != 0) {
                 totalCount = 0;
-                tudCache.commitAllBestEffort();
-                committed = true;
-                break;
+            }
+            if ((datagramState & DATAGRAM_LEFT_UNCOMMITTED_ROWS) != 0) {
+                totalCount++;
+            }
+            if (totalCount >= maxUncommittedDatagrams) {
+                totalCount = 0;
+                forceCommitAll();
+                return true;
             }
         }
-        if (!committed && ran) {
-            tudCache.commitAllBestEffort();
+        if (nextCommitTime != Long.MAX_VALUE) {
+            long wallClockMillis = millisecondClock.getTicks();
+            if (wallClockMillis >= nextCommitTime) {
+                nextCommitTime = tudCache.commitWalTables(wallClockMillis);
+                return true;
+            }
         }
         return ran;
     }
@@ -294,7 +311,8 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 .$(':')
                 .$(configuration.getPort())
                 .$(" [fd=").$(fd)
-                .$(", commitRate=").$(commitRate)
+                .$(", commitInterval=").$(commitInterval)
+                .$(", maxUncommittedDatagrams=").$(maxUncommittedDatagrams)
                 .I$();
     }
 
@@ -306,10 +324,10 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         return false;
     }
 
-    protected void processDatagram(long address, int length) {
+    protected int processDatagram(long address, int length) {
         if (length < HEADER_SIZE) {
             droppedTooShortCount++;
-            return;
+            return 0;
         }
         try {
             messageHeader.parse(address, length);
@@ -320,15 +338,16 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 default -> droppedParseErrorCount++;
             }
             LOG.error().$("header parse error: ").$(e.getFlyweightMessage()).$();
-            return;
+            return 0;
         }
         long totalLength = HEADER_SIZE + messageHeader.getPayloadLength();
         if (totalLength > length) {
             droppedTruncatedCount++;
             LOG.error().$("payload extends beyond datagram [payloadLen=").$(messageHeader.getPayloadLength())
                     .$(", received=").$(length).$(']').$();
-            return;
+            return 0;
         }
+        int datagramState = 0;
         try {
             messageCursor.of(address, (int) totalLength, null, null);
             while (messageCursor.hasNextTable()) {
@@ -344,11 +363,34 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                     LOG.error().$("failed to get table update details for: ").$(tableBlock.getTableName()).$();
                     continue;
                 }
+                final boolean hadUncommittedRows = !tud.isFirstRow();
+                tud.markMeasurement();
                 walAppender.appendToWalStreaming(AllowAllSecurityContext.INSTANCE, tableBlock, tud);
+                noteCommitDeadline(tud);
+                final boolean hasUncommittedRows = !tud.isFirstRow();
+                if (hasUncommittedRows) {
+                    datagramState |= DATAGRAM_LEFT_UNCOMMITTED_ROWS;
+                } else if (hadUncommittedRows || tableBlock.getRowCount() > 0) {
+                    datagramState |= DATAGRAM_TRIGGERED_COMMIT;
+                }
             }
         } catch (Throwable t) {
             droppedParseErrorCount++;
             LOG.error().$("datagram processing error: ").$(t.getMessage()).$();
+            return 0;
+        }
+        return datagramState;
+    }
+
+    protected void forceCommitAll() {
+        tudCache.commitAllBestEffort();
+        nextCommitTime = millisecondClock.getTicks() + commitInterval;
+    }
+
+    protected void noteCommitDeadline(WalTableUpdateDetails tud) {
+        long tableNextCommitTime = tud.getNextCommitTime();
+        if (tableNextCommitTime < nextCommitTime) {
+            nextCommitTime = tableNextCommitTime;
         }
     }
 

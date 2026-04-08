@@ -56,7 +56,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     private static final int PORT = 19_002;
     private static final QwpUdpReceiverConfiguration NO_AUTO_CREATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
-        public int getCommitRate() {
+        public int getMaxUncommittedDatagrams() {
             return 10;
         }
 
@@ -77,7 +77,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     };
     private static final QwpUdpReceiverConfiguration RCVR_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
-        public int getCommitRate() {
+        public int getMaxUncommittedDatagrams() {
             return 10;
         }
 
@@ -156,7 +156,7 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     public void testContinuesWhenReceiveBufferSizeFails() throws Exception {
         QwpUdpReceiverConfiguration rcvBufFail = new DefaultQwpUdpReceiverConfiguration() {
             @Override
-            public int getCommitRate() {
+            public int getMaxUncommittedDatagrams() {
                 return 10;
             }
 
@@ -400,6 +400,47 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                     "count\n1\n",
                     "SELECT count() FROM multi_bad"
             );
+        });
+    }
+
+    @Test
+    public void testMalformedDatagramDoesNotCountTowardsMaxUncommittedDatagrams() throws Exception {
+        QwpUdpReceiverConfiguration conf = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public long getCommitInterval() {
+                return TimeUnit.SECONDS.toMillis(5);
+            }
+
+            @Override
+            public int getMaxUncommittedDatagrams() {
+                return 2;
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(conf, engine)) {
+                sendRawBytes(new byte[12]);
+                sendValidRow("noise_then_valid", 1L, 1_000_000L);
+                drainReceiver(receiver);
+
+                Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
+
+                drainWalQueue();
+                assertSql("count\n0\n", "SELECT count() FROM noise_then_valid");
+            }
+
+            drainWalQueue();
+            assertSql("count\n1\n", "SELECT count() FROM noise_then_valid");
         });
     }
 
