@@ -19,7 +19,14 @@ pub struct DecodeContext {
     pub dict_decompress_buffer: Vec<u8>,
     pub decompress_buffer: Vec<u8>,
     pub varchar_slice_buf_pool: Vec<Vec<u8>>,
-    pub varchar_slice_dict_buf: Vec<u8>,
+    /// Scratch outer-vec for varchar_slice data-page buffers, hoisted out of the
+    /// per-column-chunk decode loop so the heap-allocated outer storage is reused
+    /// across calls. The inner `Vec<u8>` buffers are still moved into
+    /// `ColumnChunkBuffers::page_buffers` at the end of the column-chunk decode.
+    pub varchar_slice_page_bufs_scratch: Vec<Vec<u8>>,
+    /// Scratch outer-vec for varchar_slice dict-page buffers, hoisted for the same
+    /// reason as `varchar_slice_page_bufs_scratch`.
+    pub varchar_slice_dict_bufs_scratch: Vec<Vec<u8>>,
 }
 
 impl DecodeContext {
@@ -30,7 +37,8 @@ impl DecodeContext {
             dict_decompress_buffer: Vec::new(),
             decompress_buffer: Vec::new(),
             varchar_slice_buf_pool: Vec::new(),
-            varchar_slice_dict_buf: Vec::new(),
+            varchar_slice_page_bufs_scratch: Vec::new(),
+            varchar_slice_dict_bufs_scratch: Vec::new(),
         }
     }
 }
