@@ -601,7 +601,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return new BatchProber(batchSize);
     }
 
-    private static native void hashAndPrefetch(long ptrsAddr, long sizesAddr, int keyCount, long memStart, int entrySize, int mask, long hashesOut);
+    private static native void computeHashes(long ptrsAddr, long sizesAddr, int keyCount, long hashesOut);
 
     class BatchProber implements MapBatchProber {
         private static final int INITIAL_COPY_BUF_SIZE = 128;
@@ -658,8 +658,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         @Override
-        public void hashAndPrefetch(int keyCount) {
-            UnorderedVarcharMap.hashAndPrefetch(ptrsAddr, sizesAddr, keyCount, memStart, (int) entrySize, (int) mask, hashesAddr);
+        public void computeHashes(int keyCount) {
+            UnorderedVarcharMap.computeHashes(ptrsAddr, sizesAddr, keyCount, hashesAddr);
         }
 
         @Override

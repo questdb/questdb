@@ -41,7 +41,7 @@ import io.questdb.std.str.Utf8Sequence;
  * {@link io.questdb.cairo.RecordSinkSPI} methods. Variable-size methods throw
  * {@link UnsupportedOperationException}.
  * <p>
- * Subclasses implement {@link #hashAndPrefetch(int)} and
+ * Subclasses implement {@link #computeHashes(int)} and
  * {@link #probeWithHash(int)} with map-specific logic.
  */
 public abstract class BaseFixedSizeMapBatchProber implements MapBatchProber {

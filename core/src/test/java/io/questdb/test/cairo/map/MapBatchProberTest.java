@@ -66,7 +66,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     for (int k = 0; k < 20; k++) {
                         prober.resetBatch();
                         prober.putLong(k);
-                        prober.hashAndPrefetch(1);
+                        prober.computeHashes(1);
                         MapValue value = prober.probeWithHash(0);
                         if (value.isNew()) {
                             Assert.assertEquals("round " + round + " key " + k, 0, round);
@@ -128,7 +128,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     for (int i = 0; i < batchSize; i++) {
                         prober.putLong(keys[offset + i]);
                     }
-                    prober.hashAndPrefetch(batchSize);
+                    prober.computeHashes(batchSize);
                     for (int i = 0; i < batchSize; i++) {
                         MapValue value = prober.probeWithHash(i);
                         if (value.isNew()) {
@@ -176,7 +176,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (long k : keys) {
                     prober.putLong(k);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
                 for (int i = 0; i < keys.length; i++) {
                     MapValue value = prober.probeWithHash(i);
                     if (value.isNew()) {
@@ -236,7 +236,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (long k : keys) {
                     prober.putLong(k);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
                 for (int i = 0; i < keys.length; i++) {
                     MapValue value = prober.probeWithHash(i);
                     if (value.isNew()) {
@@ -270,7 +270,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (int i = 0; i < batchSize; i++) {
                     prober.putLong(i % 20);
                 }
-                prober.hashAndPrefetch(batchSize);
+                prober.computeHashes(batchSize);
                 for (int i = 0; i < batchSize; i++) {
                     MapValue value = prober.probeWithHash(i);
                     if (value.isNew()) {
@@ -294,7 +294,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
 
     @Test
     public void testOrderedMapHashMatchesJava16B() throws Exception {
-        // Covers: case 16 in OrderedMap_hashAndPrefetch switch (hashMem64_16).
+        // Covers: case 16 in OrderedMap_computeHashes switch (hashMem64_16).
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.LONG).add(ColumnType.LONG);
             try (
@@ -307,7 +307,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 prober.putLong(Long.MAX_VALUE);
                 prober.putLong(0);
                 prober.putLong(0);
-                prober.hashAndPrefetch(2);
+                prober.computeHashes(2);
 
                 long keyBuf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -327,7 +327,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
 
     @Test
     public void testOrderedMapHashMatchesJava1B() throws Exception {
-        // Covers: default branch in OrderedMap_hashAndPrefetch switch,
+        // Covers: default branch in OrderedMap_computeHashes switch,
         // and the byte-tail-only path in hashMem64 (len=1, no 8-byte or 4-byte chunks).
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes().add(ColumnType.BYTE);
@@ -341,7 +341,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (byte key : keys) {
                     prober.putByte(key);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 long keyBuf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -374,7 +374,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 prober.putLong(1);
                 prober.putLong(2);
                 prober.putInt(3);
-                prober.hashAndPrefetch(1);
+                prober.computeHashes(1);
 
                 long keyBuf = Unsafe.malloc(20, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -404,7 +404,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (short key : keys) {
                     prober.putShort(key);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 long keyBuf = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -436,7 +436,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 prober.resetBatch();
                 prober.putShort((short) -1);
                 prober.putByte((byte) 127);
-                prober.hashAndPrefetch(1);
+                prober.computeHashes(1);
 
                 long keyBuf = Unsafe.malloc(3, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -464,7 +464,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (int key : keys) {
                     prober.putInt(key);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 long keyBuf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -496,7 +496,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 prober.resetBatch();
                 prober.putInt(-1);
                 prober.putByte((byte) 42);
-                prober.hashAndPrefetch(1);
+                prober.computeHashes(1);
 
                 long keyBuf = Unsafe.malloc(5, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -526,7 +526,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 prober.putInt(100);
                 prober.putShort((short) -200);
                 prober.putByte((byte) 77);
-                prober.hashAndPrefetch(1);
+                prober.computeHashes(1);
 
                 long keyBuf = Unsafe.malloc(7, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -555,7 +555,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (long key : keys) {
                     prober.putLong(key);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 long keyBuf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -587,7 +587,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 prober.putLong(Long.MAX_VALUE);
                 prober.putInt(0);
                 prober.putLong(0);
-                prober.hashAndPrefetch(2);
+                prober.computeHashes(2);
 
                 long keyBuf = Unsafe.malloc(12, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -621,7 +621,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     keys[i] = rnd.nextLong();
                     prober.putLong(keys[i]);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 long keyBuf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -655,7 +655,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                         prober.beginKey();
                         prober.putStr("key_" + k);
                         prober.endKey();
-                        prober.hashAndPrefetch(1);
+                        prober.computeHashes(1);
                         MapValue value = prober.probeWithHash(0);
                         if (value.isNew()) {
                             Assert.assertEquals("round " + round + " key_" + k, 0, round);
@@ -719,7 +719,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                         prober.putStr(keys[offset + i]);
                         prober.endKey();
                     }
-                    prober.hashAndPrefetch(batchSize);
+                    prober.computeHashes(batchSize);
                     for (int i = 0; i < batchSize; i++) {
                         MapValue value = prober.probeWithHash(i);
                         if (value.isNew()) {
@@ -756,7 +756,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     prober.putStr("key_" + (i % 20));
                     prober.endKey();
                 }
-                prober.hashAndPrefetch(batchSize);
+                prober.computeHashes(batchSize);
                 for (int i = 0; i < batchSize; i++) {
                     MapValue value = prober.probeWithHash(i);
                     if (value.isNew()) {
@@ -794,7 +794,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     prober.putStr(key);
                     prober.endKey();
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 // Compute expected hashes using the standard MapKey path.
                 for (int i = 0; i < keys.length; i++) {
@@ -837,7 +837,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     for (int k = -5; k < 15; k++) {
                         prober.resetBatch();
                         prober.putInt(k);
-                        prober.hashAndPrefetch(1);
+                        prober.computeHashes(1);
                         MapValue value = prober.probeWithHash(0);
                         if (value.isNew()) {
                             Assert.assertEquals("round " + round + " key " + k, 0, round);
@@ -898,7 +898,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     for (int i = 0; i < batchSize; i++) {
                         prober.putInt(keys[offset + i]);
                     }
-                    prober.hashAndPrefetch(batchSize);
+                    prober.computeHashes(batchSize);
                     for (int i = 0; i < batchSize; i++) {
                         MapValue value = prober.probeWithHash(i);
                         if (value.isNew()) {
@@ -932,7 +932,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (int i = 0; i < batchSize; i++) {
                     prober.putInt((i % 20) - 5);
                 }
-                prober.hashAndPrefetch(batchSize);
+                prober.computeHashes(batchSize);
                 for (int i = 0; i < batchSize; i++) {
                     MapValue value = prober.probeWithHash(i);
                     if (value.isNew()) {
@@ -967,10 +967,10 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (int key : keys) {
                     prober.putInt(key);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 for (int i = 0; i < keys.length; i++) {
-                    long expected = Hash.hashInt64(keys[i]);
+                    long expected = Hash.hashInt64Simd(keys[i]);
                     long actual = prober.getHash(i);
                     Assert.assertEquals("hash mismatch for key " + keys[i], expected, actual);
                 }
@@ -993,10 +993,10 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     keys[i] = rnd.nextInt();
                     prober.putInt(keys[i]);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 for (int i = 0; i < keys.length; i++) {
-                    long expected = Hash.hashInt64(keys[i]);
+                    long expected = Hash.hashInt64Simd(keys[i]);
                     long actual = prober.getHash(i);
                     Assert.assertEquals("hash mismatch at index " + i, expected, actual);
                 }
@@ -1019,7 +1019,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     for (int k = -5; k < 15; k++) {
                         prober.resetBatch();
                         prober.putLong(k);
-                        prober.hashAndPrefetch(1);
+                        prober.computeHashes(1);
                         MapValue value = prober.probeWithHash(0);
                         if (value.isNew()) {
                             Assert.assertEquals("round " + round + " key " + k, 0, round);
@@ -1080,7 +1080,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     for (int i = 0; i < batchSize; i++) {
                         prober.putLong(keys[offset + i]);
                     }
-                    prober.hashAndPrefetch(batchSize);
+                    prober.computeHashes(batchSize);
                     for (int i = 0; i < batchSize; i++) {
                         MapValue value = prober.probeWithHash(i);
                         if (value.isNew()) {
@@ -1114,7 +1114,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (int i = 0; i < batchSize; i++) {
                     prober.putLong((i % 20) - 5);
                 }
-                prober.hashAndPrefetch(batchSize);
+                prober.computeHashes(batchSize);
                 for (int i = 0; i < batchSize; i++) {
                     MapValue value = prober.probeWithHash(i);
                     if (value.isNew()) {
@@ -1149,10 +1149,10 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 for (long key : keys) {
                     prober.putLong(key);
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 for (int i = 0; i < keys.length; i++) {
-                    long expected = Hash.hashLong64(keys[i]);
+                    long expected = Hash.hashLong64Simd(keys[i]);
                     long actual = prober.getHash(i);
                     Assert.assertEquals("hash mismatch for key " + keys[i], expected, actual);
                 }
@@ -1180,7 +1180,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                         prober.beginKey();
                         prober.putVarchar(sink);
                         prober.endKey();
-                        prober.hashAndPrefetch(1);
+                        prober.computeHashes(1);
                         MapValue value = prober.probeWithHash(0);
                         if (value.isNew()) {
                             Assert.assertEquals("round " + round + " key_" + k, 0, round);
@@ -1238,7 +1238,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 prober.putVarchar(sink);
                 prober.endKey();
 
-                prober.hashAndPrefetch(3);
+                prober.computeHashes(3);
                 for (int i = 0; i < 3; i++) {
                     MapValue value = prober.probeWithHash(i);
                     Assert.assertTrue("expected new entry at index " + i, value.isNew());
@@ -1296,7 +1296,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     prober.beginKey();
                     prober.putVarchar(stableKey);
                     prober.endKey();
-                    prober.hashAndPrefetch(1);
+                    prober.computeHashes(1);
 
                     // Verify hash matches standard MapKey path
                     MapKey mapKey = map.withKey();
@@ -1366,7 +1366,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                         prober.putVarchar(sink);
                         prober.endKey();
                     }
-                    prober.hashAndPrefetch(batchSize);
+                    prober.computeHashes(batchSize);
                     for (int i = 0; i < batchSize; i++) {
                         MapValue value = prober.probeWithHash(i);
                         if (value.isNew()) {
@@ -1405,7 +1405,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     prober.putVarchar(sink);
                     prober.endKey();
                 }
-                prober.hashAndPrefetch(batchSize);
+                prober.computeHashes(batchSize);
                 for (int i = 0; i < batchSize; i++) {
                     MapValue value = prober.probeWithHash(i);
                     if (value.isNew()) {
@@ -1449,7 +1449,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     prober.putVarchar(sink);
                     prober.endKey();
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 // Compute expected hashes using the standard MapKey path.
                 for (int i = 0; i < keys.length; i++) {
@@ -1479,7 +1479,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                 prober.beginKey();
                 prober.putVarchar((Utf8Sequence) null);
                 prober.endKey();
-                prober.hashAndPrefetch(1);
+                prober.computeHashes(1);
 
                 long expected = Hash.hashMem64(0, 0);
                 long actual = prober.getHash(0);
@@ -1510,7 +1510,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     prober.putVarchar(sink);
                     prober.endKey();
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 // Verify hashes match standard MapKey path.
                 for (int i = 0; i < keys.length; i++) {
@@ -1549,7 +1549,7 @@ public class MapBatchProberTest extends AbstractCairoTest {
                     prober.putVarchar(sink);
                     prober.endKey();
                 }
-                prober.hashAndPrefetch(keys.length);
+                prober.computeHashes(keys.length);
 
                 for (int i = 0; i < keys.length; i++) {
                     sink.clear();

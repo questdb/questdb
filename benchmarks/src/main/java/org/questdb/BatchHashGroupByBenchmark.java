@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapBatchProber;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
@@ -71,7 +72,7 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.SampleTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 public class BatchHashGroupByBenchmark {
-    private static final int BATCH_SIZE = 256;
+    private static final int BATCH_SIZE = 1024;
     private static final int ROW_COUNT = 1_000_000;
     private final CountLongConstGroupByFunction countFn = new CountLongConstGroupByFunction();
     // Number of distinct keys. Controls cache pressure:
@@ -89,6 +90,8 @@ public class BatchHashGroupByBenchmark {
     // Pre-generated VARCHAR key data: per-row ptr + size arrays, backed by a contiguous buffer.
     private long strKeyPtrsAddr;
     private long strKeySizesAddr;
+    private Unordered4Map unordered4Map;
+    private MapBatchProber unordered4MapProber;
     private Unordered8Map unordered8Map;
     private MapBatchProber unordered8MapProber;
     private UnorderedVarcharMap varcharMap;
@@ -102,75 +105,6 @@ public class BatchHashGroupByBenchmark {
                 .forks(1)
                 .build();
         new Runner(opt).run();
-    }
-
-    @Benchmark
-    public void orderedMapLongBatched() {
-        orderedMapLong.reopen();
-        orderedMapLongProber.reopen();
-        for (int rowOffset = 0; rowOffset < ROW_COUNT; rowOffset += BATCH_SIZE) {
-            int batchSize = Math.min(BATCH_SIZE, ROW_COUNT - rowOffset);
-            orderedMapLongProber.resetBatch();
-            for (int i = 0; i < batchSize; i++) {
-                long k = Unsafe.getUnsafe().getLong(longKeysAddr + (long) (rowOffset + i) * Long.BYTES);
-                orderedMapLongProber.putLong(k);
-            }
-            orderedMapLongProber.hashAndPrefetch(batchSize);
-            for (int i = 0; i < batchSize; i++) {
-                MapValue value = orderedMapLongProber.probeWithHash(i);
-                if (value.isNew()) {
-                    countFn.computeFirst(value, null, 0);
-                } else {
-                    countFn.computeNext(value, null, 0);
-                }
-            }
-        }
-    }
-
-    @Benchmark
-    public void orderedMapLongPerKey() {
-        orderedMapLong.reopen();
-        for (int i = 0; i < ROW_COUNT; i++) {
-            long k = Unsafe.getUnsafe().getLong(longKeysAddr + (long) i * Long.BYTES);
-            MapKey key = orderedMapLong.withKey();
-            key.putLong(k);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                countFn.computeFirst(value, null, 0);
-            } else {
-                countFn.computeNext(value, null, 0);
-            }
-        }
-    }
-
-    // ==================== OrderedMap LONG key ====================
-
-    @Benchmark
-    public void orderedMapVarcharBatched() {
-        orderedMapStr.reopen();
-        orderedMapStrProber.reopen();
-        DirectUtf8String flyweight = new DirectUtf8String();
-        for (int rowOffset = 0; rowOffset < ROW_COUNT; rowOffset += BATCH_SIZE) {
-            int batchSize = Math.min(BATCH_SIZE, ROW_COUNT - rowOffset);
-            orderedMapStrProber.resetBatch();
-            for (int i = 0; i < batchSize; i++) {
-                long ptr = Unsafe.getUnsafe().getLong(strKeyPtrsAddr + (long) (rowOffset + i) * Long.BYTES);
-                int sz = Unsafe.getUnsafe().getInt(strKeySizesAddr + (long) (rowOffset + i) * Integer.BYTES);
-                flyweight.of(ptr, ptr + sz, true);
-                orderedMapStrProber.beginKey();
-                orderedMapStrProber.putVarchar(flyweight);
-                orderedMapStrProber.endKey();
-            }
-            orderedMapStrProber.hashAndPrefetch(batchSize);
-            for (int i = 0; i < batchSize; i++) {
-                MapValue value = orderedMapStrProber.probeWithHash(i);
-                if (value.isNew()) {
-                    countFn.computeFirst(value, null, 0);
-                } else {
-                    countFn.computeNext(value, null, 0);
-                }
-            }
-        }
     }
 
     @Setup(Level.Trial)
@@ -189,6 +123,10 @@ public class BatchHashGroupByBenchmark {
         // OrderedMap with VARCHAR key.
         orderedMapStr = new OrderedMap(4 * Numbers.SIZE_1MB, new SingleColumnType(ColumnType.VARCHAR), valueTypes, distinctKeys, 0.7, Integer.MAX_VALUE);
         orderedMapStrProber = orderedMapStr.createBatchProber(BATCH_SIZE);
+
+        // Unordered4Map with INT key.
+        unordered4Map = new Unordered4Map(ColumnType.INT, valueTypes, distinctKeys, 0.7, Integer.MAX_VALUE);
+        unordered4MapProber = unordered4Map.createBatchProber(BATCH_SIZE);
 
         // Unordered8Map with LONG key.
         unordered8Map = new Unordered8Map(ColumnType.LONG, valueTypes, distinctKeys, 0.7, Integer.MAX_VALUE);
@@ -240,10 +178,12 @@ public class BatchHashGroupByBenchmark {
     public void tearDown() {
         Misc.free(orderedMapLongProber);
         Misc.free(orderedMapStrProber);
+        Misc.free(unordered4MapProber);
         Misc.free(unordered8MapProber);
         Misc.free(varcharMapProber);
         Misc.free(orderedMapLong);
         Misc.free(orderedMapStr);
+        Misc.free(unordered4Map);
         Misc.free(unordered8Map);
         Misc.free(varcharMap);
         if (longKeysAddr != 0) {
@@ -261,6 +201,73 @@ public class BatchHashGroupByBenchmark {
         if (strKeySizesAddr != 0) {
             Unsafe.free(strKeySizesAddr, (long) ROW_COUNT * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             strKeySizesAddr = 0;
+        }
+    }
+
+    @Benchmark
+    public void testOrderedMapLongBatched() {
+        orderedMapLong.reopen();
+        orderedMapLongProber.reopen();
+        for (int rowOffset = 0; rowOffset < ROW_COUNT; rowOffset += BATCH_SIZE) {
+            int batchSize = Math.min(BATCH_SIZE, ROW_COUNT - rowOffset);
+            orderedMapLongProber.resetBatch();
+            for (int i = 0; i < batchSize; i++) {
+                long k = Unsafe.getUnsafe().getLong(longKeysAddr + (long) (rowOffset + i) * Long.BYTES);
+                orderedMapLongProber.putLong(k);
+            }
+            orderedMapLongProber.computeHashes(batchSize);
+            for (int i = 0; i < batchSize; i++) {
+                MapValue value = orderedMapLongProber.probeWithHash(i);
+                if (value.isNew()) {
+                    countFn.computeFirst(value, null, 0);
+                } else {
+                    countFn.computeNext(value, null, 0);
+                }
+            }
+        }
+    }
+
+    @Benchmark
+    public void testOrderedMapLongPerKey() {
+        orderedMapLong.reopen();
+        for (int i = 0; i < ROW_COUNT; i++) {
+            long k = Unsafe.getUnsafe().getLong(longKeysAddr + (long) i * Long.BYTES);
+            MapKey key = orderedMapLong.withKey();
+            key.putLong(k);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                countFn.computeFirst(value, null, 0);
+            } else {
+                countFn.computeNext(value, null, 0);
+            }
+        }
+    }
+
+    @Benchmark
+    public void testOrderedMapVarcharBatched() {
+        orderedMapStr.reopen();
+        orderedMapStrProber.reopen();
+        DirectUtf8String flyweight = new DirectUtf8String();
+        for (int rowOffset = 0; rowOffset < ROW_COUNT; rowOffset += BATCH_SIZE) {
+            int batchSize = Math.min(BATCH_SIZE, ROW_COUNT - rowOffset);
+            orderedMapStrProber.resetBatch();
+            for (int i = 0; i < batchSize; i++) {
+                long ptr = Unsafe.getUnsafe().getLong(strKeyPtrsAddr + (long) (rowOffset + i) * Long.BYTES);
+                int sz = Unsafe.getUnsafe().getInt(strKeySizesAddr + (long) (rowOffset + i) * Integer.BYTES);
+                flyweight.of(ptr, ptr + sz, true);
+                orderedMapStrProber.beginKey();
+                orderedMapStrProber.putVarchar(flyweight);
+                orderedMapStrProber.endKey();
+            }
+            orderedMapStrProber.computeHashes(batchSize);
+            for (int i = 0; i < batchSize; i++) {
+                MapValue value = orderedMapStrProber.probeWithHash(i);
+                if (value.isNew()) {
+                    countFn.computeFirst(value, null, 0);
+                } else {
+                    countFn.computeNext(value, null, 0);
+                }
+            }
         }
     }
 
@@ -284,6 +291,45 @@ public class BatchHashGroupByBenchmark {
     }
 
     @Benchmark
+    public void testUnordered4MapBatched() {
+        unordered4Map.reopen();
+        unordered4MapProber.reopen();
+        for (int rowOffset = 0; rowOffset < ROW_COUNT; rowOffset += BATCH_SIZE) {
+            int batchSize = Math.min(BATCH_SIZE, ROW_COUNT - rowOffset);
+            unordered4MapProber.resetBatch();
+            for (int i = 0; i < batchSize; i++) {
+                int k = (int) Unsafe.getUnsafe().getLong(longKeysAddr + (long) (rowOffset + i) * Long.BYTES);
+                unordered4MapProber.putInt(k);
+            }
+            unordered4MapProber.computeHashes(batchSize);
+            for (int i = 0; i < batchSize; i++) {
+                MapValue value = unordered4MapProber.probeWithHash(i);
+                if (value.isNew()) {
+                    countFn.computeFirst(value, null, 0);
+                } else {
+                    countFn.computeNext(value, null, 0);
+                }
+            }
+        }
+    }
+
+    @Benchmark
+    public void testUnordered4MapPerKey() {
+        unordered4Map.reopen();
+        for (int i = 0; i < ROW_COUNT; i++) {
+            int k = (int) Unsafe.getUnsafe().getLong(longKeysAddr + (long) i * Long.BYTES);
+            MapKey key = unordered4Map.withKey();
+            key.putInt(k);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                countFn.computeFirst(value, null, 0);
+            } else {
+                countFn.computeNext(value, null, 0);
+            }
+        }
+    }
+
+    @Benchmark
     public void testUnordered8MapBatched() {
         unordered8Map.reopen();
         unordered8MapProber.reopen();
@@ -294,7 +340,7 @@ public class BatchHashGroupByBenchmark {
                 long k = Unsafe.getUnsafe().getLong(longKeysAddr + (long) (rowOffset + i) * Long.BYTES);
                 unordered8MapProber.putLong(k);
             }
-            unordered8MapProber.hashAndPrefetch(batchSize);
+            unordered8MapProber.computeHashes(batchSize);
             for (int i = 0; i < batchSize; i++) {
                 MapValue value = unordered8MapProber.probeWithHash(i);
                 if (value.isNew()) {
@@ -338,7 +384,7 @@ public class BatchHashGroupByBenchmark {
                 varcharMapProber.putVarchar(flyweight);
                 varcharMapProber.endKey();
             }
-            varcharMapProber.hashAndPrefetch(batchSize);
+            varcharMapProber.computeHashes(batchSize);
             for (int i = 0; i < batchSize; i++) {
                 MapValue value = varcharMapProber.probeWithHash(i);
                 if (value.isNew()) {

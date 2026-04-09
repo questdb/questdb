@@ -55,17 +55,16 @@ public interface MapBatchProber extends RecordSinkSPI, Reopenable {
     }
 
     /**
-     * Returns the precomputed hash for the key at the given batch index.
-     * Must be called after {@link #hashAndPrefetch(int)}.
+     * Computes hashes for the packed keys. Must be called after packing
+     * {@code keyCount} keys via the {@link RecordSinkSPI} put methods.
      */
-    long getHash(int index);
+    void computeHashes(int keyCount);
 
     /**
-     * Computes hashes for the packed keys and prefetches the corresponding
-     * map slots. Must be called after packing {@code keyCount} keys via
-     * the {@link RecordSinkSPI} put methods.
+     * Returns the precomputed hash for the key at the given batch index.
+     * Must be called after {@link #computeHashes(int)}.
      */
-    void hashAndPrefetch(int keyCount);
+    long getHash(int index);
 
     /**
      * Probes the owning map with the precomputed hash for the key at the

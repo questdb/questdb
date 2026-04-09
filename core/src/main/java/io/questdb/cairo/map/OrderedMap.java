@@ -509,9 +509,9 @@ public class OrderedMap implements Map, Reopenable {
         return new VarSizeBatchProber(batchSize);
     }
 
-    private static native void hashAndPrefetch(long keysAddr, int keySize, int keyCount, long offsetsAddr, int mask, long hashesOut);
+    private static native void computeHashes(long keysAddr, int keySize, int keyCount, long hashesOut);
 
-    private static native void hashAndPrefetchVarSize(long keysAddr, long keyOffsetsAddr, int keyCount, long offsetsAddr, int mask, long hashesOut);
+    private static native void computeHashesVarSize(long keysAddr, long keyOffsetsAddr, int keyCount, long hashesOut);
 
     private static int compressOffset(long offset) {
         return (int) ((offset >> 3) + 1);
@@ -1319,8 +1319,8 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public void hashAndPrefetch(int keyCount) {
-            OrderedMap.hashAndPrefetch(keysAddr, keySize, keyCount, offsetsAddr, mask, hashesAddr);
+        public void computeHashes(int keyCount) {
+            OrderedMap.computeHashes(keysAddr, keySize, keyCount, hashesAddr);
         }
 
         @Override
@@ -1393,8 +1393,8 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
-        public void hashAndPrefetch(int keyCount) {
-            OrderedMap.hashAndPrefetchVarSize(keysAddr, keyOffsetsAddr, keyCount, offsetsAddr, mask, hashesAddr);
+        public void computeHashes(int keyCount) {
+            OrderedMap.computeHashesVarSize(keysAddr, keyOffsetsAddr, keyCount, hashesAddr);
         }
 
         @Override

@@ -84,12 +84,32 @@ public final class Hash {
         return fmix64(key1 * M2 * M2 * M2 + key2 * M2 * M2 + key3 * M2 + key4);
     }
 
+    /**
+     * SIMD-friendly hash for 32-bit keys: a single 32x64-bit multiply that
+     * produces a full 64-bit hash. Because the upper 32 bits of the
+     * zero-extended key are zero, two of the four cross-products in a generic
+     * 64-bit multiply drop out. The hash collapses to two
+     * {@code _mm256_mul_epu32} instructions in AVX2.
+     */
+    public static long hashInt64Simd(int k) {
+        return Integer.toUnsignedLong(k) * 0xff51afd7ed558ccdL;
+    }
+
     public static int hashLong32(long k) {
         return (int) hashLong64(k);
     }
 
     public static long hashLong64(long k) {
         return fmix64(k);
+    }
+
+    /**
+     * SIMD-friendly hash for 64-bit keys: a single 64x64-bit multiply by a
+     * 64-bit constant. In AVX2 this maps to three {@code _mm256_mul_epu32}
+     * operations (the lower 64 bits of a 64x64 multiply).
+     */
+    public static long hashLong64Simd(long k) {
+        return k * 0xff51afd7ed558ccdL;
     }
 
     /**

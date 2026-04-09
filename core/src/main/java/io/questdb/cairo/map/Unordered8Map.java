@@ -264,7 +264,7 @@ public class Unordered8Map implements Map, Reopenable {
                 continue;
             }
 
-            long destAddr = getStartAddress(Hash.hashLong64(key) & mask);
+            long destAddr = getStartAddress(Hash.hashLong64Simd(key) & mask);
             for (; ; ) {
                 long k = Unsafe.getUnsafe().getLong(destAddr);
                 if (k == 0) {
@@ -360,7 +360,7 @@ public class Unordered8Map implements Map, Reopenable {
         return key;
     }
 
-    private static native void hashAndPrefetch(long keysAddr, int keyCount, long memStart, int entrySize, int mask, long hashesOut);
+    private static native void computeHashes(long keysAddr, int keyCount, long hashesOut);
 
     private Unordered8MapValue asNew(long startAddress, long key, long hashCode, Unordered8MapValue value) {
         Unsafe.getUnsafe().putLong(startAddress, key);
@@ -430,7 +430,7 @@ public class Unordered8Map implements Map, Reopenable {
                 continue;
             }
 
-            long newAddr = getStartAddress(newMemStart, Hash.hashLong64(key) & newMask);
+            long newAddr = getStartAddress(newMemStart, Hash.hashLong64Simd(key) & newMask);
             while (Unsafe.getUnsafe().getLong(newAddr) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
@@ -479,7 +479,7 @@ public class Unordered8Map implements Map, Reopenable {
         @Override
         public MapValue createValue() {
             if (key != 0) {
-                return createNonZeroKeyValue(key, Hash.hashLong64(key));
+                return createNonZeroKeyValue(key, Hash.hashLong64Simd(key));
             }
             return createZeroKeyValue();
         }
@@ -509,7 +509,7 @@ public class Unordered8Map implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return Hash.hashLong64(key);
+            return Hash.hashLong64Simd(key);
         }
 
         @Override
@@ -663,7 +663,7 @@ public class Unordered8Map implements Map, Reopenable {
                 return hasZero ? valueOf(zeroMemStart, false, value) : null;
             }
 
-            long startAddress = getStartAddress(Hash.hashLong64(key) & mask);
+            long startAddress = getStartAddress(Hash.hashLong64Simd(key) & mask);
             for (; ; ) {
                 long k = Unsafe.getUnsafe().getLong(startAddress);
                 if (k == 0) {
@@ -687,8 +687,8 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         @Override
-        public void hashAndPrefetch(int keyCount) {
-            Unordered8Map.hashAndPrefetch(keysAddr, keyCount, memStart, (int) entrySize, (int) mask, hashesAddr);
+        public void computeHashes(int keyCount) {
+            Unordered8Map.computeHashes(keysAddr, keyCount, hashesAddr);
         }
 
         @Override

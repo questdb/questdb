@@ -263,7 +263,7 @@ public class Unordered4Map implements Map, Reopenable {
                 continue;
             }
 
-            long destAddr = getStartAddress(Hash.hashInt64(key) & mask);
+            long destAddr = getStartAddress(Hash.hashInt64Simd(key) & mask);
             for (; ; ) {
                 int k = Unsafe.getUnsafe().getInt(destAddr);
                 if (k == 0) {
@@ -360,7 +360,7 @@ public class Unordered4Map implements Map, Reopenable {
         return key;
     }
 
-    private static native void hashAndPrefetch(long keysAddr, int keyCount, long memStart, int entrySize, int mask, long hashesOut);
+    private static native void computeHashes(long keysAddr, int keyCount, long hashesOut);
 
     private Unordered4MapValue asNew(long startAddress, int key, long hashCode, Unordered4MapValue value) {
         Unsafe.getUnsafe().putInt(startAddress, key);
@@ -430,7 +430,7 @@ public class Unordered4Map implements Map, Reopenable {
                 continue;
             }
 
-            long newAddr = getStartAddress(newMemStart, Hash.hashInt64(key) & newMask);
+            long newAddr = getStartAddress(newMemStart, Hash.hashInt64Simd(key) & newMask);
             while (Unsafe.getUnsafe().getInt(newAddr) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
@@ -479,7 +479,7 @@ public class Unordered4Map implements Map, Reopenable {
         @Override
         public MapValue createValue() {
             if (key != 0) {
-                return createNonZeroKeyValue(key, Hash.hashInt64(key));
+                return createNonZeroKeyValue(key, Hash.hashInt64Simd(key));
             }
             return createZeroKeyValue();
         }
@@ -509,7 +509,7 @@ public class Unordered4Map implements Map, Reopenable {
 
         @Override
         public long hash() {
-            return Hash.hashInt64(key);
+            return Hash.hashInt64Simd(key);
         }
 
         @Override
@@ -664,7 +664,7 @@ public class Unordered4Map implements Map, Reopenable {
                 return hasZero ? valueOf(zeroMemStart, false, value) : null;
             }
 
-            long hashCode = Hash.hashInt64(key);
+            long hashCode = Hash.hashInt64Simd(key);
             long index = hashCode & mask;
             long startAddress = getStartAddress(index);
             for (; ; ) {
@@ -690,8 +690,8 @@ public class Unordered4Map implements Map, Reopenable {
         }
 
         @Override
-        public void hashAndPrefetch(int keyCount) {
-            Unordered4Map.hashAndPrefetch(keysAddr, keyCount, memStart, (int) entrySize, (int) mask, hashesAddr);
+        public void computeHashes(int keyCount) {
+            Unordered4Map.computeHashes(keysAddr, keyCount, hashesAddr);
         }
 
         @Override

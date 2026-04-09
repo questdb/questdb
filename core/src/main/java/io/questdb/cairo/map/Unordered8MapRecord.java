@@ -309,7 +309,7 @@ final class Unordered8MapRecord implements MapRecord {
 
     @Override
     public long keyHashCode() {
-        return Hash.hashLong64(Unsafe.getUnsafe().getLong(startAddress));
+        return Hash.hashLong64Simd(Unsafe.getUnsafe().getLong(startAddress));
     }
 
     public void of(long address) {

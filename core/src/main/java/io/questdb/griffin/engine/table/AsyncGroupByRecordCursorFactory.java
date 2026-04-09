@@ -73,7 +73,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
-    static final int BATCH_SIZE = 256;
+    static final int BATCH_SIZE = 1024;
 
     private final RecordCursorFactory base;
     private final AsyncGroupByRecordCursor cursor;
@@ -251,6 +251,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    // TODO: for single fixed-size column keys (e.g. LONG) on native page frames
+    //  without column tops, pass the column address directly to computeHashes
+    //  instead of packing keys through RecordSink. The column data is already
+    //  contiguous, so the native function can read from it directly, eliminating
+    //  the pack loop (N writes + N reads per batch).
     private static void aggregateBatchedNonSharded(
             PageFrameMemoryRecord record,
             long frameRowCount,
@@ -270,7 +275,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 prober.endKey();
             }
 
-            prober.hashAndPrefetch(currentBatchSize);
+            prober.computeHashes(currentBatchSize);
 
             for (int i = 0; i < currentBatchSize; i++) {
                 MapValue value = prober.probeWithHash(i);
