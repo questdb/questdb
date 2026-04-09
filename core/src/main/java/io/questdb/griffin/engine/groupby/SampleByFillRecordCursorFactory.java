@@ -301,6 +301,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     return true;
                 }
 
+                if (dataTs < nextBucketTimestamp && hasPendingRow) {
+                    // Data timestamp is before expected bucket (can happen with DST fall-back
+                    // where timestamp_floor_utc produces non-monotonic UTC timestamps).
+                    // Emit the data row as-is and advance.
+                    hasPendingRow = false;
+                    fillRecord.isGapFilling = false;
+                    if (hasPrevFill) {
+                        savePrevValues(baseRecord);
+                    }
+                    return true;
+                }
+
                 // baseCursorExhausted and no TO clause — stop
                 if (baseCursorExhausted && !hasExplicitTo) {
                     return false;
