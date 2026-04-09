@@ -433,30 +433,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void setPartitionParquetGenerated(int partitionIndex, boolean parquetGenerated) {
-        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
-        setPartitionParquetGeneratedByRawIndex(indexRaw, parquetGenerated);
-    }
-
-    public void setPartitionParquetGenerated(int partitionIndex, long fileLength) {
-        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
-        setPartitionParquetGeneratedByRawIndex(indexRaw, true);
-        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, fileLength);
-    }
-
-    public void setPartitionParquetGeneratedByRawIndex(int indexRaw, boolean parquetGenerated) {
-        if (indexRaw < 0) {
-            throw CairoException.nonCritical().put("bad partition index -1");
-        }
-        int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
-        long maskedSize = attachedPartitions.getQuick(offset);
-        attachedPartitions.setQuick(offset, updatePartitionHasParquetGenerated(maskedSize, parquetGenerated));
-    }
-
-    public void setPartitionParquetGenerated(long timestamp, boolean parquetGenerated) {
-        setPartitionParquetGeneratedByRawIndex(findAttachedPartitionRawIndex(timestamp), parquetGenerated);
-    }
-
     public void setPartitionParquetFormat(long timestamp, long fileLength) {
         setPartitionParquetFormat(timestamp, fileLength, true);
     }
@@ -475,6 +451,30 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         int fileLenOffset = indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET;
         attachedPartitions.setQuick(fileLenOffset, fileLength);
+    }
+
+    public void setPartitionParquetGenerated(int partitionIndex, boolean parquetGenerated) {
+        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        setPartitionParquetGeneratedByRawIndex(indexRaw, parquetGenerated);
+    }
+
+    public void setPartitionParquetGenerated(int partitionIndex, long fileLength) {
+        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        setPartitionParquetGeneratedByRawIndex(indexRaw, true);
+        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, fileLength);
+    }
+
+    public void setPartitionParquetGenerated(long timestamp, boolean parquetGenerated) {
+        setPartitionParquetGeneratedByRawIndex(findAttachedPartitionRawIndex(timestamp), parquetGenerated);
+    }
+
+    public void setPartitionParquetGeneratedByRawIndex(int indexRaw, boolean parquetGenerated) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+        attachedPartitions.setQuick(offset, updatePartitionHasParquetGenerated(maskedSize, parquetGenerated));
     }
 
     public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {

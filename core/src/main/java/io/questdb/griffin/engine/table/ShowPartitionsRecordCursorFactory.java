@@ -151,11 +151,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private TableReaderMetadata detachedMetaReader;
         private TxReader detachedTxReader;
         private int dynamicPartitionIndex = -1;
+        private boolean hasParquetGenerated;
         private boolean isActive;
         private boolean isAttachable;
         private boolean isDetached;
         private boolean isParquet;
-        private boolean hasParquetGenerated;
         private boolean isReadOnly;
         private int limit; // partitionCount + detached + attachable
         private long maxTimestamp = Long.MIN_VALUE;

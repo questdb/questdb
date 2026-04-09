@@ -437,6 +437,37 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowPartitionsWhenPartitionsAreConvertedToParquet() throws Exception {
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE timestamp < '2023-04-01T00:00:00.000000Z'");
+            if (isWal) {
+                drainWalQueue();
+            }
+            // Three partitions are converted: 2023-01, 2023-02, 2023-03.
+            // The remaining three stay native. Both hasParquetGenerated and isParquet
+            // must be true for converted partitions; parquetFileSize must be > 0.
+            assertQueryNoLeakCheck(
+                    """
+                            name\thasParquetGenerated\tisParquet\thasParquetFile
+                            2023-01\ttrue\ttrue\ttrue
+                            2023-02\ttrue\ttrue\ttrue
+                            2023-03\ttrue\ttrue\ttrue
+                            2023-04\tfalse\tfalse\tfalse
+                            2023-05\tfalse\tfalse\tfalse
+                            2023-06\tfalse\tfalse\tfalse
+                            """,
+                    "SELECT name, hasParquetGenerated, isParquet, parquetFileSize > 0 hasParquetFile" +
+                            " FROM table_partitions('" + tableName + "')",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testShowPartitionsWhenThereAreNoDetachedNorAttachable() throws Exception {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
