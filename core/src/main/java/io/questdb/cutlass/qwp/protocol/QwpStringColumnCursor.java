@@ -55,6 +55,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     private long nullBitmapAddress;
     private long offsetArrayAddress;
     private long stringDataAddress;
+    private int stringDataLength;
     // Configuration
     private byte typeCode;
 
@@ -87,6 +88,15 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
                     .put("]=")
                     .put(startOffset);
         }
+        if (startOffset > stringDataLength || endOffset > stringDataLength) {
+            throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
+                    .put("invalid QWP string offset array: offset[")
+                    .put(currentValueIndex + 1)
+                    .put("]=")
+                    .put(endOffset)
+                    .put(" exceeds string data size ")
+                    .put(stringDataLength);
+        }
 
         // Update flyweight to point to this string's bytes - NO ALLOCATION!
         int stringLen = endOffset - startOffset;
@@ -104,6 +114,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         nullBitmapAddress = 0;
         offsetArrayAddress = 0;
         stringDataAddress = 0;
+        stringDataLength = 0;
         resetRowPosition();
     }
 
@@ -191,13 +202,15 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
 
         // Calculate total string data size from offset array
         int lastOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueCount * 4);
-        if (lastOffset < 0 || offset + lastOffset > dataLength) {
+        long availableStringData = (long) dataLength - offset;
+        if (lastOffset < 0 || (long) lastOffset > availableStringData) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                     "string column data truncated: expected string data"
             );
         }
         this.stringDataAddress = dataAddress + offset;
+        this.stringDataLength = lastOffset;
         offset += lastOffset;
 
         resetRowPosition();
