@@ -120,40 +120,27 @@ The file has a header with column descriptors, row group blocks in the middle, a
 
 ### Feature flags
 
-The header contains a single `feature_flags` field (`u64`) that gates optional sections in **both** the header area (after name strings) and the footer area (after row group entries):
+The header contains a single `feature_flags` field (`u64`) reserved for future format extensions:
 
-- **Bits 0-31**: optional - reader ignores unknown bits silently.
-- **Bits 32-63**: required - reader rejects the file if unknown bits are set.
+- **Bits 0-31**: optional - unknown bits may be ignored.
+- **Bits 32-63**: required - unknown bits must cause the reader to reject the file.
 
-Each feature's spec defines whether it adds a header section, a footer section, or both, and a deterministic size formula based on file metadata (e.g., `column_count`, `row_group_count`) and values from previously-parsed sections. Sections are written in ascending bit order in their respective area. Readers navigate sections sequentially without an offset table.
+No feature flags are currently defined. Writers emit `0`, and the current `_pm` layout has no feature-specific header or footer sections.
 
-If a reader encounters an unknown optional bit that is set, it stops parsing further sections in that area (it cannot compute the size to skip). The CRC is always locatable via `footer_length` from the trailer regardless of unknown content.
-
-A single feature can span multiple bits (e.g., a presence bit and a storage-mode bit). All bits of a feature are defined in the same spec, so a reader that understands the feature understands all of its bits together. A reader that doesn't know the lowest bit of the feature stops there and never reaches the dependent bits.
-
-#### Defined feature flags
-
-| bit | name        | header section        | footer section        | description                                   |
-| --- | ----------- | --------------------- | --------------------- | --------------------------------------------- |
-| 0   | COLUMN_TOPS | `[u64; column_count]` | `[u64; column_count]` | `column_top` per column (row where valid data starts) |
-
-When `COLUMN_TOPS` is set, the header section contains one `u64` per column giving the row number where valid data begins (rows before that are null). Legacy files only use this header section. Newer footers may also carry a footer-scoped `COLUMN_TOPS` section for the active snapshot; when present, readers must prefer the footer values over the header values. On files that use footer feature sections and have `COLUMN_TOPS` set, this footer override section is written first in the footer feature area. When unset, all tops are 0. The header section is only written when at least one column has a non-zero top.
-
-Because the feature bit lives in the header, append-only updates cannot introduce `COLUMN_TOPS` to a file that never advertised it. They can, however, append a footer-scoped override on files whose header already has the bit set, which is how O3 merges zero or otherwise update effective tops without rewriting the file from offset 0.
+QuestDB-managed parquet snapshots represented by `_pm` always normalize `column_top` to `0`. Null prefixes are materialized directly into parquet chunks/pages, and `_pm` pruning relies on per-chunk `NULL_COUNT` rather than file-level `column_top` metadata.
 
 ### File header
 
 | offset | size | field                | type | description                                                             |
 | ------ | ---- | -------------------- | ---- | ----------------------------------------------------------------------- |
 | 0      | 4    | FILE_FORMAT_VERSION  | u32  |                                                                         |
-| 4      | 8    | FEATURE_FLAGS        | u64  | feature flags (gates sections in both header and footer)                |
+| 4      | 8    | FEATURE_FLAGS        | u64  | reserved for future format extensions; currently always 0               |
 | 12     | 4    | DESIGNATED_TIMESTAMP | i32  | index of the designated timestamp in descriptors (or -1)                |
 | 16     | 4    | SORTING_COLUMN_COUNT | u32  |                                                                         |
 | 20     | 4    | COLUMN_COUNT         | u32  |                                                                         |
 | 24     | ..   | COLUMN_DESCRIPTORS   |      | COLUMN_COUNT * Column descriptor (32B each)                             |
 | ..     | ..   | SORTING_COLUMNS      |      | SORTING_COLUMN_COUNT * Sorting column (4B each)                         |
 | ..     | ..   | NAME_STRINGS         |      | Column names, each `[utf8 bytes]`; length from descriptor's NAME_LENGTH |
-| ..     | ..   | HEADER_FEAT_SECTIONS |      | Feature sections in ascending bit order                                 |
 
 For a column to be the designated timestamp it must comply to these rules:
 - It must be the first column in sorting columns, sorted in `ascending` order
@@ -224,7 +211,7 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 | 8      | 8    | NUM_VALUES       | u64  | total values (may differ from row count for arrays)                                                                               |
 | 16     | 8    | BYTE_RANGE_START | u64  | byte offset in parquet file to chunk start (dictionary page offset if present, else data page offset)                             |
 | 24     | 8    | TOTAL_COMPRESSED | u64  | total compressed bytes of all pages                                                                                               |
-| 32     | 8    | NULL_COUNT       | u64  | number of nulls                                                                                                                   |
+| 32     | 8    | NULL_COUNT       | u64  | number of nulls; mandatory for QuestDB-managed `_pm` files                                                                        |
 | 40     | 8    | DISTINCT_COUNT   | u64  | number of distinct values                                                                                                         |
 | 48     | 8    | MIN_STAT         | u64  | min value (see STAT_KIND)                                                                                                         |
 | 56     | 8    | MAX_STAT         | u64  | max value (see STAT_KIND)                                                                                                         |
@@ -245,6 +232,8 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 
 Column types with fixed size that are <= 8 bytes (BOOLEAN, BYTE, SHORT, CHAR, INT/FLOAT/IPv4, LONG/DOUBLE/DATE/TIMESTAMP) MUST have their min/max stats inlined in the column chunk. For variable-length types (VARCHAR/STRING) and fixed-size types > 8 bytes (LONG128, UUID, LONG256), min/max stats MAY be stored out-of-line immediately after the row group blocks that references them.
 
+QuestDB-managed `_pm` files always set `NULL_COUNT_PRESENT`. Readers use `NULL_COUNT == NUM_VALUES` as the all-null fast path when deciding whether a parquet column chunk needs to be fetched and decoded.
+
 ### Bloom filter bitset
 
 Bloom filter bitsets are stored in the out-of-line region of each row group block, after out-of-line stats. Each bloom filter entry is padded to 8-byte alignment so `BLOOM_FILTER_OFF` can use the shifted u32 encoding. The column chunk's `BLOOM_FILTER_OFF` field gives the absolute offset in the `_pm` file (right-shifted by 3). If `BLOOM_FILTER_OFF` is 0, there is no bloom filter for that column chunk.
@@ -260,7 +249,7 @@ At the offset, a 4-byte `LENGTH` field gives the size of the bitset, followed by
 
 The `_pm` file size is stored in `_txn` field 3. The reader locates the footer by reading the 4-byte FOOTER_LENGTH trailer at the end of the file: `footer_offset = file_size - 4 - FOOTER_LENGTH`. This mirrors how parquet files store `footer_length + PAR1` at the end.
 
-The CRC is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENGTH - 4`. This handles unknown feature sections between the row group entries and CRC.
+The CRC is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENGTH - 4`.
 
 | offset | size | field                 | type | description                                                                         |
 | ------ | ---- | --------------------- | ---- | ----------------------------------------------------------------------------------- |
@@ -269,7 +258,6 @@ The CRC is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENG
 | 12     | 4    | ROW_GROUP_COUNT       | u32  |                                                                                     |
 | 16     | 8    | UNUSED_BYTES          | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)  |
 | 24     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
-| ..     | ..   | FOOTER_FEAT_SECTIONS  |      | Feature sections in ascending bit order (if any header flags add footer sections)   |
 | ..     | 4    | CHECKSUM              | u32  | CRC32 from the start of the file to this field (exclusive)                          |
 | ..     | 4    | FOOTER_LENGTH         | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM |
 
@@ -307,6 +295,7 @@ Atomicity is provided by the `_txn` file. The `_pm` file size is stored in `_txn
 ### Decoding a specific column chunk from cold storage
 
 - Look up the column chunk from cached metadata.
+- If `NULL_COUNT == NUM_VALUES`, treat the chunk as all-null and skip the parquet fetch.
 - Fetch `[BYTE_RANGE_START, BYTE_RANGE_START + TOTAL_COMPRESSED)` from cold storage.
 - Use CODEC to decompress; page headers carry per-page encoding.
 
@@ -339,7 +328,7 @@ As cold-storage depends on this feature, no object-storage access is required fo
 
 The `FILE_FORMAT_VERSION` field in the header allows for future evolution. Incompatible changes (e.g. changing the header structure) would increment the version number.
 
-Feature flags provide additive extensibility without version bumps: new optional metadata is gated by a flag bit. Old files simply don't have the flag set - the reader uses defaults. Required features (bits 32-63) allow the reader to reject files that it cannot correctly interpret.
+Feature flags are reserved for future additive extensions. Required features (bits 32-63) allow the reader to reject files that it cannot correctly interpret.
 
 Migration from an older to a newer version mustn't require having access to the parquet file (in order to avoid cold-storage access). This is easily feasible as we control the partitions files, thus we can safely fill in the new metadata fields with default values that indicate the absence of the new feature (e.g. no encryption, already used bitmap filter algorithm).
 

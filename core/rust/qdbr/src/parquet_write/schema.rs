@@ -473,7 +473,7 @@ pub fn to_parquet_schema(
         };
         qdb_meta.schema.push(QdbMetaCol {
             column_type,
-            column_top: column.column_top,
+            column_top: 0,
             format,
             ascii,
         });

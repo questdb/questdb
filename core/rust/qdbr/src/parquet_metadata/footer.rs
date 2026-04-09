@@ -27,8 +27,8 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::types::{
-    BlockAlignedOffset, HeaderFeatureFlags, BLOCK_ALIGNMENT_SHIFT, FOOTER_CHECKSUM_SIZE,
-    FOOTER_FIXED_SIZE, FOOTER_TRAILER_SIZE, ROW_GROUP_ENTRY_SIZE,
+    BlockAlignedOffset, BLOCK_ALIGNMENT_SHIFT, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE,
+    FOOTER_TRAILER_SIZE, ROW_GROUP_ENTRY_SIZE,
 };
 
 // ── On-disk footer fixed portion (24 bytes) ─────────────────────────────
@@ -58,7 +58,6 @@ pub struct Footer<'a> {
     raw: FooterRaw,
     data: &'a [u8],
     footer_length_through_crc: u32,
-    column_tops: Option<&'a [u8]>,
 }
 
 impl<'a> Footer<'a> {
@@ -69,8 +68,6 @@ impl<'a> Footer<'a> {
     pub fn new(
         data: &'a [u8],
         footer_length_through_crc: u32,
-        feature_flags: HeaderFeatureFlags,
-        column_count: u32,
     ) -> ParquetResult<Self> {
         if data.len() < FOOTER_FIXED_SIZE + FOOTER_CHECKSUM_SIZE {
             return Err(parquet_meta_err!(
@@ -122,50 +119,7 @@ impl<'a> Footer<'a> {
             ));
         }
 
-        let mut column_tops = None;
-        if feature_flags.has_column_tops() {
-            let column_tops_size = (column_count as usize).checked_mul(8).ok_or_else(|| {
-                parquet_meta_err!(ParquetMetaErrorKind::Truncated, "column_tops size overflow")
-            })?;
-            let column_tops_start = FOOTER_FIXED_SIZE
-                .checked_add((raw.row_group_count as usize) * ROW_GROUP_ENTRY_SIZE)
-                .ok_or_else(|| {
-                    parquet_meta_err!(ParquetMetaErrorKind::Truncated, "footer size overflow")
-                })?;
-            let available = (footer_length_through_crc as usize)
-                .checked_sub(base_through_crc)
-                .ok_or_else(|| {
-                    parquet_meta_err!(ParquetMetaErrorKind::Truncated, "footer size underflow")
-                })?;
-            if available != 0 {
-                if available < column_tops_size {
-                    return Err(parquet_meta_err!(
-                        ParquetMetaErrorKind::Truncated,
-                        "footer column_tops section truncated: need {} bytes, have {}",
-                        column_tops_size,
-                        available
-                    ));
-                }
-                let column_tops_end =
-                    column_tops_start
-                        .checked_add(column_tops_size)
-                        .ok_or_else(|| {
-                            parquet_meta_err!(
-                                ParquetMetaErrorKind::Truncated,
-                                "footer column_tops section overflow"
-                            )
-                        })?;
-                if column_tops_end > data.len() {
-                    return Err(parquet_meta_err!(
-                        ParquetMetaErrorKind::Truncated,
-                        "footer column_tops section out of bounds"
-                    ));
-                }
-                column_tops = Some(&data[column_tops_start..column_tops_end]);
-            }
-        }
-
-        Ok(Self { raw, data, footer_length_through_crc, column_tops })
+        Ok(Self { raw, data, footer_length_through_crc })
     }
 
     /// Minimum byte size for the footer (fixed + base entries + CRC + trailer).
@@ -256,33 +210,6 @@ impl<'a> Footer<'a> {
             crc_data.try_into().expect("slice is 4 bytes"),
         ))
     }
-
-    pub fn has_column_tops_override(&self) -> bool {
-        self.column_tops.is_some()
-    }
-
-    pub fn column_top(&self, index: usize) -> ParquetResult<Option<u64>> {
-        match self.column_tops {
-            Some(tops_data) => {
-                let column_count = tops_data.len() / 8;
-                if index >= column_count {
-                    return Err(parquet_meta_err!(
-                        ParquetMetaErrorKind::InvalidValue,
-                        "footer column top index {} out of range [0, {})",
-                        index,
-                        column_count
-                    ));
-                }
-                let offset = index * 8;
-                Ok(Some(u64::from_le_bytes(
-                    tops_data[offset..offset + 8]
-                        .try_into()
-                        .expect("slice is 8 bytes"),
-                )))
-            }
-            None => Ok(None),
-        }
-    }
 }
 
 // ── FooterBuilder ──────────────────────────────────────────────────────
@@ -293,7 +220,6 @@ pub struct FooterBuilder {
     parquet_footer_length: u32,
     unused_bytes: u64,
     row_group_offsets: Vec<u64>,
-    column_tops: Option<Vec<u64>>,
 }
 
 impl FooterBuilder {
@@ -303,7 +229,6 @@ impl FooterBuilder {
             parquet_footer_length,
             unused_bytes: 0,
             row_group_offsets: Vec::new(),
-            column_tops: None,
         }
     }
 
@@ -319,11 +244,6 @@ impl FooterBuilder {
         let _ = BlockAlignedOffset::from_byte_offset(offset)?;
         self.row_group_offsets.push(offset);
         Ok(self)
-    }
-
-    pub fn set_column_tops(&mut self, column_tops: &[u64]) -> &mut Self {
-        self.column_tops = Some(column_tops.to_vec());
-        self
     }
 
     /// Writes the footer to `buf` (fixed fields + entries + CRC placeholder + trailer).
@@ -343,12 +263,6 @@ impl FooterBuilder {
             buf.extend_from_slice(&stored.to_le_bytes());
         }
 
-        if let Some(column_tops) = &self.column_tops {
-            for &top in column_tops {
-                buf.extend_from_slice(&top.to_le_bytes());
-            }
-        }
-
         // CRC32 placeholder (filled by the top-level writer).
         buf.extend_from_slice(&0u32.to_le_bytes());
 
@@ -364,14 +278,9 @@ impl FooterBuilder {
 mod tests {
     use super::*;
 
-    fn parse_footer(
-        buf: &[u8],
-        start: usize,
-        feature_flags: HeaderFeatureFlags,
-        column_count: u32,
-    ) -> Footer<'_> {
+    fn parse_footer(buf: &[u8], start: usize) -> Footer<'_> {
         let footer_length = u32::from_le_bytes(buf[buf.len() - 4..].try_into().unwrap());
-        Footer::new(&buf[start..], footer_length, feature_flags, column_count).unwrap()
+        Footer::new(&buf[start..], footer_length).unwrap()
     }
 
     #[test]
@@ -380,7 +289,7 @@ mod tests {
         let mut buf = Vec::new();
         let start = fb.write_to(&mut buf);
 
-        let footer = parse_footer(&buf, start, HeaderFeatureFlags::new(), 0);
+        let footer = parse_footer(&buf, start);
         assert_eq!(footer.parquet_footer_offset(), 1024);
         assert_eq!(footer.parquet_footer_length(), 512);
         assert_eq!(footer.row_group_count(), 0);
@@ -398,7 +307,7 @@ mod tests {
         let mut buf = Vec::new();
         let start = fb.write_to(&mut buf);
 
-        let footer = parse_footer(&buf, start, HeaderFeatureFlags::new(), 0);
+        let footer = parse_footer(&buf, start);
         assert_eq!(footer.row_group_count(), 3);
         assert_eq!(footer.row_group_block_offset(0).unwrap(), 0);
         assert_eq!(footer.row_group_block_offset(1).unwrap(), 64);
@@ -422,7 +331,7 @@ mod tests {
 
     #[test]
     fn footer_too_small() {
-        assert!(Footer::new(&[0u8; 4], 4, HeaderFeatureFlags::new(), 0).is_err());
+        assert!(Footer::new(&[0u8; 4], 4).is_err());
     }
 
     #[test]
@@ -431,7 +340,7 @@ mod tests {
         let mut buf = Vec::new();
         let start = fb.write_to(&mut buf);
 
-        let footer = parse_footer(&buf, start, HeaderFeatureFlags::new(), 0);
+        let footer = parse_footer(&buf, start);
         assert!(footer.row_group_block_offset(0).is_err());
     }
 
@@ -445,7 +354,7 @@ mod tests {
         buf.extend_from_slice(&5u32.to_le_bytes()); // row_group_count = 5
         buf.extend_from_slice(&0u64.to_le_bytes()); // unused_bytes
                                                     // Need 24 + 5*4 + 4 = 48 bytes, but only have 24.
-        assert!(Footer::new(&buf, 24, HeaderFeatureFlags::new(), 0).is_err());
+        assert!(Footer::new(&buf, 24).is_err());
     }
 
     #[test]
@@ -458,7 +367,7 @@ mod tests {
         let mut buf = Vec::new();
         let start = fb.write_to(&mut buf);
 
-        let footer = parse_footer(&buf, start, HeaderFeatureFlags::new(), 0);
+        let footer = parse_footer(&buf, start);
         assert_eq!(footer.row_group_count(), 100);
         for i in 0..100 {
             assert_eq!(footer.row_group_block_offset(i).unwrap(), (i as u64) * 8);
@@ -473,7 +382,7 @@ mod tests {
         let mut buf = Vec::new();
         let start = fb.write_to(&mut buf);
 
-        let footer = parse_footer(&buf, start, HeaderFeatureFlags::new(), 0);
+        let footer = parse_footer(&buf, start);
         assert_eq!(footer.unused_bytes(), 8192);
     }
 
@@ -488,7 +397,7 @@ mod tests {
 
         // Pass a footer_length_through_crc smaller than the required base size.
         let too_small = (FOOTER_FIXED_SIZE + FOOTER_CHECKSUM_SIZE - 1) as u32;
-        assert!(Footer::new(&buf[start..], too_small, HeaderFeatureFlags::new(), 0).is_err());
+        assert!(Footer::new(&buf[start..], too_small).is_err());
     }
 
     #[test]
@@ -499,62 +408,6 @@ mod tests {
         let start = fb.write_to(&mut buf);
 
         let exact = (FOOTER_FIXED_SIZE + FOOTER_CHECKSUM_SIZE) as u32;
-        Footer::new(&buf[start..], exact, HeaderFeatureFlags::new(), 0).unwrap();
-    }
-
-    #[test]
-    fn round_trip_with_footer_column_tops_override() {
-        let mut fb = FooterBuilder::new(0, 0);
-        fb.add_row_group_offset(64).unwrap();
-        fb.set_column_tops(&[42, 0, 7]);
-
-        let mut buf = Vec::new();
-        let start = fb.write_to(&mut buf);
-
-        let footer = parse_footer(&buf, start, HeaderFeatureFlags::new().with_column_tops(), 3);
-        assert!(footer.has_column_tops_override());
-        assert_eq!(footer.column_top(0).unwrap(), Some(42));
-        assert_eq!(footer.column_top(1).unwrap(), Some(0));
-        assert_eq!(footer.column_top(2).unwrap(), Some(7));
-    }
-
-    #[test]
-    fn footer_override_requires_enough_bytes() {
-        let mut fb = FooterBuilder::new(0, 0);
-        fb.add_row_group_offset(64).unwrap();
-        let mut buf = Vec::new();
-        let start = fb.write_to(&mut buf);
-
-        let footer_length = u32::from_le_bytes(buf[buf.len() - 4..].try_into().unwrap());
-        let too_long = footer_length + 8;
-        assert!(Footer::new(
-            &buf[start..],
-            too_long,
-            HeaderFeatureFlags::new().with_column_tops(),
-            2
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn footer_override_ignores_unknown_trailing_sections() {
-        let mut fb = FooterBuilder::new(0, 0);
-        fb.add_row_group_offset(64).unwrap();
-        fb.set_column_tops(&[11]);
-
-        let mut buf = Vec::new();
-        let start = fb.write_to(&mut buf);
-        let old_footer_length =
-            u32::from_le_bytes(buf[buf.len() - FOOTER_TRAILER_SIZE..].try_into().unwrap());
-        let trailer_start = buf.len() - FOOTER_TRAILER_SIZE;
-        let crc_start = trailer_start - FOOTER_CHECKSUM_SIZE;
-
-        buf.splice(crc_start..crc_start, [0xAAu8; 16]);
-        let footer_length = old_footer_length + 16;
-        let trailer_offset = buf.len() - FOOTER_TRAILER_SIZE;
-        buf[trailer_offset..].copy_from_slice(&footer_length.to_le_bytes());
-
-        let footer = parse_footer(&buf, start, HeaderFeatureFlags::new().with_column_tops(), 1);
-        assert_eq!(footer.column_top(0).unwrap(), Some(11));
+        Footer::new(&buf[start..], exact).unwrap();
     }
 }

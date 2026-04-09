@@ -80,7 +80,6 @@ pub struct FileHeaderRaw {
 pub struct FileHeader<'a> {
     raw: FileHeaderRaw,
     data: &'a [u8],
-    column_tops: Option<&'a [u8]>,
 }
 
 impl<'a> FileHeader<'a> {
@@ -131,34 +130,11 @@ impl<'a> FileHeader<'a> {
             ));
         }
 
-        // Locate the end of the name strings area to find feature sections.
-        let names_area_end = Self::compute_names_area_end(data, raw.column_count)?;
+        // Validate that name strings are in bounds. There are currently no
+        // header feature sections beyond the names area.
+        let _ = Self::compute_names_area_end(data, raw.column_count)?;
 
-        // Parse header feature sections (ascending bit order).
-        let mut column_tops = None;
-        if raw.feature_flags.has_column_tops() {
-            let section_size = (raw.column_count as usize).checked_mul(8).ok_or_else(|| {
-                parquet_meta_err!(ParquetMetaErrorKind::Truncated, "column_tops size overflow")
-            })?;
-            let section_end = names_area_end.checked_add(section_size).ok_or_else(|| {
-                parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "column_tops section overflow"
-                )
-            })?;
-            if section_end > data.len() {
-                return Err(parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "column_tops section at offset {} length {} exceeds file size {}",
-                    names_area_end,
-                    section_size,
-                    data.len()
-                ));
-            }
-            column_tops = Some(&data[names_area_end..section_end]);
-        }
-
-        Ok(Self { raw, data, column_tops })
+        Ok(Self { raw, data })
     }
 
     /// Minimum byte size required for the header with the given column counts
@@ -279,31 +255,6 @@ impl<'a> FileHeader<'a> {
         })
     }
 
-    /// Returns the column top for the column at `index`.
-    ///
-    /// Returns 0 when the `FEATURE_COLUMN_TOPS` flag is not set.
-    pub fn column_top(&self, index: usize) -> ParquetResult<u64> {
-        if index >= self.raw.column_count as usize {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "column top index {} out of range [0, {})",
-                index,
-                self.raw.column_count
-            ));
-        }
-        match self.column_tops {
-            Some(tops_data) => {
-                let offset = index * 8;
-                Ok(u64::from_le_bytes(
-                    tops_data[offset..offset + 8]
-                        .try_into()
-                        .expect("slice is 8 bytes"),
-                ))
-            }
-            None => Ok(0),
-        }
-    }
-
     /// Returns a zero-copy slice of all sorting column indices.
     ///
     /// The required bounds were validated in [`FileHeader::new`].
@@ -365,8 +316,6 @@ pub struct FileHeaderBuilder {
     designated_timestamp: i32,
     columns: Vec<ColumnEntry>,
     sorting_columns: Vec<u32>,
-    column_tops: Vec<u64>,
-    force_column_tops_feature: bool,
 }
 
 impl FileHeaderBuilder {
@@ -375,8 +324,6 @@ impl FileHeaderBuilder {
             designated_timestamp,
             columns: Vec::new(),
             sorting_columns: Vec::new(),
-            column_tops: Vec::new(),
-            force_column_tops_feature: false,
         }
     }
 
@@ -405,41 +352,20 @@ impl FileHeaderBuilder {
         self
     }
 
-    pub fn set_column_top(&mut self, index: usize, top: u64) -> &mut Self {
-        if self.column_tops.len() <= index {
-            self.column_tops.resize(index + 1, 0);
-        }
-        self.column_tops[index] = top;
-        self
-    }
-
-    pub fn enable_column_tops_feature(&mut self) -> &mut Self {
-        self.force_column_tops_feature = true;
-        self
-    }
-
     pub fn add_sorting_column(&mut self, index: u32) -> &mut Self {
         self.sorting_columns.push(index);
         self
     }
 
     /// Serializes the header into `buf`. Returns the byte offset past the end
-    /// of the header (including name strings and feature sections).
+    /// of the header.
     pub fn write_to(&self, buf: &mut Vec<u8>) -> usize {
         let column_count = self.columns.len() as u32;
         let sorting_count = self.sorting_columns.len() as u32;
 
-        // Compute feature flags.
-        let has_column_tops =
-            self.force_column_tops_feature || self.column_tops.iter().any(|&t| t != 0);
-        let mut feature_flags = HeaderFeatureFlags::new();
-        if has_column_tops {
-            feature_flags = feature_flags.with_column_tops();
-        }
-
         // Fixed header fields (24 bytes, field-by-field for alignment safety).
         buf.extend_from_slice(&FILE_FORMAT_VERSION.to_le_bytes());
-        buf.extend_from_slice(&feature_flags.0.to_le_bytes());
+        buf.extend_from_slice(&HeaderFeatureFlags::new().0.to_le_bytes());
         buf.extend_from_slice(&self.designated_timestamp.to_le_bytes());
         buf.extend_from_slice(&sorting_count.to_le_bytes());
         buf.extend_from_slice(&column_count.to_le_bytes());
@@ -485,14 +411,6 @@ impl FileHeaderBuilder {
                 &*(&desc as *const ColumnDescriptorRaw as *const [u8; COLUMN_DESCRIPTOR_SIZE])
             };
             buf[desc_offset..desc_offset + COLUMN_DESCRIPTOR_SIZE].copy_from_slice(bytes);
-        }
-
-        // Header feature sections (ascending bit order).
-        if has_column_tops {
-            for i in 0..self.columns.len() {
-                let top = self.column_tops.get(i).copied().unwrap_or(0);
-                buf.extend_from_slice(&top.to_le_bytes());
-            }
         }
 
         buf.len()
@@ -577,9 +495,6 @@ mod tests {
             FieldRepetition::Optional
         );
 
-        // Column tops default to 0 when flag is not set.
-        assert_eq!(hdr.column_top(0).unwrap(), 0);
-        assert_eq!(hdr.column_top(1).unwrap(), 0);
     }
 
     #[test]
@@ -706,55 +621,6 @@ mod tests {
         let hdr = FileHeader::new(&buf).unwrap();
         let expected = HEADER_FIXED_SIZE + 2 * COLUMN_DESCRIPTOR_SIZE + 2 * 4;
         assert_eq!(hdr.sorting_columns_end_offset(), expected);
-    }
-
-    #[test]
-    fn column_tops_round_trip() {
-        let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
-        builder.add_column("c", 2, 7, ColumnFlags::new(), 0, 0, 0, 0);
-        builder.set_column_top(1, 42);
-        builder.set_column_top(2, 100);
-
-        let mut buf = Vec::new();
-        builder.write_to(&mut buf);
-
-        let hdr = FileHeader::new(&buf).unwrap();
-        assert!(hdr.feature_flags().has_column_tops());
-        assert_eq!(hdr.column_top(0).unwrap(), 0);
-        assert_eq!(hdr.column_top(1).unwrap(), 42);
-        assert_eq!(hdr.column_top(2).unwrap(), 100);
-    }
-
-    #[test]
-    fn column_tops_all_zero_no_flag() {
-        let mut builder = FileHeaderBuilder::new(-1);
-        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
-        // No set_column_top calls — all zeros.
-
-        let mut buf = Vec::new();
-        let end = builder.write_to(&mut buf);
-
-        let hdr = FileHeader::new(&buf).unwrap();
-        assert!(!hdr.feature_flags().has_column_tops());
-        assert_eq!(hdr.column_top(0).unwrap(), 0);
-        assert_eq!(hdr.column_top(1).unwrap(), 0);
-
-        // No column tops section written — header end is right after names.
-        let names_end = FileHeader::compute_names_area_end(&buf, 2).unwrap();
-        assert_eq!(end, names_end);
-    }
-
-    #[test]
-    fn column_top_out_of_range() {
-        let builder = FileHeaderBuilder::new(-1);
-        let mut buf = Vec::new();
-        builder.write_to(&mut buf);
-
-        let hdr = FileHeader::new(&buf).unwrap();
-        assert!(hdr.column_top(0).is_err());
     }
 
     #[test]

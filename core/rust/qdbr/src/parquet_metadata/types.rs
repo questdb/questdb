@@ -75,24 +75,12 @@ const fn unknown_required(raw: u64, known_required: u64) -> u64 {
 pub struct HeaderFeatureFlags(pub u64);
 
 impl HeaderFeatureFlags {
-    const COLUMN_TOPS_BIT: u64 = 1 << 0;
-
     pub const fn new() -> Self {
         Self(0)
     }
 
     pub const fn from_le_bytes(bytes: [u8; 8]) -> Self {
         Self(u64::from_le_bytes(bytes))
-    }
-
-    /// Column tops are stored in a legacy header section and may also appear in
-    /// a footer-scoped override section for the active snapshot.
-    pub const fn has_column_tops(self) -> bool {
-        self.0 & Self::COLUMN_TOPS_BIT != 0
-    }
-
-    pub const fn with_column_tops(self) -> Self {
-        Self(self.0 | Self::COLUMN_TOPS_BIT)
     }
 
     /// Returns the unknown required bits given a mask of known required bits.

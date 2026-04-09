@@ -102,21 +102,16 @@ pub fn decode_row_group(
         };
         let ascii = if flags.is_ascii() { Some(true) } else { None };
 
-        let column_top = parquet_meta_reader.column_top(column_idx)? as usize;
-        let accumulated_size = (0..row_group_index).try_fold(0usize, |acc, rg| {
-            parquet_meta_reader
-                .row_group(rg)
-                .map(|b| acc + b.num_rows() as usize)
-        })?;
-
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
-
-        if column_top >= row_group_hi + accumulated_size {
-            column_chunk_bufs.reset();
-            continue;
-        }
+        let col_info = QdbMetaCol { column_type, column_top: 0, format, ascii };
 
         let chunk = rg_block.column_chunk(column_idx)?;
+        let stat_flags = StatFlags(chunk.stat_flags);
+        if stat_flags.has_null_count() && chunk.null_count == chunk.num_values {
+            column_chunk_bufs.reset();
+            decoded = row_group_hi.saturating_sub(row_group_lo);
+            continue;
+        }
         let col_start = chunk.byte_range_start as usize;
         let col_len = chunk.total_compressed as usize;
         let compression = chunk
@@ -133,8 +128,6 @@ pub fn decode_row_group(
             column_name,
             repetition,
         );
-
-        let col_info = QdbMetaCol { column_type, column_top, format, ascii };
 
         match decode_column_chunk_with_params(
             ctx,
@@ -226,6 +219,24 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
         let ascii = if flags.is_ascii() { Some(true) } else { None };
 
         let chunk = rg_block.column_chunk(column_idx)?;
+        let buf_idx = column_offset + dest_col_idx;
+        let column_chunk_bufs = &mut row_group_bufs.column_bufs[buf_idx];
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format,
+            ascii,
+        };
+        let stat_flags = StatFlags(chunk.stat_flags);
+        if stat_flags.has_null_count() && chunk.null_count == chunk.num_values {
+            column_chunk_bufs.reset();
+            decoded = if FILL_NULLS {
+                row_group_hi.saturating_sub(row_group_lo)
+            } else {
+                filtered_rows.len()
+            };
+            continue;
+        }
         let col_start = chunk.byte_range_start as usize;
         let col_len = chunk.total_compressed as usize;
         let compression: parquet2::compression::Compression = chunk
@@ -242,15 +253,6 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             column_name,
             repetition,
         );
-
-        let col_info = QdbMetaCol {
-            column_type,
-            column_top: parquet_meta_reader.column_top(column_idx)? as usize,
-            format,
-            ascii,
-        };
-        let buf_idx = column_offset + dest_col_idx;
-        let column_chunk_bufs = &mut row_group_bufs.column_bufs[buf_idx];
 
         match decode_column_chunk_filtered_with_params::<FILL_NULLS>(
             ctx,

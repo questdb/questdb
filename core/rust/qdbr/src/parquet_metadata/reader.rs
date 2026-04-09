@@ -138,12 +138,7 @@ impl<'a> ParquetMetaReader<'a> {
                 .expect("slice is 4 bytes"),
         );
 
-        let footer = Footer::new(
-            footer_data,
-            footer_length,
-            header.feature_flags(),
-            header.column_count(),
-        )?;
+        let footer = Footer::new(footer_data, footer_length)?;
 
         Ok(Self { data, header, footer, footer_offset })
     }
@@ -199,15 +194,6 @@ impl<'a> ParquetMetaReader<'a> {
         self.header.column_name(desc)
     }
 
-    /// Returns the column top for the column at `index`.
-    /// Returns 0 when the FEATURE_COLUMN_TOPS flag is not set.
-    pub fn column_top(&self, index: usize) -> ParquetResult<u64> {
-        if let Some(top) = self.footer.column_top(index)? {
-            return Ok(top);
-        }
-        self.header.column_top(index)
-    }
-
     /// Returns the sorting column index at position `i`.
     pub fn sorting_column(&self, i: usize) -> ParquetResult<u32> {
         self.header.sorting_column(i)
@@ -252,11 +238,6 @@ impl<'a> ParquetMetaReader<'a> {
     pub fn feature_flags(&self) -> crate::parquet_metadata::types::HeaderFeatureFlags {
         self.header.feature_flags()
     }
-
-    pub fn has_footer_column_tops_override(&self) -> bool {
-        self.footer.has_column_tops_override()
-    }
-
     /// Returns the raw file data slice.
     pub fn data(&self) -> &'a [u8] {
         self.data
@@ -503,74 +484,6 @@ mod tests {
         assert_eq!(reader.sorting_column_count(), 2);
         assert_eq!(reader.sorting_column(0).unwrap(), 0);
         assert_eq!(reader.sorting_column(1).unwrap(), 1);
-    }
-
-    #[test]
-    fn column_tops_through_reader() {
-        let mut w = ParquetMetaWriter::new();
-        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        w.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
-        w.set_column_top(0, 256);
-
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
-        reader.verify_checksum().unwrap();
-
-        assert_eq!(reader.column_top(0).unwrap(), 256);
-        assert_eq!(reader.column_top(1).unwrap(), 0);
-    }
-
-    #[test]
-    fn footer_column_tops_override_header_values() {
-        let mut w = ParquetMetaWriter::new();
-        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        w.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
-        w.set_column_top(0, 256);
-        w.set_footer_column_tops(&[0, 9]);
-
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
-
-        assert!(reader.feature_flags().has_column_tops());
-        assert!(reader.has_footer_column_tops_override());
-        assert_eq!(reader.column_top(0).unwrap(), 0);
-        assert_eq!(reader.column_top(1).unwrap(), 9);
-    }
-
-    #[test]
-    fn footer_column_tops_can_enable_feature_without_nonzero_header_tops() {
-        let mut w = ParquetMetaWriter::new();
-        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        w.set_footer_column_tops(&[5]);
-
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
-
-        assert!(reader.feature_flags().has_column_tops());
-        assert!(reader.has_footer_column_tops_override());
-        assert_eq!(reader.column_top(0).unwrap(), 5);
-    }
-
-    #[test]
-    fn crc_covers_column_tops_section() {
-        let mut w = ParquetMetaWriter::new();
-        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        w.set_column_top(0, 42);
-
-        let (mut bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
-        reader.verify_checksum().unwrap();
-
-        // Corrupt a byte in the column tops section.
-        let top_bytes = 42u64.to_le_bytes();
-        let pos = bytes
-            .windows(8)
-            .position(|w| w == top_bytes)
-            .expect("should find top value in file");
-        bytes[pos] ^= 0xFF;
-
-        let reader2 = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
-        assert!(reader2.verify_checksum().is_err());
     }
 
     #[test]

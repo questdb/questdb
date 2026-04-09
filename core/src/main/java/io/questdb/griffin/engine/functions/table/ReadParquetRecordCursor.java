@@ -72,6 +72,13 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Page frame cursor for single-threaded read_parquet() SQL function.
+ * <p>
+ * This cursor currently reads external parquet files via {@link PartitionDecoder},
+ * which materializes all requested chunks. It does not currently understand the
+ * `_pm` zero-pointer all-null convention used by {@code ParquetMetaPartitionDecoder}.
+ * If {@code read_parquet()} ever starts using `_pm`, the getters in this class
+ * must first be taught to treat {@code dataPtr == 0 && auxPtr == 0} as a logical
+ * all-null chunk instead of dereferencing the pointers directly.
  */
 public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetRecordCursor.class);

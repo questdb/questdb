@@ -81,9 +81,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
     private static final int EXPECTED_FORMAT_VERSION = 1;
 
-    // Feature flags
-    private static final long FEATURE_COLUMN_TOPS = 1L;
-
     // Header offsets
     private static final int HEADER_FORMAT_VERSION_OFF = 0;
     private static final int HEADER_FEATURE_FLAGS_OFF = 4;
@@ -131,10 +128,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
     private long addr;
     private int columnCount;
-    // Address of the column tops section (valid only when FEATURE_COLUMN_TOPS is set).
-    private long columnTopsAddr;
-    // Address of the footer-scoped column tops override section in the active footer.
-    private long footerColumnTopsAddr;
     private long featureFlags;
     private long fileSize;
     private long footerAddr;
@@ -187,14 +180,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
         this.rowGroupCount = Unsafe.getUnsafe().getInt(this.footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
 
-        // Locate column tops section if the feature flag is set.
-        if ((featureFlags & FEATURE_COLUMN_TOPS) != 0) {
-            this.columnTopsAddr = computeNamesAreaEnd(addr, columnCount);
-        } else {
-            this.columnTopsAddr = 0;
-        }
-
-        this.footerColumnTopsAddr = 0;
         final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
         final long footerLengthUnsigned = Integer.toUnsignedLong(footerLength);
         if (footerLengthUnsigned < baseFooterLength) {
@@ -204,17 +189,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(']');
         }
         final long footerExtra = footerLengthUnsigned - baseFooterLength;
-        if ((featureFlags & FEATURE_COLUMN_TOPS) != 0) {
-            final long footerColumnTopsSize = (long) columnCount * Long.BYTES;
-            if (footerExtra != 0) {
-                if (footerExtra < footerColumnTopsSize) {
-                    throw CairoException.critical(0)
-                            .put("truncated _pm footer column tops section [available=").put(footerExtra)
-                            .put(", required=").put(footerColumnTopsSize)
-                            .put(']');
-                }
-                this.footerColumnTopsAddr = this.footerAddr + FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES;
-            }
+        if (footerExtra != 0) {
+            throw CairoException.critical(0)
+                    .put("unexpected _pm footer feature bytes [bytes=").put(footerExtra)
+                    .put(']');
         }
     }
 
@@ -242,8 +220,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.columnCount = 0;
         this.rowGroupCount = 0;
         this.featureFlags = 0;
-        this.columnTopsAddr = 0;
-        this.footerColumnTopsAddr = 0;
     }
 
     /**
@@ -360,19 +336,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_ID_OFF);
     }
 
-    /**
-     * Returns the column top for the given column.
-     * Prefers the footer-scoped column tops override from the active footer
-     * snapshot, then falls back to the legacy header section. Returns 0
-     * otherwise (all columns start at row 0).
-     */
     public long getColumnTop(int columnIndex) {
-        if (footerColumnTopsAddr != 0) {
-            return Unsafe.getUnsafe().getLong(footerColumnTopsAddr + (long) columnIndex * 8);
-        }
-        if (columnTopsAddr != 0) {
-            return Unsafe.getUnsafe().getLong(columnTopsAddr + (long) columnIndex * 8);
-        }
         return 0;
     }
 
@@ -498,26 +462,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             int filterCount,
             long filterBufEnd
     );
-
-    /**
-     * Computes the byte offset past the last name string entry.
-     * Name entries are stored as raw UTF-8 bytes (length from descriptor's NAME_LENGTH).
-     * The end of the names area is where header feature sections begin.
-     */
-    private static long computeNamesAreaEnd(long baseAddr, int columnCount) {
-        long end = baseAddr + HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
-        for (int i = 0; i < columnCount; i++) {
-            long descAddr = baseAddr + HEADER_FIXED_SIZE + (long) i * COLUMN_DESCRIPTOR_SIZE;
-            long nameOffset = Unsafe.getUnsafe().getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
-            int nameLength = Unsafe.getUnsafe().getInt(descAddr + COL_DESC_NAME_LENGTH_OFF);
-            long entryEnd = baseAddr + nameOffset + nameLength;
-            if (entryEnd > end) {
-                end = entryEnd;
-            }
-        }
-        return end;
-    }
-
     private static native long createNativeReader(long addr, long fileSize);
 
     private static native void destroyNativeReader(long ptr);

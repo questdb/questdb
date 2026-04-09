@@ -25,12 +25,15 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
@@ -985,13 +988,12 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
     @Test
     public void testNativeToParquetRoundTripColumnTopEqualsRowCount() throws Exception {
-        // When a column is added to a single-partition table, column_top ==
-        // partitionRowCount. The parquet encoder stores column_top = rowCount
-        // in the file metadata. The Rust decoder skips columns whose
-        // column_top >= row_group_size, producing 0-byte native files.
-        // zeroColumnTopsAfterParquetRewrite must NOT zero these column tops,
-        // otherwise the subsequent parquet→native conversion opens empty
-        // native files and crashes (SIGBUS / AssertionError).
+        // When a column is added after all rows already exist, the native
+        // partition starts with column_top == partitionRowCount. Converting to
+        // parquet must materialize those nulls into the parquet chunks and
+        // normalize the parquet-side top to 0. The parquet→native round-trip
+        // must then rebuild full-size native null columns rather than treating
+        // the all-null parquet chunks as empty data.
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -1030,6 +1032,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // native → parquet → native round-trip
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
+            assertPmAllNullChunkUsesZeroPointers("x", "n", ColumnType.LONG, "v", ColumnType.VARCHAR_SLICE);
             assertSql(expected, "SELECT * FROM x");
 
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
@@ -1038,7 +1041,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
             assertSql(expected, "SELECT * FROM x");
 
-            // Second round-trip to verify column tops survive correctly
+            // Second round-trip to verify the normalized representation remains stable.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
@@ -1116,14 +1119,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
     @Test
     public void testNativeToParquetRoundTripNonExistentColumn() throws Exception {
-        // When a column is added at a later partition, earlier partitions have
-        // no column-version record for it (getColumnTop returns -1). The
-        // parquet encoder adds the column as all-NULL with
-        // column_top = partitionRowCount. The Rust decoder skips it entirely.
-        // zeroColumnTopsAfterParquetRewrite must NOT create a column-version
-        // record with column_top = 0 for these columns, otherwise a
-        // subsequent parquet→native conversion maps 0-byte files expecting
-        // partitionRowCount * elementSize bytes.
+        // When a column is added on a later partition, earlier partitions have
+        // no native column files for it (getColumnTop returns -1). Converting
+        // such a partition to parquet must synthesize all-null chunks, and the
+        // parquet→native round-trip must materialize full native null columns
+        // from those chunks even though the parquet-side top is normalized to 0.
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -1172,7 +1172,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
             assertSql(expected01, "SELECT * FROM x WHERE ts < '2020-01-02'");
 
-            // Second round-trip to verify column tops survive correctly
+            // Second round-trip to verify the normalized representation remains stable.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
@@ -3164,6 +3164,51 @@ public class ParquetWriteTest extends AbstractCairoTest {
     private static int countPartitionDirs(File tableDir, String prefix) {
         String[] dirs = tableDir.list((dir, name) -> name.startsWith(prefix));
         return dirs != null ? dirs.length : 0;
+    }
+
+    private void assertPmAllNullChunkUsesZeroPointers(
+            String tableName,
+            String fixedColumnName,
+            int fixedColumnType,
+            String varColumnName,
+            int varColumnType
+    ) {
+        try (TableReader reader = getReader(tableName)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+
+                reader.openPartition(i);
+                ParquetMetaPartitionDecoder decoder = reader.getAndInitParquetMetaPartitionDecoder(i);
+                try (
+                        RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        DirectIntList parquetColumns = new DirectIntList(4, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)
+                ) {
+                    final int fixedColumnIndex = decoder.metadata().getColumnIndex(fixedColumnName);
+                    final int varColumnIndex = decoder.metadata().getColumnIndex(varColumnName);
+                    Assert.assertTrue(fixedColumnName + " should exist in parquet metadata", fixedColumnIndex >= 0);
+                    Assert.assertTrue(varColumnName + " should exist in parquet metadata", varColumnIndex >= 0);
+
+                    parquetColumns.add(fixedColumnIndex);
+                    parquetColumns.add(fixedColumnType);
+                    parquetColumns.add(varColumnIndex);
+                    parquetColumns.add(varColumnType);
+
+                    final int rowGroupSize = (int) decoder.metadata().getRowGroupSize(0);
+                    decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, 0, 0, rowGroupSize);
+
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataPtr(0));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataSize(0));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataPtr(1));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataSize(1));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkAuxPtr(1));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkAuxSize(1));
+                }
+                return;
+            }
+        }
+        Assert.fail("should find parquet partition");
     }
 
     private long getPartitionNameTxn(String tableName, long partitionTimestamp) {

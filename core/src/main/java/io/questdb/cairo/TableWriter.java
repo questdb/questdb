@@ -1723,11 +1723,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            // Before updating column top, check and re-build indexes.
-            // copyOrRebuildColumnIndexes() must be called before zeroColumnTopsAfterParquetRewrite()
-            // and use the same logic that zeros the column top to re-write indexes.
+            // Before normalizing column tops, rebuild indexed symbol metadata
+            // using the same source tops that drove parquet encoding.
             copyOrRebuildColumnIndexes(partitionTimestamp, getTxn(), partitionRowCount);
-            zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, false);
+            zeroColumnTopsAfterParquetRewrite(partitionTimestamp);
         } catch (CairoException e) {
             LOG.error().$("could not convert partition to parquet [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
@@ -1904,6 +1903,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
                         final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
 
+                        if (srcDataPtr == 0 && srcAuxPtr == 0) {
+                            final long newDataVecBytesWritten = appendAllNullVarSizeChunk(
+                                    columnTypeDriver,
+                                    dstAuxFd,
+                                    dstDataFd,
+                                    rowGroupIndex,
+                                    rowGroupRowCount,
+                                    dataVecBytesWritten
+                            );
+                            columnFdAndDataSize.set(3L * columnIndex + 2, newDataVecBytesWritten);
+                            continue;
+                        }
+
                         if (rowGroupIndex > 0) {
                             // Adjust offsets in the auxiliary vector
                             columnTypeDriver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
@@ -1918,7 +1930,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         columnFdAndDataSize.set(3L * columnIndex + 2, dataVecBytesWritten + srcDataSize);
                     } else {
                         final long dstFixFd = columnFdAndDataSize.get(3L * columnIndex + 1);
-                        appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
+                        if (srcDataPtr == 0) {
+                            appendAllNullFixedChunk(dstFixFd, columnType, rowGroupRowCount);
+                        } else {
+                            appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
+                        }
                     }
                 }
             }
@@ -3590,6 +3606,77 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void appendAllNullFixedChunk(long dstFixFd, int columnType, long rowCount) {
+        final long fixSize = rowCount * ColumnType.sizeOf(columnType);
+        if (fixSize == 0) {
+            return;
+        }
+
+        long nullFixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            TableUtils.setNull(columnType, nullFixBuf, rowCount);
+            appendBuffer(dstFixFd, nullFixBuf, fixSize);
+        } finally {
+            Unsafe.free(nullFixBuf, fixSize, MemoryTag.NATIVE_TABLE_WRITER);
+        }
+    }
+
+    private long appendAllNullVarSizeChunk(
+            ColumnTypeDriver columnTypeDriver,
+            long dstAuxFd,
+            long dstDataFd,
+            int rowGroupIndex,
+            long rowCount,
+            long dataVecBytesWritten
+    ) {
+        final long dataSize = rowCount * columnTypeDriver.getDataVectorMinEntrySize();
+        final long auxSize = columnTypeDriver.getAuxVectorSize(rowCount);
+
+        long nullDataBuf = 0;
+        long nullAuxBuf = 0;
+        try {
+            if (dataSize > 0) {
+                nullDataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_TABLE_WRITER);
+                columnTypeDriver.setDataVectorEntriesToNull(nullDataBuf, rowCount);
+                appendBuffer(dstDataFd, nullDataBuf, dataSize);
+            }
+
+            if (auxSize > 0) {
+                nullAuxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_TABLE_WRITER);
+                columnTypeDriver.setFullAuxVectorNull(nullAuxBuf, rowCount);
+
+                if (dataVecBytesWritten > 0 && rowCount > 0) {
+                    columnTypeDriver.shiftCopyAuxVector(
+                            -dataVecBytesWritten,
+                            nullAuxBuf,
+                            0,
+                            rowCount - 1,
+                            nullAuxBuf,
+                            auxSize
+                    );
+                }
+
+                long auxPtr = nullAuxBuf;
+                long auxBytes = auxSize;
+                if (rowGroupIndex > 0) {
+                    final long adjust = columnTypeDriver.getMinAuxVectorSize();
+                    auxPtr += adjust;
+                    auxBytes -= adjust;
+                }
+                appendBuffer(dstAuxFd, auxPtr, auxBytes);
+            }
+
+            return dataVecBytesWritten + dataSize;
+        } finally {
+            if (nullAuxBuf != 0) {
+                Unsafe.free(nullAuxBuf, auxSize, MemoryTag.NATIVE_TABLE_WRITER);
+            }
+            if (nullDataBuf != 0) {
+                Unsafe.free(nullDataBuf, dataSize, MemoryTag.NATIVE_TABLE_WRITER);
+            }
+        }
+    }
+
     private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean allowPartial) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
         if (!isCommitDedupMode()
@@ -4461,15 +4548,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Copies or rebuilds bitmap index files for indexed symbol columns from the
      * old partition directory ({@code path}) to the new one ({@code other}).
-     * For columns whose column top will be zeroed, the index is rebuilt with
-     * explicit NULL entries for {@code [0, columnTop)}.  For other indexed
-     * columns the existing {@code .k}/{@code .v} files are hard-linked.
+     * For columns whose column top will be normalized to zero, the index is
+     * rebuilt with explicit NULL entries for any rows that were previously
+     * covered by the top. For other indexed columns the existing
+     * {@code .k}/{@code .v} files are hard-linked.
      *
      * @param partitionTimestamp  partition timestamp
      * @param newPartitionNameTxn name txn of the new (destination) partition directory
      * @param partitionRowCount   total row count of the partition
      */
     private void copyOrRebuildColumnIndexes(long partitionTimestamp, long newPartitionNameTxn, long partitionRowCount) {
+        if (partitionRowCount == 0) {
+            return;
+        }
+
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         final long oldPartitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
@@ -4485,12 +4577,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                if (colTop == -1 || colTop >= partitionRowCount) {
-                    continue; // column does not exist or has no data in this partition
+                if (colTop == -1) {
+                    continue; // column does not exist in this partition
                 }
 
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+                final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
 
                 if (colTop > 0) {
                     if (indexWriter == null) {
@@ -4498,26 +4591,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     // Column top will be zeroed: rebuild index with explicit NULL
-                    // entries for [0, colTop).  After zeroing, BitmapIndexFwdReader
-                    // no longer synthesizes those NULLs.
-                    final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-                    final long dataSize = (partitionRowCount - colTop) * Integer.BYTES;
-                    final long dataAddr = TableUtils.mapRO(ff, dFile(path.trimTo(srcDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                    // entries for rows previously covered by the top. When the
+                    // top spans the whole partition, synthesize an all-NULL
+                    // index without reading a data column file.
+                    indexWriter.of(other.trimTo(dstDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
                     try {
-                        indexWriter.of(other.trimTo(dstDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
-
                         final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
-                        for (long row = 0; row < colTop; row++) {
-                            indexWriter.add(nullKey, row);
+                        if (colTop >= partitionRowCount) {
+                            for (long row = 0; row < partitionRowCount; row++) {
+                                indexWriter.add(nullKey, row);
+                            }
+                            indexWriter.setMaxValue(partitionRowCount - 1);
+                        } else {
+                            final long dataSize = (partitionRowCount - colTop) * Integer.BYTES;
+                            final long dataAddr = TableUtils.mapRO(ff, dFile(path.trimTo(srcDirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                            try {
+                                for (long row = 0; row < colTop; row++) {
+                                    indexWriter.add(nullKey, row);
+                                }
+                                for (long row = colTop; row < partitionRowCount; row++) {
+                                    final int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dataAddr + (row - colTop) * Integer.BYTES));
+                                    indexWriter.add(key, row);
+                                }
+                                indexWriter.setMaxValue(partitionRowCount - 1);
+                            } finally {
+                                ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                            }
                         }
-                        for (long row = colTop; row < partitionRowCount; row++) {
-                            final int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dataAddr + (row - colTop) * Integer.BYTES));
-                            indexWriter.add(key, row);
-                        }
-                        indexWriter.setMaxValue(partitionRowCount - 1);
                     } finally {
                         indexWriter.close();
-                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
                     }
                 } else {
                     // No column top change: hard link existing index files.
@@ -6812,11 +6914,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                         partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
                         txWriter.setPartitionParquetFormat(partitionTimestamp, parquetMetadataFileSize);
-                        // After O3 rewrite, the Rust updater zeros all column_tops
-                        // in the parquet metadata (update.rs), so the decoder will
-                        // produce data for every column.  Zero ALL column tops
-                        // here, including previously non-existent columns.
-                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
+                        // QuestDB-managed parquet snapshots always materialize
+                        // null prefixes into the chunk data, so column tops are
+                        // normalized to zero after every parquet rewrite.
+                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp);
                         // Parquet rewrite replaces the partition directory (old dir
                         // queued for removal). Bump the partition table version so
                         // readers do a full reconciliation and drop stale references
@@ -11082,31 +11183,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * After a parquet (re)write, zero column tops so that column-version
-     * records match the parquet content.
-     *
-     * @param zeroAllColumns when {@code true}, zero column tops for ALL
-     *                       columns (including ones that had no data at all).
-     *                       Use {@code true} for the O3 parquet-rewrite path
-     *                       where the Rust updater zeros all column_tops in
-     *                       the parquet metadata, so the decoder produces data
-     *                       for every column.  Use {@code false} for
-     *                       native→parquet conversion, where the encoder
-     *                       preserves the original column_top.  The Rust
-     *                       decoder skips columns whose
-     *                       column_top >= row_group_size (i.e. all-NULL
-     *                       columns), so only columns with partial data
-     *                       (0 < column_top < partitionRowCount) should be
-     *                       zeroed — those are the ones where the encoder
-     *                       fills the top region with NULLs and the decoder
-     *                       produces all rows.
+     * After a parquet write or rewrite, zero column tops so that column-version
+     * records match the normalized parquet content. QuestDB-managed parquet
+     * snapshots always materialize null prefixes into the chunk data, so file-
+     * level tops are never needed after the write completes.
      */
-    private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
+    private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp) {
         final int columnCount = metadata.getColumnCount();
         for (int column = 0; column < columnCount; column++) {
             if (metadata.getColumnType(column) > 0) {
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, column);
-                if (zeroAllColumns ? (colTop != 0) : (colTop > 0 && colTop < partitionRowCount)) {
+                if (colTop != 0) {
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, column, 0);
                 }
             }

@@ -33,19 +33,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Regression test for stale-reader safety when `_pm` column tops change.
+ * Regression test for stale-reader safety during append-only `_pm` updates.
  *
- * <p>When a parquet partition's `_pm` header carries a non-zero column top
- * (e.g. a partition that pre-existed an `ALTER TABLE ADD COLUMN`), the next O3
- * merge needs to zero the effective top because the merged parquet output now
- * materializes the null prefix in page data. The `_pm` updater must express
- * that change append-only so that any concurrent {@link TableReader} holding
- * the earlier {@code parquetMetaFileSize} continues to resolve to a consistent
- * older snapshot.
- *
- * <p>The fix appends a new footer-scoped column-top override instead of
- * rewriting the existing `_pm` from offset 0. Older readers keep seeing the
- * header-based snapshot, while fresh readers pick up the new footer snapshot.
+ * <p>QuestDB-managed parquet normalizes {@code column_top} to 0 when a
+ * partition is converted or rewritten. The stale-reader guarantee therefore no
+ * longer depends on mutating top metadata. It still depends on append-only
+ * footer snapshots: a reader pinned to an older {@code parquetMetaFileSize}
+ * must keep resolving a consistent older `_pm` snapshot while a fresh reader
+ * sees the new footer after the O3 merge commits.
  */
 public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
@@ -53,7 +48,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     public void testStaleReaderSurvivesO3MergeWithColumnTops() throws Exception {
         // Force the in-place update path to be the default by making rewrite
         // thresholds permissive. The merge must stay append-only even though
-        // effective column tops change across the snapshot boundary.
+        // the parquet snapshot itself changes.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
@@ -90,34 +85,31 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute("INSERT INTO x(a, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
             drainWalQueue();
 
-            // ALTER TABLE ADD COLUMN updates the column-version writer with a
-            // non-zero column top for the new column on every existing
-            // partition. The next CONVERT TO PARQUET reads that column top
-            // straight into the parquet partition's `_pm` header.
+            // ALTER TABLE ADD COLUMN gives the new column a non-zero native
+            // column top on the existing partition. Converting to parquet must
+            // materialize that null prefix into the parquet chunks and publish
+            // an `_pm` snapshot with normalized top metadata.
             execute("ALTER TABLE x ADD COLUMN newcol DOUBLE");
             drainWalQueue();
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            // Sanity-check the precondition: the parquet partition's `_pm`
-            // header records a non-zero column top for the new column.
+            // Sanity-check the new invariant: freshly written parquet metadata
+            // exposes normalized tops even when the source native partition had
+            // a non-zero top for the added column.
             try (TableReader reader = getReader("x")) {
                 int parquetIdx = findParquetPartitionIndex(reader);
                 Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
                 reader.openPartition(parquetIdx);
                 ParquetMetaFileReader meta = reader.getAndInitParquetMetaPartitionDecoder(parquetIdx).metadata();
-                boolean hasNonZeroTop = false;
                 for (int c = 0, n = meta.getColumnCount(); c < n; c++) {
-                    if (meta.getColumnTop(c) != 0) {
-                        hasNonZeroTop = true;
-                        break;
-                    }
+                    Assert.assertEquals(
+                            "expected normalized parquet `_pm` column tops after ADD COLUMN + CONVERT",
+                            0,
+                            meta.getColumnTop(c)
+                    );
                 }
-                Assert.assertTrue(
-                        "expected the parquet `_pm` to record a non-zero column top after ADD COLUMN + CONVERT",
-                        hasNonZeroTop
-                );
                 Assert.assertTrue(
                         "expected the parquet partition to have at least 2 row groups",
                         meta.getRowGroupCount() >= 2
@@ -137,9 +129,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 Assert.assertTrue("partition should have rows", sizeBefore > 0);
 
                 // O3 insert into the parquet partition with values for the
-                // newly-added column. The merge must zero the effective column
-                // top for the new column in the active `_pm` snapshot while
-                // leaving the old bytes intact for the stale reader.
+                // newly-added column. The merge publishes a new footer snapshot
+                // while leaving the old bytes intact for the stale reader.
                 execute(
                         """
                                 INSERT INTO x(a, newcol, ts) VALUES

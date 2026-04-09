@@ -147,9 +147,6 @@ pub fn convert_from_parquet(
             }
         }
 
-        let top = qdb_meta
-            .map(|meta| meta.schema[i].column_top as u64)
-            .unwrap_or(0);
         let phys_type = col_desc.descriptor.primitive_type.physical_type;
         let physical_type = physical_type_to_u8(phys_type);
         let fixed_byte_len = match phys_type {
@@ -168,9 +165,6 @@ pub fn convert_from_parquet(
             max_rep_level,
             max_def_level,
         );
-        if top != 0 {
-            writer.set_column_top(i, top);
-        }
     }
 
     // Add row groups.
@@ -645,7 +639,6 @@ fn build_column_chunk_from_thrift(
 /// so that `parquet_metadata` doesn't depend on `parquet_write`.
 pub struct ParquetMetaColumnInfo<'a> {
     pub name: &'a str,
-    pub top: u64,
     pub col_type_code: i32,
     pub col_type_tag: Option<ColumnTypeTag>,
     pub id: i32,
@@ -695,7 +688,7 @@ pub fn generate_parquet_metadata(
         writer.add_sorting_column(sc_idx);
     }
 
-    for (i, col) in columns.iter().enumerate() {
+    for col in columns {
         writer.add_column(
             col.name,
             col.id,
@@ -706,9 +699,6 @@ pub fn generate_parquet_metadata(
             col.max_rep_level,
             col.max_def_level,
         );
-        if col.top != 0 {
-            writer.set_column_top(i, col.top);
-        }
     }
 
     let col_type_tags: Vec<Option<ColumnTypeTag>> =
@@ -750,12 +740,6 @@ pub fn generate_parquet_metadata(
 /// the resulting file size. Returns an error when the new row group count is
 /// smaller than the existing one (compaction is not supported in the in-place
 /// path; the writer's row-group entry list cannot drop existing references).
-/// Column tops are treated as snapshot metadata: when they change and the file
-/// already advertises the `COLUMN_TOPS` capability bit, the updater appends a
-/// new footer-scoped override section instead of rewriting the header. The one
-/// unsupported case is introducing a new non-zero top on a file whose header
-/// never carried the `COLUMN_TOPS` bit, because append-only updates cannot
-/// change the header capability flags for stale readers.
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_pm: &[u8],
@@ -830,24 +814,6 @@ pub fn update_parquet_metadata(
         existing_pm,
         existing_footer_offset,
     )?;
-
-    let requested_tops: Vec<u64> = columns.iter().map(|c| c.top).collect();
-    let column_tops_changed = requested_tops.iter().enumerate().any(|(i, &top)| {
-        existing_reader
-            .column_top(i)
-            .map(|existing| existing != top)
-            .unwrap_or(true)
-    });
-    if column_tops_changed {
-        let requested_has_non_zero_top = requested_tops.iter().any(|&top| top != 0);
-        if requested_has_non_zero_top && !existing_reader.feature_flags().has_column_tops() {
-            return Err(parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "_pm in-place update cannot introduce non-zero column tops without the COLUMN_TOPS header feature bit; caller must escalate to rewrite mode (new nameTxn directory)"
-            ));
-        }
-        updater.set_footer_column_tops(&requested_tops);
-    }
 
     let col_type_tags: Vec<Option<ColumnTypeTag>> =
         columns.iter().map(|c| c.col_type_tag).collect();
@@ -2312,7 +2278,6 @@ mod tests {
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
-                    top: cm.map(|c| c.column_top as u64).unwrap_or(0),
                     col_type_code,
                     col_type_tag,
                     id: field_info.id.unwrap_or(-1),
@@ -2388,7 +2353,6 @@ mod tests {
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
-                    top: cm.map(|c| c.column_top as u64).unwrap_or(0),
                     col_type_code: cm.map(|c| c.column_type.code()).unwrap_or(-1),
                     col_type_tag,
                     id: field_info.id.unwrap_or(-1),
@@ -2487,7 +2451,6 @@ mod tests {
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
-                    top: 0,
                     col_type_code: cm.map(|c| c.column_type.code()).unwrap_or(-1),
                     col_type_tag,
                     id: field_info.id.unwrap_or(-1),
@@ -2504,118 +2467,6 @@ mod tests {
                 }
             })
             .collect()
-    }
-
-    #[test]
-    fn update_with_column_top_change_appends_footer_override() {
-        let parquet_data = write_multi_column_parquet(80);
-        let mut cursor = Cursor::new(&parquet_data);
-        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
-        let qdb_meta = extract_qdb_meta_from(&metadata);
-        let thrift_meta = metadata.into_thrift();
-
-        let mut cursor2 = Cursor::new(&parquet_data);
-        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
-        let schema_columns = metadata2.schema_descr.columns();
-
-        let mut col_infos_with_top = col_infos_from_schema(schema_columns, qdb_meta.as_ref());
-        col_infos_with_top[0].top = 42;
-
-        let (initial_pm, _) = generate_parquet_metadata(
-            &col_infos_with_top,
-            schema_columns,
-            &thrift_meta.row_groups,
-            0,
-            &[0],
-            100,
-            50,
-            &[],
-            0,
-        )
-        .unwrap();
-        let initial_size = initial_pm.len() as u64;
-
-        let initial_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
-        assert_eq!(initial_reader.column_top(0).unwrap(), 42);
-        assert!(!initial_reader.has_footer_column_tops_override());
-
-        let col_infos_zeroed = col_infos_from_schema(schema_columns, qdb_meta.as_ref());
-        let result = update_parquet_metadata(
-            &initial_pm,
-            initial_size,
-            &col_infos_zeroed,
-            schema_columns,
-            &thrift_meta.row_groups,
-            100,
-            50,
-            &[],
-            0,
-        )
-        .unwrap();
-
-        let mut full_file = initial_pm.clone();
-        full_file.extend_from_slice(&result.bytes);
-        let new_reader =
-            ParquetMetaReader::from_file_size(&full_file, result.new_file_size).unwrap();
-        assert!(new_reader.has_footer_column_tops_override());
-        assert_eq!(new_reader.column_top(0).unwrap(), 0);
-
-        let old_reader = ParquetMetaReader::from_file_size(&full_file, initial_size).unwrap();
-        assert!(!old_reader.has_footer_column_tops_override());
-        assert_eq!(old_reader.column_top(0).unwrap(), 42);
-    }
-
-    #[test]
-    fn update_with_new_nonzero_column_top_requires_rewrite() {
-        let parquet_data = write_multi_column_parquet(80);
-        let mut cursor = Cursor::new(&parquet_data);
-        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
-        let qdb_meta = extract_qdb_meta_from(&metadata);
-        let thrift_meta = metadata.into_thrift();
-
-        let mut cursor2 = Cursor::new(&parquet_data);
-        let metadata2 = read_metadata_with_size(&mut cursor2, parquet_data.len() as u64).unwrap();
-        let schema_columns = metadata2.schema_descr.columns();
-
-        let col_infos_zeroed = col_infos_from_schema(schema_columns, qdb_meta.as_ref());
-        let (initial_pm, _) = generate_parquet_metadata(
-            &col_infos_zeroed,
-            schema_columns,
-            &thrift_meta.row_groups,
-            0,
-            &[0],
-            100,
-            50,
-            &[],
-            0,
-        )
-        .unwrap();
-        let initial_size = initial_pm.len() as u64;
-
-        let mut col_infos_with_top = col_infos_from_schema(schema_columns, qdb_meta.as_ref());
-        col_infos_with_top[0].top = 42;
-        let err = update_parquet_metadata(
-            &initial_pm,
-            initial_size,
-            &col_infos_with_top,
-            schema_columns,
-            &thrift_meta.row_groups,
-            100,
-            50,
-            &[],
-            0,
-        )
-        .unwrap_err();
-
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("cannot introduce non-zero column tops"),
-            "expected non-zero column top rewrite error, got: {msg}"
-        );
-        assert!(
-            msg.contains("escalate to rewrite mode"),
-            "expected escalation hint in error, got: {msg}"
-        );
     }
 
     #[test]
@@ -2787,7 +2638,6 @@ mod tests {
 
         let col_infos = vec![ParquetMetaColumnInfo {
             name: "ts",
-            top: 0,
             col_type_code: ColumnTypeTag::Timestamp.into_type().code(),
             col_type_tag: Some(ColumnTypeTag::Timestamp),
             id: 0,
@@ -2934,7 +2784,6 @@ mod tests {
                 flags = flags.with_repetition(FieldRepetition::from(field_info.repetition));
                 ParquetMetaColumnInfo {
                     name: &field_info.name,
-                    top: 0,
                     col_type_code,
                     col_type_tag,
                     id: field_info.id.unwrap_or(-1),

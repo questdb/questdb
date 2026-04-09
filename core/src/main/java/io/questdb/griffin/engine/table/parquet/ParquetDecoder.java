@@ -44,6 +44,18 @@ import io.questdb.std.DirectLongList;
  * decoding, file identity checks, and column metadata for column-ID mapping.
  * Row group skipping is intentionally not part of this interface — see
  * {@link ParquetRowGroupSkipper} for the dedicated pruning contract.
+ * <p>
+ * Buffer contract:
+ * <ul>
+ *   <li>{@link PartitionDecoder} materializes decoded native buffers for every requested chunk.</li>
+ *   <li>{@link ParquetMetaPartitionDecoder} may represent an all-null decoded chunk as
+ *       {@code dataPtr == 0 && auxPtr == 0 && dataSize == 0 && auxSize == 0} to avoid
+ *       fetching and materializing parquet bytes.</li>
+ * </ul>
+ * Callers must therefore treat zero pointers as "logical all-null chunk" rather than
+ * blindly dereferencing them. This is already the convention used by the page-frame path.
+ * If {@code read_parquet()} ever starts using {@code _pm}, its direct row-group consumers
+ * must honor the same contract.
  *
  * @see PageFrameMemoryPool
  * @see ParquetRowGroupSkipper
@@ -52,12 +64,16 @@ public interface ParquetDecoder {
 
     /**
      * Decodes the specified row range from a row group into native buffers.
+     * For {@code _pm}-backed decode, a chunk that is known to be all-null may be
+     * returned as zero data/aux pointers and zero sizes instead of materialized
+     * null buffers.
      *
      * @param buffers   target buffers that receive decoded column data
      * @param columns   {@code [parquet_column_index, column_type]} pairs
      * @param rowGroup  zero-based row group index
      * @param rowLo     first row within the row group (inclusive)
      * @param rowHi     last row within the row group (exclusive)
+     *
      * @return number of rows decoded
      */
     int decodeRowGroup(

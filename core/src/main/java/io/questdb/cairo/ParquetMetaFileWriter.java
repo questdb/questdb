@@ -42,10 +42,6 @@ public class ParquetMetaFileWriter {
 
     public static native void addColumn(long writerPtr, long namePtr, int nameLen, int id, int colType, int flags, int fixedByteLen, int physicalType, int maxRepLevel, int maxDefLevel);
 
-    public static native void setColumnTop(long writerPtr, int index, long top);
-
-    public static native void setFooterColumnTop(long writerPtr, int index, long top);
-
     public static native void addSortingColumn(long writerPtr, int index);
 
     public static native void addRowGroup(long writerPtr, long numRows) throws CairoException;
