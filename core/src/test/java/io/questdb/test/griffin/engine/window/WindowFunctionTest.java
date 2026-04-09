@@ -13507,6 +13507,89 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionOrderByDerivedJoinAliasChain() throws Exception {
+        // Derived join emits aliases built on top of other aliases. Window ORDER BY should
+        // be able to follow the alias chain back to base columns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab1 (ts TIMESTAMP, grp SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, score INT, grp SYMBOL) TIMESTAMP(ts)");
+
+            execute("""
+                    INSERT INTO tab1 VALUES
+                        ('2024-01-01T00:00:00Z', 'a'),
+                        ('2024-01-02T00:00:00Z', 'b'),
+                        ('2024-01-03T00:00:00Z', 'c')
+                    """);
+            execute("""
+                    INSERT INTO tab2 VALUES
+                        ('2024-01-01T00:00:00Z', 5, 'a'),
+                        ('2024-01-02T00:00:00Z', 7, 'b'),
+                        ('2024-01-03T00:00:00Z', 6, 'c')
+                    """);
+
+            assertQuery(
+                    """
+                            z\trn
+                            7\t1
+                            8\t2
+                            9\t3
+                            """,
+                    """
+                            SELECT d.y AS z, row_number() OVER (ORDER BY z) AS rn
+                            FROM tab1 t1
+                            JOIN (
+                                SELECT grp, x + 1 AS y
+                                FROM (
+                                    SELECT grp, score + 1 AS x
+                                    FROM tab2
+                                )
+                            ) d ON t1.grp = d.grp
+                            ORDER BY z
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testWindowFunctionOrderByJoinedTableAliasOnly() throws Exception {
+        // Alias coming from a joined table is only referenced in the window ORDER BY clause.
+        // Even though it is not part of the final projection, it still must be resolvable.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, score INT, grp SYMBOL) TIMESTAMP(ts)");
+
+            execute("""
+                    INSERT INTO tab2 VALUES
+                        ('2024-01-01T00:00:00Z', 30, 'a'),
+                        ('2024-01-02T00:00:00Z', 10, 'b'),
+                        ('2024-01-03T00:00:00Z', 20, 'c')
+                    """);
+
+            assertQuery(
+                    """
+                            grp\trn
+                            a\t3
+                            b\t1
+                            c\t2
+                            """,
+                    """
+                            SELECT grp, row_number() OVER (ORDER BY x) AS rn
+                            FROM (
+                                SELECT grp, score AS x
+                                FROM tab2
+                            )
+                            ORDER BY grp
+                            """,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testWindowFunctionOrderByJoinedTableColumnAlias() throws Exception {
         // Regression test: A column coming from a joined table can be aliased in SELECT
         // and referenced via that alias inside a window ORDER BY clause.
