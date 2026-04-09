@@ -47,6 +47,539 @@ import static org.junit.Assert.*;
 public class CoveringIndexTest extends AbstractCairoTest {
 
     @Test
+    public void testCoveringIndexNextPartitionNullSymbolWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_null_part (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_null_part VALUES
+                    ('2025-01-01T00:00:00', 'A', 1.0, 10),
+                    ('2025-01-01T01:00:00', 'B', 2.0, 20),
+                    ('2025-01-01T02:00:00', 'A', 3.0, 30)
+                    """);
+            // Second partition with NULL symbol
+            execute("INSERT INTO t_null_part (ts) VALUES ('2025-01-02')");
+            drainWalQueue();
+
+            assertSql("""
+                    price\tqty
+                    1.0\t10
+                    3.0\t30
+                    """, "SELECT price, qty FROM t_null_part WHERE sym = 'A'");
+
+            // Nonexistent key should return empty across both partitions
+            assertSql("""
+                    price\tqty
+                    """, "SELECT price, qty FROM t_null_part WHERE sym = 'nonexistent'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionAfterO3Merge() throws Exception {
+        // O3CopyJob.updateIndex calls rollbackConditionally before writing.
+        // Before the fix, PostingIndexWriter.rollbackConditionally would trigger
+        // a destructive in-place re-encode of sealed generations, corrupting
+        // sidecar alignment and causing AIOOBE in ALP decode.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_cover (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_cover VALUES
+                    ('2024-01-01T10:00:00', 'A', 10.5, 100),
+                    ('2024-01-01T12:00:00', 'B', 20.5, 200),
+                    ('2024-01-01T14:00:00', 'A', 30.5, 300)
+                    """);
+            drainWalQueue();
+
+            // O3 insert into same partition triggers merge → rollbackConditionally
+            execute("""
+                    INSERT INTO t_o3_cover VALUES
+                    ('2024-01-01T09:00:00', 'A', 5.5, 50),
+                    ('2024-01-01T11:00:00', 'B', 15.5, 150),
+                    ('2024-01-01T13:00:00', 'A', 25.5, 250)
+                    """);
+            drainWalQueue();
+
+            // Verify covering data is readable (would crash with AIOOBE before the fix)
+            assertSql("""
+                    price\tqty
+                    5.5\t50
+                    10.5\t100
+                    25.5\t250
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_o3_cover WHERE sym = 'A'");
+
+            assertSql("""
+                    price\tqty
+                    15.5\t150
+                    20.5\t200
+                    """, "SELECT price, qty FROM t_o3_cover WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionAfterO3MergeMultiPartition() throws Exception {
+        // O3 merge across multiple partitions: each partition's posting index
+        // must survive rollbackConditionally without sidecar corruption.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_mp VALUES
+                    ('2024-01-01T12:00:00', 'X', 1.0),
+                    ('2024-01-02T12:00:00', 'X', 2.0),
+                    ('2024-01-03T12:00:00', 'Y', 3.0)
+                    """);
+            drainWalQueue();
+
+            // O3: insert rows before existing ones in every partition
+            execute("""
+                    INSERT INTO t_o3_mp VALUES
+                    ('2024-01-01T06:00:00', 'X', 0.5),
+                    ('2024-01-02T06:00:00', 'Y', 1.5),
+                    ('2024-01-03T06:00:00', 'X', 2.5)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    val
+                    0.5
+                    1.0
+                    2.0
+                    2.5
+                    """, "SELECT val FROM t_o3_mp WHERE sym = 'X'");
+
+            assertSql("""
+                    val
+                    1.5
+                    3.0
+                    """, "SELECT val FROM t_o3_mp WHERE sym = 'Y'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionAfterRepeatedO3() throws Exception {
+        // Multiple rounds of O3 merges on the same partition.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_repeat (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_repeat VALUES
+                    ('2024-01-01T10:00:00', 'A', 100.0),
+                    ('2024-01-01T20:00:00', 'B', 200.0)
+                    """);
+            drainWalQueue();
+
+            // Round 1: O3 before existing data
+            execute("""
+                    INSERT INTO t_o3_repeat VALUES
+                    ('2024-01-01T05:00:00', 'A', 50.0)
+                    """);
+            drainWalQueue();
+
+            // Round 2: O3 between existing rows
+            execute("""
+                    INSERT INTO t_o3_repeat VALUES
+                    ('2024-01-01T15:00:00', 'A', 150.0)
+                    """);
+            drainWalQueue();
+
+            // Round 3: O3 at the very start
+            execute("""
+                    INSERT INTO t_o3_repeat VALUES
+                    ('2024-01-01T01:00:00', 'B', 10.0)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    price
+                    50.0
+                    100.0
+                    150.0
+                    """, "SELECT price FROM t_o3_repeat WHERE sym = 'A'");
+
+            assertSql("""
+                    price
+                    10.0
+                    200.0
+                    """, "SELECT price FROM t_o3_repeat WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionDuplicateO3() throws Exception {
+        // Duplicate rows via O3 — exercises rollbackConditionally with row > 0
+        // where the posting index already has entries at those positions.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_dup (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_dup VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+
+            // Exact duplicate insert triggers O3 merge
+            execute("""
+                    INSERT INTO t_o3_dup VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    1.5\t10
+                    3.5\t30
+                    3.5\t30
+                    """, "SELECT price, qty FROM t_o3_dup WHERE sym = 'A'");
+
+            assertSql("""
+                    price\tqty
+                    2.5\t20
+                    2.5\t20
+                    """, "SELECT price, qty FROM t_o3_dup WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionO3WithNulls() throws Exception {
+        // O3 merge where some rows have NULL symbol values.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_null (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_null VALUES
+                    ('2024-01-01T10:00:00', 'A', 10.0),
+                    ('2024-01-01T12:00:00', null, 20.0),
+                    ('2024-01-01T14:00:00', 'A', 30.0)
+                    """);
+            drainWalQueue();
+
+            // O3 insert with NULLs
+            execute("""
+                    INSERT INTO t_o3_null VALUES
+                    ('2024-01-01T09:00:00', null, 5.0),
+                    ('2024-01-01T11:00:00', 'A', 15.0),
+                    ('2024-01-01T13:00:00', null, 25.0)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    val
+                    10.0
+                    15.0
+                    30.0
+                    """, "SELECT val FROM t_o3_null WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionWalMultiPartitionThenO3() throws Exception {
+        // WAL creates multiple partitions in order, then O3 merges into a prior partition.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mp_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_mp_o3 VALUES
+                    ('2024-01-01T12:00:00', 'A', 1.0),
+                    ('2024-01-02T12:00:00', 'A', 2.0),
+                    ('2024-01-03T12:00:00', 'A', 3.0)
+                    """);
+            drainWalQueue();
+
+            // O3 into first partition
+            execute("""
+                    INSERT INTO t_mp_o3 VALUES
+                    ('2024-01-01T06:00:00', 'A', 0.5)
+                    """);
+            drainWalQueue();
+
+            // Verify all partitions are intact
+            assertSql("""
+                    price
+                    0.5
+                    1.0
+                    2.0
+                    3.0
+                    """, "SELECT price FROM t_mp_o3 WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionO3ManyCoveredColumns() throws Exception {
+        // Many covered columns of different types — exercises all CoveringCompressor
+        // read methods (readDoubleAt, readLongAt, readIntAt) on sidecar data that
+        // would have been corrupted by in-place rollback.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_many_cols (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d1, d2, d3, i1, l1),
+                        d1 DOUBLE,
+                        d2 DOUBLE,
+                        d3 DOUBLE,
+                        i1 INT,
+                        l1 LONG
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_many_cols VALUES
+                    ('2024-01-01T10:00:00', 'A', 1.1, 2.2, 3.3, 100, 1000),
+                    ('2024-01-01T12:00:00', 'B', 4.4, 5.5, 6.6, 200, 2000),
+                    ('2024-01-01T14:00:00', 'A', 7.7, 8.8, 9.9, 300, 3000)
+                    """);
+            drainWalQueue();
+
+            // O3 merge
+            execute("""
+                    INSERT INTO t_many_cols VALUES
+                    ('2024-01-01T09:00:00', 'A', 0.1, 0.2, 0.3, 10, 100),
+                    ('2024-01-01T11:00:00', 'B', 3.3, 3.4, 3.5, 150, 1500)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    d1\td2\td3\ti1\tl1
+                    0.1\t0.2\t0.3\t10\t100
+                    1.1\t2.2\t3.3\t100\t1000
+                    7.7\t8.8\t9.9\t300\t3000
+                    """, "SELECT d1, d2, d3, i1, l1 FROM t_many_cols WHERE sym = 'A'");
+
+            assertSql("""
+                    d1\td2\td3\ti1\tl1
+                    3.3\t3.4\t3.5\t150\t1500
+                    4.4\t5.5\t6.6\t200\t2000
+                    """, "SELECT d1, d2, d3, i1, l1 FROM t_many_cols WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexSidecarWrittenOnAlterAddIndex() throws Exception {
+        // ALTER TABLE ADD INDEX INCLUDE on a table with existing data must
+        // seal the posting index for the last partition so that sidecar files
+        // exist before any query uses the covering scan plan.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_cover (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter_cover VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            execute("ALTER TABLE t_alter_cover ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseAllWriters();
+
+            // Covering query — all selected columns are in INCLUDE
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    """, "SELECT price, qty FROM t_alter_cover WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexSidecarWrittenOnAlterAddIndexWal() throws Exception {
+        // Same as above but through the WAL path.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter_wal VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_alter_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    """, "SELECT price, qty FROM t_alter_wal WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexSidecarSurvivesPartitionSwitch() throws Exception {
+        // After ALTER TABLE ADD INDEX INCLUDE, inserting into the next partition
+        // must not corrupt the prior partition's sidecar files.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_switch (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_switch VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            execute("ALTER TABLE t_switch ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+
+            // Insert into next partition — triggers partition switch and seal
+            execute("""
+                    INSERT INTO t_switch VALUES
+                    ('2024-01-02T09:00:00', 'A', 4.5, 40),
+                    ('2024-01-02T10:00:00', 'B', 5.5, 50)
+                    """);
+            engine.releaseAllWriters();
+
+            // Both partitions should return correct covered data
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    4.5\t40
+                    """, "SELECT price, qty FROM t_switch WHERE sym = 'A'");
+
+            assertSql("""
+                    price\tqty
+                    2.5\t20
+                    5.5\t50
+                    """, "SELECT price, qty FROM t_switch WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexSidecarSurvivesPartitionSwitchWal() throws Exception {
+        // Same partition-switch scenario through WAL.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_switch_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_switch_wal VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_switch_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+
+            // Insert into next partition
+            execute("""
+                    INSERT INTO t_switch_wal VALUES
+                    ('2024-01-02T09:00:00', 'A', 4.5, 40),
+                    ('2024-01-02T10:00:00', 'B', 5.5, 50)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    4.5\t40
+                    """, "SELECT price, qty FROM t_switch_wal WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexSidecarAlterAddIndexMultiPartition() throws Exception {
+        // ALTER TABLE ADD INDEX INCLUDE on a table with multiple existing partitions.
+        // All partitions must get sidecar files.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter_mp VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.0, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.0, 20),
+                    ('2024-01-02T09:00:00', 'A', 3.0, 30),
+                    ('2024-01-03T09:00:00', 'B', 4.0, 40)
+                    """);
+            execute("ALTER TABLE t_alter_mp ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    1.0\t10
+                    3.0\t30
+                    """, "SELECT price, qty FROM t_alter_mp WHERE sym = 'A'");
+
+            assertSql("""
+                    price\tqty
+                    2.0\t20
+                    4.0\t40
+                    """, "SELECT price, qty FROM t_alter_mp WHERE sym = 'B'");
+        });
+    }
+
+    @Test
     public void testAlterTableAddIndexO3DuplicateInsert() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

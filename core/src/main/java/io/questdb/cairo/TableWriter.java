@@ -6155,6 +6155,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
         configureCoveringIfNeeded(indexer, columnIndex, lastPartitionTs);
         indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
+
+        // Seal now so that covering sidecar files are written immediately.
+        // Without this, the last partition's writer stays open and sidecar
+        // files are only created on close — but queries run before close
+        // would use a covering index scan plan (metadata says INCLUDE) and
+        // find no sidecar data. Future writes create new sparse generations
+        // that the next seal merges.
+        if (indexer.getWriter() instanceof PostingIndexWriter piw) {
+            piw.seal();
+        }
     }
 
     private void indexNativePartition(
