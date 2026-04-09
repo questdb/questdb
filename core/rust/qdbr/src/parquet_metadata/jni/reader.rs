@@ -143,12 +143,9 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileReader_canSkipRowGro
         } else {
             unsafe { slice::from_raw_parts(filters_ptr, filter_count as usize) }
         };
-        crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            row_group_index as usize,
-            filters,
-            filter_buf_end,
-        )
+        jni_reader
+            .reader()
+            .can_skip_row_group(row_group_index as usize, filters, filter_buf_end)
     })();
     match res {
         Ok(skip) => skip,
@@ -273,13 +270,7 @@ mod tests {
         let bytes = build_long_pm(&[(100, 0, 10, 200)]);
         let jni_reader =
             unsafe { JniParquetMetaReader::new(bytes.as_ptr(), bytes.len() as u64) }.unwrap();
-        let result = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            0,
-            &[],
-            0,
-        )
-        .unwrap();
+        let result = jni_reader.reader().can_skip_row_group(0, &[], 0).unwrap();
         assert!(!result, "no filters → cannot skip");
     }
 
@@ -298,13 +289,10 @@ mod tests {
             ColumnTypeTag::Long as i32,
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
-        let result = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            0,
-            &[filter],
-            buf_end,
-        )
-        .unwrap();
+        let result = jni_reader
+            .reader()
+            .can_skip_row_group(0, &[filter], buf_end)
+            .unwrap();
         assert!(result, "EQ 999 outside [10,200] → skip");
     }
 
@@ -322,13 +310,10 @@ mod tests {
             ColumnTypeTag::Long as i32,
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
-        let result = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            0,
-            &[filter],
-            buf_end,
-        )
-        .unwrap();
+        let result = jni_reader
+            .reader()
+            .can_skip_row_group(0, &[filter], buf_end)
+            .unwrap();
         assert!(!result, "EQ 50 inside [10,200] → cannot skip");
     }
 
@@ -346,13 +331,10 @@ mod tests {
             ColumnTypeTag::Long as i32,
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
-        let result = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            0,
-            &[filter],
-            buf_end,
-        )
-        .unwrap();
+        let result = jni_reader
+            .reader()
+            .can_skip_row_group(0, &[filter], buf_end)
+            .unwrap();
         assert!(result, "LT 10 with min=10 → all values >= 10, skip");
     }
 
@@ -370,13 +352,10 @@ mod tests {
             ColumnTypeTag::Long as i32,
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
-        let result = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            0,
-            &[filter],
-            buf_end,
-        )
-        .unwrap();
+        let result = jni_reader
+            .reader()
+            .can_skip_row_group(0, &[filter], buf_end)
+            .unwrap();
         assert!(result, "GT 200 with max=200 → all values <= 200, skip");
     }
 
@@ -386,13 +365,10 @@ mod tests {
         let jni_reader =
             unsafe { JniParquetMetaReader::new(bytes.as_ptr(), bytes.len() as u64) }.unwrap();
         let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
-        let result = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            0,
-            &[filter],
-            0,
-        )
-        .unwrap();
+        let result = jni_reader
+            .reader()
+            .can_skip_row_group(0, &[filter], 0)
+            .unwrap();
         assert!(result, "IS NULL with null_count=0 → skip");
     }
 
@@ -401,12 +377,7 @@ mod tests {
         let bytes = build_long_pm(&[(100, 0, 10, 200)]);
         let jni_reader =
             unsafe { JniParquetMetaReader::new(bytes.as_ptr(), bytes.len() as u64) }.unwrap();
-        let res = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            5,
-            &[],
-            0,
-        );
+        let res = jni_reader.reader().can_skip_row_group(5, &[], 0);
         assert!(res.is_err(), "row group index 5 out of range");
     }
 
@@ -430,27 +401,18 @@ mod tests {
         );
         let buf_end = unsafe { (&value as *const i64).add(1) } as u64;
 
-        let r0 = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            0,
-            &[filter],
-            buf_end,
-        )
-        .unwrap();
-        let r1 = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            1,
-            &[filter],
-            buf_end,
-        )
-        .unwrap();
-        let r2 = crate::parquet_read::parquet_meta_decode::can_skip_row_group(
-            jni_reader.reader(),
-            2,
-            &[filter],
-            buf_end,
-        )
-        .unwrap();
+        let r0 = jni_reader
+            .reader()
+            .can_skip_row_group(0, &[filter], buf_end)
+            .unwrap();
+        let r1 = jni_reader
+            .reader()
+            .can_skip_row_group(1, &[filter], buf_end)
+            .unwrap();
+        let r2 = jni_reader
+            .reader()
+            .can_skip_row_group(2, &[filter], buf_end)
+            .unwrap();
         assert!(!r0, "rg 0 [0..99] contains 50, cannot skip");
         assert!(r1, "rg 1 [100..199] does not contain 50, skip");
         assert!(r2, "rg 2 [200..299] does not contain 50, skip");
