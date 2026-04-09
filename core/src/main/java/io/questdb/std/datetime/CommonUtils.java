@@ -285,6 +285,27 @@ public class CommonUtils {
     }
 
     /**
+     * Returns the timezone offset to use when converting a UTC timestamp to
+     * local time for floor/round bucket computations. Sub-day units use the
+     * standard (non-DST) offset to keep bucket widths uniform across DST
+     * transitions. Super-day units use the actual offset at the given instant.
+     * <p>
+     * Both {@code timestamp_floor_utc} (SAMPLE BY query path) and the mat view
+     * refresh iterator MUST call this method to ensure bucket boundaries agree.
+     * <p>
+     * Typical usage (zero-allocation, no closures):
+     * <pre>
+     *   long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, utcTs, unit);
+     *   long local = utcTs + tzOff;
+     *   long floored = ... // caller's own floor/round
+     *   long utcResult = CommonUtils.offsetFlooredUtcResult(floored, tzOff, offset, tzRules, unit);
+     * </pre>
+     */
+    public static long getFloorUtcTzOffset(TimeZoneRules tzRules, long utcTimestamp, char unit) {
+        return isSubDayUnit(unit) ? tzRules.getStandardOffset() : tzRules.getOffset(utcTimestamp);
+    }
+
+    /**
      * Since ISO weeks don't always start on the first day of the year, there is an offset of days from the 1st day of the year.
      *
      * @param year of timestamp
@@ -342,6 +363,13 @@ public class CommonUtils {
         return ((year & 3) == 0) && ((year % 100) != 0 || (year % 400) == 0);
     }
 
+    public static boolean isSubDayUnit(char unit) {
+        return switch (unit) {
+            case 'h', 'm', 's', 'T', 'U', 'n' -> true;
+            default -> false;
+        };
+    }
+
     public static long microsToNanos(long micros) {
         try {
             return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : Math.multiplyExact(micros, Micros.MICRO_NANOS);
@@ -352,6 +380,21 @@ public class CommonUtils {
 
     public static long nanosToMicros(long nanos) {
         return nanos == Numbers.LONG_NULL ? Numbers.LONG_NULL : nanos / 1000L;
+    }
+
+    /**
+     * Converts a floored local timestamp back to UTC and applies the user
+     * offset. Must be paired with {@link #getFloorUtcTzOffset} — the
+     * {@code tzOff} parameter must come from that method for the same
+     * input timestamp. Pass {@code offset = 0} when the caller's floor
+     * operation already incorporates the offset (e.g. TimestampSampler).
+     */
+    public static long offsetFlooredUtcResult(long flooredLocal, long tzOff, long offset, TimeZoneRules tzRules, char unit) {
+        if (isSubDayUnit(unit)) {
+            return flooredLocal - tzOff + offset;
+        }
+        final long resultTzOff = tzRules.getOffset(flooredLocal - tzOff);
+        return flooredLocal - resultTzOff + offset;
     }
 
     public static void parseDigits(int assertRemainingIndex, int parseIntIndex, int digitCount, BytecodeAssembler asm, int localPos, int pHi, int pInputStr) {
