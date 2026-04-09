@@ -34,6 +34,7 @@ import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.map.Unordered8Map;
 import io.questdb.cairo.map.UnorderedVarcharMap;
+import io.questdb.std.Rosti;
 import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -90,6 +91,9 @@ public class BatchHashGroupByBenchmark {
     // Pre-generated VARCHAR key data: per-row ptr + size arrays, backed by a contiguous buffer.
     private long strKeyPtrsAddr;
     private long strKeySizesAddr;
+    private long pRosti;
+    private long intKeysAddr;
+    private static final int ROSTI_COUNT_VALUE_OFFSET = 1; // value column index in Rosti (key is at 0)
     private Unordered4Map unordered4Map;
     private MapBatchProber unordered4MapProber;
     private Unordered8Map unordered8Map;
@@ -138,11 +142,21 @@ public class BatchHashGroupByBenchmark {
 
         // Pre-generate LONG keys.
         longKeysAddr = Unsafe.malloc((long) ROW_COUNT * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        // Mirror the same values as int32 keys for Unordered4Map and Rosti.
+        intKeysAddr = Unsafe.malloc((long) ROW_COUNT * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         Rnd rnd = new Rnd();
         for (int i = 0; i < ROW_COUNT; i++) {
             // Use positive keys to avoid Unordered8Map zero-key edge case noise.
-            Unsafe.getUnsafe().putLong(longKeysAddr + (long) i * Long.BYTES, rnd.nextLong(distinctKeys) + 1);
+            long k = rnd.nextLong(distinctKeys) + 1;
+            Unsafe.getUnsafe().putLong(longKeysAddr + (long) i * Long.BYTES, k);
+            Unsafe.getUnsafe().putInt(intKeysAddr + (long) i * Integer.BYTES, (int) k);
         }
+
+        // Allocate Rosti map: column 0 = INT key, column 1 = LONG count value.
+        ArrayColumnTypes rostiTypes = new ArrayColumnTypes();
+        rostiTypes.add(ColumnType.INT);
+        rostiTypes.add(ColumnType.LONG);
+        pRosti = Rosti.alloc(rostiTypes, Math.max(distinctKeys, 16));
 
         // Pre-generate VARCHAR key data in a contiguous native buffer.
         strKeyPtrsAddr = Unsafe.malloc((long) ROW_COUNT * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -186,9 +200,17 @@ public class BatchHashGroupByBenchmark {
         Misc.free(unordered4Map);
         Misc.free(unordered8Map);
         Misc.free(varcharMap);
+        if (pRosti != 0) {
+            Rosti.free(pRosti);
+            pRosti = 0;
+        }
         if (longKeysAddr != 0) {
             Unsafe.free(longKeysAddr, (long) ROW_COUNT * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             longKeysAddr = 0;
+        }
+        if (intKeysAddr != 0) {
+            Unsafe.free(intKeysAddr, (long) ROW_COUNT * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            intKeysAddr = 0;
         }
         if (strBufAddr != 0) {
             Unsafe.free(strBufAddr, strBufCapacity, MemoryTag.NATIVE_DEFAULT);
@@ -327,6 +349,14 @@ public class BatchHashGroupByBenchmark {
                 countFn.computeNext(value, null, 0);
             }
         }
+    }
+
+    @Benchmark
+    public void testRostiInt() {
+        Rosti.clear(pRosti);
+        // Re-initialize the count slot to 0 (clear may have wiped it).
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, ROSTI_COUNT_VALUE_OFFSET), 0);
+        Rosti.keyedIntCount(pRosti, intKeysAddr, ROW_COUNT, ROSTI_COUNT_VALUE_OFFSET);
     }
 
     @Benchmark
