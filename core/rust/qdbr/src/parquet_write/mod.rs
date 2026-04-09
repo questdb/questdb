@@ -527,20 +527,22 @@ mod tests {
         assert_eq!(row_group_size, meta.row_groups[0].num_rows());
 
         let chunk_meta = &meta.row_groups[0].columns()[0];
-        let max_page_size = page_size_bytes + 20;
+        let max_page_size = chunk_meta.uncompressed_size() as usize + 64;
         let pages =
             parquet2::read::get_page_iterator(chunk_meta, reader, None, vec![], max_page_size)
                 .expect("pages iter");
+        let mut data_pages = 0;
         for page in pages {
             let page = page.expect("page");
             match page {
                 CompressedPage::Data(data) => {
-                    let uncompressed = data.uncompressed_size();
-                    assert!(uncompressed <= max_page_size);
+                    data_pages += 1;
+                    assert!(data.uncompressed_size() <= max_page_size);
                 }
                 _ => unreachable!(),
             }
         }
+        assert_eq!(data_pages, 1);
     }
 
     #[test]

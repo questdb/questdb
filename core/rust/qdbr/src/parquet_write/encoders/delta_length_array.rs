@@ -177,9 +177,9 @@ mod tests {
     use parquet2::page::DataPageHeader;
     use parquet2::schema::types::ParquetType;
     use parquet2::write::Version;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use std::collections::HashSet;
     use std::sync::{Arc, Mutex};
-    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
     fn write_options() -> WriteOptions {
         WriteOptions {
@@ -272,7 +272,7 @@ mod tests {
             data_buf.as_ptr(),
             data_buf.len(),
             offsets.as_ptr() as *const u8,
-            offsets.len() * std::mem::size_of::<i64>(),
+            std::mem::size_of_val(&offsets[..]),
             std::ptr::null(),
             0,
             false,
@@ -303,7 +303,7 @@ mod tests {
             data_buf.as_ptr(),
             data_buf.len(),
             offsets.as_ptr() as *const u8,
-            offsets.len() * std::mem::size_of::<i64>(),
+            std::mem::size_of_val(&offsets[..]),
             std::ptr::null(),
             0,
             false,
@@ -467,7 +467,7 @@ mod tests {
             data.as_ptr(),
             data.len(),
             offsets.as_ptr() as *const u8,
-            offsets.len() * std::mem::size_of::<i64>(),
+            std::mem::size_of_val(offsets),
             std::ptr::null(),
             0,
             false,
@@ -477,11 +477,7 @@ mod tests {
         .unwrap()
     }
 
-    fn build_string_column_with_top(
-        data: &[u8],
-        offsets: &[i64],
-        column_top: usize,
-    ) -> Column {
+    fn build_string_column_with_top(data: &[u8], offsets: &[i64], column_top: usize) -> Column {
         Column::from_raw_data(
             0,
             "col",
@@ -491,7 +487,7 @@ mod tests {
             data.as_ptr(),
             data.len(),
             offsets.as_ptr() as *const u8,
-            offsets.len() * std::mem::size_of::<i64>(),
+            std::mem::size_of_val(offsets),
             std::ptr::null(),
             0,
             false,
@@ -511,7 +507,7 @@ mod tests {
             data.as_ptr(),
             data.len(),
             offsets.as_ptr() as *const u8,
-            offsets.len() * std::mem::size_of::<i64>(),
+            std::mem::size_of_val(offsets),
             std::ptr::null(),
             0,
             false,
@@ -521,11 +517,7 @@ mod tests {
         .unwrap()
     }
 
-    fn build_binary_column_with_top(
-        data: &[u8],
-        offsets: &[i64],
-        column_top: usize,
-    ) -> Column {
+    fn build_binary_column_with_top(data: &[u8], offsets: &[i64], column_top: usize) -> Column {
         Column::from_raw_data(
             0,
             "col",
@@ -535,7 +527,7 @@ mod tests {
             data.as_ptr(),
             data.len(),
             offsets.as_ptr() as *const u8,
-            offsets.len() * std::mem::size_of::<i64>(),
+            std::mem::size_of_val(offsets),
             std::ptr::null(),
             0,
             false,
@@ -650,8 +642,7 @@ mod tests {
         let offsets: Vec<i64> = vec![];
         let col = build_string_column(&data, &offsets);
         let pt = primitive_type_for(ColumnTypeTag::String);
-        let pages =
-            encode_string(&[col], 0, 0, &pt, write_options(), None).expect("encode");
+        let pages = encode_string(&[col], 0, 0, &pt, write_options(), None).expect("encode");
         assert!(pages.is_empty());
     }
 
@@ -661,8 +652,7 @@ mod tests {
         let offsets: Vec<i64> = vec![];
         let col = build_binary_column(&data, &offsets);
         let pt = primitive_type_for(ColumnTypeTag::Binary);
-        let pages =
-            encode_binary(&[col], 0, 0, &pt, write_options(), None).expect("encode");
+        let pages = encode_binary(&[col], 0, 0, &pt, write_options(), None).expect("encode");
         assert!(pages.is_empty());
     }
 
@@ -704,8 +694,7 @@ mod tests {
         let (data_buf, offsets) = make_string_aux(&["a", "b"]);
         let col = build_string_column_with_top(&data_buf, &offsets, 5);
         let pt = primitive_type_for(ColumnTypeTag::String);
-        let pages =
-            encode_string(&[col], 0, 7, &pt, write_options(), None).expect("encode");
+        let pages = encode_string(&[col], 0, 7, &pt, write_options(), None).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 7);
@@ -718,8 +707,7 @@ mod tests {
         let (data_buf, offsets) = make_binary_aux(&[b"abc", b"xy"]);
         let col = build_binary_column_with_top(&data_buf, &offsets, 3);
         let pt = primitive_type_for(ColumnTypeTag::Binary);
-        let pages =
-            encode_binary(&[col], 0, 5, &pt, write_options(), None).expect("encode");
+        let pages = encode_binary(&[col], 0, 5, &pt, write_options(), None).expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 5);
@@ -805,21 +793,14 @@ mod tests {
 
     #[test]
     fn encode_varchar_delta_multi_partition_with_nulls() {
-        let aux1 = [
-            make_varchar_aux_inlined(b"a"),
-            make_varchar_aux_null(),
-        ];
-        let aux2 = [
-            make_varchar_aux_null(),
-            make_varchar_aux_inlined(b"z"),
-        ];
+        let aux1 = [make_varchar_aux_inlined(b"a"), make_varchar_aux_null()];
+        let aux2 = [make_varchar_aux_null(), make_varchar_aux_inlined(b"z")];
         let data: Vec<u8> = vec![];
         let col1 = build_varchar_column(&aux1, &data);
         let col2 = build_varchar_column(&aux2, &data);
         let pt = primitive_type_for(ColumnTypeTag::Varchar);
-        let pages =
-            encode_varchar(&[col1, col2], 0, aux2.len(), &pt, write_options(), None)
-                .expect("encode");
+        let pages = encode_varchar(&[col1, col2], 0, aux2.len(), &pt, write_options(), None)
+            .expect("encode");
         assert_eq!(pages.len(), 2);
         let (nv0, nn0, _) = v2_header(&pages[0]);
         let (nv1, nn1, _) = v2_header(&pages[1]);

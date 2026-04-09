@@ -204,14 +204,10 @@ where
         options,
         repetition,
     )?;
-    let mut pages = Vec::with_capacity(2);
-    pages.push(parquet2::page::Page::Dict(build_dict_page(
-        dict_buffer,
-        dict_entry_count,
-    )));
-    pages.push(parquet2::page::Page::Data(data_page));
-
-    Ok(pages)
+    Ok(vec![
+        parquet2::page::Page::Dict(build_dict_page(dict_buffer, dict_entry_count)),
+        parquet2::page::Page::Data(data_page),
+    ])
 }
 
 fn upsert_dict_entry<P>(

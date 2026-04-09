@@ -116,11 +116,10 @@ pub fn encode_string(
         options,
         Repetition::Optional,
     )?;
-    let mut pages = Vec::with_capacity(2);
-    pages.push(Page::Dict(build_dict_page(dict_buffer, dict_entry_count)));
-    pages.push(Page::Data(data_page));
-
-    Ok(pages)
+    Ok(vec![
+        Page::Dict(build_dict_page(dict_buffer, dict_entry_count)),
+        Page::Data(data_page),
+    ])
 }
 
 /// Encode a Binary column as RleDictionary pages.
@@ -281,11 +280,10 @@ where
         options,
         Repetition::Optional,
     )?;
-    let mut pages = Vec::with_capacity(2);
-    pages.push(Page::Dict(build_dict_page(dict_buffer, dict_entry_count)));
-    pages.push(Page::Data(data_page));
-
-    Ok(pages)
+    Ok(vec![
+        Page::Dict(build_dict_page(dict_buffer, dict_entry_count)),
+        Page::Data(data_page),
+    ])
 }
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;

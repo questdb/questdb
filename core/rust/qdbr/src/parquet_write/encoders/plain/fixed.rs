@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use parquet2::bloom_filter::hash_byte;
-use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -14,8 +13,8 @@ use crate::parquet_write::encoders::helpers::{collect_typed_chunk_segments, Type
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
-    begin_primitive_level_stream, build_plain_page, encode_dict_rle_pages,
-    encode_primitive_def_levels, finish_primitive_level_stream, transmute_slice, BinaryMaxMinStats,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, transmute_slice,
+    BinaryMaxMinStats,
 };
 
 use super::encode_column_chunk;
@@ -109,30 +108,38 @@ fn bytes_segments_to_page<const N: usize>(
     let mut buffer = vec![];
     let mut null_count = 0usize;
 
-    let payload_start = begin_primitive_level_stream(&mut buffer, options.version);
-    for segment in segments {
-        if segment.adjusted_column_top > 0 {
-            null_count += segment.adjusted_column_top;
-            encode_bool(
-                &mut buffer,
-                std::iter::repeat_n(false, segment.adjusted_column_top),
-                segment.adjusted_column_top,
-            )?;
+    let mut segment_idx = 0usize;
+    let mut segment_started = false;
+    let mut top_remaining = 0usize;
+    let mut value_idx = 0usize;
+    let def_levels = std::iter::from_fn(|| loop {
+        let segment = segments.get(segment_idx)?;
+
+        if !segment_started {
+            top_remaining = segment.adjusted_column_top;
+            segment_started = true;
         }
-        if !segment.slice.is_empty() {
-            let mut segment_null_count = 0usize;
-            let iter = segment.slice.iter().map(|value| {
-                let present = *value != null_value;
-                if !present {
-                    segment_null_count += 1;
-                }
-                present
-            });
-            encode_bool(&mut buffer, iter, segment.slice.len())?;
-            null_count += segment_null_count;
+
+        if top_remaining > 0 {
+            top_remaining -= 1;
+            null_count += 1;
+            return Some(false);
         }
-    }
-    finish_primitive_level_stream(&mut buffer, payload_start, options.version);
+
+        if let Some(value) = segment.slice.get(value_idx) {
+            value_idx += 1;
+            let present = *value != null_value;
+            if !present {
+                null_count += 1;
+            }
+            return Some(present);
+        }
+
+        segment_idx += 1;
+        segment_started = false;
+        value_idx = 0;
+    });
+    encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
     let mut stats = BinaryMaxMinStats::new(&primitive_type);

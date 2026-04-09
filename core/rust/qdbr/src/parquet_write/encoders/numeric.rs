@@ -21,13 +21,11 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::encoders::helpers::TypedChunkSegment;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    begin_primitive_level_stream, build_plain_page, encode_dict_rle_pages,
-    encode_primitive_def_levels, finish_primitive_level_stream, ExactSizedIter, MaxMin,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
 use parquet2::bloom_filter::hash_native;
 use parquet2::encoding::delta_bitpacked::{encode, encode_i32};
-use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
@@ -62,33 +60,40 @@ fn encode_segmented_def_levels<T, F>(
 where
     F: FnMut(&T) -> bool,
 {
-    let payload_start = begin_primitive_level_stream(buffer, options.version);
     let mut null_count = 0usize;
+    let num_rows = segment_num_rows(segments);
+    let mut segment_idx = 0usize;
+    let mut segment_started = false;
+    let mut top_remaining = 0usize;
+    let mut value_idx = 0usize;
+    let def_levels = std::iter::from_fn(|| loop {
+        let segment = segments.get(segment_idx)?;
 
-    for segment in segments {
-        if segment.adjusted_column_top > 0 {
-            null_count += segment.adjusted_column_top;
-            encode_bool(
-                buffer,
-                std::iter::repeat_n(false, segment.adjusted_column_top),
-                segment.adjusted_column_top,
-            )?;
+        if !segment_started {
+            top_remaining = segment.adjusted_column_top;
+            segment_started = true;
         }
-        if !segment.slice.is_empty() {
-            let mut segment_null_count = 0usize;
-            let iter = segment.slice.iter().map(|value| {
-                let present = is_present(value);
-                if !present {
-                    segment_null_count += 1;
-                }
-                present
-            });
-            encode_bool(buffer, iter, segment.slice.len())?;
-            null_count += segment_null_count;
-        }
-    }
 
-    finish_primitive_level_stream(buffer, payload_start, options.version);
+        if top_remaining > 0 {
+            top_remaining -= 1;
+            null_count += 1;
+            return Some(false);
+        }
+
+        if let Some(value) = segment.slice.get(value_idx) {
+            value_idx += 1;
+            let present = is_present(value);
+            if !present {
+                null_count += 1;
+            }
+            return Some(present);
+        }
+
+        segment_idx += 1;
+        segment_started = false;
+        value_idx = 0;
+    });
+    encode_primitive_def_levels(buffer, def_levels, num_rows, options.version)?;
     Ok(null_count)
 }
 
@@ -245,7 +250,7 @@ pub fn int_segments_to_page_notnull<T, P>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
@@ -255,7 +260,7 @@ where
 
     let num_rows = segment_num_rows(segments);
     let column_top = segment_column_top(segments);
-    let statistics = match (options.write_statistics, bloom_hashes.as_deref_mut()) {
+    let statistics = match (options.write_statistics, bloom_hashes) {
         (true, Some(h)) => {
             let mut statistics = MaxMin::new();
             for segment in segments {

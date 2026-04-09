@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use parquet2::bloom_filter::hash_byte;
-use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -15,9 +14,8 @@ use crate::parquet_write::encoders::helpers::{column_chunk_row_count, partition_
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
-    begin_primitive_level_stream, build_plain_page, encode_dict_rle_pages,
-    encode_primitive_def_levels, finish_primitive_level_stream, transmute_slice, BinaryMaxMinStats,
-    ExactSizedIter,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, transmute_slice,
+    BinaryMaxMinStats, ExactSizedIter,
 };
 
 use super::encode_column_chunk;
@@ -226,35 +224,43 @@ pub(crate) fn binary_columns_to_page(
     let segments = collect_binary_segments(columns, first_partition_start, last_partition_end);
     let num_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut buffer = vec![];
-    let mut validity = Vec::new();
+    for segment in &segments {
+        visit_binary_entries(segment.offsets, segment.data, |_| Ok(()))?;
+    }
     let mut null_count = 0usize;
 
-    let payload_start = begin_primitive_level_stream(&mut buffer, options.version);
-    for segment in &segments {
-        if segment.adjusted_column_top > 0 {
-            null_count += segment.adjusted_column_top;
-            encode_bool(
-                &mut buffer,
-                std::iter::repeat_n(false, segment.adjusted_column_top),
-                segment.adjusted_column_top,
-            )?;
+    let mut segment_idx = 0usize;
+    let mut segment_started = false;
+    let mut top_remaining = 0usize;
+    let mut entry_idx = 0usize;
+    let def_levels = std::iter::from_fn(|| loop {
+        let segment = segments.get(segment_idx)?;
+
+        if !segment_started {
+            top_remaining = segment.adjusted_column_top;
+            segment_started = true;
         }
 
-        validity.clear();
-        validity.reserve(segment.offsets.len());
-        visit_binary_entries(segment.offsets, segment.data, |entry| {
-            let present = entry.is_some();
+        if top_remaining > 0 {
+            top_remaining -= 1;
+            null_count += 1;
+            return Some(false);
+        }
+
+        if let Some(&offset) = segment.offsets.get(entry_idx) {
+            entry_idx += 1;
+            let present = binary_get_slice_validated(segment.data, offset).is_some();
             if !present {
                 null_count += 1;
             }
-            validity.push(present);
-            Ok(())
-        })?;
-        if !validity.is_empty() {
-            encode_bool(&mut buffer, validity.iter().copied(), validity.len())?;
+            return Some(present);
         }
-    }
-    finish_primitive_level_stream(&mut buffer, payload_start, options.version);
+
+        segment_idx += 1;
+        segment_started = false;
+        entry_idx = 0;
+    });
+    encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
@@ -336,35 +342,43 @@ pub(crate) fn string_columns_to_page(
     let segments = collect_string_segments(columns, first_partition_start, last_partition_end);
     let num_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut buffer = vec![];
-    let mut validity = Vec::new();
+    for segment in &segments {
+        visit_string_entries(segment.offsets, segment.data, |_| Ok(()))?;
+    }
     let mut null_count = 0usize;
 
-    let payload_start = begin_primitive_level_stream(&mut buffer, options.version);
-    for segment in &segments {
-        if segment.adjusted_column_top > 0 {
-            null_count += segment.adjusted_column_top;
-            encode_bool(
-                &mut buffer,
-                std::iter::repeat_n(false, segment.adjusted_column_top),
-                segment.adjusted_column_top,
-            )?;
+    let mut segment_idx = 0usize;
+    let mut segment_started = false;
+    let mut top_remaining = 0usize;
+    let mut entry_idx = 0usize;
+    let def_levels = std::iter::from_fn(|| loop {
+        let segment = segments.get(segment_idx)?;
+
+        if !segment_started {
+            top_remaining = segment.adjusted_column_top;
+            segment_started = true;
         }
 
-        validity.clear();
-        validity.reserve(segment.offsets.len());
-        visit_string_entries(segment.offsets, segment.data, |entry| {
-            let present = entry.is_some();
+        if top_remaining > 0 {
+            top_remaining -= 1;
+            null_count += 1;
+            return Some(false);
+        }
+
+        if let Some(&offset) = segment.offsets.get(entry_idx) {
+            entry_idx += 1;
+            let present = string_get_utf16_validated(segment.data, offset).is_some();
             if !present {
                 null_count += 1;
             }
-            validity.push(present);
-            Ok(())
-        })?;
-        if !validity.is_empty() {
-            encode_bool(&mut buffer, validity.iter().copied(), validity.len())?;
+            return Some(present);
         }
-    }
-    finish_primitive_level_stream(&mut buffer, payload_start, options.version);
+
+        segment_idx += 1;
+        segment_started = false;
+        entry_idx = 0;
+    });
+    encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
@@ -452,35 +466,43 @@ pub(crate) fn varchar_columns_to_page(
     let segments = collect_varchar_segments(columns, first_partition_start, last_partition_end);
     let num_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut buffer = vec![];
-    let mut validity = Vec::new();
+    for segment in &segments {
+        visit_varchar_entries(segment.aux, segment.data, |_| Ok(()))?;
+    }
     let mut null_count = 0usize;
 
-    let payload_start = begin_primitive_level_stream(&mut buffer, options.version);
-    for segment in &segments {
-        if segment.adjusted_column_top > 0 {
-            null_count += segment.adjusted_column_top;
-            encode_bool(
-                &mut buffer,
-                std::iter::repeat_n(false, segment.adjusted_column_top),
-                segment.adjusted_column_top,
-            )?;
+    let mut segment_idx = 0usize;
+    let mut segment_started = false;
+    let mut top_remaining = 0usize;
+    let mut entry_idx = 0usize;
+    let def_levels = std::iter::from_fn(|| loop {
+        let segment = segments.get(segment_idx)?;
+
+        if !segment_started {
+            top_remaining = segment.adjusted_column_top;
+            segment_started = true;
         }
 
-        validity.clear();
-        validity.reserve(segment.aux.len());
-        visit_varchar_entries(segment.aux, segment.data, |entry| {
-            let present = entry.is_some();
+        if top_remaining > 0 {
+            top_remaining -= 1;
+            null_count += 1;
+            return Some(false);
+        }
+
+        if let Some(entry) = segment.aux.get(entry_idx) {
+            entry_idx += 1;
+            let present = varchar_get_slice_validated(entry, segment.data).is_some();
             if !present {
                 null_count += 1;
             }
-            validity.push(present);
-            Ok(())
-        })?;
-        if !validity.is_empty() {
-            encode_bool(&mut buffer, validity.iter().copied(), validity.len())?;
+            return Some(present);
         }
-    }
-    finish_primitive_level_stream(&mut buffer, payload_start, options.version);
+
+        segment_idx += 1;
+        segment_started = false;
+        entry_idx = 0;
+    });
+    encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
     let mut stats = BinaryMaxMinStats::new(&primitive_type);

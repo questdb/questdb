@@ -55,6 +55,7 @@ pub struct ChunkSlice {
     pub adjusted_column_top: usize,
 }
 
+#[cfg(test)]
 impl ChunkSlice {
     #[inline]
     pub fn len(&self) -> usize {
@@ -177,18 +178,15 @@ pub fn column_chunk_slices<'a>(
     last_partition_end: usize,
 ) -> impl Iterator<Item = ChunkSlice> + 'a {
     let num_partitions = columns.len();
-    columns
-        .iter()
-        .enumerate()
-        .map(move |(part_idx, column)| {
-            partition_chunk_slice(
-                part_idx,
-                num_partitions,
-                column,
-                first_partition_start,
-                last_partition_end,
-            )
-        })
+    columns.iter().enumerate().map(move |(part_idx, column)| {
+        partition_chunk_slice(
+            part_idx,
+            num_partitions,
+            column,
+            first_partition_start,
+            last_partition_end,
+        )
+    })
 }
 
 /// Borrowed typed view of a logical chunk segment from a single partition.
@@ -218,10 +216,11 @@ where
 {
     let mut segments = Vec::with_capacity(columns.len());
 
-    for (column, chunk) in columns
-        .iter()
-        .zip(column_chunk_slices(columns, first_partition_start, last_partition_end))
-    {
+    for (column, chunk) in columns.iter().zip(column_chunk_slices(
+        columns,
+        first_partition_start,
+        last_partition_end,
+    )) {
         let typed = transmuter(column)?;
         segments.push(TypedChunkSegment {
             adjusted_column_top: chunk.adjusted_column_top,

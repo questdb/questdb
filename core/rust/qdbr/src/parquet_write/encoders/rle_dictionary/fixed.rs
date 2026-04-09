@@ -131,11 +131,10 @@ pub fn encode_fixed_len_bytes<const N: usize>(
         options,
         Repetition::Optional,
     )?;
-    let mut pages = Vec::with_capacity(2);
-    pages.push(Page::Dict(build_dict_page(dict_buffer, dict_entry_count)));
-    pages.push(Page::Data(data_page));
-
-    Ok(pages)
+    Ok(vec![
+        Page::Dict(build_dict_page(dict_buffer, dict_entry_count)),
+        Page::Data(data_page),
+    ])
 }
 
 fn encode_decimal_inner<T>(
@@ -209,11 +208,10 @@ where
         options,
         Repetition::Optional,
     )?;
-    let mut pages = Vec::with_capacity(2);
-    pages.push(Page::Dict(build_dict_page(dict_buffer, dict_entry_count)));
-    pages.push(Page::Data(data_page));
-
-    Ok(pages)
+    Ok(vec![
+        Page::Dict(build_dict_page(dict_buffer, dict_entry_count)),
+        Page::Data(data_page),
+    ])
 }
 
 fn build_decimal_stats<T: NativeType>(
