@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,20 +24,16 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-public interface ReadOnlyObjList<T> extends Sinkable {
-    T get(int index);
-
-    T getLast();
-
-    T getQuick(int index);
-
-    T getQuiet(int index);
-
-    int indexOf(Object o);
-
+public interface CharSequenceObjMap<V> {
     int size();
 
-    ReadOnlyObjList<T> copy();
+    V getAt(int i);
+
+    V get(@NotNull CharSequence key);
+
+    boolean put(@NotNull CharSequence key, V value);
+
+    int remove(@NotNull CharSequence key);
 }

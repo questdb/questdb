@@ -5460,7 +5460,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
                 case SHOW_TABLES:
-                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
+                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory(executionContext.getCairoEngine().getConfiguration());
                     break;
                 case SHOW_COLUMNS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);

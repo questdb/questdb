@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,29 +27,28 @@ package io.questdb.std;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
-import java.util.Comparator;
 
-
-public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet implements CharSequenceObjMap<V> {
-    private final ObjList<CharSequence> list;
+public class CharSequenceObjSortedHashMap<V> extends AbstractCharSequenceHashSet implements CharSequenceObjMap<V> {
+    private final CharSequenceSortedList list;
     private V[] values;
 
-    public CharSequenceObjHashMap() {
+    public CharSequenceObjSortedHashMap() {
         this(8);
     }
 
-    public CharSequenceObjHashMap(int initialCapacity) {
+    public CharSequenceObjSortedHashMap(int initialCapacity) {
         this(initialCapacity, 0.5);
     }
 
     @SuppressWarnings("unchecked")
-    private CharSequenceObjHashMap(int initialCapacity, double loadFactor) {
+    private CharSequenceObjSortedHashMap(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
-        this.list = new ObjList<>(capacity);
+        this.list = new CharSequenceSortedList(capacity);
         values = (V[]) new Object[keys.length];
         clear();
     }
 
+    @Override
     public final void clear() {
         super.clear();
         list.clear();
@@ -60,10 +59,10 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet imple
     }
 
     public V getAt(int index) {
-        return get(list.getQuick(index));
+        return get(list.get(index));
     }
 
-    public ObjList<CharSequence> keys() {
+    public ReadOnlyObjList<CharSequence> keys() {
         return list;
     }
 
@@ -71,7 +70,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet imple
         return putAt(keyIndex(key), key, value);
     }
 
-    public void putAll(@NotNull CharSequenceObjHashMap<V> other) {
+    public void putAll(@NotNull CharSequenceObjSortedHashMap<V> other) {
         CharSequence[] otherKeys = other.keys;
         V[] otherValues = other.values;
         for (int i = 0, n = otherKeys.length; i < n; i++) {
@@ -90,16 +89,13 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet imple
         return false;
     }
 
+    @Override
     public void removeAt(int index) {
         if (index < 0) {
             CharSequence key = keys[-index - 1];
             super.removeAt(index);
             list.remove(key);
         }
-    }
-
-    public void sortKeys(Comparator<CharSequence> comparator) {
-        list.sort(comparator);
     }
 
     public V valueAt(int index) {
@@ -111,7 +107,7 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet imple
     }
 
     public V valueQuick(int index) {
-        return get(list.getQuick(index));
+        return get(list.get(index));
     }
 
     private boolean putAt0(int index, CharSequence key, V value) {

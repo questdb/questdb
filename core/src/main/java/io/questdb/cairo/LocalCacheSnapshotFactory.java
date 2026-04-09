@@ -1,4 +1,4 @@
-/*+*****************************************************************************
+/*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -22,22 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo;
 
-import io.questdb.std.str.Sinkable;
+import io.questdb.std.CharSequenceObjMap;
 
-public interface ReadOnlyObjList<T> extends Sinkable {
-    T get(int index);
+public interface LocalCacheSnapshotFactory {
 
-    T getLast();
-
-    T getQuick(int index);
-
-    T getQuiet(int index);
-
-    int indexOf(Object o);
-
-    int size();
-
-    ReadOnlyObjList<T> copy();
+    CharSequenceObjMap<CairoTable> newInstance(CairoConfiguration configuration);
 }
