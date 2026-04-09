@@ -113,10 +113,10 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
                     m.isSymbolTableStatic(),
                     m.getMetadata()
             );
+            cm.setParquetEncodingConfig(m.getParquetEncodingConfig());
         } else {
             cm = m;
         }
-        cm.setParquetEncodingConfig(m.getParquetEncodingConfig());
         addToMap(columnName, dot, cm);
     }
 

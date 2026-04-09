@@ -7308,16 +7308,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (queryColumn.getAlias() == null) {
                 queryMetadata.add(metadata.getColumnMetadata(index));
             } else {
-                queryMetadata.add(
-                        new TableColumnMetadata(
-                                Chars.toString(queryColumn.getAlias()),
-                                metadata.getColumnType(index),
-                                metadata.isColumnIndexed(index),
-                                metadata.getIndexValueBlockCapacity(index),
-                                metadata.isSymbolTableStatic(index),
-                                metadata.getMetadata(index)
-                        )
+                TableColumnMetadata aliasedColumn = new TableColumnMetadata(
+                        Chars.toString(queryColumn.getAlias()),
+                        metadata.getColumnType(index),
+                        metadata.isColumnIndexed(index),
+                        metadata.getIndexValueBlockCapacity(index),
+                        metadata.isSymbolTableStatic(index),
+                        metadata.getMetadata(index)
                 );
+                aliasedColumn.setParquetEncodingConfig(
+                        metadata.getColumnMetadata(index).getParquetEncodingConfig()
+                );
+                queryMetadata.add(aliasedColumn);
             }
 
             if (index == timestampIndex) {
@@ -7337,16 +7339,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            queryMetadata.add(
-                    new TableColumnMetadata(
-                            "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
-                            colMetadata.getColumnType(),
-                            colMetadata.isSymbolIndexFlag(),
-                            colMetadata.getIndexValueBlockCapacity(),
-                            colMetadata.isSymbolTableStatic(),
-                            metadata
-                    )
+            TableColumnMetadata implicitTs = new TableColumnMetadata(
+                    "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
+                    colMetadata.getColumnType(),
+                    colMetadata.isSymbolIndexFlag(),
+                    colMetadata.getIndexValueBlockCapacity(),
+                    colMetadata.isSymbolTableStatic(),
+                    metadata
             );
+            implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+            queryMetadata.add(implicitTs);
             queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }

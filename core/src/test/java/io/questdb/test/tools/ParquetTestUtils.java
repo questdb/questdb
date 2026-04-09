@@ -71,8 +71,12 @@ public final class ParquetTestUtils {
                 }
             }
         } finally {
-            ff.close(fd);
-            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            if (fd > 0) {
+                ff.close(fd);
+            }
         }
     }
 }
