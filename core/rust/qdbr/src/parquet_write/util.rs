@@ -252,6 +252,25 @@ pub fn encode_primitive_def_levels<I: Iterator<Item = bool>>(
     }
 }
 
+#[inline]
+pub fn begin_primitive_level_stream(buffer: &mut Vec<u8>, version: Version) -> usize {
+    match version {
+        Version::V1 => {
+            buffer.extend_from_slice(&[0; 4]);
+            buffer.len()
+        }
+        Version::V2 => buffer.len(),
+    }
+}
+
+#[inline]
+pub fn finish_primitive_level_stream(buffer: &mut Vec<u8>, payload_start: usize, version: Version) {
+    if matches!(version, Version::V1) {
+        let payload_len = (buffer.len() - payload_start) as i32;
+        buffer[payload_start - 4..payload_start].copy_from_slice(&payload_len.to_le_bytes());
+    }
+}
+
 /// Encode def levels where every value is present (all 1s).
 /// Uses a single RLE run which is ~3 bytes regardless of row count,
 /// vs the general bitpacked path that scales with row count.

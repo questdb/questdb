@@ -15,7 +15,7 @@ use parquet2::types::NativeType;
 use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::encoders::helpers::{lock_bloom_set, partition_chunk_slice, ChunkSlice};
+use crate::parquet_write::encoders::helpers::{lock_bloom_set, partition_chunk_slice};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
@@ -45,23 +45,57 @@ impl Repetition {
     }
 }
 
-struct PartitionDictState<S> {
-    chunk: ChunkSlice,
+struct ColumnChunkDictState<S> {
+    num_rows: usize,
     keys: Vec<u32>,
     is_not_null: Vec<bool>,
-    partition_null_count: usize,
+    null_count: usize,
     stats: Option<S>,
 }
 
-impl<S> PartitionDictState<S> {
-    fn new(chunk: ChunkSlice, stats: Option<S>) -> Self {
+impl<S> ColumnChunkDictState<S> {
+    fn new(stats: Option<S>) -> Self {
         Self {
-            chunk,
+            num_rows: 0,
             keys: Vec::new(),
             is_not_null: Vec::new(),
-            partition_null_count: 0,
+            null_count: 0,
             stats,
         }
+    }
+
+    #[inline]
+    fn push_optional_null(&mut self) {
+        self.num_rows += 1;
+        self.null_count += 1;
+        self.is_not_null.push(false);
+    }
+
+    #[inline]
+    fn push_optional_value(&mut self, key: u32) {
+        self.num_rows += 1;
+        self.keys.push(key);
+        self.is_not_null.push(true);
+    }
+
+    #[inline]
+    fn push_required_value(&mut self, key: u32) {
+        self.num_rows += 1;
+        self.keys.push(key);
+    }
+
+    #[inline]
+    fn extend_optional_nulls(&mut self, count: usize) {
+        self.num_rows += count;
+        self.null_count += count;
+        self.is_not_null
+            .resize(self.is_not_null.len() + count, false);
+    }
+
+    #[inline]
+    fn extend_required_values(&mut self, key: u32, count: usize) {
+        self.num_rows += count;
+        self.keys.resize(self.keys.len() + count, key);
     }
 }
 
@@ -89,7 +123,8 @@ where
     let num_partitions = columns.len();
     let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
     let mut dict_entries: Vec<P> = Vec::new();
-    let mut per_partition: Vec<PartitionDictState<MaxMin<P>>> = Vec::with_capacity(num_partitions);
+    let mut state =
+        ColumnChunkDictState::<MaxMin<P>>::new(options.write_statistics.then(MaxMin::<P>::new));
 
     for (part_idx, column) in columns.iter().enumerate() {
         let chunk = partition_chunk_slice(
@@ -102,11 +137,6 @@ where
         let typed = transmuter(column)?;
         let slice = &typed[chunk.lower_bound..chunk.upper_bound];
 
-        let mut state = PartitionDictState::<MaxMin<P>>::new(
-            chunk,
-            options.write_statistics.then(MaxMin::<P>::new),
-        );
-
         if repetition.is_required() && chunk.adjusted_column_top > 0 {
             let default_p = column_top_default.ok_or_else(|| {
                 fmt_err!(
@@ -115,12 +145,12 @@ where
                 )
             })?;
             let default_key = upsert_dict_entry(&mut dict_map, &mut dict_entries, default_p)?;
-            for _ in 0..chunk.adjusted_column_top {
-                state.keys.push(default_key);
-            }
+            state.extend_required_values(default_key, chunk.adjusted_column_top);
             if let Some(ref mut stats) = state.stats {
                 stats.update(default_p);
             }
+        } else if chunk.adjusted_column_top > 0 {
+            state.extend_optional_nulls(chunk.adjusted_column_top);
         }
 
         for &value in slice {
@@ -131,22 +161,20 @@ where
                         "encountered null value in Required column"
                     ));
                 }
-                state.is_not_null.push(false);
-                state.partition_null_count += 1;
+                state.push_optional_null();
             } else {
                 let p = project(value);
                 let key = upsert_dict_entry(&mut dict_map, &mut dict_entries, p)?;
-                state.keys.push(key);
-                if !repetition.is_required() {
-                    state.is_not_null.push(true);
+                if repetition.is_required() {
+                    state.push_required_value(key);
+                } else {
+                    state.push_optional_value(key);
                 }
                 if let Some(ref mut stats) = state.stats {
                     stats.update(p);
                 }
             }
         }
-
-        per_partition.push(state);
     }
 
     let mut dict_buffer = Vec::with_capacity(dict_entries.len() * std::mem::size_of::<P>());
@@ -162,33 +190,26 @@ where
     }
 
     let dict_entry_count = dict_entries.len();
-    let mut pages = Vec::with_capacity(num_partitions + 1);
+    let stats = state
+        .stats
+        .map(|s| build_primitive_stats(Some(state.null_count as i64), s, primitive_type.clone()));
+    let data_page = build_primitive_dict_data_page(
+        &state.keys,
+        &state.is_not_null,
+        state.num_rows,
+        state.null_count,
+        dict_entry_count,
+        stats,
+        primitive_type,
+        options,
+        repetition,
+    )?;
+    let mut pages = Vec::with_capacity(2);
     pages.push(parquet2::page::Page::Dict(build_dict_page(
         dict_buffer,
         dict_entry_count,
     )));
-
-    for state in per_partition {
-        let stats = state.stats.map(|s| {
-            build_primitive_stats(
-                Some((state.chunk.adjusted_column_top + state.partition_null_count) as i64),
-                s,
-                primitive_type.clone(),
-            )
-        });
-        let data_page = build_primitive_dict_data_page(
-            &state.keys,
-            &state.is_not_null,
-            state.chunk,
-            state.partition_null_count,
-            dict_entry_count,
-            stats,
-            primitive_type,
-            options,
-            repetition,
-        )?;
-        pages.push(parquet2::page::Page::Data(data_page));
-    }
+    pages.push(parquet2::page::Page::Data(data_page));
 
     Ok(pages)
 }
@@ -241,35 +262,27 @@ fn build_primitive_stats<P: NativeType>(
 fn build_primitive_dict_data_page(
     keys: &[u32],
     is_not_null: &[bool],
-    chunk: ChunkSlice,
-    partition_null_count: usize,
+    num_rows: usize,
+    null_count: usize,
     dict_entry_count: usize,
     statistics: Option<ParquetStatistics>,
     primitive_type: &PrimitiveType,
     options: WriteOptions,
     repetition: Repetition,
 ) -> ParquetResult<parquet2::page::DataPage> {
-    let num_rows = chunk.num_rows();
     let required = repetition.is_required();
-    let total_null_count = if required {
-        0
-    } else {
-        chunk.adjusted_column_top + partition_null_count
-    };
+    let total_null_count = if required { 0 } else { null_count };
     let non_null_count = if required { num_rows } else { keys.len() };
 
     let mut buffer: Vec<u8> = Vec::new();
 
     if !required {
-        let column_top = chunk.adjusted_column_top;
-        let def_levels = (0..num_rows).map(|i| {
-            if i < column_top {
-                false
-            } else {
-                is_not_null[i - column_top]
-            }
-        });
-        encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)?;
+        encode_primitive_def_levels(
+            &mut buffer,
+            is_not_null.iter().copied(),
+            num_rows,
+            options.version,
+        )?;
     }
     let definition_levels_byte_length = buffer.len();
 
@@ -304,8 +317,8 @@ fn build_primitive_dict_data_page(
 fn build_var_dict_data_page(
     keys: &[u32],
     is_not_null: &[bool],
-    chunk: ChunkSlice,
-    partition_null_count: usize,
+    num_rows: usize,
+    null_count: usize,
     dict_entry_count: usize,
     statistics: Option<ParquetStatistics>,
     primitive_type: &PrimitiveType,
@@ -315,8 +328,8 @@ fn build_var_dict_data_page(
     build_primitive_dict_data_page(
         keys,
         is_not_null,
-        chunk,
-        partition_null_count,
+        num_rows,
+        null_count,
         dict_entry_count,
         statistics,
         primitive_type,

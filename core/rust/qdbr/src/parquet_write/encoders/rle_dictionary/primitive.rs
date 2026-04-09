@@ -15,7 +15,7 @@ use crate::parquet_write::Nullable;
 use super::{encode_primitive, Repetition};
 
 /// Encode a SIMD-encodable primitive type (Int, Long, Float, Double, Date,
-/// Timestamp) as RleDictionary pages: 1 DictPage + N DataPages.
+/// Timestamp) as RleDictionary pages: 1 DictPage + 1 DataPage.
 pub fn encode_simd<T>(
     columns: &[Column],
     first_partition_start: usize,

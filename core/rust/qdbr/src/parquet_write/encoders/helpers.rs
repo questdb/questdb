@@ -33,11 +33,13 @@ use crate::parquet_write::schema::Column;
 
 /// Default cap on uncompressed data page size, mirroring the legacy
 /// `DEFAULT_PAGE_SIZE` constant in `file.rs` before the rework.
+#[allow(dead_code)]
 pub const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 
 /// Compute the number of rows per data page for a given primitive size.
 /// Mirrors the legacy `column_chunk_to_primitive_pages` formula.
 #[inline]
+#[allow(dead_code)]
 pub fn rows_per_page(options: &WriteOptions, bytes_per_row: usize) -> usize {
     let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
     cmp::max(max_page_size / bytes_per_row, 1)
@@ -143,6 +145,93 @@ pub fn partition_chunk_slice(
     compute_chunk_slice(column.column_top, chunk_offset, chunk_length)
 }
 
+/// Total number of logical rows covered by the selected column chunk across
+/// all input partitions.
+#[inline]
+pub fn column_chunk_row_count(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+) -> usize {
+    let num_partitions = columns.len();
+    columns
+        .iter()
+        .enumerate()
+        .map(|(part_idx, column)| {
+            partition_slice_range(
+                part_idx,
+                num_partitions,
+                column.row_count,
+                first_partition_start,
+                last_partition_end,
+            )
+            .1
+        })
+        .sum()
+}
+
+/// Compute the logical chunk slice for each input partition.
+pub fn column_chunk_slices<'a>(
+    columns: &'a [Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+) -> impl Iterator<Item = ChunkSlice> + 'a {
+    let num_partitions = columns.len();
+    columns
+        .iter()
+        .enumerate()
+        .map(move |(part_idx, column)| {
+            partition_chunk_slice(
+                part_idx,
+                num_partitions,
+                column,
+                first_partition_start,
+                last_partition_end,
+            )
+        })
+}
+
+/// Borrowed typed view of a logical chunk segment from a single partition.
+#[derive(Clone, Copy, Debug)]
+pub struct TypedChunkSegment<'a, T> {
+    pub adjusted_column_top: usize,
+    pub slice: &'a [T],
+}
+
+impl<T> TypedChunkSegment<'_, T> {
+    #[inline]
+    pub fn num_rows(&self) -> usize {
+        self.adjusted_column_top + self.slice.len()
+    }
+}
+
+/// Build borrowed typed segments for the selected column chunk without
+/// materializing a whole-chunk value buffer.
+pub fn collect_typed_chunk_segments<'a, T, F>(
+    columns: &'a [Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    mut transmuter: F,
+) -> ParquetResult<Vec<TypedChunkSegment<'a, T>>>
+where
+    F: FnMut(&'a Column) -> ParquetResult<&'a [T]>,
+{
+    let mut segments = Vec::with_capacity(columns.len());
+
+    for (column, chunk) in columns
+        .iter()
+        .zip(column_chunk_slices(columns, first_partition_start, last_partition_end))
+    {
+        let typed = transmuter(column)?;
+        segments.push(TypedChunkSegment {
+            adjusted_column_top: chunk.adjusted_column_top,
+            slice: &typed[chunk.lower_bound..chunk.upper_bound],
+        });
+    }
+
+    Ok(segments)
+}
+
 /// Iterator over sub-chunks of a partition that respects `rows_per_page`.
 /// Each yielded `ChunkSlice` covers at most `rows_per_page` rows.
 #[derive(Clone)]
@@ -155,6 +244,7 @@ pub struct PartitionPageSlices {
 }
 
 impl PartitionPageSlices {
+    #[allow(dead_code)]
     pub fn new(
         column: &Column,
         chunk_offset: usize,

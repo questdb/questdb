@@ -173,11 +173,12 @@ mod tests {
     use super::*;
     use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_write::schema::column_type_to_parquet_type;
-    use crate::parquet_write::tests::make_column_with_top;
     use parquet2::compression::CompressionOptions;
     use parquet2::page::DataPageHeader;
     use parquet2::schema::types::ParquetType;
     use parquet2::write::Version;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
     fn write_options() -> WriteOptions {
@@ -440,9 +441,391 @@ mod tests {
         assert_eq!(num_nulls, 10);
     }
 
-    // Silence the otherwise-unused helper.
-    #[allow(dead_code)]
-    fn _ensure_make_column_with_top_used() {
-        let _ = make_column_with_top::<u8>("col", ColumnTypeTag::Boolean, &[], 0, 0);
+    fn make_varchar_aux_null() -> [u8; 16] {
+        let mut entry = [0u8; 16];
+        entry[0] = 0b100;
+        entry
+    }
+
+    fn make_null_string_aux(count: usize) -> (Vec<u8>, Vec<i64>) {
+        let mut data = Vec::new();
+        let mut offsets = Vec::new();
+        for _ in 0..count {
+            offsets.push(data.len() as i64);
+            data.extend_from_slice(&(-1i32).to_le_bytes());
+        }
+        (data, offsets)
+    }
+
+    fn build_string_column(data: &[u8], offsets: &[i64]) -> Column {
+        Column::from_raw_data(
+            0,
+            "col",
+            ColumnTypeTag::String.into_type().code(),
+            0,
+            offsets.len(),
+            data.as_ptr(),
+            data.len(),
+            offsets.as_ptr() as *const u8,
+            offsets.len() * std::mem::size_of::<i64>(),
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap()
+    }
+
+    fn build_string_column_with_top(
+        data: &[u8],
+        offsets: &[i64],
+        column_top: usize,
+    ) -> Column {
+        Column::from_raw_data(
+            0,
+            "col",
+            ColumnTypeTag::String.into_type().code(),
+            column_top as i64,
+            offsets.len(),
+            data.as_ptr(),
+            data.len(),
+            offsets.as_ptr() as *const u8,
+            offsets.len() * std::mem::size_of::<i64>(),
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap()
+    }
+
+    fn build_binary_column(data: &[u8], offsets: &[i64]) -> Column {
+        Column::from_raw_data(
+            0,
+            "col",
+            ColumnTypeTag::Binary.into_type().code(),
+            0,
+            offsets.len(),
+            data.as_ptr(),
+            data.len(),
+            offsets.as_ptr() as *const u8,
+            offsets.len() * std::mem::size_of::<i64>(),
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap()
+    }
+
+    fn build_binary_column_with_top(
+        data: &[u8],
+        offsets: &[i64],
+        column_top: usize,
+    ) -> Column {
+        Column::from_raw_data(
+            0,
+            "col",
+            ColumnTypeTag::Binary.into_type().code(),
+            column_top as i64,
+            offsets.len(),
+            data.as_ptr(),
+            data.len(),
+            offsets.as_ptr() as *const u8,
+            offsets.len() * std::mem::size_of::<i64>(),
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap()
+    }
+
+    fn build_varchar_column(aux: &[[u8; 16]], data: &[u8]) -> Column {
+        Column::from_raw_data(
+            0,
+            "col",
+            ColumnTypeTag::Varchar.into_type().code(),
+            0,
+            aux.len(),
+            data.as_ptr(),
+            data.len(),
+            aux.as_ptr() as *const u8,
+            aux.len() * 16,
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap()
+    }
+
+    // ----- null handling -----
+
+    #[test]
+    fn encode_string_delta_with_null_values() {
+        let mut data = Vec::new();
+        let mut offsets = Vec::new();
+        // Row 0: "hi"
+        let (d, _) = make_string_aux(&["hi"]);
+        offsets.push(data.len() as i64);
+        data.extend_from_slice(&d);
+        // Row 1: null (length header = -1)
+        offsets.push(data.len() as i64);
+        data.extend_from_slice(&(-1i32).to_le_bytes());
+        // Row 2: "yo"
+        let start = data.len();
+        let (d2, _) = make_string_aux(&["yo"]);
+        offsets.push(start as i64);
+        data.extend_from_slice(&d2);
+
+        let col = build_string_column(&data, &offsets);
+        let pt = primitive_type_for(ColumnTypeTag::String);
+        let pages =
+            encode_string(&[col], 0, offsets.len(), &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, enc) = v2_header(&pages[0]);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 1);
+        assert_eq!(enc, 6);
+    }
+
+    #[test]
+    fn encode_binary_delta_with_null_values() {
+        let mut data = Vec::new();
+        let mut offsets = Vec::new();
+        // Row 0: "abc"
+        offsets.push(data.len() as i64);
+        data.extend_from_slice(&3i64.to_le_bytes());
+        data.extend_from_slice(b"abc");
+        // Row 1: null (negative length)
+        offsets.push(data.len() as i64);
+        data.extend_from_slice(&(-1i64).to_le_bytes());
+        // Row 2: "z"
+        offsets.push(data.len() as i64);
+        data.extend_from_slice(&1i64.to_le_bytes());
+        data.extend_from_slice(b"z");
+
+        let col = build_binary_column(&data, &offsets);
+        let pt = primitive_type_for(ColumnTypeTag::Binary);
+        let pages =
+            encode_binary(&[col], 0, offsets.len(), &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, enc) = v2_header(&pages[0]);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 1);
+        assert_eq!(enc, 6);
+    }
+
+    #[test]
+    fn encode_varchar_delta_with_null_values() {
+        let aux = [
+            make_varchar_aux_inlined(b"hi"),
+            make_varchar_aux_null(),
+            make_varchar_aux_inlined(b"bye"),
+            make_varchar_aux_null(),
+        ];
+        let data: Vec<u8> = vec![];
+        let col = build_varchar_column(&aux, &data);
+        let pt = primitive_type_for(ColumnTypeTag::Varchar);
+        let pages =
+            encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, enc) = v2_header(&pages[0]);
+        assert_eq!(num_values, 4);
+        assert_eq!(num_nulls, 2);
+        assert_eq!(enc, 6);
+    }
+
+    // ----- empty and all-nulls edge cases -----
+
+    #[test]
+    fn encode_string_delta_empty_yields_zero_pages() {
+        let data: Vec<u8> = vec![];
+        let offsets: Vec<i64> = vec![];
+        let col = build_string_column(&data, &offsets);
+        let pt = primitive_type_for(ColumnTypeTag::String);
+        let pages =
+            encode_string(&[col], 0, 0, &pt, write_options(), None).expect("encode");
+        assert!(pages.is_empty());
+    }
+
+    #[test]
+    fn encode_binary_delta_empty_yields_zero_pages() {
+        let data: Vec<u8> = vec![];
+        let offsets: Vec<i64> = vec![];
+        let col = build_binary_column(&data, &offsets);
+        let pt = primitive_type_for(ColumnTypeTag::Binary);
+        let pages =
+            encode_binary(&[col], 0, 0, &pt, write_options(), None).expect("encode");
+        assert!(pages.is_empty());
+    }
+
+    #[test]
+    fn encode_string_delta_all_nulls() {
+        let (data, offsets) = make_null_string_aux(5);
+        let col = build_string_column(&data, &offsets);
+        let pt = primitive_type_for(ColumnTypeTag::String);
+        let pages =
+            encode_string(&[col], 0, offsets.len(), &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, _) = v2_header(&pages[0]);
+        assert_eq!(num_values, 5);
+        assert_eq!(num_nulls, 5);
+    }
+
+    #[test]
+    fn encode_varchar_delta_all_nulls() {
+        let aux = [
+            make_varchar_aux_null(),
+            make_varchar_aux_null(),
+            make_varchar_aux_null(),
+        ];
+        let data: Vec<u8> = vec![];
+        let col = build_varchar_column(&aux, &data);
+        let pt = primitive_type_for(ColumnTypeTag::Varchar);
+        let pages =
+            encode_varchar(&[col], 0, aux.len(), &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, _) = v2_header(&pages[0]);
+        assert_eq!(num_values, 3);
+        assert_eq!(num_nulls, 3);
+    }
+
+    // ----- column-top -----
+
+    #[test]
+    fn encode_string_delta_with_column_top() {
+        let (data_buf, offsets) = make_string_aux(&["a", "b"]);
+        let col = build_string_column_with_top(&data_buf, &offsets, 5);
+        let pt = primitive_type_for(ColumnTypeTag::String);
+        let pages =
+            encode_string(&[col], 0, 7, &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, enc) = v2_header(&pages[0]);
+        assert_eq!(num_values, 7);
+        assert_eq!(num_nulls, 5, "column top rows should appear as nulls");
+        assert_eq!(enc, 6);
+    }
+
+    #[test]
+    fn encode_binary_delta_with_column_top() {
+        let (data_buf, offsets) = make_binary_aux(&[b"abc", b"xy"]);
+        let col = build_binary_column_with_top(&data_buf, &offsets, 3);
+        let pt = primitive_type_for(ColumnTypeTag::Binary);
+        let pages =
+            encode_binary(&[col], 0, 5, &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, enc) = v2_header(&pages[0]);
+        assert_eq!(num_values, 5);
+        assert_eq!(num_nulls, 3, "column top rows should appear as nulls");
+        assert_eq!(enc, 6);
+    }
+
+    // ----- bloom filter -----
+
+    #[test]
+    fn encode_string_delta_bloom_filter() {
+        let (data_buf, offsets) = make_string_aux(&["alpha", "beta", "gamma"]);
+        let col = build_string_column(&data_buf, &offsets);
+        let pt = primitive_type_for(ColumnTypeTag::String);
+        let bloom = Arc::new(Mutex::new(HashSet::new()));
+        let _ = encode_string(
+            &[col],
+            0,
+            offsets.len(),
+            &pt,
+            write_options(),
+            Some(bloom.clone()),
+        )
+        .expect("encode");
+        let set = bloom.lock().expect("lock");
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn encode_binary_delta_bloom_filter() {
+        let (data_buf, offsets) = make_binary_aux(&[b"abc", b"def", b"ghi", b"jkl"]);
+        let col = build_binary_column(&data_buf, &offsets);
+        let pt = primitive_type_for(ColumnTypeTag::Binary);
+        let bloom = Arc::new(Mutex::new(HashSet::new()));
+        let _ = encode_binary(
+            &[col],
+            0,
+            offsets.len(),
+            &pt,
+            write_options(),
+            Some(bloom.clone()),
+        )
+        .expect("encode");
+        let set = bloom.lock().expect("lock");
+        assert_eq!(set.len(), 4);
+    }
+
+    // ----- multi-partition with nulls (per-partition pages) -----
+
+    #[test]
+    fn encode_binary_delta_multi_partition_with_nulls() {
+        // Partition 1: "abc", null
+        let mut data1 = Vec::new();
+        let mut offsets1 = Vec::new();
+        offsets1.push(data1.len() as i64);
+        data1.extend_from_slice(&3i64.to_le_bytes());
+        data1.extend_from_slice(b"abc");
+        offsets1.push(data1.len() as i64);
+        data1.extend_from_slice(&(-1i64).to_le_bytes());
+
+        // Partition 2: null, "xy"
+        let mut data2 = Vec::new();
+        let mut offsets2 = Vec::new();
+        offsets2.push(data2.len() as i64);
+        data2.extend_from_slice(&(-1i64).to_le_bytes());
+        offsets2.push(data2.len() as i64);
+        data2.extend_from_slice(&2i64.to_le_bytes());
+        data2.extend_from_slice(b"xy");
+
+        let col1 = build_binary_column(&data1, &offsets1);
+        let col2 = build_binary_column(&data2, &offsets2);
+        let pt = primitive_type_for(ColumnTypeTag::Binary);
+        let pages = encode_binary(&[col1, col2], 0, offsets2.len(), &pt, write_options(), None)
+            .expect("encode");
+        assert_eq!(pages.len(), 2);
+        let (nv0, nn0, _) = v2_header(&pages[0]);
+        let (nv1, nn1, _) = v2_header(&pages[1]);
+        assert_eq!(nv0, 2);
+        assert_eq!(nn0, 1);
+        assert_eq!(nv1, 2);
+        assert_eq!(nn1, 1);
+    }
+
+    #[test]
+    fn encode_varchar_delta_multi_partition_with_nulls() {
+        let aux1 = [
+            make_varchar_aux_inlined(b"a"),
+            make_varchar_aux_null(),
+        ];
+        let aux2 = [
+            make_varchar_aux_null(),
+            make_varchar_aux_inlined(b"z"),
+        ];
+        let data: Vec<u8> = vec![];
+        let col1 = build_varchar_column(&aux1, &data);
+        let col2 = build_varchar_column(&aux2, &data);
+        let pt = primitive_type_for(ColumnTypeTag::Varchar);
+        let pages =
+            encode_varchar(&[col1, col2], 0, aux2.len(), &pt, write_options(), None)
+                .expect("encode");
+        assert_eq!(pages.len(), 2);
+        let (nv0, nn0, _) = v2_header(&pages[0]);
+        let (nv1, nn1, _) = v2_header(&pages[1]);
+        assert_eq!(nv0, 2);
+        assert_eq!(nn0, 1);
+        assert_eq!(nv1, 2);
+        assert_eq!(nn1, 1);
     }
 }

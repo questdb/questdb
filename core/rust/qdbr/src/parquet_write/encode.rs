@@ -46,9 +46,9 @@ use qdb_core::col_type::ColumnTypeTag;
 /// Encode a column chunk into Parquet pages, dispatching by physical type.
 ///
 /// `columns` carries one Column per partition (length 1 for single-partition
-/// row groups, N for multi-partition). Dict-encoded paths build a single
-/// global dictionary across the input partitions; plain/delta paths emit one
-/// page per partition independently.
+/// row groups, N for multi-partition). All encoder paths materialize the
+/// selected logical chunk across those partitions and emit a single data page
+/// for it; dictionary paths prepend one dict page for the chunk.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_column_chunk(
     encoding: Encoding,

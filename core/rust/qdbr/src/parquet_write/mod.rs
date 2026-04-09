@@ -10,7 +10,6 @@ pub use file::ParquetWriter;
 mod jni;
 pub mod schema;
 pub mod simd;
-mod symbol;
 mod update;
 mod util;
 pub mod varchar;
@@ -29,8 +28,8 @@ pub mod bench {
     pub use super::encoders::plain::{bytes_to_dict_pages, bytes_to_page};
     pub use super::encoders::plain::{string_to_dict_pages, string_to_page};
     pub use super::encoders::plain::{varchar_to_dict_pages, varchar_to_page};
+    pub use super::encoders::symbol::symbol_to_pages;
     pub use super::file::WriteOptions;
-    pub use super::symbol::symbol_to_pages;
 
     // Multi-partition benches use the top-level writer entrypoint and row-group helpers.
     pub use super::encode::encode_column_chunk;

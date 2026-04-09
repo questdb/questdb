@@ -14,8 +14,10 @@ use crate::parquet_write::util::{transmute_slice, BinaryMaxMinStats};
 
 use super::{
     build_dict_page, build_var_dict_data_page, lock_bloom_set, partition_chunk_slice,
-    PartitionDictState, Repetition,
+    ColumnChunkDictState, Repetition,
 };
+
+type ByteSliceIter<'a> = Box<dyn Iterator<Item = ParquetResult<Option<&'a [u8]>>> + 'a>;
 
 /// Encode a String column (UTF-16 source) as RleDictionary pages.
 pub fn encode_string(
@@ -27,11 +29,14 @@ pub fn encode_string(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
     let num_partitions = columns.len();
-    let mut dict_map: RapidHashMap<Vec<u16>, u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<Vec<u16>> = Vec::new();
-
-    let mut per_partition: Vec<PartitionDictState<BinaryMaxMinStats>> =
-        Vec::with_capacity(num_partitions);
+    let mut dict_map: RapidHashMap<&[u16], u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<Vec<u8>> = Vec::new();
+    let mut total_keys_bytes = 0usize;
+    let mut state = ColumnChunkDictState::<BinaryMaxMinStats>::new(
+        options
+            .write_statistics
+            .then(|| BinaryMaxMinStats::new(primitive_type)),
+    );
 
     for (part_idx, column) in columns.iter().enumerate() {
         let chunk = partition_chunk_slice(
@@ -45,12 +50,7 @@ pub fn encode_string(
         let aux_slice = &aux[chunk.lower_bound..chunk.upper_bound];
         let data = column.primary_data;
 
-        let mut state = PartitionDictState::<BinaryMaxMinStats>::new(
-            chunk,
-            options
-                .write_statistics
-                .then(|| BinaryMaxMinStats::new(primitive_type)),
-        );
+        state.extend_optional_nulls(chunk.adjusted_column_top);
 
         for offset in aux_slice {
             let offset = usize::try_from(*offset).map_err(|_| {
@@ -67,73 +67,58 @@ pub fn encode_string(
             })?;
             match read_utf16(entry_tail)? {
                 Some(utf16) => {
-                    let next_id = u32::try_from(dict_entries.len())
-                        .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
-                    let key = if let Some(&id) = dict_map.get(utf16) {
+                    let key = if let Some(&id) = dict_map.get(&utf16) {
                         id
                     } else {
-                        let owned: Vec<u16> = utf16.to_vec();
-                        let id = next_id;
-                        dict_map.insert(owned.clone(), id);
-                        dict_entries.push(owned);
+                        let utf8 = utf16_to_utf8_bytes(utf16)?;
+                        total_keys_bytes += 4 + utf8.len();
+                        if let Some(ref mut stats) = state.stats {
+                            stats.update(&utf8);
+                        }
+                        let id = u32::try_from(dict_entries.len())
+                            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+                        dict_map.insert(utf16, id);
+                        dict_entries.push(utf8);
                         id
                     };
-                    state.keys.push(key);
-                    state.is_not_null.push(true);
-                    if let Some(ref mut stats) = state.stats {
-                        let utf8 = String::from_utf16(utf16).map_err(|e| {
-                            fmt_err!(Layout, "invalid UTF-16 data in string column: {e}")
-                        })?;
-                        stats.update(utf8.as_bytes());
-                    }
+                    state.push_optional_value(key);
                 }
                 None => {
-                    state.is_not_null.push(false);
-                    state.partition_null_count += 1;
+                    state.push_optional_null();
                 }
             }
         }
-
-        per_partition.push(state);
     }
 
-    let mut dict_buffer = Vec::new();
+    let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
     {
         let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
         let mut bloom = bloom_guard.as_deref_mut();
-        for utf16 in &dict_entries {
-            let utf8 = String::from_utf16(utf16)
-                .map_err(|e| fmt_err!(Layout, "invalid UTF-16 in dictionary entry: {e}"))?;
-            let bytes = utf8.as_bytes();
-            dict_buffer.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-            dict_buffer.extend_from_slice(bytes);
+        for entry in &dict_entries {
+            dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+            dict_buffer.extend_from_slice(entry);
             if let Some(ref mut h) = bloom {
-                h.insert(hash_byte(bytes));
+                h.insert(hash_byte(entry));
             }
         }
     }
 
     let dict_entry_count = dict_entries.len();
-    let mut pages = Vec::with_capacity(num_partitions + 1);
+    let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
+    let data_page = build_var_dict_data_page(
+        &state.keys,
+        &state.is_not_null,
+        state.num_rows,
+        state.null_count,
+        dict_entry_count,
+        stats,
+        primitive_type,
+        options,
+        Repetition::Optional,
+    )?;
+    let mut pages = Vec::with_capacity(2);
     pages.push(Page::Dict(build_dict_page(dict_buffer, dict_entry_count)));
-
-    for state in per_partition {
-        let stats = state.stats.map(|s| {
-            s.into_parquet_stats(state.chunk.adjusted_column_top + state.partition_null_count)
-        });
-        let data_page = build_var_dict_data_page(
-            &state.keys,
-            &state.is_not_null,
-            state.chunk,
-            state.partition_null_count,
-            dict_entry_count,
-            stats,
-            primitive_type,
-            options,
-            Repetition::Optional,
-        )?;
-        pages.push(Page::Data(data_page));
-    }
+    pages.push(Page::Data(data_page));
 
     Ok(pages)
 }
@@ -159,8 +144,7 @@ pub fn encode_binary(
             let aux_slice = &aux[chunk.lower_bound..chunk.upper_bound];
             let data = column.primary_data;
             let size_of_header = std::mem::size_of::<i64>();
-            let mut out: Vec<Option<&[u8]>> = Vec::with_capacity(aux_slice.len());
-            for offset in aux_slice {
+            Ok(Box::new(aux_slice.iter().map(move |offset| {
                 let offset = usize::try_from(*offset).map_err(|_| {
                     fmt_err!(
                         Layout,
@@ -175,7 +159,7 @@ pub fn encode_binary(
                 })?;
                 let len = types::decode::<i64>(header_bytes);
                 if len < 0 {
-                    out.push(None);
+                    Ok(None)
                 } else {
                     let value_offset = offset + size_of_header;
                     let value_len = len as usize;
@@ -185,10 +169,9 @@ pub fn encode_binary(
                             "invalid offset and length in binary aux column: offset {offset}, length {len}"
                         ));
                     }
-                    out.push(Some(&data[value_offset..value_offset + value_len]));
+                    Ok(Some(&data[value_offset..value_offset + value_len]))
                 }
-            }
-            Ok(out)
+            })))
         },
     )
 }
@@ -209,7 +192,7 @@ pub fn encode_varchar(
         primitive_type,
         options,
         bloom_set,
-        varchar_aux_to_byte_slices,
+        visit_varchar_aux_byte_slices,
     )
 }
 
@@ -223,75 +206,53 @@ fn encode_byte_slices<F>(
     decode: F,
 ) -> ParquetResult<Vec<Page>>
 where
-    F: Fn(
-        &Column,
+    F: for<'a> Fn(
+        &'a Column,
         crate::parquet_write::encoders::helpers::ChunkSlice,
-    ) -> ParquetResult<Vec<Option<&[u8]>>>,
+    ) -> ParquetResult<ByteSliceIter<'a>>,
 {
     let num_partitions = columns.len();
-
-    struct OwnedSlice<'a> {
-        chunk: crate::parquet_write::encoders::helpers::ChunkSlice,
-        slices: Vec<Option<&'a [u8]>>,
-    }
-
-    let decoded: Vec<OwnedSlice<'_>> = (0..num_partitions)
-        .map(|part_idx| -> ParquetResult<OwnedSlice<'_>> {
-            let column = &columns[part_idx];
-            let chunk = partition_chunk_slice(
-                part_idx,
-                num_partitions,
-                column,
-                first_partition_start,
-                last_partition_end,
-            );
-            let slices = decode(column, chunk)?;
-            Ok(OwnedSlice { chunk, slices })
-        })
-        .collect::<ParquetResult<Vec<_>>>()?;
-
     let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
     let mut total_keys_bytes = 0usize;
-    let mut per_partition: Vec<PartitionDictState<BinaryMaxMinStats>> =
-        Vec::with_capacity(num_partitions);
+    let mut state = ColumnChunkDictState::<BinaryMaxMinStats>::new(
+        options
+            .write_statistics
+            .then(|| BinaryMaxMinStats::new(primitive_type)),
+    );
 
-    for owned in &decoded {
-        let mut state = PartitionDictState::<BinaryMaxMinStats>::new(
-            owned.chunk,
-            options
-                .write_statistics
-                .then(|| BinaryMaxMinStats::new(primitive_type)),
+    for (part_idx, column) in columns.iter().enumerate() {
+        let chunk = partition_chunk_slice(
+            part_idx,
+            num_partitions,
+            column,
+            first_partition_start,
+            last_partition_end,
         );
-
-        for slice_opt in &owned.slices {
-            match slice_opt {
+        state.extend_optional_nulls(chunk.adjusted_column_top);
+        for slice_opt in decode(column, chunk)? {
+            match slice_opt? {
                 Some(s) => {
-                    let next_id = u32::try_from(dict_entries.len())
-                        .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
-                    let key = if let Some(&id) = dict_map.get(s) {
+                    let key = if let Some(&id) = dict_map.get(&s) {
                         id
                     } else {
-                        let id = next_id;
-                        dict_map.insert(*s, id);
-                        dict_entries.push(*s);
+                        let id = u32::try_from(dict_entries.len())
+                            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+                        dict_map.insert(s, id);
+                        dict_entries.push(s);
                         total_keys_bytes += 4 + s.len();
                         id
                     };
-                    state.keys.push(key);
-                    state.is_not_null.push(true);
+                    state.push_optional_value(key);
                     if let Some(ref mut stats) = state.stats {
                         stats.update(s);
                     }
                 }
                 None => {
-                    state.is_not_null.push(false);
-                    state.partition_null_count += 1;
+                    state.push_optional_null();
                 }
             }
         }
-
-        per_partition.push(state);
     }
 
     let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
@@ -308,26 +269,21 @@ where
     }
 
     let dict_entry_count = dict_entries.len();
-    let mut pages = Vec::with_capacity(num_partitions + 1);
+    let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
+    let data_page = build_var_dict_data_page(
+        &state.keys,
+        &state.is_not_null,
+        state.num_rows,
+        state.null_count,
+        dict_entry_count,
+        stats,
+        primitive_type,
+        options,
+        Repetition::Optional,
+    )?;
+    let mut pages = Vec::with_capacity(2);
     pages.push(Page::Dict(build_dict_page(dict_buffer, dict_entry_count)));
-
-    for state in per_partition {
-        let stats = state.stats.map(|s| {
-            s.into_parquet_stats(state.chunk.adjusted_column_top + state.partition_null_count)
-        });
-        let data_page = build_var_dict_data_page(
-            &state.keys,
-            &state.is_not_null,
-            state.chunk,
-            state.partition_null_count,
-            dict_entry_count,
-            stats,
-            primitive_type,
-            options,
-            Repetition::Optional,
-        )?;
-        pages.push(Page::Data(data_page));
-    }
+    pages.push(Page::Data(data_page));
 
     Ok(pages)
 }
@@ -351,22 +307,21 @@ struct VarcharAuxSplit {
     offset_hi: u32,
 }
 
-fn varchar_aux_to_byte_slices<'a>(
+fn visit_varchar_aux_byte_slices<'a>(
     column: &'a Column,
     chunk: crate::parquet_write::encoders::helpers::ChunkSlice,
-) -> ParquetResult<Vec<Option<&'a [u8]>>> {
+) -> ParquetResult<ByteSliceIter<'a>> {
     let aux: &[[u8; 16]] = unsafe { transmute_slice(column.secondary_data) };
     let aux_slice = &aux[chunk.lower_bound..chunk.upper_bound];
     let aux_inlined: &[VarcharAuxInlined] = unsafe { std::mem::transmute(aux_slice) };
     let data = column.primary_data;
 
-    let mut out: Vec<Option<&'a [u8]>> = Vec::with_capacity(aux_inlined.len());
-    for entry in aux_inlined {
+    Ok(Box::new(aux_inlined.iter().map(move |entry| {
         if (entry.header & HEADER_FLAG_NULL) != 0 {
-            out.push(None);
+            Ok(None)
         } else if (entry.header & HEADER_FLAG_INLINED) != 0 {
             let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
-            out.push(Some(&entry.chars[..size]));
+            Ok(Some(&entry.chars[..size]))
         } else {
             let split: &VarcharAuxSplit = unsafe { std::mem::transmute(entry) };
             let header = split.header;
@@ -381,10 +336,9 @@ fn varchar_aux_to_byte_slices<'a>(
                     data.len()
                 ));
             }
-            out.push(Some(&data[offset..][..size]));
+            Ok(Some(&data[offset..][..size]))
         }
-    }
-    Ok(out)
+    })))
 }
 
 fn read_utf16(entry_tail: &[u8]) -> ParquetResult<Option<&[u16]>> {
@@ -402,4 +356,14 @@ fn read_utf16(entry_tail: &[u8]) -> ParquetResult<Option<&[u16]>> {
         .get(..char_count)
         .ok_or_else(|| fmt_err!(Layout, "not enough bytes for string value"))?;
     Ok(Some(chars))
+}
+
+fn utf16_to_utf8_bytes(utf16: &[u16]) -> ParquetResult<Vec<u8>> {
+    let mut out = Vec::with_capacity(utf16.len());
+    for c in char::decode_utf16(utf16.iter().copied()) {
+        let c = c.map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
+        let mut buf = [0; 4];
+        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+    }
+    Ok(out)
 }

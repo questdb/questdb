@@ -189,7 +189,10 @@ mod tests {
     use parquet2::compression::CompressionOptions;
     use parquet2::page::DataPageHeader;
     use parquet2::schema::types::ParquetType;
+    use parquet2::statistics::PrimitiveStatistics;
     use parquet2::write::Version;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
     fn write_options() -> WriteOptions {
@@ -428,5 +431,282 @@ mod tests {
         let (num_values, num_nulls, _) = v2_header(&pages[0]);
         assert_eq!(num_values, 4);
         assert_eq!(num_nulls, 1);
+    }
+
+    // ----- column-top, empty, all-nulls edge cases -----
+
+    #[test]
+    fn encode_simd_int_with_column_top() {
+        let data: Vec<i32> = (0..100).collect();
+        let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 50, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Int);
+        let pages =
+            encode_simd::<i32>(&[col], 0, 150, &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, enc) = v2_header(&pages[0]);
+        assert_eq!(num_values, 150);
+        assert_eq!(num_nulls, 50, "column top rows should appear as nulls");
+        assert_eq!(enc, 5);
+    }
+
+    #[test]
+    fn encode_simd_empty_partition_yields_zero_pages() {
+        let data: Vec<i32> = vec![];
+        let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Int);
+        let pages =
+            encode_simd::<i32>(&[col], 0, 0, &pt, write_options(), None).expect("encode");
+        assert!(pages.is_empty());
+    }
+
+    #[test]
+    fn encode_simd_all_nulls_partition() {
+        let data: Vec<i32> = vec![i32::MIN; 50];
+        let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Int);
+        let pages =
+            encode_simd::<i32>(&[col], 0, 50, &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, _) = v2_header(&pages[0]);
+        assert_eq!(num_values, 50);
+        assert_eq!(num_nulls, 50);
+    }
+
+    #[test]
+    fn encode_simd_single_value_repeated() {
+        let data: Vec<i32> = vec![42; 100];
+        let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Int);
+        let pages =
+            encode_simd::<i32>(&[col], 0, data.len(), &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, _) = v2_header(&pages[0]);
+        assert_eq!(num_values, 100);
+        assert_eq!(num_nulls, 0);
+    }
+
+    // ----- statistics verification -----
+
+    fn page_i32_min_max(page: &Page) -> (i32, i32) {
+        match page {
+            Page::Data(d) => {
+                let arc = d.statistics().expect("statistics present").expect("ok");
+                let stats = arc
+                    .as_any()
+                    .downcast_ref::<PrimitiveStatistics<i32>>()
+                    .expect("PrimitiveStatistics<i32>");
+                (stats.min_value.unwrap(), stats.max_value.unwrap())
+            }
+            _ => panic!("expected data page"),
+        }
+    }
+
+    fn page_i64_min_max(page: &Page) -> (i64, i64) {
+        match page {
+            Page::Data(d) => {
+                let arc = d.statistics().expect("statistics present").expect("ok");
+                let stats = arc
+                    .as_any()
+                    .downcast_ref::<PrimitiveStatistics<i64>>()
+                    .expect("PrimitiveStatistics<i64>");
+                (stats.min_value.unwrap(), stats.max_value.unwrap())
+            }
+            _ => panic!("expected data page"),
+        }
+    }
+
+    #[test]
+    fn encode_simd_int_page_stats() {
+        let data: Vec<i32> = vec![500, 100, 300, 200, 400];
+        let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Int);
+        let pages =
+            encode_simd::<i32>(&[col], 0, data.len(), &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (min, max) = page_i32_min_max(&pages[0]);
+        assert_eq!((min, max), (100, 500));
+    }
+
+    #[test]
+    fn encode_simd_long_page_stats() {
+        let data: Vec<i64> = vec![500, 100, 300, 200, 400];
+        let col = make_column_with_top("col", ColumnTypeTag::Long, &data, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Long);
+        let pages =
+            encode_simd::<i64>(&[col], 0, data.len(), &pt, write_options(), None).expect("encode");
+        let (min, max) = page_i64_min_max(&pages[0]);
+        assert_eq!((min, max), (100, 500));
+    }
+
+    // ----- bloom filter -----
+
+    #[test]
+    fn encode_simd_int_bloom_hashes() {
+        let data: Vec<i32> = vec![10, 20, 30, 40, 50, 60];
+        let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Int);
+        let bloom = Arc::new(Mutex::new(HashSet::new()));
+        let _ = encode_simd::<i32>(&[col], 0, data.len(), &pt, write_options(), Some(bloom.clone()))
+            .expect("encode");
+        let set = bloom.lock().expect("lock");
+        assert_eq!(set.len(), 6);
+    }
+
+    // ----- multi-partition null counts (per-partition pages) -----
+
+    #[test]
+    fn encode_simd_multi_partition_null_counts() {
+        // Each partition gets its own page; verify null counts per page.
+        let parts: Vec<Vec<i32>> = vec![
+            vec![1, 2, 3, 4, 5],               // 0 nulls
+            vec![1, i32::MIN, 2, i32::MIN, 3],  // 2 nulls
+            vec![i32::MIN, i32::MIN, i32::MIN, 1, 2], // 3 nulls
+        ];
+        let columns: Vec<Column> = parts
+            .iter()
+            .map(|d| make_column_with_top("col", ColumnTypeTag::Int, d, 0, 0))
+            .collect();
+        let pt = primitive_type_for(ColumnTypeTag::Int);
+        let pages =
+            encode_simd::<i32>(&columns, 0, 5, &pt, write_options(), None).expect("encode");
+        assert_eq!(pages.len(), 3);
+        let (_, nulls0, _) = v2_header(&pages[0]);
+        let (_, nulls1, _) = v2_header(&pages[1]);
+        let (_, nulls2, _) = v2_header(&pages[2]);
+        assert_eq!(nulls0, 0);
+        assert_eq!(nulls1, 2);
+        assert_eq!(nulls2, 3);
+    }
+
+    // ----- notnull: column-top, multi-partition -----
+
+    #[test]
+    fn encode_int_notnull_byte_with_column_top() {
+        let data: Vec<i8> = vec![5, 6, 7];
+        let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 4, 0);
+        let pt = primitive_type_for(ColumnTypeTag::Byte);
+        let pages =
+            encode_int_notnull::<i8, i32>(&[col], 0, 7, &pt, write_options(), None)
+                .expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, enc) = v2_header(&pages[0]);
+        assert_eq!(num_values, 7);
+        // The notnull delta encoder fills column-top rows with default values
+        // but still reports column_top as null_count in the page header.
+        assert_eq!(num_nulls, 4);
+        assert_eq!(enc, 5);
+    }
+
+    #[test]
+    fn encode_int_notnull_short_multi_partition() {
+        let parts: Vec<Vec<i16>> = vec![vec![10, 20, 30], vec![40, 50, 60]];
+        let columns: Vec<Column> = parts
+            .iter()
+            .map(|d| make_column_with_top("col", ColumnTypeTag::Short, d, 0, 0))
+            .collect();
+        let pt = primitive_type_for(ColumnTypeTag::Short);
+        let pages =
+            encode_int_notnull::<i16, i32>(&columns, 0, 3, &pt, write_options(), None)
+                .expect("encode");
+        assert_eq!(pages.len(), 2);
+        for page in &pages {
+            let (num_values, num_nulls, enc) = v2_header(page);
+            assert_eq!(num_values, 3);
+            assert_eq!(num_nulls, 0);
+            assert_eq!(enc, 5);
+        }
+    }
+
+    // ----- nullable: all-nulls, column-top, multi-partition -----
+
+    #[test]
+    fn encode_int_nullable_ipv4_all_nulls() {
+        let data: Vec<i32> = vec![0; 10]; // IPv4 null sentinel is 0
+        let col = make_column_with_top("col", ColumnTypeTag::IPv4, &data, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::IPv4);
+        let pages = encode_int_nullable::<crate::parquet_write::IPv4, i32, true>(
+            &[col],
+            0,
+            data.len(),
+            &pt,
+            write_options(),
+            None,
+        )
+        .expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, _) = v2_header(&pages[0]);
+        assert_eq!(num_values, 10);
+        assert_eq!(num_nulls, 10);
+    }
+
+    #[test]
+    fn encode_int_nullable_ipv4_with_column_top() {
+        let data: Vec<i32> = vec![1, 2, 3];
+        let col = make_column_with_top("col", ColumnTypeTag::IPv4, &data, 5, 0);
+        let pt = primitive_type_for(ColumnTypeTag::IPv4);
+        let pages = encode_int_nullable::<crate::parquet_write::IPv4, i32, true>(
+            &[col],
+            0,
+            8, // 5 column-top + 3 data
+            &pt,
+            write_options(),
+            None,
+        )
+        .expect("encode");
+        assert_eq!(pages.len(), 1);
+        let (num_values, num_nulls, _) = v2_header(&pages[0]);
+        assert_eq!(num_values, 8);
+        assert_eq!(num_nulls, 5, "column top rows should appear as nulls");
+    }
+
+    #[test]
+    fn encode_int_nullable_multi_partition_null_counts() {
+        // Each partition gets its own page.
+        let parts: Vec<Vec<i32>> = vec![
+            vec![1, 0, 3],    // 1 null (0 is IPv4 null)
+            vec![0, 0, 0],    // 3 nulls
+            vec![10, 20, 30], // 0 nulls
+        ];
+        let columns: Vec<Column> = parts
+            .iter()
+            .map(|d| make_column_with_top("col", ColumnTypeTag::IPv4, d, 0, 0))
+            .collect();
+        let pt = primitive_type_for(ColumnTypeTag::IPv4);
+        let pages = encode_int_nullable::<crate::parquet_write::IPv4, i32, true>(
+            &columns,
+            0,
+            3,
+            &pt,
+            write_options(),
+            None,
+        )
+        .expect("encode");
+        assert_eq!(pages.len(), 3);
+        let (_, nulls0, _) = v2_header(&pages[0]);
+        let (_, nulls1, _) = v2_header(&pages[1]);
+        let (_, nulls2, _) = v2_header(&pages[2]);
+        assert_eq!(nulls0, 1);
+        assert_eq!(nulls1, 3);
+        assert_eq!(nulls2, 0);
+    }
+
+    #[test]
+    fn encode_int_nullable_geobyte_bloom_filter() {
+        let data: Vec<i8> = vec![10, 20, -1, 30];
+        let col = make_column_with_top("col", ColumnTypeTag::GeoByte, &data, 0, 0);
+        let pt = primitive_type_for(ColumnTypeTag::GeoByte);
+        let bloom = Arc::new(Mutex::new(HashSet::new()));
+        let _ = encode_int_nullable::<crate::parquet_write::GeoByte, i32, false>(
+            &[col],
+            0,
+            data.len(),
+            &pt,
+            write_options(),
+            Some(bloom.clone()),
+        )
+        .expect("encode");
+        let set = bloom.lock().expect("lock");
+        // 3 non-null values should produce 3 bloom hashes
+        assert_eq!(set.len(), 3);
     }
 }

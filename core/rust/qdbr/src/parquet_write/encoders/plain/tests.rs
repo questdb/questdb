@@ -65,7 +65,7 @@ fn encode_simd_int_single_partition_round_trip() {
 }
 
 #[test]
-fn encode_simd_int_multi_partition_independent_pages() {
+fn encode_simd_int_multi_partition_single_page() {
     let parts: Vec<Vec<i32>> = (0..4)
         .map(|p| ((p * 25)..(p * 25 + 25)).collect())
         .collect();
@@ -75,13 +75,11 @@ fn encode_simd_int_multi_partition_independent_pages() {
         .collect();
     let pt = primitive_type_for(ColumnTypeTag::Int);
     let pages = encode_simd::<i32>(&columns, 0, 25, &pt, write_options(), None).expect("encode");
-    assert_eq!(pages.len(), 4);
-    for page in &pages {
-        let (num_values, num_nulls, enc) = v2_header(page);
-        assert_eq!(num_values, 25);
-        assert_eq!(num_nulls, 0);
-        assert_eq!(enc, 0);
-    }
+    assert_eq!(pages.len(), 1);
+    let (num_values, num_nulls, enc) = v2_header(&pages[0]);
+    assert_eq!(num_values, 100);
+    assert_eq!(num_nulls, 0);
+    assert_eq!(enc, 0);
 }
 
 #[test]
@@ -97,15 +95,15 @@ fn encode_simd_long_with_column_top() {
 }
 
 #[test]
-fn encode_simd_page_splitting_honors_data_page_size() {
+fn encode_simd_single_page_ignores_data_page_size() {
     let data: Vec<i64> = (0..1000).collect();
     let col = make_column_with_top("col", ColumnTypeTag::Long, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Long);
     let opts = WriteOptions { data_page_size: Some(256), ..write_options() };
     let pages = encode_simd::<i64>(&[col], 0, data.len(), &pt, opts, None).expect("encode");
-    assert_eq!(pages.len(), 32);
-    let (last_num_values, _, _) = v2_header(pages.last().unwrap());
-    assert_eq!(last_num_values, 8);
+    assert_eq!(pages.len(), 1);
+    let (num_values, _, _) = v2_header(&pages[0]);
+    assert_eq!(num_values, 1000);
 }
 
 #[test]

@@ -12,14 +12,14 @@ use parquet2::statistics::{
 use parquet2::types::NativeType;
 
 use crate::parquet::error::ParquetResult;
-use crate::parquet_write::encoders::helpers::rows_per_page;
+use crate::parquet_write::encoders::helpers::{collect_typed_chunk_segments, TypedChunkSegment};
 use crate::parquet_write::encoders::numeric::{self, SimdEncodable, StatsUpdater};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{build_plain_page, transmute_slice, MaxMin};
 use crate::parquet_write::Nullable;
 
-use super::encode_per_partition;
+use super::encode_column_chunk;
 
 /// Encode a SIMD-encodable primitive type (Int, Long, Float, Double, Date,
 /// Timestamp) as Plain pages.
@@ -34,21 +34,24 @@ pub fn encode_simd<T>(
 where
     T: SimdEncodable,
 {
-    let rpp = rows_per_page(&options, std::mem::size_of::<T>());
-    encode_per_partition(
+    let segments = collect_typed_chunk_segments(
         columns,
         first_partition_start,
         last_partition_end,
-        rpp,
-        bloom_set,
-        |column, chunk, bloom| {
+        |column| {
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
             // page-aligned. The byte content represents valid `T` values.
-            let data: &[T] = unsafe { transmute_slice(column.primary_data) };
-            let slice = &data[chunk.lower_bound..chunk.upper_bound];
-            numeric::slice_to_page_simd::<T>(
-                slice,
-                chunk.adjusted_column_top,
+            Ok(unsafe { transmute_slice(column.primary_data) })
+        },
+    )?;
+    encode_column_chunk(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        bloom_set,
+        |bloom| {
+            numeric::slice_segments_to_page_simd::<T>(
+                &segments,
                 options,
                 primitive_type.clone(),
                 Encoding::Plain,
@@ -69,23 +72,26 @@ pub fn encode_int_notnull<T, P>(
 ) -> ParquetResult<Vec<Page>>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
-    T: Default + num_traits::AsPrimitive<P> + Debug,
+    T: Default + num_traits::AsPrimitive<P> + Debug + Copy,
 {
-    let rpp = rows_per_page(&options, std::mem::size_of::<P>());
-    encode_per_partition(
+    let segments = collect_typed_chunk_segments(
         columns,
         first_partition_start,
         last_partition_end,
-        rpp,
-        bloom_set,
-        |column, chunk, bloom| {
+        |column| {
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
             // page-aligned. The byte content represents valid `T` values.
-            let data: &[T] = unsafe { transmute_slice(column.primary_data) };
-            let slice = &data[chunk.lower_bound..chunk.upper_bound];
-            numeric::int_slice_to_page_notnull::<T, P>(
-                slice,
-                chunk.adjusted_column_top,
+            Ok(unsafe { transmute_slice(column.primary_data) })
+        },
+    )?;
+    encode_column_chunk(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        bloom_set,
+        |bloom| {
+            numeric::int_segments_to_page_notnull::<T, P>(
+                &segments,
                 options,
                 primitive_type.clone(),
                 Encoding::Plain,
@@ -106,24 +112,27 @@ pub fn encode_int_nullable<T, P, const UNSIGNED_STATS: bool>(
 ) -> ParquetResult<Vec<Page>>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
-    T: Nullable + num_traits::AsPrimitive<P> + Debug,
+    T: Nullable + num_traits::AsPrimitive<P> + Debug + Copy,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
-    let rpp = rows_per_page(&options, std::mem::size_of::<P>());
-    encode_per_partition(
+    let segments = collect_typed_chunk_segments(
         columns,
         first_partition_start,
         last_partition_end,
-        rpp,
-        bloom_set,
-        |column, chunk, bloom| {
+        |column| {
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
             // page-aligned. The byte content represents valid `T` values.
-            let data: &[T] = unsafe { transmute_slice(column.primary_data) };
-            let slice = &data[chunk.lower_bound..chunk.upper_bound];
-            numeric::int_slice_to_page_nullable::<T, P, UNSIGNED_STATS>(
-                slice,
-                chunk.adjusted_column_top,
+            Ok(unsafe { transmute_slice(column.primary_data) })
+        },
+    )?;
+    encode_column_chunk(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        bloom_set,
+        |bloom| {
+            numeric::int_segments_to_page_nullable::<T, P, UNSIGNED_STATS>(
+                &segments,
                 options,
                 primitive_type.clone(),
                 Encoding::Plain,
@@ -143,23 +152,26 @@ pub fn encode_decimal<T>(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>>
 where
-    T: Nullable + NativeType + Debug,
+    T: Nullable + NativeType + Debug + Copy,
 {
-    let rpp = rows_per_page(&options, std::mem::size_of::<T>());
-    encode_per_partition(
+    let segments = collect_typed_chunk_segments(
         columns,
         first_partition_start,
         last_partition_end,
-        rpp,
-        bloom_set,
-        |column, chunk, bloom| {
+        |column| {
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
             // page-aligned. The byte content represents valid `T` values.
-            let data: &[T] = unsafe { transmute_slice(column.primary_data) };
-            let slice = &data[chunk.lower_bound..chunk.upper_bound];
-            numeric::decimal_slice_to_page_plain::<T>(
-                slice,
-                chunk.adjusted_column_top,
+            Ok(unsafe { transmute_slice(column.primary_data) })
+        },
+    )?;
+    encode_column_chunk(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        bloom_set,
+        |bloom| {
+            numeric::decimal_segments_to_page_plain::<T>(
+                &segments,
                 options,
                 primitive_type.clone(),
                 bloom,
@@ -177,26 +189,59 @@ pub fn encode_boolean(
     options: WriteOptions,
     _bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    // Booleans always pack at 1 byte/value for the rows_per_page estimate
-    // (matches the legacy bytes_per_primitive_type for PhysicalType::Boolean).
-    let rpp = rows_per_page(&options, 1);
-    encode_per_partition(
+    let segments = collect_typed_chunk_segments(
         columns,
         first_partition_start,
         last_partition_end,
-        rpp,
+        |column| Ok(column.primary_data),
+    )?;
+    encode_column_chunk(
+        columns,
+        first_partition_start,
+        last_partition_end,
         None,
-        |column, chunk, _bloom| {
-            let data = column.primary_data;
-            let slice = &data[chunk.lower_bound..chunk.upper_bound];
-            boolean_to_page(
-                slice,
-                chunk.adjusted_column_top,
-                options,
-                primitive_type.clone(),
-            )
-        },
+        |_bloom| boolean_segments_to_page(&segments, options, primitive_type.clone()),
     )
+}
+
+fn boolean_segments_to_page(
+    segments: &[TypedChunkSegment<'_, u8>],
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+) -> ParquetResult<Page> {
+    let num_rows: usize = segments.iter().map(TypedChunkSegment::num_rows).sum();
+    let mut buffer = vec![];
+    let mut stats = MaxMin::new();
+    let iter = segments
+        .iter()
+        .flat_map(|segment| {
+            std::iter::repeat_n(0u8, segment.adjusted_column_top)
+                .chain(segment.slice.iter().copied())
+        })
+        .map(|value| {
+            stats.update(value as i32);
+            value != 0
+        });
+    bitpacked_encode(&mut buffer, iter, num_rows)?;
+
+    let statistics = if options.write_statistics {
+        Some(boolean_statistics(stats))
+    } else {
+        None
+    };
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        0,
+        0,
+        statistics,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        true,
+    )
+    .map(Page::Data)
 }
 
 /// Encode a slice of booleans as a single Parquet Plain data page.

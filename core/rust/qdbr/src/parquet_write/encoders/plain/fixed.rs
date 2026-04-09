@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use parquet2::bloom_filter::hash_byte;
+use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -9,15 +10,15 @@ use parquet2::write::DynIter;
 use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::encoders::helpers::rows_per_page;
+use crate::parquet_write::encoders::helpers::{collect_typed_chunk_segments, TypedChunkSegment};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
-    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, transmute_slice,
-    BinaryMaxMinStats,
+    begin_primitive_level_stream, build_plain_page, encode_dict_rle_pages,
+    encode_primitive_def_levels, finish_primitive_level_stream, transmute_slice, BinaryMaxMinStats,
 };
 
-use super::encode_per_partition;
+use super::encode_column_chunk;
 
 /// Encode a FixedLenByteArray column (UUID, Long128, Long256, Decimal FLBA)
 /// as Plain pages. `reverse` swaps endianness for UUID columns.
@@ -30,28 +31,34 @@ pub fn encode_fixed_len_bytes<const N: usize>(
     reverse: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    let rpp = rows_per_page(&options, N);
-    encode_per_partition(
+    let segments = collect_typed_chunk_segments(
         columns,
         first_partition_start,
         last_partition_end,
-        rpp,
-        bloom_set,
-        |column, chunk, bloom| {
+        |column| {
             // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
             // page-aligned. The byte content represents valid `[u8; N]` values.
-            let data: &[[u8; N]] = unsafe { transmute_slice(column.primary_data) };
-            let slice = &data[chunk.lower_bound..chunk.upper_bound];
-            bytes_to_page::<N>(
-                slice,
-                reverse,
-                chunk.adjusted_column_top,
-                options,
-                primitive_type.clone(),
-                bloom,
-            )
+            Ok(unsafe { transmute_slice(column.primary_data) })
+        },
+    )?;
+    encode_column_chunk(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        bloom_set,
+        |bloom| {
+            bytes_segments_to_page::<N>(&segments, reverse, options, primitive_type.clone(), bloom)
         },
     )
+}
+
+fn fixed_null_value<const N: usize>() -> [u8; N] {
+    let mut null_value = [0u8; N];
+    let long_as_bytes = i64::MIN.to_le_bytes();
+    for i in 0..N {
+        null_value[i] = long_as_bytes[i % long_as_bytes.len()];
+    }
+    null_value
 }
 
 fn encode_fixed_plain_be<const N: usize>(
@@ -90,6 +97,87 @@ fn encode_fixed_plain<const N: usize>(
     }
 }
 
+fn bytes_segments_to_page<const N: usize>(
+    segments: &[TypedChunkSegment<'_, [u8; N]>],
+    reverse: bool,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    let num_rows: usize = segments.iter().map(TypedChunkSegment::num_rows).sum();
+    let null_value = fixed_null_value::<N>();
+    let mut buffer = vec![];
+    let mut null_count = 0usize;
+
+    let payload_start = begin_primitive_level_stream(&mut buffer, options.version);
+    for segment in segments {
+        if segment.adjusted_column_top > 0 {
+            null_count += segment.adjusted_column_top;
+            encode_bool(
+                &mut buffer,
+                std::iter::repeat_n(false, segment.adjusted_column_top),
+                segment.adjusted_column_top,
+            )?;
+        }
+        if !segment.slice.is_empty() {
+            let mut segment_null_count = 0usize;
+            let iter = segment.slice.iter().map(|value| {
+                let present = *value != null_value;
+                if !present {
+                    segment_null_count += 1;
+                }
+                present
+            });
+            encode_bool(&mut buffer, iter, segment.slice.len())?;
+            null_count += segment_null_count;
+        }
+    }
+    finish_primitive_level_stream(&mut buffer, payload_start, options.version);
+
+    let definition_levels_byte_length = buffer.len();
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+    if reverse {
+        for segment in segments {
+            encode_fixed_plain_be(segment.slice, &mut buffer, null_value, &mut stats, None);
+        }
+    } else {
+        for segment in segments {
+            encode_fixed_plain(segment.slice, &mut buffer, null_value, &mut stats, None);
+        }
+    }
+
+    if let Some(h) = bloom_hashes {
+        for segment in segments {
+            for value in segment.slice.iter().filter(|&&value| value != null_value) {
+                if reverse {
+                    let mut reversed = *value;
+                    reversed.reverse();
+                    h.insert(hash_byte(reversed));
+                } else {
+                    h.insert(hash_byte(*value));
+                }
+            }
+        }
+    }
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(null_count))
+        } else {
+            None
+        },
+        primitive_type,
+        options,
+        Encoding::Plain,
+        false,
+    )
+    .map(Page::Data)
+}
+
 /// Encode a slice of `[u8; N]` values as a single FixedLenByteArray Plain
 /// data page. `reverse` toggles big-endian byte order (used for UUID).
 pub fn bytes_to_page<const N: usize>(
@@ -101,14 +189,7 @@ pub fn bytes_to_page<const N: usize>(
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows = column_top + data.len();
-    let null_value = {
-        let mut null_value = [0u8; N];
-        let long_as_bytes = i64::MIN.to_le_bytes();
-        for i in 0..N {
-            null_value[i] = long_as_bytes[i % long_as_bytes.len()];
-        }
-        null_value
-    };
+    let null_value = fixed_null_value::<N>();
     let mut buffer = vec![];
     let mut null_count = 0;
 
@@ -164,14 +245,7 @@ pub fn bytes_to_dict_pages<const N: usize>(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + data.len();
-    let null_value = {
-        let mut null_value = [0u8; N];
-        let long_as_bytes = i64::MIN.to_le_bytes();
-        for i in 0..N {
-            null_value[i] = long_as_bytes[i % long_as_bytes.len()];
-        }
-        null_value
-    };
+    let null_value = fixed_null_value::<N>();
     let mut null_count = 0;
 
     let mut dict_map: RapidHashMap<[u8; N], u32> = RapidHashMap::default();

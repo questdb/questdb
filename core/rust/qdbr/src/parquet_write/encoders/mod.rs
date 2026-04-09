@@ -27,9 +27,9 @@
 //!
 //! Multi-partition row groups pass `columns.len() == N`; single-partition
 //! row groups pass `columns.len() == 1`. The same function handles both —
-//! dict encoders build a global dictionary across the input partitions and
-//! emit `[DictPage, DataPage_1, ..., DataPage_N]`, while plain/delta encoders
-//! emit one DataPage per partition independently.
+//! each encoder materializes the selected logical column chunk and emits a
+//! single data page for it. Dictionary encoders add a dict page ahead of that
+//! chunk-level data page.
 
 pub mod delta_binary_packed;
 pub mod delta_length_array;

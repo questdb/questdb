@@ -18,13 +18,16 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet_write::encoders::helpers::TypedChunkSegment;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
+    begin_primitive_level_stream, build_plain_page, encode_dict_rle_pages,
+    encode_primitive_def_levels, finish_primitive_level_stream, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
 use parquet2::bloom_filter::hash_native;
 use parquet2::encoding::delta_bitpacked::{encode, encode_i32};
+use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
@@ -37,9 +40,60 @@ use parquet2::write::DynIter;
 use qdb_core::col_type::nulls;
 use rapidhash::RapidHashMap;
 
-pub fn decimal_slice_to_page_plain<T>(
-    slice: &[T],
-    column_top: usize,
+#[inline]
+fn segment_num_rows<T>(segments: &[TypedChunkSegment<'_, T>]) -> usize {
+    segments.iter().map(TypedChunkSegment::num_rows).sum()
+}
+
+#[inline]
+fn segment_column_top<T>(segments: &[TypedChunkSegment<'_, T>]) -> usize {
+    segments
+        .iter()
+        .map(|segment| segment.adjusted_column_top)
+        .sum()
+}
+
+fn encode_segmented_def_levels<T, F>(
+    buffer: &mut Vec<u8>,
+    segments: &[TypedChunkSegment<'_, T>],
+    options: WriteOptions,
+    mut is_present: F,
+) -> ParquetResult<usize>
+where
+    F: FnMut(&T) -> bool,
+{
+    let payload_start = begin_primitive_level_stream(buffer, options.version);
+    let mut null_count = 0usize;
+
+    for segment in segments {
+        if segment.adjusted_column_top > 0 {
+            null_count += segment.adjusted_column_top;
+            encode_bool(
+                buffer,
+                std::iter::repeat_n(false, segment.adjusted_column_top),
+                segment.adjusted_column_top,
+            )?;
+        }
+        if !segment.slice.is_empty() {
+            let mut segment_null_count = 0usize;
+            let iter = segment.slice.iter().map(|value| {
+                let present = is_present(value);
+                if !present {
+                    segment_null_count += 1;
+                }
+                present
+            });
+            encode_bool(buffer, iter, segment.slice.len())?;
+            null_count += segment_null_count;
+        }
+    }
+
+    finish_primitive_level_stream(buffer, payload_start, options.version);
+    Ok(null_count)
+}
+
+pub fn decimal_segments_to_page_plain<T>(
+    segments: &[TypedChunkSegment<'_, T>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
@@ -47,41 +101,31 @@ pub fn decimal_slice_to_page_plain<T>(
 where
     T: Nullable + NativeType + Debug,
 {
-    assert!(primitive_type.field_info.repetition == Repetition::Optional);
-    let num_rows = column_top + slice.len();
-    let mut null_count = 0;
-    let write_stats = options.write_statistics;
-    let mut statistics = MaxMin::new();
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
 
-    let deflevels_iter = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
-        } else {
-            let value = slice[i - column_top];
-            if value.is_null() {
-                null_count += 1;
-                false
-            } else {
-                if write_stats {
-                    statistics.update(value);
-                }
-                if let Some(ref mut h) = bloom_hashes {
-                    h.insert(hash_native(value));
-                }
-                true
-            }
-        }
-    });
+    let num_rows = segment_num_rows(segments);
     let mut buffer = vec![];
-    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
-
+    let null_count =
+        encode_segmented_def_levels(&mut buffer, segments, options, |value| !value.is_null())?;
     let definition_levels_byte_length = buffer.len();
-    let buffer = encode_plain_nullable_direct(slice, null_count, buffer);
+
+    let mut statistics = MaxMin::new();
+    for segment in segments {
+        for &value in segment.slice.iter().filter(|value| !value.is_null()) {
+            if options.write_statistics {
+                statistics.update(value);
+            }
+            if let Some(ref mut h) = bloom_hashes {
+                h.insert(hash_native(value));
+            }
+            buffer.extend_from_slice(value.to_bytes().as_ref());
+        }
+    }
 
     let statistics = if options.write_statistics {
         let s = &FixedLenStatistics {
             primitive_type: primitive_type.clone(),
-            null_count: Some((column_top + null_count) as i64),
+            null_count: Some(null_count as i64),
             distinct_count: None,
             max_value: statistics.max.map(|x| x.to_bytes().as_ref().to_vec()),
             min_value: statistics.min.map(|x| x.to_bytes().as_ref().to_vec()),
@@ -94,13 +138,219 @@ where
     build_plain_page(
         buffer,
         num_rows,
-        column_top + null_count,
+        null_count,
         definition_levels_byte_length,
         statistics,
         primitive_type,
         options,
         Encoding::Plain,
         false,
+    )
+    .map(Page::Data)
+}
+
+pub fn int_segments_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
+    segments: &[TypedChunkSegment<'_, T>],
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page>
+where
+    P: NativeType + num_traits::AsPrimitive<i64>,
+    T: Nullable + num_traits::AsPrimitive<P> + Debug,
+    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+
+    let num_rows = segment_num_rows(segments);
+    let mut buffer = vec![];
+    let null_count =
+        encode_segmented_def_levels(&mut buffer, segments, options, |value| !value.is_null())?;
+    let definition_levels_byte_length = buffer.len();
+    let non_null_count = num_rows - null_count;
+
+    let statistics = if options.write_statistics || bloom_hashes.is_some() {
+        let mut statistics = MaxMin::new();
+        for segment in segments {
+            for &value in segment.slice.iter().filter(|value| !value.is_null()) {
+                let parquet_value: P = value.as_();
+                if options.write_statistics {
+                    statistics.update_stats(parquet_value);
+                }
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_native(parquet_value));
+                }
+            }
+        }
+        options
+            .write_statistics
+            .then(|| build_statistics(Some(null_count as i64), statistics, primitive_type.clone()))
+    } else {
+        None
+    };
+
+    match encoding {
+        Encoding::Plain => {
+            buffer.reserve(size_of::<P>() * non_null_count);
+            for segment in segments {
+                for value in segment.slice.iter().filter(|value| !value.is_null()) {
+                    let parquet_value: P = value.as_();
+                    buffer.extend_from_slice(parquet_value.to_bytes().as_ref());
+                }
+            }
+        }
+        Encoding::DeltaBinaryPacked => {
+            let iterator = segments.iter().flat_map(|segment| {
+                segment
+                    .slice
+                    .iter()
+                    .filter(|value| !value.is_null())
+                    .map(|value| {
+                        let parquet_value: P = value.as_();
+                        parquet_value.as_()
+                    })
+            });
+            let iterator = ExactSizedIter::new(iterator, non_null_count);
+            if size_of::<P>() <= 4 {
+                encode_i32(iterator, &mut buffer);
+            } else {
+                encode(iterator, &mut buffer);
+            }
+        }
+        other => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported encoding {other:?} while writing an int column"
+            ))
+        }
+    }
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        encoding,
+        false,
+    )
+    .map(Page::Data)
+}
+
+pub fn int_segments_to_page_notnull<T, P>(
+    segments: &[TypedChunkSegment<'_, T>],
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page>
+where
+    P: NativeType + num_traits::AsPrimitive<i64>,
+    T: Default + num_traits::AsPrimitive<P> + Debug,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+
+    let num_rows = segment_num_rows(segments);
+    let column_top = segment_column_top(segments);
+    let statistics = match (options.write_statistics, bloom_hashes.as_deref_mut()) {
+        (true, Some(h)) => {
+            let mut statistics = MaxMin::new();
+            for segment in segments {
+                for value in segment.slice {
+                    let parquet_value: P = value.as_();
+                    statistics.update(parquet_value);
+                    h.insert(hash_native(parquet_value));
+                }
+            }
+            Some(build_statistics(
+                Some(column_top as i64),
+                statistics,
+                primitive_type.clone(),
+            ))
+        }
+        (true, None) => {
+            let mut statistics = MaxMin::new();
+            for segment in segments {
+                for value in segment.slice {
+                    statistics.update(value.as_());
+                }
+            }
+            Some(build_statistics(
+                Some(column_top as i64),
+                statistics,
+                primitive_type.clone(),
+            ))
+        }
+        (false, Some(h)) => {
+            for segment in segments {
+                for value in segment.slice {
+                    h.insert(hash_native(value.as_()));
+                }
+            }
+            None
+        }
+        (false, None) => None,
+    };
+
+    let mut buffer = Vec::new();
+    match encoding {
+        Encoding::Plain => {
+            buffer.reserve(size_of::<P>() * num_rows);
+            let default_bytes = {
+                let parquet_value: P = T::default().as_();
+                parquet_value.to_bytes().as_ref().to_vec()
+            };
+            for segment in segments {
+                for _ in 0..segment.adjusted_column_top {
+                    buffer.extend_from_slice(&default_bytes);
+                }
+                for value in segment.slice {
+                    let parquet_value: P = value.as_();
+                    buffer.extend_from_slice(parquet_value.to_bytes().as_ref());
+                }
+            }
+        }
+        Encoding::DeltaBinaryPacked => {
+            let default_value: i64 = {
+                let parquet_value: P = T::default().as_();
+                parquet_value.as_()
+            };
+            let iterator = segments.iter().flat_map(|segment| {
+                std::iter::repeat_n(default_value, segment.adjusted_column_top).chain(
+                    segment.slice.iter().map(|value| {
+                        let parquet_value: P = value.as_();
+                        parquet_value.as_()
+                    }),
+                )
+            });
+            let iterator = ExactSizedIter::new(iterator, num_rows);
+            if size_of::<P>() <= 4 {
+                encode_i32(iterator, &mut buffer);
+            } else {
+                encode(iterator, &mut buffer);
+            }
+        }
+        other => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported encoding {other:?} while writing an int column"
+            ))
+        }
+    }
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        column_top,
+        0,
+        statistics,
+        primitive_type,
+        options,
+        encoding,
+        true,
     )
     .map(Page::Data)
 }
@@ -400,17 +650,6 @@ where
     buffer
 }
 
-fn encode_plain_nullable_direct<T>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
-where
-    T: Nullable + NativeType,
-{
-    buffer.reserve(std::mem::size_of::<T>() * (slice.len() - null_count));
-    for x in slice.iter().filter(|x| !x.is_null()) {
-        buffer.extend_from_slice(x.to_bytes().as_ref())
-    }
-    buffer
-}
-
 fn encode_delta_nullable<T, P>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
@@ -471,6 +710,22 @@ pub trait SimdEncodable: NativeType {
     /// Encode data with delta encoding. Override for types that support it.
     fn encode_delta(_slice: &[Self], _non_null_count: usize, _buffer: &mut Vec<u8>) -> bool {
         false // Not supported by default
+    }
+
+    /// Encode data with delta encoding across multiple logical chunk segments.
+    fn encode_delta_segments(
+        segments: &[TypedChunkSegment<'_, Self>],
+        non_null_count: usize,
+        buffer: &mut Vec<u8>,
+    ) -> bool
+    where
+        Self: Sized,
+    {
+        if segments.len() == 1 {
+            Self::encode_delta(segments[0].slice, non_null_count, buffer)
+        } else {
+            false
+        }
     }
 
     /// Encode data values, dispatching to Plain or Delta based on encoding.
@@ -541,6 +796,19 @@ impl SimdEncodable for i64 {
         encode(iterator, buffer);
         true
     }
+
+    fn encode_delta_segments(
+        segments: &[TypedChunkSegment<'_, Self>],
+        non_null_count: usize,
+        buffer: &mut Vec<u8>,
+    ) -> bool {
+        let iterator = segments
+            .iter()
+            .flat_map(|segment| segment.slice.iter().filter(|&&x| x != nulls::LONG).copied());
+        let iterator = ExactSizedIter::new(iterator, non_null_count);
+        encode(iterator, buffer);
+        true
+    }
 }
 
 impl SimdEncodable for i32 {
@@ -564,6 +832,23 @@ impl SimdEncodable for i32 {
             .iter()
             .filter(|&&x| x != nulls::INT)
             .map(|&x| x as i64);
+        let iterator = ExactSizedIter::new(iterator, non_null_count);
+        encode_i32(iterator, buffer);
+        true
+    }
+
+    fn encode_delta_segments(
+        segments: &[TypedChunkSegment<'_, Self>],
+        non_null_count: usize,
+        buffer: &mut Vec<u8>,
+    ) -> bool {
+        let iterator = segments.iter().flat_map(|segment| {
+            segment
+                .slice
+                .iter()
+                .filter(|&&x| x != nulls::INT)
+                .map(|&x| x as i64)
+        });
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode_i32(iterator, buffer);
         true
@@ -602,6 +887,83 @@ impl SimdEncodable for f32 {
     fn is_null(&self) -> bool {
         self.is_nan()
     }
+}
+
+/// Generic page encoder for nullable SIMD-backed chunk segments.
+pub fn slice_segments_to_page_simd<T: SimdEncodable>(
+    segments: &[TypedChunkSegment<'_, T>],
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+
+    let num_rows = segment_num_rows(segments);
+    let mut buffer = vec![];
+    let null_count =
+        encode_segmented_def_levels(&mut buffer, segments, options, |value| !value.is_null())?;
+    let definition_levels_byte_length = buffer.len();
+    let non_null_count = num_rows - null_count;
+
+    let statistics = if options.write_statistics {
+        let mut statistics = MaxMin::new();
+        for segment in segments {
+            for &value in segment.slice.iter().filter(|value| !value.is_null()) {
+                statistics.update(value);
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_native(value));
+                }
+            }
+        }
+        Some(build_statistics(
+            Some(null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        if let Some(ref mut h) = bloom_hashes {
+            for segment in segments {
+                for &value in segment.slice.iter().filter(|value| !value.is_null()) {
+                    h.insert(hash_native(value));
+                }
+            }
+        }
+        None
+    };
+
+    match encoding {
+        Encoding::Plain => {
+            buffer.reserve(size_of::<T>() * non_null_count);
+            for segment in segments {
+                for value in segment.slice.iter().filter(|value| !value.is_null()) {
+                    buffer.extend_from_slice(value.to_bytes().as_ref());
+                }
+            }
+        }
+        Encoding::DeltaBinaryPacked => {
+            if !T::encode_delta_segments(segments, non_null_count, &mut buffer) {
+                return Err(fmt_err!(
+                    Unsupported,
+                    "delta encoding not supported for this type"
+                ));
+            }
+        }
+        other => return Err(fmt_err!(Unsupported, "unsupported encoding {other:?}")),
+    }
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        encoding,
+        false,
+    )
+    .map(Page::Data)
 }
 
 /// Generic SIMD-optimized page encoder for nullable columns.

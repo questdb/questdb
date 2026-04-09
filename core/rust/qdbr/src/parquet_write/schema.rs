@@ -31,7 +31,7 @@ pub fn column_type_to_parquet_type(
     // Symbol columns are always Optional even when Column::not_null_hint is true (no
     // nulls). The `not_null_hint` flag is only a write-time hint that lets the encoder
     // emit a fast all-ones RLE run for definition levels instead of computing
-    // per-row values. See symbol_to_pages() in symbol.rs.
+    // per-row values. See encoders::symbol::symbol_to_pages().
     let is_notnull_type = matches!(
         column_type.tag(),
         ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char

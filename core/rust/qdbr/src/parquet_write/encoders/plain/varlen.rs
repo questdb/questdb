@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use parquet2::bloom_filter::hash_byte;
+use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -10,15 +11,124 @@ use parquet2::write::DynIter;
 use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::encoders::helpers::rows_per_page;
+use crate::parquet_write::encoders::helpers::{column_chunk_row_count, partition_chunk_slice};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
-    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, transmute_slice,
-    BinaryMaxMinStats, ExactSizedIter,
+    begin_primitive_level_stream, build_plain_page, encode_dict_rle_pages,
+    encode_primitive_def_levels, finish_primitive_level_stream, transmute_slice, BinaryMaxMinStats,
+    ExactSizedIter,
 };
 
-use super::encode_per_partition;
+use super::encode_column_chunk;
+
+#[derive(Clone, Copy)]
+struct BinaryChunkSegment<'a> {
+    adjusted_column_top: usize,
+    offsets: &'a [i64],
+    data: &'a [u8],
+}
+
+#[derive(Clone, Copy)]
+struct StringChunkSegment<'a> {
+    adjusted_column_top: usize,
+    offsets: &'a [i64],
+    data: &'a [u8],
+}
+
+#[derive(Clone, Copy)]
+struct VarcharChunkSegment<'a> {
+    adjusted_column_top: usize,
+    aux: &'a [[u8; 16]],
+    data: &'a [u8],
+}
+
+fn collect_binary_segments<'a>(
+    columns: &'a [Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+) -> Vec<BinaryChunkSegment<'a>> {
+    let num_partitions = columns.len();
+    columns
+        .iter()
+        .enumerate()
+        .map(|(part_idx, column)| {
+            let chunk = partition_chunk_slice(
+                part_idx,
+                num_partitions,
+                column,
+                first_partition_start,
+                last_partition_end,
+            );
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
+            // page-aligned. The byte content represents valid `i64` offsets.
+            let aux: &[i64] = unsafe { transmute_slice(column.secondary_data) };
+            BinaryChunkSegment {
+                adjusted_column_top: chunk.adjusted_column_top,
+                offsets: &aux[chunk.lower_bound..chunk.upper_bound],
+                data: column.primary_data,
+            }
+        })
+        .collect()
+}
+
+fn collect_string_segments<'a>(
+    columns: &'a [Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+) -> Vec<StringChunkSegment<'a>> {
+    let num_partitions = columns.len();
+    columns
+        .iter()
+        .enumerate()
+        .map(|(part_idx, column)| {
+            let chunk = partition_chunk_slice(
+                part_idx,
+                num_partitions,
+                column,
+                first_partition_start,
+                last_partition_end,
+            );
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
+            // page-aligned. The byte content represents valid `i64` offsets.
+            let aux: &[i64] = unsafe { transmute_slice(column.secondary_data) };
+            StringChunkSegment {
+                adjusted_column_top: chunk.adjusted_column_top,
+                offsets: &aux[chunk.lower_bound..chunk.upper_bound],
+                data: column.primary_data,
+            }
+        })
+        .collect()
+}
+
+fn collect_varchar_segments<'a>(
+    columns: &'a [Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+) -> Vec<VarcharChunkSegment<'a>> {
+    let num_partitions = columns.len();
+    columns
+        .iter()
+        .enumerate()
+        .map(|(part_idx, column)| {
+            let chunk = partition_chunk_slice(
+                part_idx,
+                num_partitions,
+                column,
+                first_partition_start,
+                last_partition_end,
+            );
+            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
+            // page-aligned. The byte content represents valid `[u8; 16]` aux entries.
+            let aux: &[[u8; 16]] = unsafe { transmute_slice(column.secondary_data) };
+            VarcharChunkSegment {
+                adjusted_column_top: chunk.adjusted_column_top,
+                aux: &aux[chunk.lower_bound..chunk.upper_bound],
+                data: column.primary_data,
+            }
+        })
+        .collect()
+}
 
 /// Encode a String column (UTF-16 source) as Plain pages.
 pub fn encode_string(
@@ -29,22 +139,16 @@ pub fn encode_string(
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    let rpp = rows_per_page(&options, 8);
-    encode_per_partition(
+    encode_column_chunk(
         columns,
         first_partition_start,
         last_partition_end,
-        rpp,
         bloom_set,
-        |column, chunk, bloom| {
-            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
-            // page-aligned. The byte content represents valid `i64` offsets.
-            let aux: &[i64] = unsafe { transmute_slice(column.secondary_data) };
-            let aux_slice = &aux[chunk.lower_bound..chunk.upper_bound];
-            string_to_page(
-                aux_slice,
-                column.primary_data,
-                chunk.adjusted_column_top,
+        |bloom| {
+            string_columns_to_page(
+                columns,
+                first_partition_start,
+                last_partition_end,
                 options,
                 primitive_type.clone(),
                 Encoding::Plain,
@@ -63,22 +167,16 @@ pub fn encode_binary(
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    let rpp = rows_per_page(&options, 8);
-    encode_per_partition(
+    encode_column_chunk(
         columns,
         first_partition_start,
         last_partition_end,
-        rpp,
         bloom_set,
-        |column, chunk, bloom| {
-            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
-            // page-aligned. The byte content represents valid `i64` offsets.
-            let aux: &[i64] = unsafe { transmute_slice(column.secondary_data) };
-            let aux_slice = &aux[chunk.lower_bound..chunk.upper_bound];
-            binary_to_page(
-                aux_slice,
-                column.primary_data,
-                chunk.adjusted_column_top,
+        |bloom| {
+            binary_columns_to_page(
+                columns,
+                first_partition_start,
+                last_partition_end,
                 options,
                 primitive_type.clone(),
                 Encoding::Plain,
@@ -97,22 +195,16 @@ pub fn encode_varchar(
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    let rpp = rows_per_page(&options, 8);
-    encode_per_partition(
+    encode_column_chunk(
         columns,
         first_partition_start,
         last_partition_end,
-        rpp,
         bloom_set,
-        |column, chunk, bloom| {
-            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
-            // page-aligned. The byte content represents valid `[u8; 16]` aux entries.
-            let aux: &[[u8; 16]] = unsafe { transmute_slice(column.secondary_data) };
-            let aux_slice = &aux[chunk.lower_bound..chunk.upper_bound];
-            varchar_to_page(
-                aux_slice,
-                column.primary_data,
-                chunk.adjusted_column_top,
+        |bloom| {
+            varchar_columns_to_page(
+                columns,
+                first_partition_start,
+                last_partition_end,
                 options,
                 primitive_type.clone(),
                 Encoding::Plain,
@@ -122,81 +214,98 @@ pub fn encode_varchar(
     )
 }
 
-const BINARY_HEADER_SIZE: usize = std::mem::size_of::<i64>();
-
-/// Encode a Binary column as a single Plain or DeltaLengthByteArray data page.
-pub fn binary_to_page(
-    offsets: &[i64],
-    data: &[u8],
-    column_top: usize,
+pub(crate) fn binary_columns_to_page(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    // Validate offsets upfront so the deflevels iterator below can safely
-    // cast each `i64` offset to `usize`. The iterator can't return an error,
-    // and a negative offset would otherwise overflow the usize add downstream.
-    for &off in offsets {
-        if off < 0 {
-            return Err(fmt_err!(
-                Layout,
-                "invalid offset value in binary aux column: {off}"
-            ));
-        }
-    }
-
-    let num_rows = column_top + offsets.len();
+    let segments = collect_binary_segments(columns, first_partition_start, last_partition_end);
+    let num_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut buffer = vec![];
-    let mut null_count = 0;
+    let mut validity = Vec::new();
+    let mut null_count = 0usize;
 
-    let deflevels_iter = (0..num_rows).map(|i| {
-        let len = if i < column_top {
-            -1
-        } else {
-            let offset = offsets[i - column_top] as usize;
-            let len = types::decode::<i64>(&data[offset..offset + BINARY_HEADER_SIZE]);
-            if len < 0 {
+    let payload_start = begin_primitive_level_stream(&mut buffer, options.version);
+    for segment in &segments {
+        if segment.adjusted_column_top > 0 {
+            null_count += segment.adjusted_column_top;
+            encode_bool(
+                &mut buffer,
+                std::iter::repeat_n(false, segment.adjusted_column_top),
+                segment.adjusted_column_top,
+            )?;
+        }
+
+        validity.clear();
+        validity.reserve(segment.offsets.len());
+        visit_binary_entries(segment.offsets, segment.data, |entry| {
+            let present = entry.is_some();
+            if !present {
                 null_count += 1;
             }
-            len
-        };
-        len >= 0
-    });
-    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+            validity.push(present);
+            Ok(())
+        })?;
+        if !validity.is_empty() {
+            encode_bool(&mut buffer, validity.iter().copied(), validity.len())?;
+        }
+    }
+    finish_primitive_level_stream(&mut buffer, payload_start, options.version);
 
     let definition_levels_byte_length = buffer.len();
-
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     match encoding {
         Encoding::Plain => {
-            encode_binary_plain(
-                offsets,
-                data,
-                &mut buffer,
-                &mut stats,
-                bloom_hashes.as_deref_mut(),
-            )?;
+            for segment in &segments {
+                for &offset in segment.offsets {
+                    if let Some(value) = binary_get_slice_validated(segment.data, offset) {
+                        let len = value.len();
+                        buffer.extend_from_slice(&(len as u32).to_le_bytes());
+                        buffer.extend_from_slice(value);
+                        stats.update(value);
+                        if let Some(ref mut h) = bloom_hashes {
+                            h.insert(hash_byte(value));
+                        }
+                    }
+                }
+            }
         }
         Encoding::DeltaLengthByteArray => {
-            encode_binary_delta(
-                offsets,
-                data,
-                null_count,
-                &mut buffer,
-                &mut stats,
-                bloom_hashes,
-            )?;
+            let non_null_count = num_rows - null_count;
+            let lengths = segments.iter().flat_map(|segment| {
+                segment
+                    .offsets
+                    .iter()
+                    .filter_map(|&offset| binary_get_slice_validated(segment.data, offset))
+                    .map(|value| value.len() as i64)
+            });
+            let lengths = ExactSizedIter::new(lengths, non_null_count);
+            delta_bitpacked::encode(lengths, &mut buffer);
+
+            for segment in &segments {
+                for &offset in segment.offsets {
+                    if let Some(value) = binary_get_slice_validated(segment.data, offset) {
+                        buffer.extend_from_slice(value);
+                        stats.update(value);
+                        if let Some(ref mut h) = bloom_hashes {
+                            h.insert(hash_byte(value));
+                        }
+                    }
+                }
+            }
         }
         _ => {
             return Err(fmt_err!(
                 Unsupported,
                 "unsupported encoding {encoding:?} while writing a binary column"
-            ));
+            ))
         }
-    };
+    }
 
-    let null_count = column_top + null_count;
     build_plain_page(
         buffer,
         num_rows,
@@ -215,26 +324,379 @@ pub fn binary_to_page(
     .map(Page::Data)
 }
 
-fn encode_binary_plain(
-    offsets: &[i64],
-    values: &[u8],
-    buffer: &mut Vec<u8>,
-    stats: &mut BinaryMaxMinStats,
+pub(crate) fn string_columns_to_page(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<()> {
-    for offset in offsets {
-        let offset = usize::try_from(*offset).map_err(|_| {
+) -> ParquetResult<Page> {
+    let segments = collect_string_segments(columns, first_partition_start, last_partition_end);
+    let num_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
+    let mut buffer = vec![];
+    let mut validity = Vec::new();
+    let mut null_count = 0usize;
+
+    let payload_start = begin_primitive_level_stream(&mut buffer, options.version);
+    for segment in &segments {
+        if segment.adjusted_column_top > 0 {
+            null_count += segment.adjusted_column_top;
+            encode_bool(
+                &mut buffer,
+                std::iter::repeat_n(false, segment.adjusted_column_top),
+                segment.adjusted_column_top,
+            )?;
+        }
+
+        validity.clear();
+        validity.reserve(segment.offsets.len());
+        visit_string_entries(segment.offsets, segment.data, |entry| {
+            let present = entry.is_some();
+            if !present {
+                null_count += 1;
+            }
+            validity.push(present);
+            Ok(())
+        })?;
+        if !validity.is_empty() {
+            encode_bool(&mut buffer, validity.iter().copied(), validity.len())?;
+        }
+    }
+    finish_primitive_level_stream(&mut buffer, payload_start, options.version);
+
+    let definition_levels_byte_length = buffer.len();
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+    match encoding {
+        Encoding::Plain => {
+            for segment in &segments {
+                for &offset in segment.offsets {
+                    if let Some(utf16) = string_get_utf16_validated(segment.data, offset) {
+                        let len_offset = buffer.len();
+                        buffer.extend_from_slice(&[0; 4]);
+                        let utf8_start = buffer.len();
+                        let utf8_len = append_utf8_from_utf16(&mut buffer, utf16)?;
+                        buffer[len_offset..utf8_start]
+                            .copy_from_slice(&(utf8_len as u32).to_le_bytes());
+                        let value = &buffer[utf8_start..utf8_start + utf8_len];
+                        stats.update(value);
+                        if let Some(ref mut h) = bloom_hashes {
+                            h.insert(hash_byte(value));
+                        }
+                    }
+                }
+            }
+        }
+        Encoding::DeltaLengthByteArray => {
+            let non_null_count = num_rows - null_count;
+            let lengths = segments.iter().flat_map(|segment| {
+                segment
+                    .offsets
+                    .iter()
+                    .filter_map(|&offset| string_get_utf16_validated(segment.data, offset))
+                    .map(|utf16| compute_utf8_length(utf16) as i64)
+            });
+            let lengths = ExactSizedIter::new(lengths, non_null_count);
+            delta_bitpacked::encode(lengths, &mut buffer);
+
+            for segment in &segments {
+                for &offset in segment.offsets {
+                    if let Some(utf16) = string_get_utf16_validated(segment.data, offset) {
+                        let utf8_start = buffer.len();
+                        let utf8_len = append_utf8_from_utf16(&mut buffer, utf16)?;
+                        let value = &buffer[utf8_start..utf8_start + utf8_len];
+                        stats.update(value);
+                        if let Some(ref mut h) = bloom_hashes {
+                            h.insert(hash_byte(value));
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported encoding {encoding:?} while writing a string column"
+            ))
+        }
+    }
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(null_count))
+        } else {
+            None
+        },
+        primitive_type,
+        options,
+        encoding,
+        false,
+    )
+    .map(Page::Data)
+}
+
+pub(crate) fn varchar_columns_to_page(
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    let segments = collect_varchar_segments(columns, first_partition_start, last_partition_end);
+    let num_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
+    let mut buffer = vec![];
+    let mut validity = Vec::new();
+    let mut null_count = 0usize;
+
+    let payload_start = begin_primitive_level_stream(&mut buffer, options.version);
+    for segment in &segments {
+        if segment.adjusted_column_top > 0 {
+            null_count += segment.adjusted_column_top;
+            encode_bool(
+                &mut buffer,
+                std::iter::repeat_n(false, segment.adjusted_column_top),
+                segment.adjusted_column_top,
+            )?;
+        }
+
+        validity.clear();
+        validity.reserve(segment.aux.len());
+        visit_varchar_entries(segment.aux, segment.data, |entry| {
+            let present = entry.is_some();
+            if !present {
+                null_count += 1;
+            }
+            validity.push(present);
+            Ok(())
+        })?;
+        if !validity.is_empty() {
+            encode_bool(&mut buffer, validity.iter().copied(), validity.len())?;
+        }
+    }
+    finish_primitive_level_stream(&mut buffer, payload_start, options.version);
+
+    let definition_levels_byte_length = buffer.len();
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+    match encoding {
+        Encoding::Plain => {
+            for segment in &segments {
+                for entry in segment.aux {
+                    if let Some(value) = varchar_get_slice_validated(entry, segment.data) {
+                        let len = value.len();
+                        buffer.extend_from_slice(&(len as u32).to_le_bytes());
+                        buffer.extend_from_slice(value);
+                        stats.update(value);
+                        if let Some(ref mut h) = bloom_hashes {
+                            h.insert(hash_byte(value));
+                        }
+                    }
+                }
+            }
+        }
+        Encoding::DeltaLengthByteArray => {
+            let non_null_count = num_rows - null_count;
+            let lengths = segments.iter().flat_map(|segment| {
+                segment
+                    .aux
+                    .iter()
+                    .filter_map(|entry| varchar_get_slice_validated(entry, segment.data))
+                    .map(|value| value.len() as i64)
+            });
+            let lengths = ExactSizedIter::new(lengths, non_null_count);
+            delta_bitpacked::encode(lengths, &mut buffer);
+
+            for segment in &segments {
+                for entry in segment.aux {
+                    if let Some(value) = varchar_get_slice_validated(entry, segment.data) {
+                        buffer.extend_from_slice(value);
+                        stats.update(value);
+                        if let Some(ref mut h) = bloom_hashes {
+                            h.insert(hash_byte(value));
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported encoding {encoding:?} while writing a varchar column"
+            ))
+        }
+    }
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(null_count))
+        } else {
+            None
+        },
+        primitive_type,
+        options,
+        encoding,
+        false,
+    )
+    .map(Page::Data)
+}
+
+const BINARY_HEADER_SIZE: usize = std::mem::size_of::<i64>();
+
+/// Encode a Binary column as a single Plain or DeltaLengthByteArray data page.
+pub fn binary_to_page(
+    offsets: &[i64],
+    data: &[u8],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    let mut byte_slices = Vec::with_capacity(column_top + offsets.len());
+    byte_slices.resize(column_top, None);
+    extend_binary_slices(&mut byte_slices, offsets, data)?;
+    binary_slices_to_page(
+        &byte_slices,
+        options,
+        primitive_type,
+        encoding,
+        bloom_hashes,
+    )
+}
+
+pub fn binary_slices_to_page(
+    byte_slices: &[Option<&[u8]>],
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    let num_rows = byte_slices.len();
+    let null_count = byte_slices.iter().filter(|entry| entry.is_none()).count();
+    let mut buffer = vec![];
+
+    let deflevels_iter = byte_slices.iter().map(|entry| entry.is_some());
+    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+    let definition_levels_byte_length = buffer.len();
+
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+    match encoding {
+        Encoding::Plain => {
+            encode_binary_plain(
+                byte_slices,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes.as_deref_mut(),
+            );
+        }
+        Encoding::DeltaLengthByteArray => {
+            encode_binary_delta(
+                byte_slices,
+                null_count,
+                &mut buffer,
+                &mut stats,
+                bloom_hashes,
+            );
+        }
+        _ => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported encoding {encoding:?} while writing a binary column"
+            ));
+        }
+    };
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(null_count))
+        } else {
+            None
+        },
+        primitive_type,
+        options,
+        encoding,
+        false,
+    )
+    .map(Page::Data)
+}
+
+fn binary_get_slice(values: &[u8], offset: i64) -> ParquetResult<Option<&[u8]>> {
+    let offset = usize::try_from(offset).map_err(|_| {
+        fmt_err!(
+            Layout,
+            "invalid offset value in binary aux column: {offset}"
+        )
+    })?;
+    let len = values
+        .get(offset..offset + BINARY_HEADER_SIZE)
+        .ok_or_else(|| {
             fmt_err!(
                 Layout,
                 "invalid offset value in binary aux column: {offset}"
             )
         })?;
-        let len = types::decode::<i64>(&values[offset..offset + BINARY_HEADER_SIZE]);
-        if len < 0 {
-            continue;
-        }
-        let value_offset = offset + BINARY_HEADER_SIZE;
-        let value = &values[value_offset..value_offset + len as usize];
+    let len = types::decode::<i64>(len);
+    if len < 0 {
+        return Ok(None);
+    }
+    let value_offset = offset + BINARY_HEADER_SIZE;
+    if value_offset + len as usize > values.len() {
+        return Err(fmt_err!(
+            Layout,
+            "invalid offset and length in binary aux column: offset {offset}, length {len}"
+        ));
+    }
+    Ok(Some(&values[value_offset..value_offset + len as usize]))
+}
+
+fn binary_get_slice_validated(values: &[u8], offset: i64) -> Option<&[u8]> {
+    binary_get_slice(values, offset).expect("binary segment was validated before encoding")
+}
+
+fn visit_binary_entries<'a, F>(offsets: &[i64], values: &'a [u8], mut visit: F) -> ParquetResult<()>
+where
+    F: FnMut(Option<&'a [u8]>) -> ParquetResult<()>,
+{
+    for &offset in offsets {
+        visit(binary_get_slice(values, offset)?)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn extend_binary_slices<'a>(
+    byte_slices: &mut Vec<Option<&'a [u8]>>,
+    offsets: &[i64],
+    values: &'a [u8],
+) -> ParquetResult<()> {
+    visit_binary_entries(offsets, values, |entry| {
+        byte_slices.push(entry);
+        Ok(())
+    })?;
+    Ok(())
+}
+
+fn encode_binary_plain(
+    byte_slices: &[Option<&[u8]>],
+    buffer: &mut Vec<u8>,
+    stats: &mut BinaryMaxMinStats,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) {
+    for value in byte_slices.iter().filter_map(|&entry| entry) {
+        let len = value.len();
         let encoded_len = (len as u32).to_le_bytes();
         buffer.extend_from_slice(&encoded_len);
         buffer.extend_from_slice(value);
@@ -243,69 +705,49 @@ fn encode_binary_plain(
             h.insert(hash_byte(value));
         }
     }
-    Ok(())
 }
 
 fn encode_binary_delta(
-    offsets: &[i64],
-    values: &[u8],
+    byte_slices: &[Option<&[u8]>],
     null_count: usize,
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMinStats,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<()> {
-    let row_count = offsets.len();
+) {
+    let row_count = byte_slices.len();
+    let non_null_count = row_count - null_count;
 
-    if row_count == 0 {
+    if non_null_count == 0 {
         delta_bitpacked::encode(std::iter::empty(), buffer);
-        return Ok(());
-    }
-
-    for &off in offsets {
-        if off < 0 {
-            return Err(fmt_err!(
-                Layout,
-                "invalid offset value in binary aux column: {off}"
-            ));
-        }
+        return;
     }
 
     {
-        let last_offset = offsets[row_count - 1] as usize;
-        let last_size =
-            types::decode::<i64>(&values[last_offset..last_offset + BINARY_HEADER_SIZE]);
-        let last_size = if last_size > 0 { last_size } else { 0 };
-        let capacity = (offsets[row_count - 1] - offsets[0] + last_size) as usize
-            - ((row_count - 1) * BINARY_HEADER_SIZE);
+        let payload_bytes = byte_slices
+            .iter()
+            .flatten()
+            .map(|value| value.len())
+            .sum::<usize>();
+        let capacity =
+            payload_bytes + (non_null_count.saturating_sub(1) * std::mem::size_of::<i64>());
         buffer.reserve(capacity);
     }
 
-    let lengths = offsets
+    let lengths = byte_slices
         .iter()
-        .map(|offset| {
-            let offset = *offset as usize;
-            types::decode::<i64>(&values[offset..offset + BINARY_HEADER_SIZE])
-        })
-        .filter(|len| *len >= 0);
-    let lengths = ExactSizedIter::new(lengths, row_count - null_count);
+        .filter_map(|&entry| entry)
+        .map(|value| value.len() as i64);
+    let lengths = ExactSizedIter::new(lengths, non_null_count);
 
     delta_bitpacked::encode(lengths, buffer);
 
-    for offset in offsets {
-        let offset = *offset as usize;
-        let len = types::decode::<i64>(&values[offset..offset + BINARY_HEADER_SIZE]);
-        if len < 0 {
-            continue;
-        }
-        let value_offset = offset + BINARY_HEADER_SIZE;
-        let value = &values[value_offset..value_offset + len as usize];
+    for value in byte_slices.iter().filter_map(|&entry| entry) {
         buffer.extend_from_slice(value);
         stats.update(value);
         if let Some(ref mut h) = bloom_hashes {
             h.insert(hash_byte(value));
         }
     }
-    Ok(())
 }
 
 /// Single-partition Binary dict encoder. Production code goes through
@@ -430,47 +872,41 @@ pub fn string_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    let mut utf16_slices = Vec::with_capacity(column_top + offsets.len());
+    utf16_slices.resize(column_top, None);
+    extend_string_slices(&mut utf16_slices, offsets, data)?;
+    string_slices_to_page(
+        &utf16_slices,
+        options,
+        primitive_type,
+        encoding,
+        bloom_hashes,
+    )
+}
+
+pub fn string_slices_to_page(
+    utf16_slices: &[Option<&[u16]>],
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    let num_rows = column_top + offsets.len();
+    let num_rows = utf16_slices.len();
+    let null_count = utf16_slices.iter().filter(|entry| entry.is_none()).count();
     let mut buffer = vec![];
-    let mut null_count = 0;
 
-    let utf16_slices: Vec<Option<&[u16]>> = offsets
-        .iter()
-        .map(|offset| {
-            let offset = usize::try_from(*offset).map_err(|_| {
-                fmt_err!(
-                    Layout,
-                    "invalid offset value in string aux column: {offset}"
-                )
-            })?;
-            let data = data.get(offset..).ok_or_else(|| {
-                fmt_err!(
-                    Layout,
-                    "offset value {offset} is out of bounds for string aux column data"
-                )
-            })?;
-            let maybe_utf16 = string_get_utf16(data)?;
-            if maybe_utf16.is_none() {
-                null_count += 1;
-            }
-            Ok(maybe_utf16)
-        })
-        .collect::<ParquetResult<Vec<_>>>()?;
-
-    let deflevels_iter =
-        (0..num_rows).map(|i| i >= column_top && utf16_slices[i - column_top].is_some());
+    let deflevels_iter = utf16_slices.iter().map(|entry| entry.is_some());
     encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
-
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
 
     match encoding {
         Encoding::Plain => {
             encode_string_plain(
-                &utf16_slices,
+                utf16_slices,
                 &mut buffer,
                 &mut stats,
                 bloom_hashes.as_deref_mut(),
@@ -478,7 +914,7 @@ pub fn string_to_page(
         }
         Encoding::DeltaLengthByteArray => {
             encode_string_delta(
-                &utf16_slices,
+                utf16_slices,
                 null_count,
                 &mut buffer,
                 &mut stats,
@@ -493,7 +929,6 @@ pub fn string_to_page(
         }
     };
 
-    let null_count = column_top + null_count;
     build_plain_page(
         buffer,
         num_rows,
@@ -510,6 +945,18 @@ pub fn string_to_page(
         false,
     )
     .map(Page::Data)
+}
+
+pub(crate) fn extend_string_slices<'a>(
+    utf16_slices: &mut Vec<Option<&'a [u16]>>,
+    offsets: &[i64],
+    data: &'a [u8],
+) -> ParquetResult<()> {
+    visit_string_entries(offsets, data, |entry| {
+        utf16_slices.push(entry);
+        Ok(())
+    })?;
+    Ok(())
 }
 
 /// Single-partition String dict encoder (legacy bench surface).
@@ -613,12 +1060,12 @@ fn encode_string_plain(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<()> {
     for utf16 in utf16_slices.iter().filter_map(|&option| option) {
-        let utf8 = String::from_utf16(utf16)
-            .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
-        let encoded_len = (utf8.len() as u32).to_le_bytes();
-        buffer.extend_from_slice(&encoded_len);
-        let value = utf8.as_bytes();
-        buffer.extend_from_slice(value);
+        let len_offset = buffer.len();
+        buffer.extend_from_slice(&[0; 4]);
+        let utf8_start = buffer.len();
+        let utf8_len = append_utf8_from_utf16(buffer, utf16)?;
+        buffer[len_offset..utf8_start].copy_from_slice(&(utf8_len as u32).to_le_bytes());
+        let value = &buffer[utf8_start..utf8_start + utf8_len];
         stats.update(value);
         if let Some(ref mut h) = bloom_hashes {
             h.insert(hash_byte(value));
@@ -641,14 +1088,53 @@ fn encode_string_delta(
     let lengths = ExactSizedIter::new(lengths, utf16_slices.len() - null_count);
     delta_bitpacked::encode(lengths, buffer);
     for utf16 in utf16_slices.iter().filter_map(|&option| option) {
-        let utf8 = String::from_utf16(utf16)
-            .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
-        let value = utf8.as_bytes();
-        buffer.extend_from_slice(value);
+        let utf8_start = buffer.len();
+        let utf8_len = append_utf8_from_utf16(buffer, utf16)?;
+        let value = &buffer[utf8_start..utf8_start + utf8_len];
         stats.update(value);
         if let Some(ref mut h) = bloom_hashes {
             h.insert(hash_byte(value));
         }
+    }
+    Ok(())
+}
+
+fn append_utf8_from_utf16(buffer: &mut Vec<u8>, utf16: &[u16]) -> ParquetResult<usize> {
+    let start = buffer.len();
+    for c in char::decode_utf16(utf16.iter().copied()) {
+        let c = c.map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
+        let mut tmp = [0; 4];
+        buffer.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
+    }
+    Ok(buffer.len() - start)
+}
+
+fn string_get_utf16_at_offset(data: &[u8], offset: i64) -> ParquetResult<Option<&[u16]>> {
+    let offset = usize::try_from(offset).map_err(|_| {
+        fmt_err!(
+            Layout,
+            "invalid offset value in string aux column: {offset}"
+        )
+    })?;
+    let data = data.get(offset..).ok_or_else(|| {
+        fmt_err!(
+            Layout,
+            "offset value {offset} is out of bounds for string aux column data"
+        )
+    })?;
+    string_get_utf16(data)
+}
+
+fn string_get_utf16_validated(data: &[u8], offset: i64) -> Option<&[u16]> {
+    string_get_utf16_at_offset(data, offset).expect("string segment was validated before encoding")
+}
+
+fn visit_string_entries<'a, F>(offsets: &[i64], data: &'a [u8], mut visit: F) -> ParquetResult<()>
+where
+    F: FnMut(Option<&'a [u16]>) -> ParquetResult<()>,
+{
+    for &offset in offsets {
+        visit(string_get_utf16_at_offset(data, offset)?)?;
     }
     Ok(())
 }
@@ -725,62 +1211,41 @@ pub fn varchar_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    let mut utf8_slices = Vec::with_capacity(column_top + aux.len());
+    utf8_slices.resize(column_top, None);
+    extend_varchar_slices(&mut utf8_slices, aux, data)?;
+    varchar_slices_to_page(
+        &utf8_slices,
+        options,
+        primitive_type,
+        encoding,
+        bloom_hashes,
+    )
+}
+
+pub fn varchar_slices_to_page(
+    utf8_slices: &[Option<&[u8]>],
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    debug_assert_eq!(std::mem::size_of::<VarcharAuxInlined>(), 16);
-    debug_assert_eq!(std::mem::size_of::<VarcharAuxSplit>(), 16);
-
-    let num_rows = column_top + aux.len();
+    let num_rows = utf8_slices.len();
+    let null_count = utf8_slices.iter().filter(|entry| entry.is_none()).count();
     let mut buffer = vec![];
-    let mut null_count = 0usize;
 
-    // SAFETY: `VarcharAuxInlined` is `#[repr(C, packed)]` and exactly 16 bytes.
-    // The source `&[[u8; 16]]` has compatible size and alignment 1.
-    let aux: &[VarcharAuxInlined] = unsafe { std::mem::transmute(aux) };
-
-    let utf8_slices: Vec<Option<&[u8]>> = aux
-        .iter()
-        .map(|entry| {
-            if varchar_is_null(entry.header) {
-                null_count += 1;
-                Ok(None)
-            } else if varchar_is_inlined(entry.header) {
-                let size = (entry.header >> VARCHAR_HEADER_FLAGS_WIDTH) as usize;
-                Ok(Some(&entry.chars[..size]))
-            } else {
-                // SAFETY: Both `VarcharAuxInlined` and `VarcharAuxSplit` are
-                // `#[repr(C, packed)]` and 16 bytes. The header flag check
-                // determines which interpretation is valid.
-                let entry: &VarcharAuxSplit = unsafe { std::mem::transmute(entry) };
-                let header = entry.header;
-                let size = (header >> VARCHAR_HEADER_FLAGS_WIDTH) as usize;
-                let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
-                if offset + size > data.len() {
-                    return Err(fmt_err!(
-                        Layout,
-                        "data corruption in VARCHAR column: offset {} + size {} exceeds data length {}",
-                        offset,
-                        size,
-                        data.len()
-                    ));
-                }
-                Ok(Some(&data[offset..][..size]))
-            }
-        })
-        .collect::<ParquetResult<Vec<_>>>()?;
-
-    let deflevels_iter =
-        (0..num_rows).map(|i| i >= column_top && utf8_slices[i - column_top].is_some());
+    let deflevels_iter = utf8_slices.iter().map(|entry| entry.is_some());
     encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
-
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
 
     match encoding {
         Encoding::Plain => {
             encode_varchar_plain(
-                &utf8_slices,
+                utf8_slices,
                 &mut buffer,
                 &mut stats,
                 bloom_hashes.as_deref_mut(),
@@ -788,7 +1253,7 @@ pub fn varchar_to_page(
         }
         Encoding::DeltaLengthByteArray => {
             encode_varchar_delta(
-                &utf8_slices,
+                utf8_slices,
                 null_count,
                 &mut buffer,
                 &mut stats,
@@ -803,7 +1268,6 @@ pub fn varchar_to_page(
         }
     };
 
-    let null_count = column_top + null_count;
     build_plain_page(
         buffer,
         num_rows,
@@ -820,6 +1284,69 @@ pub fn varchar_to_page(
         false,
     )
     .map(Page::Data)
+}
+
+pub(crate) fn extend_varchar_slices<'a>(
+    utf8_slices: &mut Vec<Option<&'a [u8]>>,
+    aux: &'a [[u8; 16]],
+    data: &'a [u8],
+) -> ParquetResult<()> {
+    visit_varchar_entries(aux, data, |entry| {
+        utf8_slices.push(entry);
+        Ok(())
+    })?;
+    Ok(())
+}
+
+fn varchar_get_slice<'a>(entry: &'a [u8; 16], data: &'a [u8]) -> ParquetResult<Option<&'a [u8]>> {
+    debug_assert_eq!(std::mem::size_of::<VarcharAuxInlined>(), 16);
+    debug_assert_eq!(std::mem::size_of::<VarcharAuxSplit>(), 16);
+
+    // SAFETY: `VarcharAuxInlined` is `#[repr(C, packed)]` and exactly 16 bytes.
+    // The source `&[[u8; 16]]` has compatible size and alignment 1.
+    let entry: &VarcharAuxInlined = unsafe { std::mem::transmute(entry) };
+    if varchar_is_null(entry.header) {
+        Ok(None)
+    } else if varchar_is_inlined(entry.header) {
+        let size = (entry.header >> VARCHAR_HEADER_FLAGS_WIDTH) as usize;
+        Ok(Some(&entry.chars[..size]))
+    } else {
+        // SAFETY: Both `VarcharAuxInlined` and `VarcharAuxSplit` are
+        // `#[repr(C, packed)]` and 16 bytes. The header flag check
+        // determines which interpretation is valid.
+        let entry: &VarcharAuxSplit = unsafe { std::mem::transmute(entry) };
+        let header = entry.header;
+        let size = (header >> VARCHAR_HEADER_FLAGS_WIDTH) as usize;
+        let offset = entry.offset_lo as usize | ((entry.offset_hi as usize) << 16);
+        if offset + size > data.len() {
+            return Err(fmt_err!(
+                Layout,
+                "data corruption in VARCHAR column: offset {} + size {} exceeds data length {}",
+                offset,
+                size,
+                data.len()
+            ));
+        }
+        Ok(Some(&data[offset..][..size]))
+    }
+}
+
+fn varchar_get_slice_validated<'a>(entry: &'a [u8; 16], data: &'a [u8]) -> Option<&'a [u8]> {
+    varchar_get_slice(entry, data).expect("varchar segment was validated before encoding")
+}
+
+fn visit_varchar_entries<'a, F>(
+    aux: &'a [[u8; 16]],
+    data: &'a [u8],
+    mut visit: F,
+) -> ParquetResult<()>
+where
+    F: FnMut(Option<&'a [u8]>) -> ParquetResult<()>,
+{
+    for entry in aux {
+        visit(varchar_get_slice(entry, data)?)?;
+    }
+    Ok(())
 }
 
 /// Single-partition Varchar dict encoder (legacy bench surface).

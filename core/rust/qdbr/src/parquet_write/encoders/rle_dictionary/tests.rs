@@ -113,7 +113,7 @@ fn dict_global_uniqueness_int() {
 }
 
 #[test]
-fn dict_per_partition_stats_int() {
+fn dict_chunk_stats_int() {
     let parts: Vec<Vec<i32>> = vec![
         (1..=10).collect(),
         (100..=110).collect(),
@@ -128,20 +128,13 @@ fn dict_per_partition_stats_int() {
     let pages = encode_simd::<i32>(&columns, 0, 11, &pt, write_options(), None).expect("encode");
 
     let datas = data_pages(&pages);
-    assert_eq!(datas.len(), 4);
-    let expected = [(1, 10), (100, 110), (1000, 1010), (10000, 10010)];
-    for (i, (page, exp)) in datas.iter().zip(expected.iter()).enumerate() {
-        let (min, max) = page_i32_min_max(page);
-        assert_eq!(
-            (min, max),
-            *exp,
-            "page {i} stats should match its partition only"
-        );
-    }
+    assert_eq!(datas.len(), 1);
+    let (min, max) = page_i32_min_max(datas[0]);
+    assert_eq!((min, max), (1, 10010));
 }
 
 #[test]
-fn dict_per_partition_stats_decimal64() {
+fn dict_chunk_stats_decimal64() {
     let parts: Vec<Vec<Decimal64>> = vec![
         (1..=10).map(|i| Decimal64(i * 100)).collect(),
         (100..=110).map(|i| Decimal64(i * 100)).collect(),
@@ -173,7 +166,7 @@ fn dict_per_partition_stats_decimal64() {
         encode_decimal::<Decimal64>(&columns, 0, 11, &pt, write_options(), None).expect("encode");
 
     let datas = data_pages(&pages);
-    assert_eq!(datas.len(), 2);
+    assert_eq!(datas.len(), 1);
     let read_stats = |page: &parquet2::page::DataPage| -> (Vec<u8>, Vec<u8>) {
         let arc = page.statistics().expect("present").expect("ok");
         let stats = arc
@@ -185,16 +178,13 @@ fn dict_per_partition_stats_decimal64() {
             stats.max_value.clone().expect("max"),
         )
     };
-    let (min0, max0) = read_stats(datas[0]);
-    let (min1, max1) = read_stats(datas[1]);
-    assert_eq!(min0, 100i64.to_be_bytes());
-    assert_eq!(max0, 1000i64.to_be_bytes());
-    assert_eq!(min1, 10000i64.to_be_bytes());
-    assert_eq!(max1, 11000i64.to_be_bytes());
+    let (min, max) = read_stats(datas[0]);
+    assert_eq!(min, 100i64.to_be_bytes());
+    assert_eq!(max, 11000i64.to_be_bytes());
 }
 
 #[test]
-fn dict_per_partition_stats_varchar() {
+fn dict_chunk_stats_varchar() {
     let strings1: Vec<&[u8]> = vec![b"alpha", b"beta", b"gamma"];
     let strings2: Vec<&[u8]> = vec![b"xenon", b"yankee", b"zulu"];
 
@@ -213,7 +203,7 @@ fn dict_per_partition_stats_varchar() {
     let pt = primitive_type_for(ColumnTypeTag::Varchar);
     let pages = encode_varchar(&[col1, col2], 0, 3, &pt, write_options(), None).expect("encode");
     let datas = data_pages(&pages);
-    assert_eq!(datas.len(), 2);
+    assert_eq!(datas.len(), 1);
 
     let read_stats = |page: &parquet2::page::DataPage| -> (Vec<u8>, Vec<u8>) {
         let arc = page.statistics().expect("present").expect("ok");
@@ -226,16 +216,13 @@ fn dict_per_partition_stats_varchar() {
             stats.max_value.clone().expect("max"),
         )
     };
-    let (min0, max0) = read_stats(datas[0]);
-    let (min1, max1) = read_stats(datas[1]);
-    assert_eq!(&min0, b"alpha");
-    assert_eq!(&max0, b"gamma");
-    assert_eq!(&min1, b"xenon");
-    assert_eq!(&max1, b"zulu");
+    let (min, max) = read_stats(datas[0]);
+    assert_eq!(&min, b"alpha");
+    assert_eq!(&max, b"zulu");
 }
 
 #[test]
-fn dict_per_partition_null_counts() {
+fn dict_chunk_null_counts() {
     let parts: Vec<Vec<i32>> = vec![
         vec![1, 2, 3, 4, 5],
         vec![1, i32::MIN, 2, i32::MIN, 3],
@@ -250,12 +237,9 @@ fn dict_per_partition_null_counts() {
     let pages = encode_simd::<i32>(&columns, 0, 5, &pt, write_options(), None).expect("encode");
 
     let datas = data_pages(&pages);
-    assert_eq!(datas.len(), 4);
-    let expected_nulls = [0, 2, 3, 1];
-    for (page, exp) in datas.iter().zip(expected_nulls.iter()) {
-        let h = page_v2_header(page);
-        assert_eq!(h.num_nulls, *exp);
-    }
+    assert_eq!(datas.len(), 1);
+    let h = page_v2_header(datas[0]);
+    assert_eq!(h.num_nulls, 6);
 }
 
 #[test]
@@ -267,11 +251,9 @@ fn dict_exactly_one_dict_page() {
         .collect();
     let pt = primitive_type_for(ColumnTypeTag::Int);
     let pages = encode_simd::<i32>(&columns, 0, 2, &pt, write_options(), None).expect("encode");
-    assert_eq!(pages.len(), 4);
+    assert_eq!(pages.len(), 2);
     assert!(matches!(pages[0], Page::Dict(_)));
-    for page in &pages[1..] {
-        assert!(matches!(page, Page::Data(_)));
-    }
+    assert!(matches!(pages[1], Page::Data(_)));
 }
 
 #[test]

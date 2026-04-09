@@ -20,7 +20,7 @@ use crate::parquet_write::Nullable;
 
 use super::{
     build_dict_page, build_var_dict_data_page, lock_bloom_set, partition_chunk_slice,
-    upsert_dict_entry, PartitionDictState, Repetition,
+    upsert_dict_entry, ColumnChunkDictState, Repetition,
 };
 
 /// Encode a Decimal{8,16,32,64,128,256} column as RleDictionary pages.
@@ -62,8 +62,11 @@ pub fn encode_fixed_len_bytes<const N: usize>(
 
     let mut dict_map: RapidHashMap<[u8; N], u32> = RapidHashMap::default();
     let mut dict_entries: Vec<[u8; N]> = Vec::new();
-    let mut per_partition: Vec<PartitionDictState<BinaryMaxMinStats>> =
-        Vec::with_capacity(num_partitions);
+    let mut state = ColumnChunkDictState::<BinaryMaxMinStats>::new(
+        options
+            .write_statistics
+            .then(|| BinaryMaxMinStats::new(primitive_type)),
+    );
 
     for (part_idx, column) in columns.iter().enumerate() {
         let chunk = partition_chunk_slice(
@@ -76,17 +79,11 @@ pub fn encode_fixed_len_bytes<const N: usize>(
         let data: &[[u8; N]] = unsafe { transmute_slice(column.primary_data) };
         let slice = &data[chunk.lower_bound..chunk.upper_bound];
 
-        let mut state = PartitionDictState::<BinaryMaxMinStats>::new(
-            chunk,
-            options
-                .write_statistics
-                .then(|| BinaryMaxMinStats::new(primitive_type)),
-        );
+        state.extend_optional_nulls(chunk.adjusted_column_top);
 
         for &value in slice {
             if value == null_value {
-                state.is_not_null.push(false);
-                state.partition_null_count += 1;
+                state.push_optional_null();
             } else {
                 let stored = if reverse {
                     let mut r = value;
@@ -101,15 +98,12 @@ pub fn encode_fixed_len_bytes<const N: usize>(
                     dict_entries.push(stored);
                     next_id
                 });
-                state.keys.push(key);
-                state.is_not_null.push(true);
+                state.push_optional_value(key);
                 if let Some(ref mut stats) = state.stats {
                     stats.update(&stored);
                 }
             }
         }
-
-        per_partition.push(state);
     }
 
     let mut dict_buffer = Vec::with_capacity(dict_entries.len() * N);
@@ -125,26 +119,21 @@ pub fn encode_fixed_len_bytes<const N: usize>(
     }
 
     let dict_entry_count = dict_entries.len();
-    let mut pages = Vec::with_capacity(num_partitions + 1);
+    let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
+    let data_page = build_var_dict_data_page(
+        &state.keys,
+        &state.is_not_null,
+        state.num_rows,
+        state.null_count,
+        dict_entry_count,
+        stats,
+        primitive_type,
+        options,
+        Repetition::Optional,
+    )?;
+    let mut pages = Vec::with_capacity(2);
     pages.push(Page::Dict(build_dict_page(dict_buffer, dict_entry_count)));
-
-    for state in per_partition {
-        let stats = state.stats.map(|s| {
-            s.into_parquet_stats(state.chunk.adjusted_column_top + state.partition_null_count)
-        });
-        let data_page = build_var_dict_data_page(
-            &state.keys,
-            &state.is_not_null,
-            state.chunk,
-            state.partition_null_count,
-            dict_entry_count,
-            stats,
-            primitive_type,
-            options,
-            Repetition::Optional,
-        )?;
-        pages.push(Page::Data(data_page));
-    }
+    pages.push(Page::Data(data_page));
 
     Ok(pages)
 }
@@ -164,7 +153,8 @@ where
     let num_partitions = columns.len();
     let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
     let mut dict_entries: Vec<T> = Vec::new();
-    let mut per_partition: Vec<PartitionDictState<MaxMin<T>>> = Vec::with_capacity(num_partitions);
+    let mut state =
+        ColumnChunkDictState::<MaxMin<T>>::new(options.write_statistics.then(MaxMin::<T>::new));
 
     for (part_idx, column) in columns.iter().enumerate() {
         let chunk = partition_chunk_slice(
@@ -177,26 +167,19 @@ where
         let data: &[T] = unsafe { transmute_slice(column.primary_data) };
         let slice = &data[chunk.lower_bound..chunk.upper_bound];
 
-        let mut state = PartitionDictState::<MaxMin<T>>::new(
-            chunk,
-            options.write_statistics.then(MaxMin::<T>::new),
-        );
+        state.extend_optional_nulls(chunk.adjusted_column_top);
 
         for &value in slice {
             if value.is_null() {
-                state.is_not_null.push(false);
-                state.partition_null_count += 1;
+                state.push_optional_null();
             } else {
                 let key = upsert_dict_entry(&mut dict_map, &mut dict_entries, value)?;
-                state.keys.push(key);
-                state.is_not_null.push(true);
+                state.push_optional_value(key);
                 if let Some(ref mut stats) = state.stats {
                     stats.update(value);
                 }
             }
         }
-
-        per_partition.push(state);
     }
 
     let mut dict_buffer = Vec::with_capacity(dict_entries.len() * std::mem::size_of::<T>());
@@ -212,30 +195,23 @@ where
     }
 
     let dict_entry_count = dict_entries.len();
-    let mut pages = Vec::with_capacity(num_partitions + 1);
+    let stats = state.stats.map(|s| {
+        build_decimal_stats::<T>(Some(state.null_count as i64), s, primitive_type.clone())
+    });
+    let data_page = build_var_dict_data_page(
+        &state.keys,
+        &state.is_not_null,
+        state.num_rows,
+        state.null_count,
+        dict_entry_count,
+        stats,
+        primitive_type,
+        options,
+        Repetition::Optional,
+    )?;
+    let mut pages = Vec::with_capacity(2);
     pages.push(Page::Dict(build_dict_page(dict_buffer, dict_entry_count)));
-
-    for state in per_partition {
-        let stats = state.stats.map(|s| {
-            build_decimal_stats::<T>(
-                Some((state.chunk.adjusted_column_top + state.partition_null_count) as i64),
-                s,
-                primitive_type.clone(),
-            )
-        });
-        let data_page = build_var_dict_data_page(
-            &state.keys,
-            &state.is_not_null,
-            state.chunk,
-            state.partition_null_count,
-            dict_entry_count,
-            stats,
-            primitive_type,
-            options,
-            Repetition::Optional,
-        )?;
-        pages.push(Page::Data(data_page));
-    }
+    pages.push(Page::Data(data_page));
 
     Ok(pages)
 }
