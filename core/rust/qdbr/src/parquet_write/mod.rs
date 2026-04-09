@@ -1479,12 +1479,20 @@ mod tests {
         // Verify metadata has bloom filter offset
         let meta =
             parquet2::read::read_metadata(&mut Cursor::new(data.as_slice())).expect("metadata");
-        let bf_offset = meta.row_groups[0].columns()[0]
-            .metadata()
-            .bloom_filter_offset;
+        let col_meta = meta.row_groups[0].columns()[0].metadata();
+        let bf_offset = col_meta.bloom_filter_offset;
         assert!(
             bf_offset.is_some(),
             "bloom filter offset should be present in metadata"
+        );
+        let bf_length = col_meta.bloom_filter_length;
+        assert!(
+            bf_length.is_some(),
+            "bloom filter length should be present in metadata"
+        );
+        assert!(
+            bf_length.unwrap() > 0,
+            "bloom filter length should be positive"
         );
 
         // Values not in the data

@@ -725,6 +725,8 @@ public interface CairoConfiguration {
 
     long getSystemWalEventAppendPageSize();
 
+    boolean isCairoMetadataCacheSnapshotOrdered();
+
     long getTableRegistryAutoReloadFrequency();
 
     int getTableRegistryCompactionThreshold();

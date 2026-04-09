@@ -1034,6 +1034,7 @@ fn generate_null_column_chunk_bytes(
         statistics: None,
         encoding_stats: None,
         bloom_filter_offset: None,
+        bloom_filter_length: None,
     };
 
     let column_chunk = ColumnChunk {
