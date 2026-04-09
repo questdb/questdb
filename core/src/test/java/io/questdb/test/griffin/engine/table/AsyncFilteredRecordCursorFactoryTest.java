@@ -342,6 +342,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                       keys: [timestamp]
                                         Async Group By workers: 1
                                           keys: [timestamp]
+                                          keyFunctions: [timestamp_floor_utc('1h',timestamp)]
                                           values: [count(*)]
                                           filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)
                                             PageFrame

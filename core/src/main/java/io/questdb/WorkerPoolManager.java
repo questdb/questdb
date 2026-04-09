@@ -31,7 +31,7 @@ import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -108,7 +108,7 @@ public abstract class WorkerPoolManager implements Target {
         // halt is idempotent, and start may have not been called, still
         // we want to free pool resources, so we do not check the closed
         // flag, but we ensure it is true at the end.
-        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
             CharSequence name = poolNames.getQuick(i);
             WorkerPool pool = dedicatedPools.get(name);
@@ -131,7 +131,7 @@ public abstract class WorkerPoolManager implements Target {
             sharedPoolQuery.updateWorkerMetrics(now);
         }
         sharedPoolWrite.updateWorkerMetrics(now);
-        ObjList<CharSequence> poolNames = dedicatedPools.keys();
+        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
         for (int i = 0, limit = poolNames.size(); i < limit; i++) {
             dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics(now);
         }
@@ -143,7 +143,7 @@ public abstract class WorkerPoolManager implements Target {
             startWorkerPool(sharedPoolLog, sharedPoolQuery, "started shared pool [name=");
             startWorkerPool(sharedPoolLog, sharedPoolWrite, "started shared pool [name=");
 
-            ObjList<CharSequence> poolNames = dedicatedPools.keys();
+            ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
             for (int i = 0, limit = poolNames.size(); i < limit; i++) {
                 CharSequence name = poolNames.get(i);
                 WorkerPool pool = dedicatedPools.get(name);

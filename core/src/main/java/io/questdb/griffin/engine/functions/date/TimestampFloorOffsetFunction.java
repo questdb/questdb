@@ -36,13 +36,15 @@ import io.questdb.std.Numbers;
 public final class TimestampFloorOffsetFunction extends TimestampFunction implements UnaryFunction {
     private final Function arg;
     private final TimestampDriver.TimestampFloorWithOffsetMethod floor;
+    private final String name;
     private final long offset;
     private final int stride;
     private final char unit;
 
-    public TimestampFloorOffsetFunction(Function arg, char unit, int stride, long offset, int timestampType) {
+    public TimestampFloorOffsetFunction(String name, Function arg, char unit, int stride, long offset, int timestampType) {
         super(timestampType);
         this.arg = arg;
+        this.name = name;
         this.stride = stride;
         this.offset = offset;
         this.unit = unit;
@@ -62,7 +64,7 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(TimestampFloorFunctionFactory.NAME).val("('");
+        sink.val(name).val("('");
         sink.val(stride);
         sink.val(unit).val("',");
         sink.val(getArg());
