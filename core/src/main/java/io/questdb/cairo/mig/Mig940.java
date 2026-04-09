@@ -25,6 +25,7 @@
 package io.questdb.cairo.mig;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
@@ -165,42 +166,37 @@ public final class Mig940 {
         // Open data.parquet for reading.
         path.concat(TableUtils.PARQUET_PARTITION_NAME).$();
         if (!ff.exists(path.$())) {
-            LOG.error().$("parquet file not found, skipping [path=").$(path).I$();
             path.trimTo(partitionDirLen);
-            return -1L;
+            throw CairoException.critical(0).put("parquet file not found [path=").put(path).put(']');
         }
 
         long parquetFileSize = ff.length(path.$());
         if (parquetFileSize <= 0) {
-            LOG.error().$("parquet file empty or unreadable [path=").$(path).I$();
             path.trimTo(partitionDirLen);
-            return -1L;
+            throw CairoException.critical(0).put("parquet file empty or unreadable [path=").put(path).put(']');
         }
 
         long parquetFd = ff.openRO(path.$());
         if (parquetFd < 0) {
-            LOG.error().$("cannot open parquet file [path=").$(path).$(", errno=").$(ff.errno()).I$();
+            int errno = ff.errno();
             path.trimTo(partitionDirLen);
-            return -1L;
+            throw CairoException.critical(errno).put("cannot open parquet file [path=").put(path).put(']');
         }
 
         // Create _pm for writing.
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
         long parquetMetaFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
         if (parquetMetaFd < 0) {
-            LOG.error().$("cannot create parquet metadata file [path=").$(path).$(", errno=").$(ff.errno()).I$();
+            int errno = ff.errno();
             ff.close(parquetFd);
             path.trimTo(partitionDirLen);
-            return -1L;
+            throw CairoException.critical(errno).put("cannot create parquet metadata file [path=").put(path).put(']');
         }
 
         try {
             long parquetMetaSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
             LOG.info().$("generated parquet metadata [path=").$(path).$(", parquetMetadataFileSize=").$(parquetMetaSize).I$();
             return parquetMetaSize;
-        } catch (Throwable t) {
-            LOG.error().$("failed to generate parquet metadata [path=").$(path).$(", error=").$(t.getMessage()).I$();
-            return -1L;
         } finally {
             ff.close(parquetFd);
             ff.close(parquetMetaFd);

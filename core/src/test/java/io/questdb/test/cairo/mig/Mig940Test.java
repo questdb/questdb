@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.mig;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
@@ -41,6 +42,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -114,7 +116,7 @@ public class Mig940Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testMigrateHandlesMissingParquetFile() throws Exception {
+    public void testMigrateAbortOnMissingParquetFile() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
@@ -141,14 +143,102 @@ public class Mig940Test extends AbstractCairoTest {
                 ff.remove(path.$());
             }
 
-            // Migration should handle gracefully — no crash.
-            runMig940(token);
+            try {
+                runMig940(token);
+                Assert.fail("Expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "parquet file not found");
+            }
+        });
+    }
 
-            // _pm should NOT exist (parquet source was missing).
+    @Test
+    public void testMigrateAbortOnCorruptParquetFile() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Delete _pm, then overwrite data.parquet with garbage to corrupt it.
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                Assert.assertFalse("_pm should not be created when parquet is missing", ff.exists(path.$()));
+                ff.remove(path.$());
+
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                long fd = ff.openRW(path.$(), 0);
+                try {
+                    // Overwrite magic bytes with garbage.
+                    long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Unsafe.getUnsafe().putLong(buf, 0xDEADBEEFDEADBEEFL);
+                        ff.write(fd, buf, 8, 0);
+                    } finally {
+                        Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            try {
+                runMig940(token);
+                Assert.fail("Expected exception from corrupt parquet file");
+            } catch (Exception e) {
+                // ParquetMetadataWriter.generate() throws on corrupt input.
+            }
+        });
+    }
+
+    @Test
+    public void testMigrateAbortOnEmptyParquetFile() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Delete _pm, then truncate data.parquet to 0 bytes.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                ff.remove(path.$());
+
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                long fd = ff.openRW(path.$(), 0);
+                try {
+                    ff.truncate(fd, 0);
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            try {
+                runMig940(token);
+                Assert.fail("Expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "parquet file empty or unreadable");
             }
         });
     }
