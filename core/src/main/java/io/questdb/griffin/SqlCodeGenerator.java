@@ -3256,13 +3256,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.freeObjList(fillValues);
                     return groupByFactory;
                 }
-                // Skip function parsing for keywords handled by the fill cursor
-                if (isPrevKeyword(expr.token) || isNullKeyword(expr.token)) {
-                    fillValues.add(NullConstant.NULL);
-                } else {
-                    final Function fillValueFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
-                    fillValues.add(fillValueFunc);
-                }
+                final Function fillValueFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
+                fillValues.add(fillValueFunc);
             }
 
             if (fillValues.size() == 0 || (fillValues.size() == 1 && isNoneKeyword(fillValues.getQuick(0).getName()))) {
@@ -3320,14 +3315,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
 
-            // Build per-column fill specification for the unified fill cursor
+            // Build per-column fill specification
             final RecordMetadata groupByMetadata = groupByFactory.getMetadata();
             final int columnCount = groupByMetadata.getColumnCount();
             final IntList fillModes = new IntList(columnCount);
             final ObjList<Function> constantFillFuncs = new ObjList<>(columnCount);
             boolean hasPrevFill = false;
 
-            // Detect PREV in fill values
+            // Detect any PREV in fill values
             boolean anyPrev = false;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
                 if (isPrevKeyword(fillValuesExprs.getQuick(i).token)) {
@@ -3349,7 +3344,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 hasPrevFill = true;
             } else {
-                // Per-column: map fill values to columns (skipping timestamp)
+                // Per-column fill spec
                 int fillIdx = 0;
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
@@ -3357,53 +3352,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         constantFillFuncs.add(NullConstant.NULL);
                         continue;
                     }
-                    if (fillIdx < fillValuesExprs.size()) {
-                        ExpressionNode fillExpr = fillValuesExprs.getQuick(fillIdx);
-                        if (isPrevKeyword(fillExpr.token)) {
-                            fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
-                            constantFillFuncs.add(NullConstant.NULL);
-                            hasPrevFill = true;
-                        } else if (isNullKeyword(fillExpr.token)) {
-                            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                            constantFillFuncs.add(NullConstant.NULL);
-                        } else {
-                            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                            constantFillFuncs.add(fillValues.getQuick(fillIdx));
-                        }
-                    } else if (fillValuesExprs.size() == 1) {
-                        // Single fill value applies to all columns
-                        ExpressionNode fillExpr = fillValuesExprs.getQuick(0);
-                        if (isPrevKeyword(fillExpr.token)) {
-                            fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
-                            constantFillFuncs.add(NullConstant.NULL);
-                            hasPrevFill = true;
-                        } else if (isNullKeyword(fillExpr.token) || fillValues.getQuick(0).isNullConstant()) {
-                            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                            constantFillFuncs.add(NullConstant.NULL);
-                        } else {
-                            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                            constantFillFuncs.add(fillValues.getQuick(0));
-                        }
-                    } else {
-                        // Not enough fill values — default to NULL
+                    ExpressionNode fillExpr = fillIdx < fillValuesExprs.size()
+                            ? fillValuesExprs.getQuick(fillIdx)
+                            : (fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null);
+                    if (fillExpr != null && isPrevKeyword(fillExpr.token)) {
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
+                        constantFillFuncs.add(NullConstant.NULL);
+                        hasPrevFill = true;
+                    } else if (fillExpr == null || isNullKeyword(fillExpr.token)) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         constantFillFuncs.add(NullConstant.NULL);
+                    } else {
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                        Function f = fillIdx < fillValues.size() ? fillValues.getQuick(fillIdx) : NullConstant.NULL;
+                        constantFillFuncs.add(f);
                     }
                     fillIdx++;
                 }
             }
 
-            // Create RecordSink for RecordChain
+            // Sort the GROUP BY output — the fill cursor requires sorted input
+            RecordCursorFactory sorted = generateOrderBy(groupByFactory, model, executionContext);
+
+            // Create RecordSink for key column extraction (keysMap)
             final EntityColumnFilter columnFilter = new EntityColumnFilter();
-            columnFilter.of(columnCount);
+            columnFilter.of(sorted.getMetadata().getColumnCount());
             final RecordSink recordSink = RecordSinkFactory.getInstance(
-                    configuration, asm, groupByMetadata, columnFilter
+                    configuration, asm, sorted.getMetadata(), columnFilter
             );
 
             return new SampleByFillRecordCursorFactory(
                     configuration,
-                    groupByMetadata,
-                    groupByFactory,
+                    sorted.getMetadata(),
+                    sorted,
                     fillFromFunc,
                     fillToFunc,
                     samplingInterval,
@@ -9896,9 +9877,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private void guardAgainstFillWithKeyedGroupBy(QueryModel model, ArrayColumnTypes keyTypes) {
-        // Keyed fill is now supported by the unified fill cursor.
-        // This method is kept as a no-op for call-site compatibility.
+    private void guardAgainstFillWithKeyedGroupBy(QueryModel model, ArrayColumnTypes keyTypes) throws SqlException {
+        // locate fill
+        QueryModel curr = model;
+        while (curr != null && curr.getFillStride() == null) {
+            curr = curr.getNestedModel();
+        }
+
+        if (curr == null || curr.getFillStride() == null || curr.getFillValues() == null || curr.getFillValues().size() == 0) {
+            return;
+        }
+
+        if (curr.getFillValues().size() == 1 && isNoneKeyword(curr.getFillValues().getQuick(0).token)) {
+            return;
+        }
+
+        if (keyTypes.getColumnCount() == 1) {
+            return;
+        }
+
+        throw SqlException.$(0, "cannot use FILL with a keyed GROUP BY");
     }
 
     private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {

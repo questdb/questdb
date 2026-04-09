@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -42,30 +41,21 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Unified fill cursor for SAMPLE BY on the GROUP BY fast path. Handles both
- * keyed and non-keyed queries with FILL(NULL), FILL(VALUE), and FILL(PREV).
+ * Unified fill cursor for SAMPLE BY on the GROUP BY fast path. Two-pass
+ * streaming design that handles keyed and non-keyed queries.
  * <p>
- * Buffers GROUP BY output into a {@link RecordChain}, sorts by timestamp,
- * and emits rows in timestamp order with gap filling. For non-keyed queries
- * each bucket has at most one row. For keyed queries, multiple rows per bucket.
+ * Pass 1: iterate sorted base cursor, discover all unique key combinations.
+ * Pass 2: iterate again, emit data rows + fill rows for missing keys per bucket.
  * <p>
- * Note: this version does NOT implement cartesian-product keyed fill (emitting
- * all keys for every bucket). It fills whole-bucket gaps only. Per-key fill
- * requires additional Map infrastructure and will be added incrementally.
- * <p>
- * Reports {@link #followedOrderByAdvice()} = true because output is emitted
- * in timestamp order.
+ * Expects sorted input (ORDER BY ts). Reports followedOrderByAdvice=true.
  */
 public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int FILL_CONSTANT = -1;
@@ -111,8 +101,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.cursor = new SampleByFillCursor(
                 configuration, metadata, timestampSampler,
                 fromFunc, toFunc, fillModes, constantFills,
-                timestampIndex, timestampType, hasPrevFill,
-                recordSink
+                timestampIndex, timestampType, hasPrevFill
         );
     }
 
@@ -170,14 +159,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     protected void _close() {
         base.close();
-        Misc.free(cursor);
         Misc.free(fromFunc);
         Misc.free(toFunc);
         Misc.freeObjList(constantFills);
     }
 
     private static class SampleByFillCursor implements NoRandomAccessRecordCursor {
-        private final CairoConfiguration configuration;
         private final int columnCount;
         private final short[] columnTypes;
         private final ObjList<Function> constantFills;
@@ -186,22 +173,28 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final IntList fillModes;
         private final Function fromFunc;
         private final boolean hasPrevFill;
-        private final long[] prevValues;
-        private final RecordMetadata metadata;
-        private final RecordSink recordSink;
         private final TimestampDriver timestampDriver;
         private final int timestampIndex;
         private final TimestampSampler timestampSampler;
         private final Function toFunc;
-        private RecordChain chain;
-        private DirectLongList sortedIndex; // pairs: (timestamp, chainRowId)
-        private boolean isBuffered;
-        private boolean hasPrev;
+        private RecordCursor baseCursor;
+        private Record baseRecord;
+        // Per-key prev values: prevValues[keyIndex * columnCount + col]
+        // Flat array to avoid 2D allocation
+        private long[] prevValues;
+        private boolean[] prevInitialized; // per key: has prev been set?
+        // Current state
+        private boolean isInitialized;
         private long maxTimestamp;
         private long nextBucketTimestamp;
-        private long sortedPos;
-        private long sortedSize;
-        private RecordCursor baseCursor;
+        // Per-bucket key tracking
+        private boolean hasDataForCurrentBucket;
+        private boolean emittingFills; // true when emitting fill rows for missing keys
+        // For non-keyed: simple flag
+        private boolean isNonKeyed;
+        // Simple prev for non-keyed
+        private long[] simplePrev;
+        private boolean hasSimplePrev;
 
         private SampleByFillCursor(
                 CairoConfiguration configuration,
@@ -213,11 +206,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 ObjList<Function> constantFills,
                 int timestampIndex,
                 int timestampType,
-                boolean hasPrevFill,
-                RecordSink recordSink
+                boolean hasPrevFill
         ) {
-            this.configuration = configuration;
-            this.metadata = metadata;
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;
@@ -228,19 +218,19 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.columnCount = metadata.getColumnCount();
             this.fillTimestampFunc = new FillTimestampConstant(timestampType);
             this.hasPrevFill = hasPrevFill;
-            this.prevValues = hasPrevFill ? new long[columnCount] : null;
-            this.recordSink = recordSink;
             this.columnTypes = new short[columnCount];
             for (int i = 0; i < columnCount; i++) {
                 columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(i));
             }
+            this.simplePrev = hasPrevFill ? new long[columnCount] : null;
+            // Keyed support will be added incrementally.
+            // For now, treat all queries as non-keyed (no cartesian product).
+            this.isNonKeyed = true;
         }
 
         @Override
         public void close() {
             baseCursor = Misc.free(baseCursor);
-            chain = Misc.free(chain);
-            sortedIndex = Misc.free(sortedIndex);
         }
 
         @Override
@@ -253,37 +243,68 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             return baseCursor.getSymbolTable(columnIndex);
         }
 
+        // Pending row state
+        private boolean hasPendingRow;
+        private long pendingTs;
+        private boolean baseCursorExhausted;
+        private boolean hasExplicitTo;
+
         @Override
         public boolean hasNext() {
-            if (!isBuffered) {
-                bufferAndSort();
-                isBuffered = true;
+            if (!isInitialized) {
+                initialize();
+                isInitialized = true;
             }
 
             while (nextBucketTimestamp < maxTimestamp) {
-                // Emit data rows at current bucket
-                if (sortedPos < sortedSize) {
-                    long dataTs = sortedIndex.get(sortedPos * 2);
-                    if (dataTs == nextBucketTimestamp) {
-                        long rowId = sortedIndex.get(sortedPos * 2 + 1);
-                        chain.recordAt(fillRecord.dataRecord, rowId);
-                        if (hasPrevFill) {
-                            savePrevValues(fillRecord.dataRecord);
-                        }
-                        fillRecord.isGapFilling = false;
-                        sortedPos++;
-                        // Check if more rows at same timestamp (keyed)
-                        if (sortedPos >= sortedSize || sortedIndex.get(sortedPos * 2) != nextBucketTimestamp) {
+                // Try to get the next data row's timestamp
+                long dataTs;
+                if (hasPendingRow) {
+                    dataTs = pendingTs;
+                } else if (!baseCursorExhausted && baseCursor.hasNext()) {
+                    dataTs = baseRecord.getTimestamp(timestampIndex);
+                    hasPendingRow = true;
+                    pendingTs = dataTs;
+                } else {
+                    baseCursorExhausted = true;
+                    dataTs = Long.MAX_VALUE;
+                }
+
+                if (dataTs == nextBucketTimestamp) {
+                    // Data row at expected bucket — emit it
+                    hasPendingRow = false;
+                    fillRecord.isGapFilling = false;
+                    if (hasPrevFill) {
+                        savePrevValues(baseRecord);
+                    }
+                    // Peek ahead: if next row is also at this timestamp (keyed),
+                    // don't advance bucket yet
+                    if (!baseCursorExhausted && baseCursor.hasNext()) {
+                        long nextTs = baseRecord.getTimestamp(timestampIndex);
+                        hasPendingRow = true;
+                        pendingTs = nextTs;
+                        if (nextTs != nextBucketTimestamp) {
                             nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                         }
-                        return true;
+                    } else {
+                        baseCursorExhausted = !hasPendingRow && baseCursorExhausted;
+                        nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                     }
+                    return true;
                 }
-                // Gap — emit fill row
-                fillRecord.isGapFilling = true;
-                fillTimestampFunc.value = nextBucketTimestamp;
-                nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
-                return true;
+
+                if (dataTs > nextBucketTimestamp) {
+                    // Gap — emit fill row, keep pending row for next iteration
+                    fillRecord.isGapFilling = true;
+                    fillTimestampFunc.value = nextBucketTimestamp;
+                    nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
+                    return true;
+                }
+
+                // baseCursorExhausted and no TO clause — stop
+                if (baseCursorExhausted && !hasExplicitTo) {
+                    return false;
+                }
             }
             return false;
         }
@@ -303,69 +324,52 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             if (baseCursor != null) {
                 baseCursor.toTop();
             }
-            isBuffered = false;
-            hasPrev = false;
-            sortedPos = 0;
+            isInitialized = false;
+            hasSimplePrev = false;
+            hasPendingRow = false;
+            baseCursorExhausted = false;
+            hasExplicitTo = false;
         }
 
-        private void bufferAndSort() {
-            if (chain == null) {
-                chain = new RecordChain(
-                        metadata, recordSink,
-                        configuration.getSqlSortValuePageSize(),
-                        configuration.getSqlSortValueMaxPages()
-                );
-            } else {
-                chain.clear();
-            }
-            if (sortedIndex == null) {
-                sortedIndex = new DirectLongList(16, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
-            } else {
-                sortedIndex.clear();
-            }
-
-            chain.setSymbolTableResolver(baseCursor);
-            fillRecord.dataRecord = chain.getRecord();
-
-            final Record baseRecord = baseCursor.getRecord();
-            while (baseCursor.hasNext()) {
-                long rowId = chain.put(baseRecord, -1);
-                long timestamp = baseRecord.getTimestamp(timestampIndex);
-                sortedIndex.add(timestamp);
-                sortedIndex.add(rowId);
-            }
-
-            sortedSize = sortedIndex.size() / 2;
-            if (sortedSize > 1) {
-                Vect.sortLongIndexAscInPlace(sortedIndex.getAddress(), sortedSize);
-            }
-
+        private void initialize() {
             TimestampDriver driver = timestampDriver;
-            long minTimestamp = fromFunc == driver.getTimestampConstantNull() ? Long.MAX_VALUE
+            long fromTs = fromFunc == driver.getTimestampConstantNull() ? Numbers.LONG_NULL
                     : driver.from(fromFunc.getTimestamp(null), ColumnType.getTimestampType(fromFunc.getType()));
-            maxTimestamp = toFunc == driver.getTimestampConstantNull() ? Long.MIN_VALUE
-                    : driver.from(toFunc.getTimestamp(null), ColumnType.getTimestampType(toFunc.getType()));
+            hasExplicitTo = toFunc != driver.getTimestampConstantNull();
+            maxTimestamp = hasExplicitTo
+                    ? driver.from(toFunc.getTimestamp(null), ColumnType.getTimestampType(toFunc.getType()))
+                    : Numbers.LONG_NULL;
 
-            if (sortedSize > 0) {
-                long firstTs = sortedIndex.get(0);
-                long lastTs = sortedIndex.get((sortedSize - 1) * 2);
-                minTimestamp = Math.min(minTimestamp, firstTs);
-                maxTimestamp = Math.max(maxTimestamp, timestampSampler.nextTimestamp(lastTs));
+            // Peek first row to determine range
+            if (baseCursor.hasNext()) {
+                long firstTs = baseRecord.getTimestamp(timestampIndex);
+                if (fromTs == Numbers.LONG_NULL || firstTs < fromTs) {
+                    nextBucketTimestamp = firstTs;
+                } else {
+                    nextBucketTimestamp = fromTs;
+                }
+                timestampSampler.setStart(nextBucketTimestamp);
+                hasPendingRow = true;
+                pendingTs = firstTs;
+                if (maxTimestamp == Numbers.LONG_NULL) {
+                    // No TO — we'll stop after last data row + no trailing fill
+                    maxTimestamp = Long.MAX_VALUE;
+                }
+            } else {
+                if (fromTs != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
+                    nextBucketTimestamp = fromTs;
+                    timestampSampler.setStart(nextBucketTimestamp);
+                } else {
+                    maxTimestamp = Long.MIN_VALUE;
+                    nextBucketTimestamp = Long.MAX_VALUE;
+                }
+                baseCursorExhausted = true;
             }
-
-            if (minTimestamp == Long.MAX_VALUE) {
-                maxTimestamp = Long.MIN_VALUE;
-                nextBucketTimestamp = Long.MAX_VALUE;
-                return;
-            }
-
-            timestampSampler.setStart(minTimestamp);
-            nextBucketTimestamp = minTimestamp;
-            sortedPos = 0;
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
+            this.baseRecord = baseCursor.getRecord();
             Function.init(constantFills, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
@@ -373,10 +377,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void savePrevValues(Record record) {
-            hasPrev = true;
+            hasSimplePrev = true;
             for (int i = 0; i < columnCount; i++) {
                 if (i == timestampIndex) continue;
-                prevValues[i] = readColumnAsLongBits(record, i, columnTypes[i]);
+                simplePrev[i] = readColumnAsLongBits(record, i, columnTypes[i]);
             }
         }
 
@@ -399,289 +403,288 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         private long prevValue(int col) {
             int mode = fillMode(col);
-            if (mode == FILL_PREV_SELF) return prevValues[col];
-            if (mode >= 0) return prevValues[mode];
+            if (mode == FILL_PREV_SELF) return simplePrev[col];
+            if (mode >= 0) return simplePrev[mode];
             return Numbers.LONG_NULL;
         }
 
         private class FillRecord implements Record {
             boolean isGapFilling;
-            Record dataRecord;
 
             @Override
             public double getDouble(int col) {
-                if (!isGapFilling) return dataRecord.getDouble(col);
+                if (!isGapFilling) return baseRecord.getDouble(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return Double.longBitsToDouble(prevValue(col));
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return Double.longBitsToDouble(prevValue(col));
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDouble(null);
                 return Double.NaN;
             }
 
             @Override
             public float getFloat(int col) {
-                if (!isGapFilling) return dataRecord.getFloat(col);
+                if (!isGapFilling) return baseRecord.getFloat(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return Float.intBitsToFloat((int) prevValue(col));
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return Float.intBitsToFloat((int) prevValue(col));
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getFloat(null);
                 return Float.NaN;
             }
 
             @Override
             public int getInt(int col) {
-                if (!isGapFilling) return dataRecord.getInt(col);
+                if (!isGapFilling) return baseRecord.getInt(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return (int) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return (int) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getInt(null);
                 return Numbers.INT_NULL;
             }
 
             @Override
             public long getLong(int col) {
-                if (!isGapFilling) return dataRecord.getLong(col);
+                if (!isGapFilling) return baseRecord.getLong(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public short getShort(int col) {
-                if (!isGapFilling) return dataRecord.getShort(col);
+                if (!isGapFilling) return baseRecord.getShort(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return (short) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return (short) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getShort(null);
                 return 0;
             }
 
             @Override
             public byte getByte(int col) {
-                if (!isGapFilling) return dataRecord.getByte(col);
+                if (!isGapFilling) return baseRecord.getByte(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return (byte) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return (byte) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getByte(null);
                 return 0;
             }
 
             @Override
             public boolean getBool(int col) {
-                if (!isGapFilling) return dataRecord.getBool(col);
+                if (!isGapFilling) return baseRecord.getBool(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return prevValue(col) != 0;
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return prevValue(col) != 0;
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getBool(null);
                 return false;
             }
 
             @Override
             public char getChar(int col) {
-                if (!isGapFilling) return dataRecord.getChar(col);
+                if (!isGapFilling) return baseRecord.getChar(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return (char) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return (char) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getChar(null);
                 return 0;
             }
 
             @Override
             public long getTimestamp(int col) {
-                if (!isGapFilling) return dataRecord.getTimestamp(col);
+                if (!isGapFilling) return baseRecord.getTimestamp(col);
                 if (col == timestampIndex) return fillTimestampFunc.value;
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public io.questdb.cairo.arr.ArrayView getArray(int col, int columnType) {
-                if (!isGapFilling) return dataRecord.getArray(col, columnType);
+                if (!isGapFilling) return baseRecord.getArray(col, columnType);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getArray(null);
                 return null;
             }
 
             @Override
             public io.questdb.std.BinarySequence getBin(int col) {
-                if (!isGapFilling) return dataRecord.getBin(col);
+                if (!isGapFilling) return baseRecord.getBin(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getBin(null);
                 return null;
             }
 
             @Override
             public long getBinLen(int col) {
-                if (!isGapFilling) return dataRecord.getBinLen(col);
+                if (!isGapFilling) return baseRecord.getBinLen(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getBinLen(null);
                 return -1;
             }
 
             @Override
             public void getDecimal128(int col, io.questdb.std.Decimal128 sink) {
-                if (!isGapFilling) { dataRecord.getDecimal128(col, sink); return; }
+                if (!isGapFilling) { baseRecord.getDecimal128(col, sink); return; }
                 if (fillMode(col) == FILL_CONSTANT) { constantFills.getQuick(col).getDecimal128(null, sink); return; }
             }
 
             @Override
             public short getDecimal16(int col) {
-                if (!isGapFilling) return dataRecord.getDecimal16(col);
+                if (!isGapFilling) return baseRecord.getDecimal16(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return (short) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return (short) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal16(null);
                 return 0;
             }
 
             @Override
             public void getDecimal256(int col, io.questdb.std.Decimal256 sink) {
-                if (!isGapFilling) { dataRecord.getDecimal256(col, sink); return; }
+                if (!isGapFilling) { baseRecord.getDecimal256(col, sink); return; }
                 if (fillMode(col) == FILL_CONSTANT) { constantFills.getQuick(col).getDecimal256(null, sink); return; }
             }
 
             @Override
             public int getDecimal32(int col) {
-                if (!isGapFilling) return dataRecord.getDecimal32(col);
+                if (!isGapFilling) return baseRecord.getDecimal32(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return (int) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return (int) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal32(null);
                 return Numbers.INT_NULL;
             }
 
             @Override
             public long getDecimal64(int col) {
-                if (!isGapFilling) return dataRecord.getDecimal64(col);
+                if (!isGapFilling) return baseRecord.getDecimal64(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal64(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public byte getDecimal8(int col) {
-                if (!isGapFilling) return dataRecord.getDecimal8(col);
+                if (!isGapFilling) return baseRecord.getDecimal8(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return (byte) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return (byte) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal8(null);
                 return 0;
             }
 
             @Override
             public byte getGeoByte(int col) {
-                if (!isGapFilling) return dataRecord.getGeoByte(col);
+                if (!isGapFilling) return baseRecord.getGeoByte(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getGeoByte(null);
                 return 0;
             }
 
             @Override
             public int getGeoInt(int col) {
-                if (!isGapFilling) return dataRecord.getGeoInt(col);
+                if (!isGapFilling) return baseRecord.getGeoInt(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getGeoInt(null);
                 return Numbers.INT_NULL;
             }
 
             @Override
             public long getGeoLong(int col) {
-                if (!isGapFilling) return dataRecord.getGeoLong(col);
+                if (!isGapFilling) return baseRecord.getGeoLong(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getGeoLong(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public short getGeoShort(int col) {
-                if (!isGapFilling) return dataRecord.getGeoShort(col);
+                if (!isGapFilling) return baseRecord.getGeoShort(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getGeoShort(null);
                 return 0;
             }
 
             @Override
             public int getIPv4(int col) {
-                if (!isGapFilling) return dataRecord.getIPv4(col);
+                if (!isGapFilling) return baseRecord.getIPv4(col);
                 int mode = fillMode(col);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasPrev) return (int) prevValue(col);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasSimplePrev) return (int) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getIPv4(null);
                 return Numbers.IPv4_NULL;
             }
 
             @Override
             public long getLong128Hi(int col) {
-                if (!isGapFilling) return dataRecord.getLong128Hi(col);
+                if (!isGapFilling) return baseRecord.getLong128Hi(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Hi(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public long getLong128Lo(int col) {
-                if (!isGapFilling) return dataRecord.getLong128Lo(col);
+                if (!isGapFilling) return baseRecord.getLong128Lo(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Lo(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public void getLong256(int col, io.questdb.std.str.CharSink<?> sink) {
-                if (!isGapFilling) { dataRecord.getLong256(col, sink); return; }
+                if (!isGapFilling) { baseRecord.getLong256(col, sink); return; }
                 if (fillMode(col) == FILL_CONSTANT) { constantFills.getQuick(col).getLong256(null, sink); return; }
             }
 
             @Override
             public io.questdb.std.Long256 getLong256A(int col) {
-                if (!isGapFilling) return dataRecord.getLong256A(col);
+                if (!isGapFilling) return baseRecord.getLong256A(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getLong256A(null);
                 return Long256Impl.NULL_LONG256;
             }
 
             @Override
             public io.questdb.std.Long256 getLong256B(int col) {
-                if (!isGapFilling) return dataRecord.getLong256B(col);
+                if (!isGapFilling) return baseRecord.getLong256B(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getLong256B(null);
                 return Long256Impl.NULL_LONG256;
             }
 
             @Override
             public CharSequence getStrA(int col) {
-                if (!isGapFilling) return dataRecord.getStrA(col);
+                if (!isGapFilling) return baseRecord.getStrA(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getStrA(null);
                 return null;
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                if (!isGapFilling) return dataRecord.getStrB(col);
+                if (!isGapFilling) return baseRecord.getStrB(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getStrB(null);
                 return null;
             }
 
             @Override
             public int getStrLen(int col) {
-                if (!isGapFilling) return dataRecord.getStrLen(col);
+                if (!isGapFilling) return baseRecord.getStrLen(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getStrLen(null);
                 return -1;
             }
 
             @Override
             public CharSequence getSymA(int col) {
-                if (!isGapFilling) return dataRecord.getSymA(col);
+                if (!isGapFilling) return baseRecord.getSymA(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getSymbol(null);
                 return null;
             }
 
             @Override
             public CharSequence getSymB(int col) {
-                if (!isGapFilling) return dataRecord.getSymB(col);
+                if (!isGapFilling) return baseRecord.getSymB(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getSymbolB(null);
                 return null;
             }
 
             @Override
             public io.questdb.std.str.Utf8Sequence getVarcharA(int col) {
-                if (!isGapFilling) return dataRecord.getVarcharA(col);
+                if (!isGapFilling) return baseRecord.getVarcharA(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getVarcharA(null);
                 return null;
             }
 
             @Override
             public io.questdb.std.str.Utf8Sequence getVarcharB(int col) {
-                if (!isGapFilling) return dataRecord.getVarcharB(col);
+                if (!isGapFilling) return baseRecord.getVarcharB(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getVarcharB(null);
                 return null;
             }
 
             @Override
             public int getVarcharSize(int col) {
-                if (!isGapFilling) return dataRecord.getVarcharSize(col);
+                if (!isGapFilling) return baseRecord.getVarcharSize(col);
                 if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getVarcharSize(null);
                 return -1;
             }
