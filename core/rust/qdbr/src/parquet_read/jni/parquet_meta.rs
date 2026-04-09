@@ -203,7 +203,11 @@ fn pm_decode_row_group_filtered_impl<const FILL_NULLS: bool>(
     let file_data = unsafe { slice::from_raw_parts(parquet_file_ptr, parquet_file_size as usize) };
     let ctx = unsafe { &mut *ctx };
     let row_group_bufs = unsafe { &mut *row_group_bufs };
-    let col_pairs = unsafe { slice::from_raw_parts(columns, column_count as usize) };
+    let col_pairs = if columns.is_null() {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(columns, column_count as usize) }
+    };
     let filtered_rows = if filtered_rows_ptr.is_null() {
         &[]
     } else {
@@ -269,7 +273,11 @@ fn pm_decode_row_group_impl(
     let file_data = unsafe { slice::from_raw_parts(parquet_file_ptr, parquet_file_size as usize) };
     let ctx = unsafe { &mut *ctx };
     let row_group_bufs = unsafe { &mut *row_group_bufs };
-    let col_pairs = unsafe { slice::from_raw_parts(columns, column_count as usize) };
+    let col_pairs = if columns.is_null() {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(columns, column_count as usize) }
+    };
 
     crate::parquet_read::parquet_meta_decode::decode_row_group(
         ctx,
