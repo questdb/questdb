@@ -122,6 +122,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             Async Group By workers: 1
                               keys: [concat,x1]
+                              keyFunctions: [concat([lpad(x1::string,5)])]
                               values: [sum(x1)]
                               filter: null
                                 SelectedRecord
@@ -2428,6 +2429,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                     SelectedRecord
                                         Hash Join Light
                                           condition: t2.s=t1.s
+                                          symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
                                                 Interval forward scan on: t1
@@ -3840,6 +3842,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   functions: [id0,id1,2-id0+1,2/id1*2,c]
                                     Async Group By workers: 1
                                       keys: [id0,id1,column,column1]
+                                      keyFunctions: [id0/42,1/id1*42]
                                       values: [count(*)]
                                       filter: null
                                         PageFrame
@@ -4100,7 +4103,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
-            final String model = "select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
             assertModel(model, query, ExecutionModel.QUERY);
 
             final String target = """
@@ -4108,7 +4111,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     where ts >= '2017-12-20' and ts < '2018-01-31'
                     sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'""";
 
-            final String tmodel = "select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
+            final String tmodel = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
             assertModel(tmodel, target, ExecutionModel.QUERY);
         });
     }
@@ -4120,14 +4123,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
 
-            assertModel("select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
 
             final String target = """
                     select ts, avg(x) from fromto
                     where ts >= '2017-12-20'
                     sample by 5d from '2017-12-20' align to calendar with offset '10:00'""";
 
-            assertModel("select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", target, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", target, ExecutionModel.QUERY);
         });
     }
 
@@ -4138,7 +4141,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
 
-            final String model = "select-group-by timestamp_floor('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
             assertModel(model, query, ExecutionModel.QUERY);
 
             final String target = """
@@ -4146,7 +4149,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     where ts < '2018-01-31'
                     sample by 5d to '2018-01-31' align to calendar with offset '10:00'""";
 
-            final String targetModel = "select-group-by timestamp_floor('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' and ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
+            final String targetModel = "select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' and ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
             assertModel(targetModel, target, ExecutionModel.QUERY);
         });
     }
@@ -4160,14 +4163,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     where ts >= '2017-12-20'
                     sample by 5d from '2017-12-22' align to calendar with offset '10:00'""";
 
-            assertModel("select-group-by timestamp_floor('5d', ts, '2017-12-22', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-22' and ts >= '2017-12-20' from '2017-12-22' stride 5d) order by ts", fromNarrow, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-22', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-22' and ts >= '2017-12-20' from '2017-12-22' stride 5d) order by ts", fromNarrow, ExecutionModel.QUERY);
 
             final String toNarrow = """
                     select ts, avg(x) from fromto
                     where ts >= '2017-12-20'
                     sample by 5d TO '2017-12-22' align to calendar with offset '10:00'""";
 
-            assertModel("select-group-by timestamp_floor('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2017-12-22' and ts >= '2017-12-20' to '2017-12-22' stride 5d) order by ts", toNarrow, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2017-12-22' and ts >= '2017-12-20' to '2017-12-22' stride 5d) order by ts", toNarrow, ExecutionModel.QUERY);
         });
     }
 
@@ -4181,7 +4184,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'
                     """;
 
-            final String model = "select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and s != '5' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and s != '5' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
 
             assertModel(model, query, ExecutionModel.QUERY);
         });
@@ -4197,7 +4200,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d from '2017-12-20' align to calendar with offset '10:00'
                     """;
 
-            final String model = "select-group-by timestamp_floor('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and s != '5' from '2017-12-20' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and s != '5' from '2017-12-20' stride 5d) order by ts";
 
             assertModel(model, query, ExecutionModel.QUERY);
         });
@@ -4213,7 +4216,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d to '2018-01-31' align to calendar with offset '10:00'
                     """;
 
-            final String model = "select-group-by timestamp_floor('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts < '2018-01-31' and s != '5' to '2018-01-31' stride 5d) order by ts";
+            final String model = "select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts < '2018-01-31' and s != '5' to '2018-01-31' stride 5d) order by ts";
 
             assertModel(model, query, ExecutionModel.QUERY);
         });
@@ -4279,6 +4282,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null,null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                               values: [avg(x),sum(x)]
                               filter: null
                                 PageFrame
@@ -4418,6 +4422,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                               values: [avg(x)]
                               filter: null
                                 PageFrame
@@ -4488,6 +4493,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts)]
                               values: [avg(x)]
                               filter: null
                                 PageFrame
@@ -4524,6 +4530,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                               values: [avg(x)]
                               filter: null
                                 PageFrame
@@ -4566,6 +4573,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4579,6 +4587,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4599,6 +4608,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4612,6 +4622,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4648,6 +4659,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4661,6 +4673,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4692,6 +4705,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4705,6 +4719,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               values: [null,null]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                   values: [avg(x),sum(x)]
                                   filter: null
                                     PageFrame
@@ -4802,6 +4817,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                           values: [null]
                                             Async Group By workers: 1
                                               keys: [five_days]
+                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                               values: [avg(x)]
                                               filter: null
                                                 PageFrame
@@ -4816,6 +4832,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                           values: [null]
                                             Async Group By workers: 1
                                               keys: [ten_days]
+                                              keyFunctions: [timestamp_floor_utc('10d',ts,'2017-12-20T00:00:00.000Z')]
                                               values: [avg(x)]
                                               filter: null
                                                 PageFrame
@@ -4868,7 +4885,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String shouldSucceedParallel = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
 
-            final String shouldSucceedSequential = "select ts, avg(x), sum(x) from fromto\n" +
+            final String shouldSucceedWithOffset = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
 
             final String shouldSucceedResult = """
@@ -4889,6 +4906,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                           values: [null,null]
                             Async Group By workers: 1
                               keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                               values: [avg(x),sum(x)]
                               filter: null
                                 PageFrame
@@ -4898,17 +4916,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """);
             assertSql(shouldSucceedResult, shouldSucceedParallel);
 
-            assertPlanNoLeakCheck(shouldSucceedSequential, """
-                    Sample By
-                      fill: null
-                      range: ('2017-12-20',)
-                      values: [avg(x),sum(x)]
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: fromto
-                              intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
+            assertPlanNoLeakCheck(shouldSucceedWithOffset, """
+                    Encode sort
+                      keys: [ts]
+                        Fill Range
+                          range: ('2017-12-20',)
+                          stride: '5d'
+                          values: [null,null]
+                            Async Group By workers: 1
+                              keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T10:00:00.000Z')]
+                              values: [avg(x),sum(x)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: fromto
+                                      intervals: [("2017-12-20T00:00:00.000000Z","MAX")]
                     """);
-            assertSql(shouldSucceedResult, shouldSucceedSequential);
         });
     }
 
@@ -4940,6 +4964,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       values: [null,null]
                                         Async Group By workers: 1
                                           keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                           values: [avg(x),sum(x)]
                                           filter: null
                                             PageFrame
@@ -4952,6 +4977,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       values: [null,null]
                                         Async Group By workers: 1
                                           keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                           values: [avg(x),sum(x)]
                                           filter: null
                                             PageFrame
@@ -5001,6 +5027,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       values: [null,null]
                                         Async Group By workers: 1
                                           keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                           values: [avg(x),sum(x)]
                                           filter: null
                                             PageFrame
@@ -5013,6 +5040,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                       values: [null,null]
                                         Async Group By workers: 1
                                           keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                           values: [avg(x),sum(x)]
                                           filter: null
                                             PageFrame
@@ -5044,32 +5072,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromToParallelSequentialEquivalence() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(SampleByTest.FROM_TO_DDL);
-
-            final String parallel = "select ts, avg(x) from fromto\n" +
-                    "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
-
-            // offset is ignored
-            final String sequential = parallel + " align to calendar with offset '10:00'";
-
-            final String result = """
-                    ts\tavg
-                    2017-12-20T00:00:00.000000Z\tnull
-                    2017-12-27T00:00:00.000000Z\t48.5
-                    2018-01-03T00:00:00.000000Z\t264.5
-                    2018-01-10T00:00:00.000000Z\t456.5
-                    2018-01-17T00:00:00.000000Z\tnull
-                    2018-01-24T00:00:00.000000Z\tnull
-                    """;
-
-            assertSql(result, parallel);
-            assertSql(result, sequential);
-        });
-    }
-
-    @Test
     public void testSampleByFromToPlansWithRewrite() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -5085,6 +5087,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -5100,6 +5103,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts,'2018-01-01T00:00:00.000Z')]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -5115,6 +5119,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -5130,6 +5135,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('5m',ts)]
                                   values: [avg(price)]
                                   filter: null
                                     PageFrame
@@ -5159,6 +5165,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   values: [null]
                                     Async Group By workers: 1
                                       keys: [five_days]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                       values: [avg(x)]
                                       filter: null
                                         PageFrame
@@ -5181,6 +5188,46 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             2018-01-29T00:00:00.000000Z\tnull
                             """,
                     query
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToWithAndWithoutOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SampleByTest.FROM_TO_DDL);
+
+            final String parallel = "select ts, avg(x) from fromto\n" +
+                    "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
+
+            final String withOffset = parallel + " align to calendar with offset '10:00'";
+
+            assertSql(
+                    """
+                            ts\tavg
+                            2017-12-20T00:00:00.000000Z\tnull
+                            2017-12-27T00:00:00.000000Z\t48.5
+                            2018-01-03T00:00:00.000000Z\t264.5
+                            2018-01-10T00:00:00.000000Z\t456.5
+                            2018-01-17T00:00:00.000000Z\tnull
+                            2018-01-24T00:00:00.000000Z\tnull
+                            """,
+                    parallel
+            );
+            assertSql(
+                    """
+                            ts\tavg
+                            2017-12-20T00:00:00.000000Z\tnull
+                            2017-12-27T00:00:00.000000Z\tnull
+                            2017-12-27T10:00:00.000000Z\t58.5
+                            2018-01-03T00:00:00.000000Z\tnull
+                            2018-01-03T10:00:00.000000Z\t284.5
+                            2018-01-10T00:00:00.000000Z\tnull
+                            2018-01-10T10:00:00.000000Z\t466.5
+                            2018-01-17T00:00:00.000000Z\tnull
+                            2018-01-24T00:00:00.000000Z\tnull
+                            """,
+                    withOffset
             );
         });
     }
@@ -5209,6 +5256,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               keys: [timestamp]
                                 Async Group By workers: 1
                                   keys: [symbol,timestamp]
+                                  keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                   values: [last(price)]
                                   filter: symbol ~ BTC-USD [state-shared]
                                     PageFrame
@@ -5226,7 +5274,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from y\n" +
                     "sample by 5d from '2017-12-20' align to calendar time zone 'Europe/London' with offset '10:00'";
 
-            assertModel("select-virtual to_utc(ts, 'Europe/London') ts, avg from (select-group-by [timestamp_floor('5d', ts, '2017-12-20', '10:00', 'Europe/London') ts, avg(x) avg] timestamp_floor('5d', ts, '2017-12-20', '10:00', 'Europe/London') ts, avg(x) avg from (select [ts, x] from y timestamp (ts) where ts >= '2017-12-20' from '2017-12-20' stride 5d)) timestamp (ts) order by ts", query, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', 'Europe/London') ts, avg(x) avg from (select [ts, x] from y timestamp (ts) where ts >= to_utc('2017-12-20', 'Europe/London') from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
         });
     }
 

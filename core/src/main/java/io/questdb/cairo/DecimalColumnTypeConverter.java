@@ -76,7 +76,7 @@ public class DecimalColumnTypeConverter {
         return true;
     }
 
-    private static Loader getLoader(int type) {
+    static Loader getLoader(int type) {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.BYTE -> loaderFromByte;
             case ColumnType.SHORT -> loaderFromShort;
