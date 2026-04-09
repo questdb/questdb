@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 
@@ -68,12 +69,11 @@ public interface ParquetDecoder {
      * returned as zero data/aux pointers and zero sizes instead of materialized
      * null buffers.
      *
-     * @param buffers   target buffers that receive decoded column data
-     * @param columns   {@code [parquet_column_index, column_type]} pairs
-     * @param rowGroup  zero-based row group index
-     * @param rowLo     first row within the row group (inclusive)
-     * @param rowHi     last row within the row group (exclusive)
-     *
+     * @param buffers  target buffers that receive decoded column data
+     * @param columns  {@code [parquet_column_index, column_type]} pairs
+     * @param rowGroup zero-based row group index
+     * @param rowLo    first row within the row group (inclusive)
+     * @param rowHi    last row within the row group (exclusive)
      * @return number of rows decoded
      */
     int decodeRowGroup(
@@ -128,19 +128,6 @@ public interface ParquetDecoder {
     );
 
     /**
-     * Returns the base address of the parquet data file backing this decoder.
-     * Used by the memory pool to detect when the underlying file changes and
-     * the decoder needs to be re-initialized.
-     */
-    long getFileAddr();
-
-    /**
-     * Returns the size in bytes of the parquet data file backing this decoder.
-     * Used together with {@link #getFileAddr()} for file identity checks.
-     */
-    long getFileSize();
-
-    /**
      * Returns the number of columns described in the parquet metadata.
      * Used to build the column-ID-to-index map during {@code openParquet()}.
      */
@@ -154,4 +141,17 @@ public interface ParquetDecoder {
      * @param columnIndex zero-based column index within the parquet file
      */
     int getColumnId(int columnIndex);
+
+    /**
+     * Returns the base address of the parquet data file backing this decoder.
+     * Used by the memory pool to detect when the underlying file changes and
+     * the decoder needs to be re-initialized.
+     */
+    long getFileAddr();
+
+    /**
+     * Returns the size in bytes of the parquet data file backing this decoder.
+     * Used together with {@link #getFileAddr()} for file identity checks.
+     */
+    long getFileSize();
 }

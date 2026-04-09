@@ -206,11 +206,7 @@ impl<'a> FileHeader<'a> {
             None
         };
 
-        Ok(Self {
-            raw,
-            data,
-            bloom_filter_columns,
-        })
+        Ok(Self { raw, data, bloom_filter_columns })
     }
 
     /// Minimum byte size required for the header with the given column counts

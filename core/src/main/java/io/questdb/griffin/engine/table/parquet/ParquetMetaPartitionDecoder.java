@@ -60,94 +60,9 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         return (int) ((encodedIndex >> 1) - 1);
     }
 
-    /**
-     * Initializes the decoder with mmapped _pm and parquet file regions.
-     *
-     * @param parquetMetaAddr      base address of the mmapped _pm file
-     * @param parquetMetaSize      size of the mmapped _pm file
-     * @param parquetAddr base address of the mmapped parquet file
-     * @param parquetSize size of the mmapped parquet file
-     * @param memoryTag   memory tag for native allocations
-     */
-    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, int memoryTag) {
-        destroy();
-        this.parquetMetaAddr = parquetMetaAddr;
-        this.parquetMetaSize = parquetMetaSize;
-        this.parquetAddr = parquetAddr;
-        this.parquetSize = parquetSize;
-        this.allocator = Unsafe.getNativeAllocator(memoryTag);
-        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
-    }
-
-    /**
-     * Creates a shallow copy that shares mmapped regions with the source.
-     * Each copy gets its own DecodeContext for thread-safe decoding and its
-     * own {@link ParquetMetaFileReader} (with its own lazy native handle).
-     * The source must remain valid for the lifetime of this instance — the
-     * underlying mmap must outlive both the source and the copy.
-     */
-    public void of(ParquetMetaPartitionDecoder other) {
-        destroy();
-        this.parquetMetaAddr = other.parquetMetaAddr;
-        this.parquetMetaSize = other.parquetMetaSize;
-        this.parquetAddr = other.parquetAddr;
-        this.parquetSize = other.parquetSize;
-        this.allocator = other.allocator;
-        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
-    }
-
-    public ParquetMetaFileReader metadata() {
-        return parquetMetaReader;
-    }
-
-    public long getParquetAddr() {
-        return parquetAddr;
-    }
-
-    public long getParquetSize() {
-        return parquetSize;
-    }
-
-    public long getParquetMetaAddr() {
-        return parquetMetaAddr;
-    }
-
-    public long getParquetMetaSize() {
-        return parquetMetaSize;
-    }
-
-    /**
-     * Returns the parquet file address (for cache invalidation and export).
-     * Equivalent to {@link PartitionDecoder#getFileAddr()}.
-     */
-    public long getFileAddr() {
-        return parquetAddr;
-    }
-
-    /**
-     * Returns the parquet file size.
-     * Equivalent to {@link PartitionDecoder#getFileSize()}.
-     */
-    public long getFileSize() {
-        return parquetSize;
-    }
-
     @Override
-    public int getColumnCount() {
-        return parquetMetaReader.getColumnCount();
-    }
-
-    @Override
-    public int getColumnId(int columnIndex) {
-        return parquetMetaReader.getColumnId(columnIndex);
-    }
-
-    public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
-        return parquetMetaReader.getRowGroupMinTimestamp(rowGroupIndex, timestampColumnIndex);
-    }
-
-    public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
-        return parquetMetaReader.getRowGroupMaxTimestamp(rowGroupIndex, timestampColumnIndex);
+    public void close() {
+        destroy();
     }
 
     /**
@@ -253,20 +168,93 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
     }
 
     @Override
-    public void close() {
-        destroy();
+    public int getColumnCount() {
+        return parquetMetaReader.getColumnCount();
     }
 
-    private void destroy() {
-        if (decodeContextPtr != 0) {
-            PartitionDecoder.destroyDecodeContext(decodeContextPtr);
-            decodeContextPtr = 0;
-        }
-        parquetMetaReader.clear();
-        parquetMetaAddr = 0;
-        parquetMetaSize = 0;
-        parquetAddr = 0;
-        parquetSize = 0;
+    @Override
+    public int getColumnId(int columnIndex) {
+        return parquetMetaReader.getColumnId(columnIndex);
+    }
+
+    /**
+     * Returns the parquet file address (for cache invalidation and export).
+     * Equivalent to {@link PartitionDecoder#getFileAddr()}.
+     */
+    public long getFileAddr() {
+        return parquetAddr;
+    }
+
+    /**
+     * Returns the parquet file size.
+     * Equivalent to {@link PartitionDecoder#getFileSize()}.
+     */
+    public long getFileSize() {
+        return parquetSize;
+    }
+
+    public long getParquetAddr() {
+        return parquetAddr;
+    }
+
+    public long getParquetMetaAddr() {
+        return parquetMetaAddr;
+    }
+
+    public long getParquetMetaSize() {
+        return parquetMetaSize;
+    }
+
+    public long getParquetSize() {
+        return parquetSize;
+    }
+
+    public ParquetMetaFileReader metadata() {
+        return parquetMetaReader;
+    }
+
+    /**
+     * Initializes the decoder with mmapped _pm and parquet file regions.
+     *
+     * @param parquetMetaAddr base address of the mmapped _pm file
+     * @param parquetMetaSize size of the mmapped _pm file
+     * @param parquetAddr     base address of the mmapped parquet file
+     * @param parquetSize     size of the mmapped parquet file
+     * @param memoryTag       memory tag for native allocations
+     */
+    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, int memoryTag) {
+        destroy();
+        this.parquetMetaAddr = parquetMetaAddr;
+        this.parquetMetaSize = parquetMetaSize;
+        this.parquetAddr = parquetAddr;
+        this.parquetSize = parquetSize;
+        this.allocator = Unsafe.getNativeAllocator(memoryTag);
+        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+    }
+
+    /**
+     * Creates a shallow copy that shares mmapped regions with the source.
+     * Each copy gets its own DecodeContext for thread-safe decoding and its
+     * own {@link ParquetMetaFileReader} (with its own lazy native handle).
+     * The source must remain valid for the lifetime of this instance — the
+     * underlying mmap must outlive both the source and the copy.
+     */
+    public void of(ParquetMetaPartitionDecoder other) {
+        destroy();
+        this.parquetMetaAddr = other.parquetMetaAddr;
+        this.parquetMetaSize = other.parquetMetaSize;
+        this.parquetAddr = other.parquetAddr;
+        this.parquetSize = other.parquetSize;
+        this.allocator = other.allocator;
+        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+    }
+
+    public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
+        return parquetMetaReader.getRowGroupMaxTimestamp(rowGroupIndex, timestampColumnIndex);
+    }
+
+    public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
+        return parquetMetaReader.getRowGroupMinTimestamp(rowGroupIndex, timestampColumnIndex);
     }
 
     private static native int decodeRowGroup(
@@ -331,6 +319,18 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             long rowHi,
             int timestampColumnIndex
     ) throws CairoException;
+
+    private void destroy() {
+        if (decodeContextPtr != 0) {
+            PartitionDecoder.destroyDecodeContext(decodeContextPtr);
+            decodeContextPtr = 0;
+        }
+        parquetMetaReader.clear();
+        parquetMetaAddr = 0;
+        parquetMetaSize = 0;
+        parquetAddr = 0;
+        parquetSize = 0;
+    }
 
     static {
         Os.init();
