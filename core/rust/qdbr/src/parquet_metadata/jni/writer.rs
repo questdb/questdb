@@ -194,7 +194,7 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_finish(
     ptr: *mut JniParquetMetaWriter,
 ) -> *mut ParquetMetaBuiltFile {
     check_not_null!(env, ptr, "ParquetMetaFileWriter");
-    let wrapper = unsafe { &*ptr };
+    let wrapper = unsafe { &mut *ptr };
     match wrapper.writer.finish() {
         Ok((data, footer_offset)) => {
             Box::into_raw(Box::new(ParquetMetaBuiltFile { data, footer_offset }))

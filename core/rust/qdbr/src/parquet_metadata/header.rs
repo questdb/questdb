@@ -80,6 +80,8 @@ pub struct FileHeaderRaw {
 pub struct FileHeader<'a> {
     raw: FileHeaderRaw,
     data: &'a [u8],
+    /// Bloom filter column indices (raw bytes of u32 array), if BLOOM_FILTERS bit is set.
+    bloom_filter_columns: Option<&'a [u8]>,
 }
 
 impl<'a> FileHeader<'a> {
@@ -130,11 +132,81 @@ impl<'a> FileHeader<'a> {
             ));
         }
 
-        // Validate that name strings are in bounds. There are currently no
-        // header feature sections beyond the names area.
-        let _ = Self::compute_names_area_end(data, raw.column_count)?;
+        // Validate bit dependencies.
+        raw.feature_flags.validate_bit_dependencies()?;
 
-        Ok(Self { raw, data })
+        // Validate that name strings are in bounds.
+        let names_end = Self::compute_names_area_end(data, raw.column_count)?;
+
+        // Parse header feature sections (after name strings, in bit order).
+        let bloom_filter_columns = if raw.feature_flags.has_bloom_filters() {
+            let mut cursor = names_end;
+            // Read bloom_col_count: u32.
+            if cursor + 4 > data.len() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "bloom filter header section: missing bloom_col_count"
+                ));
+            }
+            let bloom_col_count = u32::from_le_bytes(data[cursor..cursor + 4].try_into().unwrap());
+            cursor += 4;
+
+            if bloom_col_count == 0 {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "bloom filter header section: bloom_col_count is 0 but bit 0 is set"
+                ));
+            }
+            if bloom_col_count > raw.column_count {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "bloom filter header section: bloom_col_count {} exceeds column_count {}",
+                    bloom_col_count,
+                    raw.column_count
+                ));
+            }
+
+            let indices_bytes = (bloom_col_count as usize) * 4;
+            if cursor + indices_bytes > data.len() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "bloom filter header section: indices truncated"
+                ));
+            }
+            let indices_slice = &data[cursor..cursor + indices_bytes];
+
+            // Validate: each index < column_count, sorted ascending, unique.
+            let mut prev: Option<u32> = None;
+            for i in 0..bloom_col_count as usize {
+                let off = i * 4;
+                let idx = u32::from_le_bytes(indices_slice[off..off + 4].try_into().unwrap());
+                if idx >= raw.column_count {
+                    return Err(parquet_meta_err!(
+                        ParquetMetaErrorKind::InvalidValue,
+                        "bloom filter column index {} >= column_count {}",
+                        idx,
+                        raw.column_count
+                    ));
+                }
+                if let Some(p) = prev {
+                    if idx <= p {
+                        return Err(parquet_meta_err!(
+                            ParquetMetaErrorKind::InvalidValue,
+                            "bloom filter column indices not sorted ascending and unique: {} after {}",
+                            idx,
+                            p
+                        ));
+                    }
+                }
+                prev = Some(idx);
+            }
+
+            Some(indices_slice)
+        } else {
+            None
+        };
+
+        Ok(Self { raw, data, bloom_filter_columns })
     }
 
     /// Minimum byte size required for the header with the given column counts
@@ -296,6 +368,48 @@ impl<'a> FileHeader<'a> {
             + (self.raw.column_count as usize) * COLUMN_DESCRIPTOR_SIZE
             + (self.raw.sorting_column_count as usize) * 4
     }
+
+    /// Number of columns with bloom filters. Returns 0 if the bloom filter
+    /// feature is not enabled.
+    pub fn bloom_filter_column_count(&self) -> u32 {
+        match self.bloom_filter_columns {
+            Some(slice) => (slice.len() / 4) as u32,
+            None => 0,
+        }
+    }
+
+    /// Returns the column index at position `pos` in the bloom filter column list.
+    pub fn bloom_filter_column(&self, pos: usize) -> ParquetResult<u32> {
+        let slice = self.bloom_filter_columns.ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "no bloom filter columns"
+            )
+        })?;
+        let off = pos * 4;
+        if off + 4 > slice.len() {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "bloom filter column position {} out of range [0, {})",
+                pos,
+                slice.len() / 4
+            ));
+        }
+        Ok(u32::from_le_bytes(slice[off..off + 4].try_into().unwrap()))
+    }
+
+    /// Binary search for `col_idx` in the sorted bloom filter column list.
+    /// Returns the position if found.
+    pub fn bloom_filter_position(&self, col_idx: u32) -> Option<usize> {
+        let slice = self.bloom_filter_columns?;
+        let count = slice.len() / 4;
+        let result = (0..count).collect::<Vec<_>>().binary_search_by(|&pos| {
+            let off = pos * 4;
+            let idx = u32::from_le_bytes(slice[off..off + 4].try_into().unwrap());
+            idx.cmp(&col_idx)
+        });
+        result.ok()
+    }
 }
 
 // ── FileHeaderBuilder ──────────────────────────────────────────────────
@@ -316,6 +430,8 @@ pub struct FileHeaderBuilder {
     designated_timestamp: i32,
     columns: Vec<ColumnEntry>,
     sorting_columns: Vec<u32>,
+    pub(crate) bloom_filter_columns: Vec<u32>,
+    pub(crate) bloom_filters_external: bool,
 }
 
 impl FileHeaderBuilder {
@@ -324,6 +440,8 @@ impl FileHeaderBuilder {
             designated_timestamp,
             columns: Vec::new(),
             sorting_columns: Vec::new(),
+            bloom_filter_columns: Vec::new(),
+            bloom_filters_external: false,
         }
     }
 
@@ -357,15 +475,37 @@ impl FileHeaderBuilder {
         self
     }
 
+    /// Sets the bloom filter column indices. The list is sorted and deduped.
+    pub fn set_bloom_filter_columns(&mut self, indices: &[u32]) -> &mut Self {
+        self.bloom_filter_columns = indices.to_vec();
+        self.bloom_filter_columns.sort_unstable();
+        self.bloom_filter_columns.dedup();
+        self
+    }
+
+    pub fn set_bloom_filters_external(&mut self, value: bool) -> &mut Self {
+        self.bloom_filters_external = value;
+        self
+    }
+
     /// Serializes the header into `buf`. Returns the byte offset past the end
     /// of the header.
     pub fn write_to(&self, buf: &mut Vec<u8>) -> usize {
         let column_count = self.columns.len() as u32;
         let sorting_count = self.sorting_columns.len() as u32;
 
+        // Compute feature flags.
+        let mut flags = HeaderFeatureFlags::new();
+        if !self.bloom_filter_columns.is_empty() {
+            flags = flags.with_bloom_filters();
+            if self.bloom_filters_external {
+                flags = flags.with_bloom_filters_external();
+            }
+        }
+
         // Fixed header fields (24 bytes, field-by-field for alignment safety).
         buf.extend_from_slice(&FILE_FORMAT_VERSION.to_le_bytes());
-        buf.extend_from_slice(&HeaderFeatureFlags::new().0.to_le_bytes());
+        buf.extend_from_slice(&flags.0.to_le_bytes());
         buf.extend_from_slice(&self.designated_timestamp.to_le_bytes());
         buf.extend_from_slice(&sorting_count.to_le_bytes());
         buf.extend_from_slice(&column_count.to_le_bytes());
@@ -411,6 +551,16 @@ impl FileHeaderBuilder {
                 &*(&desc as *const ColumnDescriptorRaw as *const [u8; COLUMN_DESCRIPTOR_SIZE])
             };
             buf[desc_offset..desc_offset + COLUMN_DESCRIPTOR_SIZE].copy_from_slice(bytes);
+        }
+
+        // Header feature sections (in bit order, after name strings).
+        // Bit 0: BLOOM_FILTERS header section.
+        if !self.bloom_filter_columns.is_empty() {
+            let bloom_col_count = self.bloom_filter_columns.len() as u32;
+            buf.extend_from_slice(&bloom_col_count.to_le_bytes());
+            for &idx in &self.bloom_filter_columns {
+                buf.extend_from_slice(&idx.to_le_bytes());
+            }
         }
 
         buf.len()
@@ -494,7 +644,6 @@ mod tests {
             desc1.flags().repetition().unwrap(),
             FieldRepetition::Optional
         );
-
     }
 
     #[test]
@@ -630,8 +779,9 @@ mod tests {
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
-        // Set unknown optional flag bits (bits 1-31).
-        let flags_with_unknown = 0x0000_0000_FFFF_FFFEu64;
+        // Set unknown optional flag bits (bits 2-31). Bits 0-1 are now defined
+        // (bloom filters), so we skip them to avoid bit-dependency validation.
+        let flags_with_unknown = 0x0000_0000_FFFF_FFFCu64;
         buf[4..12].copy_from_slice(&flags_with_unknown.to_le_bytes());
 
         // Reader should accept the file (ignores unknown optional flags).
@@ -651,5 +801,121 @@ mod tests {
         buf[4..12].copy_from_slice(&flags_with_required.to_le_bytes());
 
         assert!(FileHeader::new(&buf).is_err());
+    }
+
+    #[test]
+    fn bloom_filter_columns_round_trip() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("c", 2, 7, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.set_bloom_filter_columns(&[0, 2]);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(hdr.feature_flags().has_bloom_filters());
+        assert!(!hdr.feature_flags().has_bloom_filters_external());
+        assert_eq!(hdr.bloom_filter_column_count(), 2);
+        assert_eq!(hdr.bloom_filter_column(0).unwrap(), 0);
+        assert_eq!(hdr.bloom_filter_column(1).unwrap(), 2);
+    }
+
+    #[test]
+    fn bloom_filter_position_binary_search() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        for i in 0..5 {
+            builder.add_column(&format!("c{i}"), i, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        }
+        builder.set_bloom_filter_columns(&[1, 3]);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert_eq!(hdr.bloom_filter_position(0), None);
+        assert_eq!(hdr.bloom_filter_position(1), Some(0));
+        assert_eq!(hdr.bloom_filter_position(2), None);
+        assert_eq!(hdr.bloom_filter_position(3), Some(1));
+        assert_eq!(hdr.bloom_filter_position(4), None);
+    }
+
+    #[test]
+    fn bloom_filter_bit1_without_bit0_rejected() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        // Manually set only BLOOM_FILTERS_EXTERNAL (bit 1) without BLOOM_FILTERS (bit 0).
+        let flags = HeaderFeatureFlags::BLOOM_FILTERS_EXTERNAL_BIT;
+        buf[4..12].copy_from_slice(&flags.to_le_bytes());
+
+        assert!(FileHeader::new(&buf).is_err());
+    }
+
+    #[test]
+    fn bloom_filter_index_exceeds_column_count_rejected() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        // Column index 5 exceeds column_count=1.
+        builder.set_bloom_filter_columns(&[5]);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        assert!(FileHeader::new(&buf).is_err());
+    }
+
+    #[test]
+    fn bloom_filter_not_sorted_rejected() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("c", 2, 7, ColumnFlags::new(), 0, 0, 0, 0);
+        // set_bloom_filter_columns sorts, so write manually to test unsorted.
+        builder.bloom_filter_columns = vec![2, 0]; // not sorted
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        assert!(FileHeader::new(&buf).is_err());
+    }
+
+    #[test]
+    fn bloom_filter_zero_count_with_bit0_rejected() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        // Set bit 0 manually but provide zero bloom_col_count.
+        let flags = HeaderFeatureFlags::BLOOM_FILTERS_BIT;
+        buf[4..12].copy_from_slice(&flags.to_le_bytes());
+        // After name strings, write bloom_col_count = 0.
+        let names_end = buf.len();
+        buf.extend_from_slice(&0u32.to_le_bytes()); // bloom_col_count = 0
+                                                    // This would be at names_end, which is where the section starts.
+                                                    // But the header was already built without the section. We need to
+                                                    // inject it. Actually, the reader reads the count from after names.
+                                                    // The existing buf has names at the end with no section bytes. Adding
+                                                    // 4 bytes is enough since the reader parses from names_end.
+        let _ = names_end; // suppress unused
+                           // Re-parse: this should fail because bloom_col_count == 0 with bit 0 set.
+        assert!(FileHeader::new(&buf).is_err());
+    }
+
+    #[test]
+    fn no_bloom_filters_means_no_section() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        // Don't set any bloom filter columns.
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(!hdr.feature_flags().has_bloom_filters());
+        assert_eq!(hdr.bloom_filter_column_count(), 0);
     }
 }

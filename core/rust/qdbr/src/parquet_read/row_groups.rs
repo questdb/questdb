@@ -117,7 +117,7 @@ pub(crate) fn decompress_varchar_slice_data<'a>(
 /// triple; the heap allocation that the inner pointer references stays at the same address.
 /// `persistent_bufs` is moved into `column_chunk_bufs.page_buffers` at the end of the
 /// column-chunk loop, so the returned slice is valid for the full column-chunk decode.
-fn decompress_varchar_slice_dict<'bufs>(
+pub(super) fn decompress_varchar_slice_dict<'bufs>(
     dict_page: SlicedDictPage<'_>,
     persistent_bufs: &'bufs mut Vec<Vec<u8>>,
     buf_pool: &mut Vec<Vec<u8>>,

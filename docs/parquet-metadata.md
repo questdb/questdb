@@ -28,7 +28,7 @@ Currently stored under the `"questdb"` key in the parquet file's key-value metad
 
 Binary file encoded in little-endian. One file per partition, stored in the partition directory alongside `data.parquet`.
 
-The file has a header with column descriptors, row group blocks in the middle, and a footer at the end. The footer ends with a 4-byte trailer that stores the footer length, allowing readers to locate the footer given only the file size. The `_pm` file size is stored in `_txn` field 3 for each partition. Row group blocks are referenced by offset from the footer. On update, only new/changed row group blocks are appended; the footer reuses offsets to unchanged blocks. The file is small (typically tens of KB), memory-mapped and cached in `TableReader`. Bloom filter bitsets are stored in the out-of-line region of each row group block, referenced by `BLOOM_FILTER_OFF` in the column chunk.
+The file has a header with column descriptors, row group blocks in the middle, and a footer at the end. The footer ends with a 4-byte trailer that stores the footer length, allowing readers to locate the footer given only the file size. The `_pm` file size is stored in `_txn` field 3 for each partition. Row group blocks are referenced by offset from the footer. On update, only new/changed row group blocks are appended; the footer reuses offsets to unchanged blocks. The file is small (typically tens of KB), memory-mapped and cached in `TableReader`. Bloom filter bitsets are stored in the out-of-line region of each row group block (inlined mode) or referenced from the parquet file (external mode), with offsets in the footer feature section.
 
 ### Overview
 
@@ -62,12 +62,12 @@ The file has a header with column descriptors, row group blocks in the middle, a
                  |    byte_range_start  --+---------+
                  |    total_compressed    |
                  |    null_count          |
-                 |    bloom_filter_off  --+--.
-                 |    min_stat, max_stat  |  |
-                 |  chunk col 1: ...      |  |
-                 |  ...                   |  |
-                 | (out-of-line stats)    |  |
-                 | (bloom filters)      <----'
+                 |    _reserved (0)       |
+                 |    min_stat, max_stat  |
+                 |  chunk col 1: ...      |
+                 |  ...                   |
+                 | (out-of-line stats)    |
+                 | (bloom filter bitsets) |
                  +------------------------+
                  | ROW GROUP BLOCK 1      |
                  |  ...                   |
@@ -82,8 +82,9 @@ The file has a header with column descriptors, row group blocks in the middle, a
                  |  entry 0: offset ------+--> ROW GROUP BLOCK 0
                  |  entry 1: offset ------+--> ROW GROUP BLOCK 1
                  |  ...                   |
-                 |  FOOTER FEATURE SECTIONS|
-                 |  (if any flags set)    |
+                 | FOOTER FEATURE SECTIONS|
+                 |  bloom filter offsets  |
+                 |  (if BLOOM_FILTERS set)|
                  |  CRC32                 |
                  |  FOOTER_LENGTH (4B)  --+--> footer start = file_size - 4 - FOOTER_LENGTH
   _txn field 3:  +========================+
@@ -125,22 +126,30 @@ The header contains a single `feature_flags` field (`u64`) reserved for future f
 - **Bits 0-31**: optional - unknown bits may be ignored.
 - **Bits 32-63**: required - unknown bits must cause the reader to reject the file.
 
-No feature flags are currently defined. Writers emit `0`, and the current `_pm` layout has no feature-specific header or footer sections.
+#### Defined feature flags
+
+| bit | name                   | dependency | header section                                                                                                           | footer section                                                                                                                                 |
+| --- | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0   | BLOOM_FILTERS          | none       | `4 + bloom_col_count * 4` bytes: `[u32 bloom_col_count][u32; bloom_col_count]` column indices (sorted ascending, unique) | `row_group_count * bloom_col_count * 4` bytes: inlined offsets (`>>3`) into `_pm`; `0` = absent                                                |
+| 1   | BLOOM_FILTERS_EXTERNAL | bit 0      | none (shares bit 0 header section)                                                                                       | entry width grows from 4 to 16 bytes: `[(u64 offset, u64 length); row_group_count * bloom_col_count]` into the parquet file; `(0, 0)` = absent |
+
+Bit 0 is only set when at least one column has a bloom filter. Bit 1 cannot be set without bit 0; the reader rejects the file otherwise. Feature sections are ordered by bit position.
 
 QuestDB-managed parquet snapshots represented by `_pm` always normalize `column_top` to `0`. Null prefixes are materialized directly into parquet chunks/pages, and `_pm` pruning relies on per-chunk `NULL_COUNT` rather than file-level `column_top` metadata.
 
 ### File header
 
-| offset | size | field                | type | description                                                             |
-| ------ | ---- | -------------------- | ---- | ----------------------------------------------------------------------- |
-| 0      | 4    | FILE_FORMAT_VERSION  | u32  |                                                                         |
-| 4      | 8    | FEATURE_FLAGS        | u64  | reserved for future format extensions; currently always 0               |
-| 12     | 4    | DESIGNATED_TIMESTAMP | i32  | index of the designated timestamp in descriptors (or -1)                |
-| 16     | 4    | SORTING_COLUMN_COUNT | u32  |                                                                         |
-| 20     | 4    | COLUMN_COUNT         | u32  |                                                                         |
-| 24     | ..   | COLUMN_DESCRIPTORS   |      | COLUMN_COUNT * Column descriptor (32B each)                             |
-| ..     | ..   | SORTING_COLUMNS      |      | SORTING_COLUMN_COUNT * Sorting column (4B each)                         |
-| ..     | ..   | NAME_STRINGS         |      | Column names, each `[utf8 bytes]`; length from descriptor's NAME_LENGTH |
+| offset | size | field                   | type | description                                                             |
+| ------ | ---- | ----------------------- | ---- | ----------------------------------------------------------------------- |
+| 0      | 4    | FILE_FORMAT_VERSION     | u32  |                                                                         |
+| 4      | 8    | FEATURE_FLAGS           | u64  | reserved for future format extensions; currently always 0               |
+| 12     | 4    | DESIGNATED_TIMESTAMP    | i32  | index of the designated timestamp in descriptors (or -1)                |
+| 16     | 4    | SORTING_COLUMN_COUNT    | u32  |                                                                         |
+| 20     | 4    | COLUMN_COUNT            | u32  |                                                                         |
+| 24     | ..   | COLUMN_DESCRIPTORS      |      | COLUMN_COUNT * Column descriptor (32B each)                             |
+| ..     | ..   | SORTING_COLUMNS         |      | SORTING_COLUMN_COUNT * Sorting column (4B each)                         |
+| ..     | ..   | NAME_STRINGS            |      | Column names, each `[utf8 bytes]`; length from descriptor's NAME_LENGTH |
+| ..     | ..   | HEADER FEATURE SECTIONS |      | Feature-flag-gated sections, in bit order. See "Bloom filters" below.   |
 
 For a column to be the designated timestamp it must comply to these rules:
 - It must be the first column in sorting columns, sorted in `ascending` order
@@ -188,7 +197,7 @@ Written sequentially after the header. Each block holds the column chunk metadat
 
 Blocks must be aligned to 8 bytes so that the offset in the footer can be stored as a u32 (actual offset = value << 3).
 
-For types > 8 bytes (LONG128, UUID, LONG256), min/max stat values are stored out-of-line immediately after the column chunks. Bloom filter bitsets follow the out-of-line stats, each padded to 8-byte alignment so `BLOOM_FILTER_OFF` can use the shifted u32 encoding. All out-of-line data is part of the row group block and written together with it.
+For types > 8 bytes (LONG128, UUID, LONG256), min/max stat values are stored out-of-line immediately after the column chunks. When inlined bloom filters are present (feature flag bit 0 set, bit 1 clear), bloom filter bitsets follow the out-of-line stats, each padded to 8-byte alignment. All out-of-line data is part of the row group block and written together with it. References to the bitsets are in the footer feature section, not in the column chunk struct.
 
 #### Row group block
 
@@ -207,7 +216,7 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 | 1      | 1    | ENCODINGS        | u8   | bitmask: bit 0=PLAIN, 1=RLE_DICTIONARY, 2=DELTA_BINARY_PACKED, 3=DELTA_LENGTH_BYTE_ARRAY, 4=DELTA_BYTE_ARRAY, 5=BYTE_STREAM_SPLIT |
 | 2      | 1    | STAT_FLAGS       | u8   |                                                                                                                                   |
 | 3      | 1    | STAT_SIZES       | u8   | low nibble = MIN_STAT byte size (inline only), high nibble = MAX_STAT byte size (inline only)                                     |
-| 4      | 4    | BLOOM_FILTER_OFF | u32  | byte offset from _pm file start >> 3 (actual = value << 3); points to bloom filter bitset in the OOL region; 0 = absent           |
+| 4      | 4    | RESERVED         | u32  | must be 0. Previously held bloom filter offsets, now moved to footer feature sections. Exists for layout preservation.            |
 | 8      | 8    | NUM_VALUES       | u64  | total values (may differ from row count for arrays)                                                                               |
 | 16     | 8    | BYTE_RANGE_START | u64  | byte offset in parquet file to chunk start (dictionary page offset if present, else data page offset)                             |
 | 24     | 8    | TOTAL_COMPRESSED | u64  | total compressed bytes of all pages                                                                                               |
@@ -234,11 +243,35 @@ Column types with fixed size that are <= 8 bytes (BOOLEAN, BYTE, SHORT, CHAR, IN
 
 QuestDB-managed `_pm` files always set `NULL_COUNT_PRESENT`. Readers use `NULL_COUNT == NUM_VALUES` as the all-null fast path when deciding whether a parquet column chunk needs to be fetched and decoded.
 
-### Bloom filter bitset
+### Bloom filters
 
-Bloom filter bitsets are stored in the out-of-line region of each row group block, after out-of-line stats. Each bloom filter entry is padded to 8-byte alignment so `BLOOM_FILTER_OFF` can use the shifted u32 encoding. The column chunk's `BLOOM_FILTER_OFF` field gives the absolute offset in the `_pm` file (right-shifted by 3). If `BLOOM_FILTER_OFF` is 0, there is no bloom filter for that column chunk.
+Bloom filter metadata is gated by feature flag bits 0 and 1 in the header.
 
-At the offset, a 4-byte `LENGTH` field gives the size of the bitset, followed by the bitset bytes.
+**Header section** (bit 0, after name strings): declares which columns have bloom filters.
+
+| offset | size                | field                | type  | description                                |
+| ------ | ------------------- | -------------------- | ----- | ------------------------------------------ |
+| 0      | 4                   | BLOOM_COL_COUNT      | u32   | number of columns with bloom filters (> 0) |
+| 4      | BLOOM_COL_COUNT * 4 | BLOOM_FILTER_COLUMNS | u32[] | column indices, sorted ascending, unique   |
+
+All indices must satisfy `index < COLUMN_COUNT`. The reader rejects the file otherwise.
+
+**Footer section** (bit 0, after row group entries, before CRC): dense `ROW_GROUP_COUNT * BLOOM_COL_COUNT` matrix, row-major. Entry `[rg_idx * BLOOM_COL_COUNT + pos]` where `pos` is the column's position in `BLOOM_FILTER_COLUMNS`.
+
+- **Inlined (bit 1 = 0)**: each entry is a `u32` — the absolute `_pm` offset right-shifted by 3. `0` = absent for that `(row_group, bloom_col)` pair.
+- **External (bit 1 = 1)**: each entry is `(u64 offset, u64 length)` into the parquet file. `(0, 0)` = absent.
+
+**Bitset storage**:
+- **Inlined**: bitsets live in the row group block's out-of-line region, padded to 8-byte alignment. At the offset: `[i32 LENGTH][bitset bytes]`.
+- **External**: bitsets live in the parquet file. The footer section entry gives offset and length.
+
+**Invariants**:
+- Bit 0 is only set when at least one column has a bloom filter. If no columns have bloom filters, neither bit is set and no sections are written.
+- Bit 1 requires bit 0; setting bit 1 alone is invalid.
+- `BLOOM_FILTER_COLUMNS` is fixed at file creation time. Update mode does not rewrite the header; compaction (full rewrite) changes which columns have bloom filters.
+- A column can be in `BLOOM_FILTER_COLUMNS` but absent in some row groups (sentinel value `0` or `(0, 0)`).
+
+#### Bloom filter bitset (inlined)
 
 | offset | size | field  | type | description                                           |
 | ------ | ---- | ------ | ---- | ----------------------------------------------------- |
@@ -306,8 +339,11 @@ Atomicity is provided by the `_txn` file. The `_pm` file size is stored in `_txn
 
 ### Pruning row groups with bloom filter
 
-- Look up the column chunk from cached metadata.
-- Read `LENGTH` (i32) at `BLOOM_FILTER_OFF` in the `_pm` file, then read `LENGTH` bytes of bitset.
+- Check if the `BLOOM_FILTERS` feature flag (bit 0) is set in the header.
+- Look up the column's position in `BLOOM_FILTER_COLUMNS` via binary search.
+- Read the bloom filter offset from the footer feature section at `[rg_idx * bloom_col_count + pos]`.
+- For inlined mode: read `LENGTH` (i32) at the offset in the `_pm` file, then read `LENGTH` bytes of bitset.
+- For external mode: read the bitset from the parquet file at `(offset, length)`.
 - Check if the value is in the bitset; skip row group if not present.
 
 ### Retrieving byte ranges for specific columns

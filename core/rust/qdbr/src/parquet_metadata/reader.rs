@@ -29,7 +29,10 @@ use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::footer::Footer;
 use crate::parquet_metadata::header::{ColumnDescriptorRaw, FileHeader};
 use crate::parquet_metadata::row_group::RowGroupBlockReader;
-use crate::parquet_metadata::types::{FOOTER_CHECKSUM_SIZE, FOOTER_TRAILER_SIZE};
+use crate::parquet_metadata::types::{
+    HeaderFeatureFlags, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE, FOOTER_TRAILER_SIZE,
+    ROW_GROUP_ENTRY_SIZE,
+};
 
 /// Main reader for a `_pm` metadata file.
 ///
@@ -40,6 +43,8 @@ pub struct ParquetMetaReader<'a> {
     header: FileHeader<'a>,
     footer: Footer<'a>,
     footer_offset: u64,
+    /// Bloom filter footer section data slice, if present.
+    bloom_filter_section: Option<&'a [u8]>,
 }
 
 impl<'a> ParquetMetaReader<'a> {
@@ -140,7 +145,49 @@ impl<'a> ParquetMetaReader<'a> {
 
         let footer = Footer::new(footer_data, footer_length)?;
 
-        Ok(Self { data, header, footer, footer_offset })
+        // Parse bloom filter footer section if the feature flag is set.
+        let bloom_filter_section = if header.feature_flags().has_bloom_filters() {
+            let bloom_col_count = header.bloom_filter_column_count() as usize;
+            let is_external = header.feature_flags().has_bloom_filters_external();
+            let entry_size = if is_external { 16 } else { 4 };
+            let rg_count = footer.row_group_count() as usize;
+            let section_size = rg_count
+                .checked_mul(bloom_col_count)
+                .and_then(|n| n.checked_mul(entry_size))
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::Truncated,
+                        "bloom filter footer section size overflow"
+                    )
+                })?;
+            let section_start = FOOTER_FIXED_SIZE + rg_count * ROW_GROUP_ENTRY_SIZE;
+            let section_end = section_start + section_size;
+            if section_end > footer.crc_offset() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "bloom filter footer section exceeds CRC offset: {} > {}",
+                    section_end,
+                    footer.crc_offset()
+                ));
+            }
+            if section_end > footer_data.len() {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "bloom filter footer section exceeds footer data"
+                ));
+            }
+            Some(&footer_data[section_start..section_end])
+        } else {
+            None
+        };
+
+        Ok(Self {
+            data,
+            header,
+            footer,
+            footer_offset,
+            bloom_filter_section,
+        })
     }
 
     /// Verifies the CRC32 checksum stored in the footer against the file contents.
@@ -235,9 +282,10 @@ impl<'a> ParquetMetaReader<'a> {
         self.footer.unused_bytes()
     }
 
-    pub fn feature_flags(&self) -> crate::parquet_metadata::types::HeaderFeatureFlags {
+    pub fn feature_flags(&self) -> HeaderFeatureFlags {
         self.header.feature_flags()
     }
+
     /// Returns the raw file data slice.
     pub fn data(&self) -> &'a [u8] {
         self.data
@@ -246,6 +294,82 @@ impl<'a> ParquetMetaReader<'a> {
     /// Returns the footer offset within this file.
     pub fn footer_offset(&self) -> u64 {
         self.footer_offset
+    }
+
+    /// Returns true if the bloom filter feature is enabled.
+    pub fn has_bloom_filters(&self) -> bool {
+        self.header.feature_flags().has_bloom_filters()
+    }
+
+    /// Returns true if bloom filter bitsets are stored in the parquet file.
+    pub fn has_bloom_filters_external(&self) -> bool {
+        self.header.feature_flags().has_bloom_filters_external()
+    }
+
+    /// Delegates to the header's binary search for the bloom filter column position.
+    pub fn bloom_filter_position(&self, col_idx: u32) -> Option<usize> {
+        self.header.bloom_filter_position(col_idx)
+    }
+
+    /// Returns an iterator over bloom filter column indices.
+    pub fn bloom_filter_columns(&self) -> Vec<u32> {
+        let count = self.header.bloom_filter_column_count();
+        (0..count as usize)
+            .map(|pos| self.header.bloom_filter_column(pos).unwrap())
+            .collect()
+    }
+
+    /// Returns the inlined bloom filter offset in the _pm file for the given
+    /// `(rg_idx, pos)` pair. `pos` is the bloom filter column position (from
+    /// `bloom_filter_position`). Returns 0 if absent.
+    ///
+    /// The stored value is `absolute_byte_offset >> 3`. This method returns
+    /// the actual byte offset.
+    pub fn bloom_filter_offset_in_pm(&self, rg_idx: usize, pos: usize) -> ParquetResult<u64> {
+        let section = self.bloom_filter_section.ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "no bloom filter section"
+            )
+        })?;
+        let bloom_col_count = self.header.bloom_filter_column_count() as usize;
+        let idx = rg_idx * bloom_col_count + pos;
+        let off = idx * 4;
+        if off + 4 > section.len() {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "bloom filter offset out of bounds: rg={}, pos={}",
+                rg_idx,
+                pos
+            ));
+        }
+        let stored = u32::from_le_bytes(section[off..off + 4].try_into().unwrap());
+        Ok((stored as u64) << crate::parquet_metadata::types::BLOCK_ALIGNMENT_SHIFT)
+    }
+
+    /// Returns the `(parquet_offset, parquet_length)` for an external bloom
+    /// filter at `(rg_idx, pos)`. Returns `(0, 0)` if absent.
+    pub fn bloom_filter_parquet_ref(&self, rg_idx: usize, pos: usize) -> ParquetResult<(u64, u64)> {
+        let section = self.bloom_filter_section.ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "no bloom filter section"
+            )
+        })?;
+        let bloom_col_count = self.header.bloom_filter_column_count() as usize;
+        let idx = rg_idx * bloom_col_count + pos;
+        let off = idx * 16;
+        if off + 16 > section.len() {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "bloom filter parquet ref out of bounds: rg={}, pos={}",
+                rg_idx,
+                pos
+            ));
+        }
+        let parquet_offset = u64::from_le_bytes(section[off..off + 8].try_into().unwrap());
+        let parquet_length = u64::from_le_bytes(section[off + 8..off + 16].try_into().unwrap());
+        Ok((parquet_offset, parquet_length))
     }
 }
 
@@ -519,5 +643,132 @@ mod tests {
         // Pass a footer offset that leaves only 3 bytes after it (less than FOOTER_TRAILER_SIZE).
         let bad_offset = (bytes.len() - 3) as u64;
         assert!(ParquetMetaReader::new(&bytes, bad_offset).is_err());
+    }
+
+    #[test]
+    fn bloom_filter_inlined_round_trip() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("b", 1, 6, ColumnFlags::new(), 0, 0, 0, 0);
+
+        let bitset = vec![0xAA_u8; 64];
+        let mut rg = RowGroupBlockBuilder::new(2);
+        rg.set_num_rows(100);
+        rg.add_bloom_filter(1, &bitset).unwrap();
+        w.add_row_group(rg);
+
+        let (bytes, footer_offset) = w.finish().unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
+
+        assert!(reader.has_bloom_filters());
+        assert!(!reader.has_bloom_filters_external());
+        assert_eq!(reader.bloom_filter_columns(), vec![1]);
+        assert_eq!(reader.bloom_filter_position(0), None);
+        assert_eq!(reader.bloom_filter_position(1), Some(0));
+
+        // Read inlined offset.
+        let off = reader.bloom_filter_offset_in_pm(0, 0).unwrap();
+        assert_ne!(off, 0);
+        assert_eq!(off % 8, 0);
+
+        // Read [i32 len][bitset] at the offset.
+        let bf_data = &bytes[off as usize..];
+        let bf_len = i32::from_le_bytes(bf_data[..4].try_into().unwrap()) as usize;
+        assert_eq!(bf_len, 64);
+        assert_eq!(&bf_data[4..4 + bf_len], &bitset);
+    }
+
+    #[test]
+    fn bloom_filter_external_round_trip() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_bloom_filters_external(true);
+
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(100);
+        rg.add_external_bloom_filter(0, 4096, 512).unwrap();
+        w.add_row_group(rg);
+
+        let (bytes, footer_offset) = w.finish().unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
+
+        assert!(reader.has_bloom_filters());
+        assert!(reader.has_bloom_filters_external());
+        assert_eq!(reader.bloom_filter_columns(), vec![0]);
+
+        let (off, len) = reader.bloom_filter_parquet_ref(0, 0).unwrap();
+        assert_eq!(off, 4096);
+        assert_eq!(len, 512);
+    }
+
+    #[test]
+    fn bloom_filter_absent_sentinel() {
+        // Two row groups, only the second has a bloom filter.
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.set_bloom_filter_columns(&[0]);
+
+        let rg0 = RowGroupBlockBuilder::new(1);
+        w.add_row_group(rg0);
+
+        let mut rg1 = RowGroupBlockBuilder::new(1);
+        rg1.set_num_rows(50);
+        rg1.add_bloom_filter(0, &[0xBBu8; 32]).unwrap();
+        w.add_row_group(rg1);
+
+        let (bytes, footer_offset) = w.finish().unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
+
+        // Row group 0 has sentinel 0 (absent).
+        let off0 = reader.bloom_filter_offset_in_pm(0, 0).unwrap();
+        assert_eq!(off0, 0);
+
+        // Row group 1 has a real offset.
+        let off1 = reader.bloom_filter_offset_in_pm(1, 0).unwrap();
+        assert_ne!(off1, 0);
+    }
+
+    #[test]
+    fn no_bloom_filters_has_no_section() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(10);
+        w.add_row_group(rg);
+
+        let (bytes, footer_offset) = w.finish().unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
+
+        assert!(!reader.has_bloom_filters());
+        assert!(reader.bloom_filter_position(0).is_none());
+    }
+
+    #[test]
+    fn bloom_filter_crc_covers_section() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(100);
+        rg.add_bloom_filter(0, &[0xCC_u8; 32]).unwrap();
+        w.add_row_group(rg);
+
+        let (mut bytes, footer_offset) = w.finish().unwrap();
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
+
+        // Corrupt a byte in the bloom filter footer section.
+        // The footer section is between the row group entries and CRC.
+        let footer_start = footer_offset as usize;
+        // Footer: 24 (fixed) + 4 (1 rg entry) + bloom section + CRC + trailer
+        let bloom_section_start = footer_start + 24 + 4;
+        bytes[bloom_section_start] ^= 0xFF;
+
+        let reader2 = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        assert!(reader2.verify_checksum().is_err());
     }
 }

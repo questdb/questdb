@@ -27,7 +27,7 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_metadata::column_chunk::ColumnChunkRaw;
 use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
-use crate::parquet_metadata::types::{BLOCK_ALIGNMENT, BLOCK_ALIGNMENT_SHIFT, COLUMN_CHUNK_SIZE};
+use crate::parquet_metadata::types::{BLOCK_ALIGNMENT, COLUMN_CHUNK_SIZE};
 
 // ── RowGroupBlockReader (zero-copy) ────────────────────────────────────
 
@@ -118,8 +118,10 @@ pub struct RowGroupBlockBuilder {
     pub(crate) num_rows: u64,
     pub(crate) chunks: Vec<ColumnChunkRaw>,
     pub(crate) out_of_line: Vec<u8>,
-    /// (col_index, ool_offset) for bloom filters needing absolute-offset patching.
+    /// (col_index, ool_offset) for inlined bloom filters.
     bloom_filters: Vec<(usize, usize)>,
+    /// (col_index, parquet_offset, parquet_length) for external bloom filters.
+    external_bloom_filters: Vec<(usize, u64, u64)>,
 }
 
 impl RowGroupBlockBuilder {
@@ -130,6 +132,7 @@ impl RowGroupBlockBuilder {
             chunks: vec![ColumnChunkRaw::zeroed(); column_count as usize],
             out_of_line: Vec::new(),
             bloom_filters: Vec::new(),
+            external_bloom_filters: Vec::new(),
         }
     }
 
@@ -201,7 +204,8 @@ impl RowGroupBlockBuilder {
 
     /// Appends a bloom filter bitset to the out-of-line region (8-byte aligned)
     /// for the given column. The bitset is stored as `[i32 length][bitset]`.
-    /// The absolute _pm file offset is patched in `write_to`.
+    /// The absolute _pm file offset is computed by the writer when building
+    /// the bloom filter footer section.
     pub fn add_bloom_filter(
         &mut self,
         col_index: usize,
@@ -229,6 +233,37 @@ impl RowGroupBlockBuilder {
         Ok(self)
     }
 
+    /// Returns the inlined bloom filter entries: `(col_idx, ool_offset)` pairs.
+    pub fn bloom_filter_inlined_entries(&self) -> &[(usize, usize)] {
+        &self.bloom_filters
+    }
+
+    /// Records an external bloom filter reference for the given column.
+    pub fn add_external_bloom_filter(
+        &mut self,
+        col_index: usize,
+        parquet_offset: u64,
+        parquet_length: u64,
+    ) -> ParquetResult<&mut Self> {
+        let len = self.chunks.len();
+        if col_index >= len {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "bloom filter column index {} out of range [0, {})",
+                col_index,
+                len
+            ));
+        }
+        self.external_bloom_filters
+            .push((col_index, parquet_offset, parquet_length));
+        Ok(self)
+    }
+
+    /// Returns the external bloom filter entries: `(col_idx, parquet_offset, parquet_length)`.
+    pub fn bloom_filter_external_entries(&self) -> &[(usize, u64, u64)] {
+        &self.external_bloom_filters
+    }
+
     /// Writes the row group block to `buf`, padding to 8-byte alignment.
     /// Returns the byte offset within `buf` where this block starts.
     pub fn write_to(&self, buf: &mut Vec<u8>) -> usize {
@@ -251,18 +286,6 @@ impl RowGroupBlockBuilder {
 
         // Out-of-line data (stats + bloom filters).
         buf.extend_from_slice(&self.out_of_line);
-
-        // Post-patch bloom filter offsets to absolute _pm file offsets.
-        // The OOL region starts at block_start + 8 + column_count * COLUMN_CHUNK_SIZE.
-        let ool_start = block_start + 8 + self.chunks.len() * COLUMN_CHUNK_SIZE;
-        for &(col_idx, ool_offset) in &self.bloom_filters {
-            let abs_offset = ool_start + ool_offset;
-            // abs_offset is 8-byte aligned: block_start is aligned, 8+N*64 is
-            // aligned, and ool_offset was padded to alignment in add_bloom_filter.
-            let shifted = (abs_offset >> BLOCK_ALIGNMENT_SHIFT) as u32;
-            let bf_field_pos = block_start + 8 + col_idx * COLUMN_CHUNK_SIZE + 4;
-            buf[bf_field_pos..bf_field_pos + 4].copy_from_slice(&shifted.to_le_bytes());
-        }
 
         block_start
     }
@@ -403,23 +426,23 @@ mod tests {
             .unwrap();
         builder.add_bloom_filter(1, &bitset).unwrap();
 
+        // Verify inlined entries accessor.
+        let entries = builder.bloom_filter_inlined_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, 1); // col_index
+
         let mut buf = Vec::new();
         let block_start = builder.write_to(&mut buf);
 
         let reader = RowGroupBlockReader::new(&buf[block_start..], 2).unwrap();
-        let c0 = reader.column_chunk(0).unwrap();
-        let c1 = reader.column_chunk(1).unwrap();
+        // _reserved field stays zero on both columns.
+        assert_eq!(reader.column_chunk(0).unwrap()._reserved, 0);
+        assert_eq!(reader.column_chunk(1).unwrap()._reserved, 0);
 
-        // Column 0 has no bloom filter.
-        assert_eq!(c0.bloom_filter_off.byte_offset(), 0);
-
-        // Column 1's bloom filter points into the buffer at an 8-byte aligned offset.
-        let bf_abs = c1.bloom_filter_off.byte_offset() as usize;
-        assert_ne!(bf_abs, 0);
-        assert_eq!(bf_abs % BLOCK_ALIGNMENT, 0);
-
-        // Read [i32 len][bitset] at the absolute offset.
-        let bf_data = &buf[bf_abs..];
+        // Read [i32 len][bitset] from the OOL region at the recorded offset.
+        let ool_start = block_start + 8 + 2 * COLUMN_CHUNK_SIZE;
+        let ool_offset = entries[0].1;
+        let bf_data = &buf[ool_start + ool_offset..];
         let bf_len = i32::from_le_bytes(bf_data[..4].try_into().unwrap()) as usize;
         assert_eq!(bf_len, 64);
         assert_eq!(&bf_data[4..4 + bf_len], &bitset);
@@ -455,9 +478,12 @@ mod tests {
         assert_eq!(min_len, 13);
         assert_eq!(&ool[min_off..min_off + min_len], &stat_data);
 
-        // Bloom filter readable at absolute offset.
-        let bf_abs = c.bloom_filter_off.byte_offset() as usize;
-        assert_ne!(bf_abs, 0);
+        // Bloom filter readable from OOL via the builder entries.
+        let entries = builder.bloom_filter_inlined_entries();
+        assert_eq!(entries.len(), 1);
+        let ool_start = block_start + 8 + COLUMN_CHUNK_SIZE;
+        let ool_offset = entries[0].1;
+        let bf_abs = ool_start + ool_offset;
         assert_eq!(bf_abs % BLOCK_ALIGNMENT, 0);
         let bf_data = &buf[bf_abs..];
         let bf_len = i32::from_le_bytes(bf_data[..4].try_into().unwrap()) as usize;
@@ -479,40 +505,40 @@ mod tests {
         builder.add_bloom_filter(0, &bf0).unwrap();
         builder.add_bloom_filter(2, &bf2).unwrap();
 
+        let entries = builder.bloom_filter_inlined_entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, 0); // col 0
+        assert_eq!(entries[1].0, 2); // col 2
+
         let mut buf = Vec::new();
         let block_start = builder.write_to(&mut buf);
 
         let reader = RowGroupBlockReader::new(&buf[block_start..], 3).unwrap();
+        // _reserved stays zero on all columns.
+        for i in 0..3 {
+            assert_eq!(reader.column_chunk(i).unwrap()._reserved, 0);
+        }
 
-        // Column 0 has bloom filter.
-        let c0_off = reader
-            .column_chunk(0)
-            .unwrap()
-            .bloom_filter_off
-            .byte_offset() as usize;
-        assert_ne!(c0_off, 0);
-        let len0 = i32::from_le_bytes(buf[c0_off..c0_off + 4].try_into().unwrap()) as usize;
-        assert_eq!(&buf[c0_off + 4..c0_off + 4 + len0], &bf0);
+        // Verify OOL bitsets via builder entries.
+        let ool_start = block_start + 8 + 3 * COLUMN_CHUNK_SIZE;
+        for (entry, expected_bitset) in entries.iter().zip([&bf0[..], &bf2[..]]) {
+            let bf_data = &buf[ool_start + entry.1..];
+            let bf_len = i32::from_le_bytes(bf_data[..4].try_into().unwrap()) as usize;
+            assert_eq!(&bf_data[4..4 + bf_len], expected_bitset);
+        }
+    }
 
-        // Column 1 has no bloom filter.
-        assert_eq!(
-            reader
-                .column_chunk(1)
-                .unwrap()
-                .bloom_filter_off
-                .byte_offset(),
-            0
-        );
+    #[test]
+    fn bloom_filter_external_round_trip() {
+        let mut builder = RowGroupBlockBuilder::new(2);
+        builder.set_num_rows(100);
+        builder.add_external_bloom_filter(0, 1024, 256).unwrap();
+        builder.add_external_bloom_filter(1, 2048, 512).unwrap();
 
-        // Column 2 has bloom filter.
-        let c2_off = reader
-            .column_chunk(2)
-            .unwrap()
-            .bloom_filter_off
-            .byte_offset() as usize;
-        assert_ne!(c2_off, 0);
-        let len2 = i32::from_le_bytes(buf[c2_off..c2_off + 4].try_into().unwrap()) as usize;
-        assert_eq!(&buf[c2_off + 4..c2_off + 4 + len2], &bf2);
+        let entries = builder.bloom_filter_external_entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], (0, 1024, 256));
+        assert_eq!(entries[1], (1, 2048, 512));
     }
 
     #[test]

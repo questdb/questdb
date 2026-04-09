@@ -118,7 +118,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_CODEC_OFF = 0;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
-    private static final int COLUMN_CHUNK_BLOOM_FILTER_OFF = 4;
+    // Offset 4 is _reserved (u32, must be 0). Previously held bloom filter offsets,
+    // now moved to footer feature sections. Bloom filter consumption happens via
+    // the Rust canSkipRowGroup JNI; Java does not parse the bloom filter sections.
     private static final int COLUMN_CHUNK_NUM_VALUES_OFF = 8;
     private static final int COLUMN_CHUNK_BYTE_RANGE_START_OFF = 16;
     private static final int COLUMN_CHUNK_TOTAL_COMPRESSED_OFF = 24;
@@ -413,15 +415,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      */
     public long getUnusedBytes() {
         return Unsafe.getUnsafe().getLong(footerAddr + FOOTER_UNUSED_BYTES_OFF);
-    }
-
-    /**
-     * Returns the bloom filter byte offset in the _pm file for the given chunk.
-     * The stored value is right-shifted by 3 (block-aligned). Returns 0 if no bloom filter.
-     */
-    public long getChunkBloomFilterOffset(int rowGroupIndex, int columnIndex) {
-        int stored = Unsafe.getUnsafe().getInt(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_BLOOM_FILTER_OFF);
-        return Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
     }
 
     public boolean isOpen() {

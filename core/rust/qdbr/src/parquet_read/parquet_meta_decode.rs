@@ -221,12 +221,7 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
         let chunk = rg_block.column_chunk(column_idx)?;
         let buf_idx = column_offset + dest_col_idx;
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[buf_idx];
-        let col_info = QdbMetaCol {
-            column_type,
-            column_top: 0,
-            format,
-            ascii,
-        };
+        let col_info = QdbMetaCol { column_type, column_top: 0, format, ascii };
         let stat_flags = StatFlags(chunk.stat_flags);
         if stat_flags.has_null_count() && chunk.null_count == chunk.num_values {
             column_chunk_bufs.reset();
@@ -515,18 +510,35 @@ pub fn can_skip_row_group(
 
         match op {
             FILTER_OP_EQ => {
-                // Bloom filter bitset stored in the _pm file as [i32 len][bitset].
-                let bloom_off = chunk.bloom_filter_off.byte_offset() as usize;
-                let bitset: &[u8] =
-                    if bloom_off > 0 && bloom_off + 4 <= parquet_meta_reader.data().len() {
-                        let bf_data = &parquet_meta_reader.data()[bloom_off..];
-                        let bf_len = i32::from_le_bytes(bf_data[..4].try_into().unwrap_or_default())
-                            as usize;
-                        bf_data.get(4..4 + bf_len).unwrap_or(&[])
+                // Bloom filter bitset lookup via footer feature section.
+                let bitset: &[u8] = if parquet_meta_reader.has_bloom_filters() {
+                    if let Some(pos) = parquet_meta_reader.bloom_filter_position(column_idx as u32)
+                    {
+                        if parquet_meta_reader.has_bloom_filters_external() {
+                            // External mode: bitsets are in the parquet file, not
+                            // available from the _pm reader alone. Skip.
+                            &[]
+                        } else {
+                            let off = parquet_meta_reader
+                                .bloom_filter_offset_in_pm(row_group_index, pos)
+                                .unwrap_or(0);
+                            if off > 0 && (off as usize) + 4 <= parquet_meta_reader.data().len() {
+                                let bf_data = &parquet_meta_reader.data()[off as usize..];
+                                let bf_len =
+                                    i32::from_le_bytes(bf_data[..4].try_into().unwrap_or_default())
+                                        as usize;
+                                bf_data.get(4..4 + bf_len).unwrap_or(&[])
+                            } else {
+                                &[]
+                            }
+                        }
                     } else {
                         &[]
-                    };
-                if bloom_off > 0 && !bitset.is_empty() {
+                    }
+                } else {
+                    &[]
+                };
+                if !bitset.is_empty() {
                     let all_absent = ParquetDecoder::all_values_absent_from_bloom(
                         bitset,
                         &physical_type,

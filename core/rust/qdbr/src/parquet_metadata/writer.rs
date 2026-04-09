@@ -27,11 +27,12 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::footer::{Footer, FooterBuilder};
-use crate::parquet_metadata::header::FileHeader;
 use crate::parquet_metadata::header::FileHeaderBuilder;
+use crate::parquet_metadata::reader::ParquetMetaReader;
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::{
-    ColumnFlags, BLOCK_ALIGNMENT, FOOTER_CHECKSUM_SIZE, FOOTER_TRAILER_SIZE,
+    ColumnFlags, BLOCK_ALIGNMENT, BLOCK_ALIGNMENT_SHIFT, COLUMN_CHUNK_SIZE, FOOTER_CHECKSUM_SIZE,
+    FOOTER_TRAILER_SIZE,
 };
 
 // ── ParquetMetaWriter (create mode) ───────────────────────────────────────────
@@ -123,15 +124,52 @@ impl ParquetMetaWriter {
         self
     }
 
+    /// Sets bloom filter column indices (delegates to header builder).
+    pub fn set_bloom_filter_columns(&mut self, indices: &[u32]) -> &mut Self {
+        self.header_builder.set_bloom_filter_columns(indices);
+        self
+    }
+
+    /// Sets whether bloom filters are stored externally in the parquet file.
+    pub fn set_bloom_filters_external(&mut self, value: bool) -> &mut Self {
+        self.header_builder.set_bloom_filters_external(value);
+        self
+    }
+
     /// Finishes writing and returns the complete `_pm` file bytes.
     ///
     /// Returns `(bytes, footer_offset)` where `footer_offset` is the byte
     /// offset of the footer within the file (to store in `_txn`).
     #[must_use = "returns the file bytes and footer offset"]
-    pub fn finish(&self) -> ParquetResult<(Vec<u8>, u64)> {
+    pub fn finish(&mut self) -> ParquetResult<(Vec<u8>, u64)> {
+        // Auto-derive bloom filter columns from row group contents if not set.
+        let is_external = self.header_builder.bloom_filters_external;
+        if self.header_builder.bloom_filter_columns.is_empty() {
+            let mut col_set = std::collections::BTreeSet::new();
+            for rg in &self.row_groups {
+                if is_external {
+                    for &(col_idx, _, _) in rg.bloom_filter_external_entries() {
+                        col_set.insert(col_idx as u32);
+                    }
+                } else {
+                    for &(col_idx, _) in rg.bloom_filter_inlined_entries() {
+                        col_set.insert(col_idx as u32);
+                    }
+                }
+            }
+            if !col_set.is_empty() {
+                let indices: Vec<u32> = col_set.into_iter().collect();
+                self.header_builder.set_bloom_filter_columns(&indices);
+            }
+        }
+
+        let bloom_filter_columns = self.header_builder.bloom_filter_columns.clone();
+        let bloom_col_count = bloom_filter_columns.len();
+
         let mut buf = Vec::new();
 
-        // Write header (includes descriptors, sorting columns, name strings).
+        // Write header (includes descriptors, sorting columns, name strings,
+        // and bloom filter header section if applicable).
         self.header_builder.write_to(&mut buf);
 
         // Write row group blocks (8-byte aligned).
@@ -141,12 +179,25 @@ impl ParquetMetaWriter {
             block_offsets.push(offset as u64);
         }
 
+        // Build the bloom filter footer section if applicable.
+        let bloom_section = if bloom_col_count > 0 {
+            build_bloom_filter_footer_section(
+                &self.row_groups,
+                &block_offsets,
+                &bloom_filter_columns,
+                is_external,
+            )
+        } else {
+            Vec::new()
+        };
+
         // Write footer.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
         fb.unused_bytes(self.unused_bytes);
         for &offset in &block_offsets {
             fb.add_row_group_offset(offset)?;
         }
+        fb.set_bloom_filter_section(bloom_section);
         let footer_offset = fb.write_to(&mut buf) as u64;
 
         // Compute and write CRC32 over [0, checksum_field_offset).
@@ -158,6 +209,47 @@ impl ParquetMetaWriter {
 
         Ok((buf, footer_offset))
     }
+}
+
+/// Builds the dense bloom filter footer section from row group builders.
+fn build_bloom_filter_footer_section(
+    row_groups: &[RowGroupBlockBuilder],
+    block_offsets: &[u64],
+    bloom_filter_columns: &[u32],
+    is_external: bool,
+) -> Vec<u8> {
+    let bloom_col_count = bloom_filter_columns.len();
+    let rg_count = row_groups.len();
+    let entry_size = if is_external { 16 } else { 4 };
+    let mut section = vec![0u8; rg_count * bloom_col_count * entry_size];
+
+    for (rg_idx, rg) in row_groups.iter().enumerate() {
+        if is_external {
+            for &(col_idx, pq_offset, pq_length) in rg.bloom_filter_external_entries() {
+                if let Ok(pos) = bloom_filter_columns.binary_search(&(col_idx as u32)) {
+                    let idx = rg_idx * bloom_col_count + pos;
+                    let off = idx * 16;
+                    section[off..off + 8].copy_from_slice(&pq_offset.to_le_bytes());
+                    section[off + 8..off + 16].copy_from_slice(&pq_length.to_le_bytes());
+                }
+            }
+        } else {
+            let block_offset = block_offsets[rg_idx] as usize;
+            let col_count = rg.chunks.len();
+            let ool_start = block_offset + 8 + col_count * COLUMN_CHUNK_SIZE;
+            for &(col_idx, ool_offset) in rg.bloom_filter_inlined_entries() {
+                if let Ok(pos) = bloom_filter_columns.binary_search(&(col_idx as u32)) {
+                    let abs_offset = ool_start + ool_offset;
+                    let shifted = (abs_offset >> BLOCK_ALIGNMENT_SHIFT) as u32;
+                    let idx = rg_idx * bloom_col_count + pos;
+                    let off = idx * 4;
+                    section[off..off + 4].copy_from_slice(&shifted.to_le_bytes());
+                }
+            }
+        }
+    }
+
+    section
 }
 
 // ── ParquetMetaUpdateWriter (update mode) ─────────────────────────────────────
@@ -174,6 +266,15 @@ pub struct ParquetMetaUpdateWriter<'a> {
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     unused_bytes: u64,
+    /// Bloom filter column indices from the existing header (empty if no bloom filters).
+    bloom_filter_columns: Vec<u32>,
+    /// Whether bloom filters are external in the existing file.
+    is_bloom_external: bool,
+    /// Existing bloom filter footer section bytes (per existing row group).
+    /// For inlined: each entry is a Vec<u32> of shifted offsets, one per bloom column.
+    /// For external: each entry is a Vec<(u64, u64)> of (offset, length) pairs.
+    existing_bloom_inlined: Vec<Vec<u32>>,
+    existing_bloom_external: Vec<Vec<(u64, u64)>>,
 }
 
 enum RowGroupEntry {
@@ -186,7 +287,8 @@ enum RowGroupEntry {
 impl<'a> ParquetMetaUpdateWriter<'a> {
     /// Creates an update writer from the existing file data and its footer offset.
     pub fn new(existing: &'a [u8], existing_footer_offset: u64) -> ParquetResult<Self> {
-        let _header = FileHeader::new(existing)?;
+        let reader = ParquetMetaReader::new(existing, existing_footer_offset)?;
+
         let footer_usize = usize::try_from(existing_footer_offset).map_err(|_| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
@@ -203,10 +305,41 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let footer_length = Self::read_footer_length(existing)?;
         let footer = Footer::new(footer_data, footer_length)?;
 
+        let rg_count = footer.row_group_count() as usize;
+
         // Initialize entries with existing row group offsets.
-        let mut entries = Vec::with_capacity(footer.row_group_count() as usize);
-        for i in 0..footer.row_group_count() as usize {
+        let mut entries = Vec::with_capacity(rg_count);
+        for i in 0..rg_count {
             entries.push(RowGroupEntry::Existing(footer.row_group_block_offset(i)?));
+        }
+
+        // Parse existing bloom filter data.
+        let bloom_filter_columns = reader.bloom_filter_columns();
+        let is_bloom_external = reader.has_bloom_filters_external();
+        let bloom_col_count = bloom_filter_columns.len();
+        let mut existing_bloom_inlined = Vec::new();
+        let mut existing_bloom_external = Vec::new();
+
+        if reader.has_bloom_filters() {
+            for rg_idx in 0..rg_count {
+                if is_bloom_external {
+                    let mut ext_entries = Vec::with_capacity(bloom_col_count);
+                    for pos in 0..bloom_col_count {
+                        let (off, len) = reader.bloom_filter_parquet_ref(rg_idx, pos)?;
+                        ext_entries.push((off, len));
+                    }
+                    existing_bloom_external.push(ext_entries);
+                } else {
+                    let mut inl_entries = Vec::with_capacity(bloom_col_count);
+                    for pos in 0..bloom_col_count {
+                        let abs_off = reader.bloom_filter_offset_in_pm(rg_idx, pos)?;
+                        // Store as shifted value (>>3).
+                        let shifted = (abs_off >> BLOCK_ALIGNMENT_SHIFT) as u32;
+                        inl_entries.push(shifted);
+                    }
+                    existing_bloom_inlined.push(inl_entries);
+                }
+            }
         }
 
         Ok(Self {
@@ -216,6 +349,10 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             parquet_footer_offset: footer.parquet_footer_offset(),
             parquet_footer_length: footer.parquet_footer_length(),
             unused_bytes: footer.unused_bytes(),
+            bloom_filter_columns,
+            is_bloom_external,
+            existing_bloom_inlined,
+            existing_bloom_external,
         })
     }
 
@@ -319,12 +456,82 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             }
         }
 
+        // Build bloom filter footer section for all row groups (existing + new).
+        let bloom_col_count = self.bloom_filter_columns.len();
+        let bloom_section = if bloom_col_count > 0 {
+            let entry_size = if self.is_bloom_external { 16 } else { 4 };
+            let total_rg = self.entries.len();
+            let mut section = vec![0u8; total_rg * bloom_col_count * entry_size];
+
+            let mut existing_idx = 0usize;
+            for (rg_idx, entry) in self.entries.iter().enumerate() {
+                match entry {
+                    RowGroupEntry::Existing(_) => {
+                        // Copy through existing bloom filter entries.
+                        if self.is_bloom_external {
+                            if let Some(ext) = self.existing_bloom_external.get(existing_idx) {
+                                for (pos, &(off, len)) in ext.iter().enumerate() {
+                                    let idx = rg_idx * bloom_col_count + pos;
+                                    let o = idx * 16;
+                                    section[o..o + 8].copy_from_slice(&off.to_le_bytes());
+                                    section[o + 8..o + 16].copy_from_slice(&len.to_le_bytes());
+                                }
+                            }
+                        } else if let Some(inl) = self.existing_bloom_inlined.get(existing_idx) {
+                            for (pos, &shifted) in inl.iter().enumerate() {
+                                let idx = rg_idx * bloom_col_count + pos;
+                                let o = idx * 4;
+                                section[o..o + 4].copy_from_slice(&shifted.to_le_bytes());
+                            }
+                        }
+                        existing_idx += 1;
+                    }
+                    RowGroupEntry::New(builder) => {
+                        let block_offset = final_offsets[rg_idx] as usize;
+                        let col_count = builder.chunks.len();
+                        if self.is_bloom_external {
+                            for &(col_idx, pq_offset, pq_length) in
+                                builder.bloom_filter_external_entries()
+                            {
+                                if let Ok(pos) =
+                                    self.bloom_filter_columns.binary_search(&(col_idx as u32))
+                                {
+                                    let idx = rg_idx * bloom_col_count + pos;
+                                    let o = idx * 16;
+                                    section[o..o + 8].copy_from_slice(&pq_offset.to_le_bytes());
+                                    section[o + 8..o + 16]
+                                        .copy_from_slice(&pq_length.to_le_bytes());
+                                }
+                            }
+                        } else {
+                            let ool_start = block_offset + 8 + col_count * COLUMN_CHUNK_SIZE;
+                            for &(col_idx, ool_offset) in builder.bloom_filter_inlined_entries() {
+                                if let Ok(pos) =
+                                    self.bloom_filter_columns.binary_search(&(col_idx as u32))
+                                {
+                                    let abs_offset = ool_start + ool_offset;
+                                    let shifted = (abs_offset >> BLOCK_ALIGNMENT_SHIFT) as u32;
+                                    let idx = rg_idx * bloom_col_count + pos;
+                                    let o = idx * 4;
+                                    section[o..o + 4].copy_from_slice(&shifted.to_le_bytes());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            section
+        } else {
+            Vec::new()
+        };
+
         // Write the new footer.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
         fb.unused_bytes(self.unused_bytes);
         for &offset in &final_offsets {
             fb.add_row_group_offset(offset)?;
         }
+        fb.set_bloom_filter_section(bloom_section);
         let footer_rel_start = fb.write_to(&mut append_buf);
         let new_footer_offset = (append_start + footer_rel_start) as u64;
 

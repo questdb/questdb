@@ -25,9 +25,7 @@
 //! 64-byte column chunk descriptor stored inside each row group block.
 
 use crate::parquet::error::ParquetResult;
-use crate::parquet_metadata::types::{
-    decode_stat_sizes, BlockAlignedOffset, Codec, EncodingMask, StatFlags,
-};
+use crate::parquet_metadata::types::{decode_stat_sizes, Codec, EncodingMask, StatFlags};
 
 /// On-disk layout of a column chunk (64 bytes).
 ///
@@ -40,7 +38,8 @@ pub struct ColumnChunkRaw {
     pub encodings: u8,
     pub stat_flags: u8,
     pub stat_sizes: u8,
-    pub bloom_filter_off: BlockAlignedOffset,
+    /// Reserved for layout preservation. Must be zero.
+    pub _reserved: u32,
     pub num_values: u64,
     pub byte_range_start: u64,
     pub total_compressed: u64,
@@ -60,7 +59,7 @@ impl ColumnChunkRaw {
             encodings: 0,
             stat_flags: 0,
             stat_sizes: 0,
-            bloom_filter_off: BlockAlignedOffset::ZERO,
+            _reserved: 0,
             num_values: 0,
             byte_range_start: 0,
             total_compressed: 0,
@@ -91,12 +90,6 @@ impl ColumnChunkRaw {
     pub const fn stat_sizes(&self) -> (u8, u8) {
         decode_stat_sizes(self.stat_sizes)
     }
-
-    /// Returns the actual bloom filter byte offset in the parquet file,
-    /// or 0 if no bloom filter is present.
-    pub const fn bloom_filter_offset(&self) -> u64 {
-        self.bloom_filter_off.byte_offset()
-    }
 }
 
 #[cfg(test)]
@@ -116,7 +109,7 @@ mod tests {
         assert_eq!(c.encodings(), EncodingMask::new());
         assert_eq!(c.stat_flags(), StatFlags::new());
         assert_eq!(c.stat_sizes(), (0, 0));
-        assert_eq!(c.bloom_filter_offset(), 0);
+        assert_eq!(c._reserved, 0);
         assert_eq!(c.num_values, 0);
         assert_eq!(c.byte_range_start, 0);
         assert_eq!(c.total_compressed, 0);
@@ -134,13 +127,6 @@ mod tests {
         let mut c = ColumnChunkRaw::zeroed();
         c.stat_sizes = encode_stat_sizes(4, 8);
         assert_eq!(c.stat_sizes(), (4, 8));
-    }
-
-    #[test]
-    fn bloom_filter_offset_shift() {
-        let mut c = ColumnChunkRaw::zeroed();
-        c.bloom_filter_off = BlockAlignedOffset(100);
-        assert_eq!(c.bloom_filter_offset(), 100 << 3);
     }
 
     #[test]

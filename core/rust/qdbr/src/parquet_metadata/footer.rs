@@ -65,10 +65,7 @@ impl<'a> Footer<'a> {
     ///
     /// `footer_length_through_crc` is the value from the trailer (bytes from
     /// footer start through CRC, inclusive).
-    pub fn new(
-        data: &'a [u8],
-        footer_length_through_crc: u32,
-    ) -> ParquetResult<Self> {
+    pub fn new(data: &'a [u8], footer_length_through_crc: u32) -> ParquetResult<Self> {
         if data.len() < FOOTER_FIXED_SIZE + FOOTER_CHECKSUM_SIZE {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
@@ -220,6 +217,9 @@ pub struct FooterBuilder {
     parquet_footer_length: u32,
     unused_bytes: u64,
     row_group_offsets: Vec<u64>,
+    /// Optional bloom filter footer feature section bytes, written between
+    /// row group entries and CRC.
+    bloom_filter_section: Vec<u8>,
 }
 
 impl FooterBuilder {
@@ -229,11 +229,19 @@ impl FooterBuilder {
             parquet_footer_length,
             unused_bytes: 0,
             row_group_offsets: Vec::new(),
+            bloom_filter_section: Vec::new(),
         }
     }
 
     pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
         self.unused_bytes = unused_bytes;
+        self
+    }
+
+    /// Sets the bloom filter footer feature section bytes. Written between
+    /// row group entries and CRC.
+    pub fn set_bloom_filter_section(&mut self, section: Vec<u8>) -> &mut Self {
+        self.bloom_filter_section = section;
         self
     }
 
@@ -261,6 +269,11 @@ impl FooterBuilder {
         for &offset in &self.row_group_offsets {
             let stored = (offset >> BLOCK_ALIGNMENT_SHIFT) as u32;
             buf.extend_from_slice(&stored.to_le_bytes());
+        }
+
+        // Footer feature sections (between row group entries and CRC).
+        if !self.bloom_filter_section.is_empty() {
+            buf.extend_from_slice(&self.bloom_filter_section);
         }
 
         // CRC32 placeholder (filled by the top-level writer).

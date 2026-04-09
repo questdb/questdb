@@ -471,12 +471,9 @@ pub fn to_parquet_schema(
         } else {
             column.data_type
         };
-        qdb_meta.schema.push(QdbMetaCol {
-            column_type,
-            column_top: 0,
-            format,
-            ascii,
-        });
+        qdb_meta
+            .schema
+            .push(QdbMetaCol { column_type, column_top: 0, format, ascii });
     }
 
     let encoded_qdb_meta = qdb_meta.serialize()?;

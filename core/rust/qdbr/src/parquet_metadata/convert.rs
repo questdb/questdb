@@ -2662,14 +2662,18 @@ mod tests {
         )
         .unwrap();
 
-        // Verify the _pm has a bloom filter.
+        // Verify the _pm has a bloom filter via the feature section.
         let reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset).unwrap();
         assert_eq!(reader.row_group_count(), 1);
-        let rg = reader.row_group(0).unwrap();
-        let chunk = rg.column_chunk(0).unwrap();
+        assert!(
+            reader.has_bloom_filters(),
+            "bloom filter feature flag should be set"
+        );
+        assert_eq!(reader.bloom_filter_position(0), Some(0));
 
-        let bf_abs = chunk.bloom_filter_off.byte_offset() as usize;
-        assert_ne!(bf_abs, 0, "bloom_filter_off should be non-zero");
+        // Read the inlined bloom filter offset from the footer section.
+        let bf_abs = reader.bloom_filter_offset_in_pm(0, 0).unwrap() as usize;
+        assert_ne!(bf_abs, 0, "bloom filter offset should be non-zero");
         assert_eq!(
             bf_abs % 8,
             0,

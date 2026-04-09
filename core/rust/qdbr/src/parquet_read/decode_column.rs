@@ -43,7 +43,9 @@ use crate::parquet_read::decode::{
     decode_page, decode_page_filtered, decompress_sliced_data, decompress_sliced_dict,
     page_row_count, sliced_page_row_count,
 };
-use crate::parquet_read::row_groups::decompress_varchar_slice_data;
+use crate::parquet_read::row_groups::{
+    decompress_varchar_slice_data, decompress_varchar_slice_dict,
+};
 use crate::parquet_read::{ColumnChunkBuffers, DecodeContext};
 
 /// Builds a [`Descriptor`] from `_pm` column descriptor fields.
@@ -119,7 +121,7 @@ pub fn decode_column_chunk_with_params(
         decompress_buffer,
         dict_decompress_buffer,
         varchar_slice_buf_pool,
-        varchar_slice_dict_buf,
+        varchar_slice_dict_bufs_scratch: varchar_slice_dict_bufs,
         ..
     } = ctx;
 
@@ -127,6 +129,7 @@ pub fn decode_column_chunk_with_params(
     bufs.reset();
 
     let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
+    varchar_slice_dict_bufs.clear();
 
     for maybe_page in page_reader {
         let sliced_page = maybe_page?;
@@ -134,7 +137,11 @@ pub fn decode_column_chunk_with_params(
         match sliced_page {
             SlicedPage::Dict(dict_page) => {
                 let page = if is_varchar_slice {
-                    decompress_sliced_dict(dict_page, varchar_slice_dict_buf)?
+                    decompress_varchar_slice_dict(
+                        dict_page,
+                        varchar_slice_dict_bufs,
+                        varchar_slice_buf_pool,
+                    )?
                 } else {
                     decompress_sliced_dict(dict_page, dict_decompress_buffer)?
                 };
@@ -210,7 +217,7 @@ pub fn decode_column_chunk_with_params(
         is_varchar_slice,
         bufs,
         &mut varchar_slice_page_bufs,
-        varchar_slice_dict_buf,
+        varchar_slice_dict_bufs,
         varchar_slice_buf_pool,
     );
     bufs.refresh_ptrs();
@@ -255,7 +262,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
         decompress_buffer,
         dict_decompress_buffer,
         varchar_slice_buf_pool,
-        varchar_slice_dict_buf,
+        varchar_slice_dict_bufs_scratch: varchar_slice_dict_bufs,
         ..
     } = ctx;
 
@@ -263,6 +270,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
     bufs.reset();
 
     let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
+    varchar_slice_dict_bufs.clear();
 
     for maybe_page in page_reader {
         let sliced_page = maybe_page?;
@@ -270,7 +278,11 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
         match sliced_page {
             SlicedPage::Dict(dict_page) => {
                 let page = if is_varchar_slice {
-                    decompress_sliced_dict(dict_page, varchar_slice_dict_buf)?
+                    decompress_varchar_slice_dict(
+                        dict_page,
+                        varchar_slice_dict_bufs,
+                        varchar_slice_buf_pool,
+                    )?
                 } else {
                     decompress_sliced_dict(dict_page, dict_decompress_buffer)?
                 };
@@ -440,7 +452,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
         is_varchar_slice,
         bufs,
         &mut varchar_slice_page_bufs,
-        varchar_slice_dict_buf,
+        varchar_slice_dict_bufs,
         varchar_slice_buf_pool,
     );
     bufs.refresh_ptrs();
@@ -474,19 +486,18 @@ fn finish_varchar_slice(
     is_varchar_slice: bool,
     bufs: &mut ColumnChunkBuffers,
     varchar_slice_page_bufs: &mut Vec<Vec<u8>>,
-    varchar_slice_dict_buf: &mut Vec<u8>,
-    varchar_slice_buf_pool: &mut Vec<Vec<u8>>,
+    varchar_slice_dict_bufs: &mut Vec<Vec<u8>>,
+    _varchar_slice_buf_pool: &mut Vec<Vec<u8>>,
 ) {
     if is_varchar_slice {
         if !bufs.data_vec.is_empty() {
             fixup_varchar_slice_spill_pointers(bufs);
         }
-        bufs.page_buffers = std::mem::take(varchar_slice_page_bufs);
-        if !varchar_slice_dict_buf.is_empty() {
-            let replacement = varchar_slice_buf_pool.pop().unwrap_or_default();
-            bufs.page_buffers
-                .push(std::mem::replace(varchar_slice_dict_buf, replacement));
-        }
+        // Move dict buffers in too — aux entries from
+        // RleDictVarcharSliceDecoder hold raw pointers into them and
+        // require them to outlive the column chunk decode.
+        varchar_slice_page_bufs.append(varchar_slice_dict_bufs);
+        bufs.page_buffers.append(varchar_slice_page_bufs);
     }
 }
 

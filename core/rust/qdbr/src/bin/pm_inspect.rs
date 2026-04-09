@@ -11,7 +11,7 @@ use parquet2::metadata::FileMetaData;
 use parquet2::read::read_metadata;
 use qdb_core::col_type::ColumnTypeTag;
 use questdbr::parquet_metadata::types::{
-    BlockAlignedOffset, Codec, ColumnFlags, EncodingMask, FieldRepetition, StatFlags,
+    Codec, ColumnFlags, EncodingMask, FieldRepetition, StatFlags,
 };
 use questdbr::parquet_metadata::ParquetMetaReader;
 use std::fs::File;
@@ -234,9 +234,8 @@ fn print_row_group(reader: &ParquetMetaReader, rg_idx: usize) {
             println!("    Max: 0x{:016x} ({}, {})", chunk.max_stat, inline, exact);
         }
 
-        let bloom_off = BlockAlignedOffset(chunk.bloom_filter_off.0);
-        if bloom_off.0 != 0 {
-            println!("    Bloom filter: offset {}", bloom_off.byte_offset());
+        if chunk._reserved != 0 {
+            println!("    _reserved (should be 0): {}", chunk._reserved);
         }
     }
     println!();
@@ -497,36 +496,13 @@ fn check_row_group(reader: &ParquetMetaReader, parquet_meta: &FileMetaData, rg_i
             errors += 1;
         }
 
-        // bloom filter offset
-        let pq_bloom = pq_col.metadata().bloom_filter_offset;
-        let pm_bloom_raw = pm_chunk.bloom_filter_off.0;
-        if pm_bloom_raw == 0 {
-            if let Some(pq_off) = pq_bloom {
-                println!(
-                    "[FAIL] {} bloom_filter: _pm=none, parquet=offset {}",
-                    prefix, pq_off
-                );
-                errors += 1;
-            }
-        } else {
-            let pm_bloom_byte = BlockAlignedOffset(pm_bloom_raw).byte_offset();
-            match pq_bloom {
-                Some(pq_off) if pm_bloom_byte != pq_off as u64 => {
-                    println!(
-                        "[FAIL] {} bloom_filter offset: _pm={}, parquet={}",
-                        prefix, pm_bloom_byte, pq_off
-                    );
-                    errors += 1;
-                }
-                None => {
-                    println!(
-                        "[FAIL] {} bloom_filter: _pm=offset {}, parquet=none",
-                        prefix, pm_bloom_byte
-                    );
-                    errors += 1;
-                }
-                _ => {}
-            }
+        // bloom filter: column chunk _reserved must be 0 (offsets moved to footer section)
+        if pm_chunk._reserved != 0 {
+            println!(
+                "[FAIL] {} column chunk _reserved is {} (should be 0)",
+                prefix, pm_chunk._reserved
+            );
+            errors += 1;
         }
 
         // null_count

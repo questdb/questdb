@@ -75,6 +75,14 @@ const fn unknown_required(raw: u64, known_required: u64) -> u64 {
 pub struct HeaderFeatureFlags(pub u64);
 
 impl HeaderFeatureFlags {
+    /// Bloom filter feature is present. Adds a header section (column indices)
+    /// and a footer section (per-row-group offset table).
+    pub const BLOOM_FILTERS_BIT: u64 = 1 << 0;
+
+    /// Bloom filter bitsets are stored in the parquet file (external) rather
+    /// than inlined in `_pm`. Only meaningful when `BLOOM_FILTERS_BIT` is set.
+    pub const BLOOM_FILTERS_EXTERNAL_BIT: u64 = 1 << 1;
+
     pub const fn new() -> Self {
         Self(0)
     }
@@ -87,6 +95,33 @@ impl HeaderFeatureFlags {
     /// Non-zero means the reader must reject the file.
     pub const fn unknown_required(self, known_required: u64) -> u64 {
         unknown_required(self.0, known_required)
+    }
+
+    pub const fn has_bloom_filters(self) -> bool {
+        self.0 & Self::BLOOM_FILTERS_BIT != 0
+    }
+
+    pub const fn with_bloom_filters(self) -> Self {
+        Self(self.0 | Self::BLOOM_FILTERS_BIT)
+    }
+
+    pub const fn has_bloom_filters_external(self) -> bool {
+        self.0 & Self::BLOOM_FILTERS_EXTERNAL_BIT != 0
+    }
+
+    pub const fn with_bloom_filters_external(self) -> Self {
+        Self(self.0 | Self::BLOOM_FILTERS_EXTERNAL_BIT)
+    }
+
+    /// Validates bit dependencies: bit 1 (external) requires bit 0 (bloom filters).
+    pub fn validate_bit_dependencies(self) -> ParquetResult<()> {
+        if self.has_bloom_filters_external() && !self.has_bloom_filters() {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "BLOOM_FILTERS_EXTERNAL (bit 1) requires BLOOM_FILTERS (bit 0)"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -811,5 +846,44 @@ mod tests {
             let back = FieldRepetition::from(parquet_rep);
             assert_eq!(back, rep, "round-trip failed for {:?}", rep);
         }
+    }
+
+    // ── HeaderFeatureFlags bloom filter tests ─────────────────────────
+
+    #[test]
+    fn bloom_filter_flags_round_trip() {
+        let f = HeaderFeatureFlags::new().with_bloom_filters();
+        assert!(f.has_bloom_filters());
+        assert!(!f.has_bloom_filters_external());
+
+        let f = f.with_bloom_filters_external();
+        assert!(f.has_bloom_filters());
+        assert!(f.has_bloom_filters_external());
+    }
+
+    #[test]
+    fn bloom_filter_external_requires_bloom_filters() {
+        let f = HeaderFeatureFlags::new().with_bloom_filters_external();
+        assert!(f.validate_bit_dependencies().is_err());
+    }
+
+    #[test]
+    fn bloom_filter_both_bits_valid() {
+        let f = HeaderFeatureFlags::new()
+            .with_bloom_filters()
+            .with_bloom_filters_external();
+        assert!(f.validate_bit_dependencies().is_ok());
+    }
+
+    #[test]
+    fn bloom_filter_bit0_alone_valid() {
+        let f = HeaderFeatureFlags::new().with_bloom_filters();
+        assert!(f.validate_bit_dependencies().is_ok());
+    }
+
+    #[test]
+    fn bloom_filter_no_bits_valid() {
+        let f = HeaderFeatureFlags::new();
+        assert!(f.validate_bit_dependencies().is_ok());
     }
 }
