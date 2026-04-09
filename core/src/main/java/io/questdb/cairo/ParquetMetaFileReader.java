@@ -135,7 +135,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     public void clear() {
-        close();
+        if (nativeReaderPtr != 0) {
+            destroyNativeReader(nativeReaderPtr);
+            nativeReaderPtr = 0;
+        }
         this.addr = 0;
         this.fileSize = 0;
         this.footerAddr = 0;
@@ -144,21 +147,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     /**
-     * Releases the lazily-allocated native reader handle, if any. Does not
-     * touch the in-memory header/footer state — accessors keep returning
-     * whatever was last loaded. This makes {@code close()} safe to call
-     * defensively on long-lived field instances that get re-{@code of()}-ed
-     * for new partitions.
-     * <p>
-     * Use {@link #clear()} to also wipe the in-memory state when fully
-     * tearing down the reader.
+     * Releases the native reader handle and resets all in-memory state.
+     * Delegates to {@link #clear()}.
      */
     @Override
     public void close() {
-        if (nativeReaderPtr != 0) {
-            destroyNativeReader(nativeReaderPtr);
-            nativeReaderPtr = 0;
-        }
+        clear();
     }
 
     public long getAddr() {

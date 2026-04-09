@@ -513,6 +513,9 @@ impl FileHeaderBuilder {
             return false;
         }
         let dts_idx = dts as usize;
+        if dts_idx >= self.columns.len() {
+            return false;
+        }
         self.sorting_columns.len() == 1
             && self.sorting_columns[0] == dts_idx as u32
             && !self.columns[dts_idx].flags.is_descending()

@@ -562,10 +562,15 @@ impl<'a> ParquetMetaReader<'a> {
                                     .unwrap_or(0);
                                 if off > 0 && (off as usize) + 4 <= self.data().len() {
                                     let bf_data = &self.data()[off as usize..];
-                                    let bf_len = i32::from_le_bytes(
+                                    let bf_len_raw = i32::from_le_bytes(
                                         bf_data[..4].try_into().unwrap_or_default(),
-                                    ) as usize;
-                                    bf_data.get(4..4 + bf_len).unwrap_or(&[])
+                                    );
+                                    if bf_len_raw <= 0 {
+                                        &[]
+                                    } else {
+                                        let bf_len = bf_len_raw as usize;
+                                        bf_data.get(4..4 + bf_len).unwrap_or(&[])
+                                    }
                                 } else {
                                     &[]
                                 }

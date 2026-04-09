@@ -321,6 +321,9 @@ pub fn find_row_group_by_timestamp(
                 chunk.max_stat as i64
             } else {
                 let num_vals = chunk.num_values as usize;
+                if num_vals == 0 {
+                    continue;
+                }
                 decode_ts(rg_idx, ts_col, num_vals - 1, num_vals)?
             };
 

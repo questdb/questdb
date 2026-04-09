@@ -405,6 +405,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final O3ParquetMergeStrategy.MergeAction action = actionsBuf.getQuick(i);
                         switch (action.type) {
                             case MERGE -> {
+                                assert partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex) <= Integer.MAX_VALUE;
                                 final int rgSize = (int) partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
                                 LOG.info()
                                         .$("parquet merge row group [table=").$(tableWriter.getTableToken())
@@ -447,6 +448,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 metadataPosition += numOutputRGs;
                             }
                             case COPY_ROW_GROUP_SLICE -> {
+                                assert partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex) <= Integer.MAX_VALUE;
                                 final int rgSize = (int) partitionDecoder.metadata().getRowGroupSize(action.rowGroupIndex);
                                 // The merge strategy always produces full-range COPY_ROW_GROUP_SLICE
                                 // actions (the entire row group). Partial slicing is not supported.
@@ -2121,6 +2123,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             activeColCount++;
         }
 
+        assert decoder.metadata().getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
         final int rowGroupSize = (int) decoder.metadata().getRowGroupSize(rowGroupIndex);
         decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, rowGroupSize);
 
@@ -3338,6 +3341,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long rowCount = 0;
                             final int rowGroupCount = parquetMetadata.getRowGroupCount();
                             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+                                assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
                                 final int rowGroupSize = (int) parquetMetadata.getRowGroupSize(rowGroupIndex);
                                 if (rowCount + rowGroupSize <= columnTop) {
                                     rowCount += rowGroupSize;

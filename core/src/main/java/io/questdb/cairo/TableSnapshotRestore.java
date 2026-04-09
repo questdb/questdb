@@ -952,6 +952,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
 
                 // Decode all indexed columns for this row group
+                assert rowGroupSize <= Integer.MAX_VALUE;
                 try {
                     partitionDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, (int) rowGroupSize);
                 } catch (CairoException e) {
