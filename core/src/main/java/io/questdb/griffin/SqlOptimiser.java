@@ -5508,7 +5508,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
                 case IQueryModel.SHOW_TABLES:
-                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
+                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory(executionContext.getCairoEngine().getConfiguration());
                     break;
                 case IQueryModel.SHOW_COLUMNS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
