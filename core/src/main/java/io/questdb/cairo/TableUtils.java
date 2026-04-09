@@ -922,7 +922,7 @@ public final class TableUtils {
 
     /**
      * Reads the packed Parquet encoding config for a column from table metadata memory.
-     * See {@link #packParquetConfig(int, int, int)} for the bit layout.
+     * See {@link #packParquetConfig(int, int, int, boolean)} for the bit layout.
      */
     public static int getParquetEncodingConfig(MemoryR metaMem, int columnIndex) {
         // type(4) + flags(8) + indexBlockCapacity(4) + symbolCapacity(4)
