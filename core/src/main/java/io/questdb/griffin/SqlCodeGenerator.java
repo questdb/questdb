@@ -3235,6 +3235,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         ObjList<Function> fillValues = null;
+        ObjList<Function> constantFillFuncs = null;
         final ExpressionNode fillFrom = curr.getFillFrom();
         final ExpressionNode fillTo = curr.getFillTo();
         final ExpressionNode fillStride = curr.getFillStride();
@@ -3319,7 +3320,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata groupByMetadata = groupByFactory.getMetadata();
             final int columnCount = groupByMetadata.getColumnCount();
             final IntList fillModes = new IntList(columnCount);
-            final ObjList<Function> constantFillFuncs = new ObjList<>(columnCount);
+            constantFillFuncs = new ObjList<>(columnCount);
             boolean hasPrevFill = false;
 
             // Detect any PREV in fill values
@@ -3371,20 +3372,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Sort the GROUP BY output — the fill cursor requires sorted input
-            RecordCursorFactory sorted = generateOrderBy(groupByFactory, model, executionContext);
+            // Sort the GROUP BY output by timestamp ascending. The fill cursor
+            // requires sorted input. We build the sort factory explicitly because
+            // the optimizer strips the ORDER BY added by rewriteSampleBy before
+            // code generation runs.
+            final RecordMetadata sortMetadata = groupByFactory.getMetadata();
+            listColumnFilterA.clear();
+            listColumnFilterA.add(timestampIndex + 1); // positive = ascending
+            entityColumnFilter.of(sortMetadata.getColumnCount());
+            groupByFactory = new SortedRecordCursorFactory(
+                    configuration,
+                    sortMetadata,
+                    groupByFactory,
+                    RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
+                    recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA),
+                    listColumnFilterA.copy()
+            );
 
             // Create RecordSink for key column extraction (keysMap)
             final EntityColumnFilter columnFilter = new EntityColumnFilter();
-            columnFilter.of(sorted.getMetadata().getColumnCount());
+            columnFilter.of(groupByFactory.getMetadata().getColumnCount());
             final RecordSink recordSink = RecordSinkFactory.getInstance(
-                    configuration, asm, sorted.getMetadata(), columnFilter
+                    configuration, asm, groupByFactory.getMetadata(), columnFilter
             );
 
             return new SampleByFillRecordCursorFactory(
                     configuration,
-                    sorted.getMetadata(),
-                    sorted,
+                    groupByFactory.getMetadata(),
+                    groupByFactory,
                     fillFromFunc,
                     fillToFunc,
                     samplingInterval,
@@ -3399,6 +3414,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);
+            Misc.freeObjList(constantFillFuncs);
             Misc.free(fillFromFunc);
             Misc.free(fillToFunc);
             Misc.free(groupByFactory);

@@ -270,26 +270,28 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     dataTs = Long.MAX_VALUE;
                 }
 
+                // Early exit: base cursor exhausted and no explicit TO bound —
+                // stop emitting because there are no more data rows and no
+                // trailing fill range was requested. This check must come
+                // AFTER the data fetch above so baseCursorExhausted is set
+                // when the base cursor returns no more rows.
+                if (baseCursorExhausted && !hasExplicitTo) {
+                    return false;
+                }
+
                 if (dataTs == nextBucketTimestamp) {
-                    // Data row at expected bucket — emit it
+                    // Data row at expected bucket — emit it.
+                    // Do NOT peek ahead here: calling baseCursor.hasNext()
+                    // would advance the base record, corrupting the current
+                    // row's data before the caller reads it. The next call
+                    // to hasNext() will fetch the next row at the top of
+                    // the loop.
                     hasPendingRow = false;
                     fillRecord.isGapFilling = false;
                     if (hasPrevFill) {
                         savePrevValues(baseRecord);
                     }
-                    // Peek ahead: if next row is also at this timestamp (keyed),
-                    // don't advance bucket yet
-                    if (!baseCursorExhausted && baseCursor.hasNext()) {
-                        long nextTs = baseRecord.getTimestamp(timestampIndex);
-                        hasPendingRow = true;
-                        pendingTs = nextTs;
-                        if (nextTs != nextBucketTimestamp) {
-                            nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
-                        }
-                    } else {
-                        baseCursorExhausted = !hasPendingRow && baseCursorExhausted;
-                        nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
-                    }
+                    nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
                     return true;
                 }
 
@@ -313,10 +315,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     return true;
                 }
 
-                // baseCursorExhausted and no TO clause — stop
-                if (baseCursorExhausted && !hasExplicitTo) {
-                    return false;
-                }
+                // Unreachable: all three cases (==, >, <) are handled above.
+                // If we get here, it means dataTs is Long.MAX_VALUE and
+                // hasExplicitTo is true — the gap branch above handles it.
             }
             return false;
         }
