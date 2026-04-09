@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
@@ -38,6 +39,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
@@ -624,6 +629,28 @@ public class SqlUtil {
         final QueryModel queryModel = model.getQueryModel();
         assert queryModel != null;
         return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
+    }
+
+    /**
+     * Extracts the interval/stride expression from a timestamp_floor or
+     * timestamp_floor_utc function call, handling 2/3/5-param overloads.
+     */
+    public static ExpressionNode getTimestampFloorInterval(ExpressionNode ast) {
+        if (ast.paramCount == 3 || ast.paramCount == 5) {
+            return ast.args.getQuick(ast.paramCount - 1);
+        }
+        return ast.lhs;
+    }
+
+    /**
+     * Extracts the timestamp column expression from a timestamp_floor or
+     * timestamp_floor_utc function call, handling 2/3/5-param overloads.
+     */
+    public static ExpressionNode getTimestampFloorTimestampArg(ExpressionNode ast) {
+        if (ast.paramCount == 3 || ast.paramCount == 5) {
+            return ast.args.getQuick(ast.paramCount - 2);
+        }
+        return ast.rhs;
     }
 
     public static byte implicitCastAsByte(long value, int fromType) {
@@ -1247,6 +1274,16 @@ public class SqlUtil {
         return true;
     }
 
+    /**
+     * Returns true if the given expression node is a timestamp_floor or
+     * timestamp_floor_utc function call.
+     */
+    public static boolean isTimestampFloorFunction(ExpressionNode ast) {
+        return ast.type == ExpressionNode.FUNCTION
+                && (Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)
+                || Chars.equalsIgnoreCase(TimestampFloorFromOffsetUtcFunctionFactory.NAME, ast.token));
+    }
+
     public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
         return pool.next().of(exprNodeType, token, 0, position);
     }
@@ -1329,6 +1366,126 @@ public class SqlUtil {
             throw SqlException.$(dimensionalityFirstPos, "arrays do not have a fixed size, remove the number");
         }
         return dim;
+    }
+
+    /**
+     * Parses the content of a PARQUET(...) clause and returns the packed config int.
+     * Syntax: PARQUET( (encoding [, compression[(level)]] [, BLOOM_FILTER]) | BLOOM_FILTER )
+     * The opening PARQUET keyword must have been consumed already; this method consumes from '(' through ')'.
+     */
+    public static int parseParquetConfig(GenericLexer lexer, int columnType) throws SqlException {
+        CharSequence tok = fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("'(' expected");
+        }
+        if (!Chars.equals(tok, '(')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'(' expected");
+        }
+
+        int encoding = 0;
+        int packedCompression = 0;
+        int packedLevel = 0;
+        boolean bloomFilter = false;
+
+        tok = fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("encoding name or BLOOM_FILTER expected");
+        }
+
+        // PARQUET(BLOOM_FILTER) shorthand
+        if (SqlKeywords.isBloomFilterKeyword(tok)) {
+            bloomFilter = true;
+            tok = fetchNext(lexer);
+            if (tok == null || !Chars.equals(tok, ')')) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+            }
+            return TableUtils.packParquetConfig(encoding, packedCompression, packedLevel, bloomFilter);
+        }
+
+        int encodingPos = lexer.lastTokenPosition();
+        encoding = ParquetEncoding.getEncoding(tok);
+        if (encoding < 0) {
+            SqlException e = SqlException.$(encodingPos, "invalid parquet encoding '").put(tok).put("', supported values: ");
+            ParquetEncoding.addValidEncodingNamesForType(e, columnType);
+            throw e;
+        }
+        if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, columnType)) {
+            SqlException e = SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(columnType))
+                    .put(", supported encodings for this type: ");
+            ParquetEncoding.addValidEncodingNamesForType(e, columnType);
+            throw e;
+        }
+
+        tok = fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.position(lexer.getPosition()).put("',' or ')' expected");
+        }
+
+        if (Chars.equals(tok, ',')) {
+            tok = fetchNext(lexer);
+            if (tok == null) {
+                throw SqlException.position(lexer.getPosition()).put("compression codec name or BLOOM_FILTER expected");
+            }
+
+            // PARQUET(encoding, BLOOM_FILTER)
+            if (SqlKeywords.isBloomFilterKeyword(tok)) {
+                bloomFilter = true;
+                tok = fetchNext(lexer);
+                if (tok == null || !Chars.equals(tok, ')')) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                }
+                return TableUtils.packParquetConfig(encoding, packedCompression, packedLevel, bloomFilter);
+            }
+
+            int codecPos = lexer.lastTokenPosition();
+            int compression = ParquetCompression.getCompressionCodec(tok);
+            if (compression < 0) {
+                SqlException e = SqlException.$(codecPos, "invalid parquet compression codec '").put(tok).put("', supported values: ");
+                ParquetCompression.addCodecNamesToException(e);
+                throw e;
+            }
+            packedCompression = compression + 1;
+
+            tok = fetchNext(lexer);
+            if (tok != null && Chars.equals(tok, '(')) {
+                tok = fetchNext(lexer);
+                if (tok == null) {
+                    throw SqlException.position(lexer.getPosition()).put("compression level expected");
+                }
+                int levelPos = lexer.lastTokenPosition();
+                try {
+                    int level = Numbers.parseInt(tok);
+                    ParquetCompression.validateCompressionLevel(compression, level, levelPos);
+                    packedLevel = level + 1;
+                } catch (NumericException e) {
+                    throw SqlException.$(levelPos, "compression level must be a number");
+                }
+                tok = fetchNext(lexer);
+                if (tok == null || !Chars.equals(tok, ')')) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                }
+                tok = fetchNext(lexer);
+            }
+
+            // PARQUET(encoding, compression[(level)], BLOOM_FILTER)
+            if (tok != null && Chars.equals(tok, ',')) {
+                tok = fetchNext(lexer);
+                if (tok == null || !SqlKeywords.isBloomFilterKeyword(tok)) {
+                    throw SqlException.position(lexer.lastTokenPosition()).put("BLOOM_FILTER expected");
+                }
+                bloomFilter = true;
+                tok = fetchNext(lexer);
+            }
+        }
+
+        if (tok == null || !Chars.equals(tok, ')')) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+        }
+
+        if (encoding == 0 && packedCompression == 0 && !bloomFilter) {
+            return 0;
+        }
+        return TableUtils.packParquetConfig(encoding, packedCompression, packedLevel, bloomFilter);
     }
 
     public static int toPersistedType(@NotNull CharSequence tok, int tokPosition) throws SqlException {

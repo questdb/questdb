@@ -659,9 +659,18 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                     final int columnType = metadata.getColumnType(i);
                     final long pageAddress = frame.getPageAddress(i);
+                    // Var-size columns may have an empty .d file when all values are inlined
+                    // into the aux vector (see FwdTableReaderPageFrameCursor for the producer
+                    // contract); use the aux address as the column-top detector to avoid
+                    // materialising live rows as NULL.
+                    final long localColTop;
+                    if (ColumnType.isVarSize(columnType)) {
+                        localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
+                    } else {
+                        localColTop = pageAddress > 0 ? 0 : frameRowCount;
+                    }
 
                     // Assert alignment for SIMD operations in Rust parquet encoder
                     assert pageAddress == 0 || isAlignedForColumnType(pageAddress, columnType)

@@ -164,6 +164,22 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'n';
     }
 
+    public static boolean isBloomFilterKeyword(CharSequence tok) {
+        return tok.length() == 12
+                && (tok.charAt(0) | 32) == 'b'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 'm'
+                && tok.charAt(5) == '_'
+                && (tok.charAt(6) | 32) == 'f'
+                && (tok.charAt(7) | 32) == 'i'
+                && (tok.charAt(8) | 32) == 'l'
+                && (tok.charAt(9) | 32) == 't'
+                && (tok.charAt(10) | 32) == 'e'
+                && (tok.charAt(11) | 32) == 'r';
+    }
+
     public static boolean isBloomFilterColumnsKeyword(CharSequence tok) {
         return tok.length() == 20
                 && (tok.charAt(0) | 32) == 'b'

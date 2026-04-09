@@ -68,6 +68,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -757,6 +758,39 @@ public class OrderedMapTest extends AbstractCairoTest {
                     TestUtils.assertAsciiCompliance(varchar);
                     Assert.assertEquals(rnd.nextLong(), record.getLong(0));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAsciiVarcharKeyIgnoresFlag() throws Exception {
+        // Two identical ASCII VARCHAR values with different isAscii() flags must
+        // hash and compare as the same key. Before the fix, the ASCII flag was
+        // preserved in the serialized header, causing GROUP BY / DISTINCT to treat
+        // visually identical values as separate groups.
+        TestUtils.assertMemoryLeak(() -> {
+            try (OrderedMap map = new OrderedMap(
+                    Numbers.SIZE_1MB,
+                    new SingleColumnType(ColumnType.VARCHAR),
+                    new SingleColumnType(ColumnType.LONG),
+                    16, 0.5f, 1
+            )) {
+                Utf8String withAscii = new Utf8String(new byte[]{'h', 'e', 'l', 'l', 'o'}, true);
+                Utf8String withoutAscii = new Utf8String(new byte[]{'h', 'e', 'l', 'l', 'o'}, false);
+
+                MapKey key1 = map.withKey();
+                key1.putVarchar(withAscii);
+                MapValue val1 = key1.createValue();
+                Assert.assertTrue(val1.isNew());
+                val1.putLong(0, 42);
+
+                MapKey key2 = map.withKey();
+                key2.putVarchar(withoutAscii);
+                MapValue val2 = key2.createValue();
+                Assert.assertFalse("same content with different ASCII flag must resolve to existing key", val2.isNew());
+                Assert.assertEquals(42, val2.getLong(0));
+
+                Assert.assertEquals(1, map.size());
             }
         });
     }
