@@ -267,7 +267,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
     /**
      * Sets up for cursor-based export: all columns materialized from a RecordCursor
-     * (no page frame backing).
+     * (no page frame backing). This is the fallback path used when the cursor-mode
+     * factory is not a {@link io.questdb.griffin.engine.table.VirtualRecordCursorFactory}
+     * (e.g. join factories, aggregation factories).
      */
     public void setUp(RecordMetadata metadata) {
         this.outputColumnCount = metadata.getColumnCount();
@@ -280,8 +282,12 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
 
         for (int i = 0; i < outputColumnCount; i++) {
             int columnType = metadata.getColumnType(i);
+            int parquetEncodingConfig = 0;
+            if (columnType == toExportColumnType(columnType)) {
+                parquetEncodingConfig = metadata.getColumnMetadata(i).getParquetEncodingConfig();
+            }
             baseColumnMap.setQuick(i, -1); // all computed in full mode
-            addComputedColumn(metadata, i, columnType);
+            addComputedColumn(metadata, i, columnType, parquetEncodingConfig);
         }
 
         buildComputedColumnIndices();
