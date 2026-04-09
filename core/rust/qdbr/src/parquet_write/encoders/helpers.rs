@@ -23,6 +23,7 @@
 //! emission. Plain encoders may lock per-partition since they have no shared
 //! state.
 
+use std::char::DecodeUtf16Error;
 use std::cmp;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -30,6 +31,23 @@ use std::sync::{Arc, Mutex};
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
+
+/// Decode a UTF-16 iterator and append the resulting UTF-8 bytes to `dest`.
+/// Returns the number of UTF-8 bytes written.
+pub fn write_utf8_from_utf16_iter(
+    dest: &mut Vec<u8>,
+    src: impl Iterator<Item = u16>,
+) -> Result<usize, DecodeUtf16Error> {
+    let start_count = dest.len();
+    for c in char::decode_utf16(src) {
+        let c = c?;
+        match c.len_utf8() {
+            1 => dest.push(c as u8),
+            _ => dest.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+        }
+    }
+    Ok(dest.len() - start_count)
+}
 
 /// Default cap on uncompressed data page size, mirroring the legacy
 /// `DEFAULT_PAGE_SIZE` constant in `file.rs` before the rework.

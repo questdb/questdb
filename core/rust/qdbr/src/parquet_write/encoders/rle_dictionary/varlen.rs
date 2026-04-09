@@ -14,7 +14,7 @@ use crate::parquet_write::util::{transmute_slice, BinaryMaxMinStats};
 
 use super::{
     build_dict_page, build_var_dict_data_page, lock_bloom_set, partition_chunk_slice,
-    ColumnChunkDictState, Repetition,
+    write_utf8_from_utf16_iter, ColumnChunkDictState, Repetition,
 };
 
 type ByteSliceIter<'a> = Box<dyn Iterator<Item = ParquetResult<Option<&'a [u8]>>> + 'a>;
@@ -30,14 +30,15 @@ pub fn encode_string(
 ) -> ParquetResult<Vec<Page>> {
     let num_partitions = columns.len();
     let mut dict_map: RapidHashMap<&[u16], u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<Vec<u8>> = Vec::new();
-    let mut total_keys_bytes = 0usize;
+    let mut dict_entries: Vec<&[u16]> = Vec::new();
+    let mut total_dict_bytes = 0usize;
     let mut state = ColumnChunkDictState::<BinaryMaxMinStats>::new(
         options
             .write_statistics
             .then(|| BinaryMaxMinStats::new(primitive_type)),
     );
 
+    // Pass 1: dedup and compute total dict buffer size.
     for (part_idx, column) in columns.iter().enumerate() {
         let chunk = partition_chunk_slice(
             part_idx,
@@ -70,15 +71,11 @@ pub fn encode_string(
                     let key = if let Some(&id) = dict_map.get(&utf16) {
                         id
                     } else {
-                        let utf8 = utf16_to_utf8_bytes(utf16)?;
-                        total_keys_bytes += 4 + utf8.len();
-                        if let Some(ref mut stats) = state.stats {
-                            stats.update(&utf8);
-                        }
+                        total_dict_bytes += 4 + utf16.len() * 2;
                         let id = u32::try_from(dict_entries.len())
                             .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
                         dict_map.insert(utf16, id);
-                        dict_entries.push(utf8);
+                        dict_entries.push(utf16);
                         id
                     };
                     state.push_optional_value(key);
@@ -90,15 +87,24 @@ pub fn encode_string(
         }
     }
 
-    let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
+    // Pass 2: fill the dict buffer at exact size and compute stats/bloom.
+    let mut dict_buffer = Vec::with_capacity(total_dict_bytes);
     {
         let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
         let mut bloom = bloom_guard.as_deref_mut();
-        for entry in &dict_entries {
-            dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
-            dict_buffer.extend_from_slice(entry);
+        for utf16 in &dict_entries {
+            let entry_start = dict_buffer.len();
+            dict_buffer.extend_from_slice(&(0u32).to_le_bytes());
+            let utf8_len = write_utf8_from_utf16_iter(&mut dict_buffer, utf16.iter().copied())
+                .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
+            let utf8_len_bytes = (utf8_len as u32).to_le_bytes();
+            dict_buffer[entry_start..(entry_start + 4)].copy_from_slice(&utf8_len_bytes);
+            let utf8_slice = &dict_buffer[entry_start + 4..entry_start + 4 + utf8_len];
             if let Some(ref mut h) = bloom {
-                h.insert(hash_byte(entry));
+                h.insert(hash_byte(utf8_slice));
+            }
+            if let Some(ref mut stats) = state.stats {
+                stats.update(utf8_slice);
             }
         }
     }
@@ -243,9 +249,6 @@ where
                         id
                     };
                     state.push_optional_value(key);
-                    if let Some(ref mut stats) = state.stats {
-                        stats.update(s);
-                    }
                 }
                 None => {
                     state.push_optional_null();
@@ -263,6 +266,9 @@ where
             dict_buffer.extend_from_slice(entry);
             if let Some(ref mut h) = bloom {
                 h.insert(hash_byte(entry));
+            }
+            if let Some(ref mut stats) = state.stats {
+                stats.update(entry);
             }
         }
     }
@@ -354,14 +360,4 @@ fn read_utf16(entry_tail: &[u8]) -> ParquetResult<Option<&[u16]>> {
         .get(..char_count)
         .ok_or_else(|| fmt_err!(Layout, "not enough bytes for string value"))?;
     Ok(Some(chars))
-}
-
-fn utf16_to_utf8_bytes(utf16: &[u16]) -> ParquetResult<Vec<u8>> {
-    let mut out = Vec::with_capacity(utf16.len());
-    for c in char::decode_utf16(utf16.iter().copied()) {
-        let c = c.map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
-        let mut buf = [0; 4];
-        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
-    }
-    Ok(out)
 }

@@ -8,7 +8,6 @@ use qdb_core::col_type::ColumnType;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
-use std::ops::Sub;
 use std::path::Path;
 use std::slice;
 

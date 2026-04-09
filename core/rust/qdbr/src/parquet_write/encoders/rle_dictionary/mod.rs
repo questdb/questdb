@@ -15,7 +15,9 @@ use parquet2::types::NativeType;
 use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::encoders::helpers::{lock_bloom_set, partition_chunk_slice};
+use crate::parquet_write::encoders::helpers::{
+    lock_bloom_set, partition_chunk_slice, write_utf8_from_utf16_iter,
+};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{

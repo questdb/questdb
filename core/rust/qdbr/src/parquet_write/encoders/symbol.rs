@@ -23,7 +23,6 @@
 //! across input partitions and emits one DataPage for the whole column chunk
 //! that re-uses those local-is-global keys.
 
-use std::char::DecodeUtf16Error;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -37,7 +36,7 @@ use parquet2::write::DynIter;
 
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
-    column_chunk_row_count, lock_bloom_set, partition_chunk_slice,
+    column_chunk_row_count, lock_bloom_set, partition_chunk_slice, write_utf8_from_utf16_iter,
 };
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
@@ -239,21 +238,6 @@ pub fn symbol_to_data_page_only(
     )?;
 
     Ok(Page::Data(data_page))
-}
-
-fn write_utf8_from_utf16_iter(
-    dest: &mut Vec<u8>,
-    src: impl Iterator<Item = u16>,
-) -> Result<usize, DecodeUtf16Error> {
-    let start_count = dest.len();
-    for c in char::decode_utf16(src) {
-        let c = c?;
-        match c.len_utf8() {
-            1 => dest.push(c as u8),
-            _ => dest.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
-        }
-    }
-    Ok(dest.len() - start_count)
 }
 
 const UTF16_LEN_SIZE: usize = 4;
