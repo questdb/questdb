@@ -9807,26 +9807,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private void guardAgainstFillWithKeyedGroupBy(QueryModel model, ArrayColumnTypes keyTypes) throws SqlException {
-        // locate fill
-        QueryModel curr = model;
-        while (curr != null && curr.getFillStride() == null) {
-            curr = curr.getNestedModel();
-        }
-
-        if (curr == null || curr.getFillStride() == null || curr.getFillValues() == null || curr.getFillValues().size() == 0) {
-            return;
-        }
-
-        if (curr.getFillValues().size() == 1 && isNoneKeyword(curr.getFillValues().getQuick(0).token)) {
-            return;
-        }
-
-        if (keyTypes.getColumnCount() == 1) {
-            return;
-        }
-
-        throw SqlException.$(0, "cannot use FILL with a keyed GROUP BY");
+    private void guardAgainstFillWithKeyedGroupBy(QueryModel model, ArrayColumnTypes keyTypes) {
+        // Keyed fill is now supported by the unified fill cursor.
+        // This method is kept as a no-op for call-site compatibility.
     }
 
     private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {
