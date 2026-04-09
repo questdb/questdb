@@ -2505,9 +2505,10 @@ mod tests {
     fn test_decode_int_column_v2_partial_decode() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let row_count = 100;
-        let row_group_size = 10;
-        let data_page_size = 5;
+        #[cfg(miri)]
+        let (row_count, row_group_size, data_page_size) = (30, 6, 3);
+        #[cfg(not(miri))]
+        let (row_count, row_group_size, data_page_size) = (100, 10, 5);
         let version = Version::V2;
         let expected_buff =
             create_col_data_buff::<i32, 4, _>(row_count, INT_NULL, |int| int.to_le_bytes());
@@ -2570,9 +2571,10 @@ mod tests {
     fn test_decode_boolean_column_v2_partial_decode() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let row_count = 100;
-        let row_group_size = 10;
-        let data_page_size = 5;
+        #[cfg(miri)]
+        let (row_count, row_group_size, data_page_size) = (30, 6, 3);
+        #[cfg(not(miri))]
+        let (row_count, row_group_size, data_page_size) = (100, 10, 5);
         let version = Version::V2;
         let expected_buff = create_col_data_buff_bool(row_count);
         let columns = vec![create_fix_column(
@@ -2628,9 +2630,10 @@ mod tests {
 
     #[test]
     fn test_decode_int_long_column_v2_nulls_multi_groups() {
-        let row_count = 10000;
-        let row_group_size = 1000;
-        let data_page_size = 1000;
+        #[cfg(miri)]
+        let (row_count, row_group_size, data_page_size) = (100, 10, 10);
+        #[cfg(not(miri))]
+        let (row_count, row_group_size, data_page_size) = (10000, 1000, 1000);
         let version = Version::V1;
         let array_type = encode_array_type(ColumnTypeTag::Double, 1).unwrap();
 
@@ -2720,9 +2723,10 @@ mod tests {
 
     #[test]
     fn test_decode_column_type2() {
-        let row_count = 10000;
-        let row_group_size = 1000;
-        let data_page_size = 1000;
+        #[cfg(miri)]
+        let (row_count, row_group_size, data_page_size) = (100, 10, 10);
+        #[cfg(not(miri))]
+        let (row_count, row_group_size, data_page_size) = (10000, 1000, 1000);
         let version = Version::V2;
 
         let expected_buffs: Vec<(ColumnBuffers, ColumnType)> = vec![
@@ -3026,26 +3030,55 @@ mod tests {
         random_bin
     }
 
+    struct TestDataPage {
+        header: DataPageHeader,
+        descriptor: Descriptor,
+        buffer: Vec<u8>,
+    }
+
+    impl TestDataPage {
+        fn as_page(&self) -> DataPage<'_> {
+            DataPage {
+                header: &self.header,
+                descriptor: &self.descriptor,
+                buffer: &self.buffer,
+            }
+        }
+    }
+
+    struct TestDictPage {
+        buffer: Vec<u8>,
+        num_values: usize,
+        is_sorted: bool,
+    }
+
+    impl TestDictPage {
+        fn as_page(&self) -> DictPage<'_> {
+            DictPage {
+                buffer: &self.buffer,
+                num_values: self.num_values,
+                is_sorted: self.is_sorted,
+            }
+        }
+    }
+
     fn make_required_page(
         primitive_type: PrimitiveType,
         encoding: Encoding,
         values: Vec<u8>,
         num_values: usize,
-    ) -> DataPage<'static> {
-        let header = Box::leak(Box::new(DataPageHeader::V1(DataPageHeaderV1 {
-            num_values: num_values as i32,
-            encoding: encoding.into(),
-            definition_level_encoding: Encoding::Rle.into(),
-            repetition_level_encoding: Encoding::Rle.into(),
-            statistics: None,
-        })));
-        let descriptor = Box::leak(Box::new(Descriptor {
-            primitive_type,
-            max_def_level: 0,
-            max_rep_level: 0,
-        }));
-        let buffer = Box::leak(values.into_boxed_slice());
-        DataPage { header, descriptor, buffer }
+    ) -> TestDataPage {
+        TestDataPage {
+            header: DataPageHeader::V1(DataPageHeaderV1 {
+                num_values: num_values as i32,
+                encoding: encoding.into(),
+                definition_level_encoding: Encoding::Rle.into(),
+                repetition_level_encoding: Encoding::Rle.into(),
+                statistics: None,
+            }),
+            descriptor: Descriptor { primitive_type, max_def_level: 0, max_rep_level: 0 },
+            buffer: values,
+        }
     }
 
     fn make_decimal_flba_type(len: usize, precision: usize, scale: usize) -> PrimitiveType {
@@ -3087,33 +3120,33 @@ mod tests {
         }
     }
 
-    fn make_dict_page_i32(values: &[i32]) -> DictPage<'static> {
+    fn make_dict_page_i32(values: &[i32]) -> TestDictPage {
         let mut buf = Vec::with_capacity(values.len() * 4);
         for v in values {
             buf.extend_from_slice(&v.to_le_bytes());
         }
-        DictPage {
-            buffer: Box::leak(buf.into_boxed_slice()),
+        TestDictPage {
+            buffer: buf,
             num_values: values.len(),
             is_sorted: false,
         }
     }
 
-    fn make_dict_page_fixed<const N: usize>(values: &[[u8; N]]) -> DictPage<'static> {
+    fn make_dict_page_fixed<const N: usize>(values: &[[u8; N]]) -> TestDictPage {
         let mut buf = Vec::with_capacity(values.len() * N);
         for value in values {
             buf.extend_from_slice(value);
         }
-        DictPage {
-            buffer: Box::leak(buf.into_boxed_slice()),
+        TestDictPage {
+            buffer: buf,
             num_values: values.len(),
             is_sorted: false,
         }
     }
 
-    fn make_dict_page_var(values: &[Vec<u8>]) -> DictPage<'static> {
-        DictPage {
-            buffer: Box::leak(encode_plain_byte_array(values).into_boxed_slice()),
+    fn make_dict_page_var(values: &[Vec<u8>]) -> TestDictPage {
+        TestDictPage {
+            buffer: encode_plain_byte_array(values),
             num_values: values.len(),
             is_sorted: false,
         }
@@ -3123,7 +3156,7 @@ mod tests {
         primitive_type: PrimitiveType,
         encoding: Encoding,
         indices: &[u32],
-    ) -> DataPage<'static> {
+    ) -> TestDataPage {
         let mut buf = Vec::new();
         let max_index = indices.iter().copied().max().unwrap_or(0);
         let bit_width = get_bit_width(max_index as i16);
@@ -3894,6 +3927,7 @@ mod tests {
             buffer,
             values.len(),
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -3935,6 +3969,7 @@ mod tests {
             buffer,
             values.len(),
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -3984,6 +4019,7 @@ mod tests {
             buffer,
             1,
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -4017,6 +4053,7 @@ mod tests {
             ], // +2
         ];
         let dict_page = make_dict_page_fixed(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_decimal_flba_type(src_len, 10, 2);
 
@@ -4027,6 +4064,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
@@ -4065,6 +4103,7 @@ mod tests {
             ], // +2
         ];
         let dict_page = make_dict_page_fixed(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_decimal_flba_type(src_len, 10, 2);
         let rows_filter = vec![1i64, 3];
@@ -4081,6 +4120,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
@@ -4125,6 +4165,7 @@ mod tests {
             encode_plain_byte_array(&values),
             values.len(),
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -4155,6 +4196,7 @@ mod tests {
             vec![0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF6], // -10
         ];
         let dict_page = make_dict_page_var(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 3, 0];
         let primitive_type = make_decimal_ba_type(10, 2);
         let rows_filter = vec![1i64, 3];
@@ -4171,6 +4213,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnType::new(ColumnTypeTag::Decimal64, 0),
@@ -4207,6 +4250,7 @@ mod tests {
             encode_plain_byte_array(&values),
             values.len(),
         );
+        let page = page.as_page();
 
         let mut bufs = ColumnChunkBuffers::new(allocator);
         let col_info = QdbMetaCol {
@@ -4244,6 +4288,7 @@ mod tests {
             encode_plain_byte_array(&values),
             values.len(),
         );
+        let page = page.as_page();
 
         for (tag, target_size) in decimal_target_cases() {
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
@@ -4279,6 +4324,7 @@ mod tests {
             vec![0x00],                         // 0
         ];
         let dict_page = make_dict_page_var(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 3, 4, 5, 6, 1];
         let rows_filter = vec![1i64, 3, 5, 6];
         let primitive_type = make_decimal_ba_type(20, 4);
@@ -4294,6 +4340,7 @@ mod tests {
 
             for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
                 let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+                let page = page.as_page();
                 let mut bufs = ColumnChunkBuffers::new(allocator.clone());
                 let col_info = QdbMetaCol {
                     column_type: ColumnType::new(tag, 0),
@@ -4328,6 +4375,7 @@ mod tests {
 
         let dict_values = [10, -20, 30];
         let dict_page = make_dict_page_i32(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_int32_type();
 
@@ -4350,6 +4398,7 @@ mod tests {
 
             for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
                 let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+                let page = page.as_page();
                 let mut bufs = ColumnChunkBuffers::new(allocator.clone());
                 let col_info = QdbMetaCol {
                     column_type: ColumnType::new(tag, 0),
@@ -4378,6 +4427,7 @@ mod tests {
 
         let dict_values = [10, -20, 30];
         let dict_page = make_dict_page_i32(&dict_values);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_int32_type();
         let rows_filter = vec![1i64, 3];
@@ -4402,6 +4452,7 @@ mod tests {
 
             for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
                 let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+                let page = page.as_page();
                 let mut bufs = ColumnChunkBuffers::new(allocator.clone());
                 let col_info = QdbMetaCol {
                     column_type: ColumnType::new(tag, 0),
@@ -4451,6 +4502,7 @@ mod tests {
 
         let dict_days = [100i32, 200, 365];
         let dict_page = make_dict_page_i32(&dict_days);
+        let dict_page = dict_page.as_page();
 
         let indices = [0u32, 1, 2, 1, 0, 2];
         let primitive_type = make_date_type();
@@ -4464,6 +4516,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnTypeTag::Date.into_type(),
@@ -4500,6 +4553,7 @@ mod tests {
 
         let dict_days = [10i32, 50, 100];
         let dict_page = make_dict_page_i32(&dict_days);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_date_type();
         let rows_filter = vec![1i64, 3]; // Select rows 1 and 3
@@ -4513,6 +4567,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnTypeTag::Date.into_type(),
@@ -4553,6 +4608,7 @@ mod tests {
 
         let dict_days = [7i32, 30, 365];
         let dict_page = make_dict_page_i32(&dict_days);
+        let dict_page = dict_page.as_page();
         let indices = [0u32, 1, 2, 1, 0];
         let primitive_type = make_date_type();
         let rows_filter = vec![0i64, 2, 4]; // Select rows 0, 2, 4
@@ -4569,6 +4625,7 @@ mod tests {
 
         for encoding in [Encoding::RleDictionary, Encoding::PlainDictionary] {
             let page = make_dict_data_page(primitive_type.clone(), encoding, &indices);
+            let page = page.as_page();
             let mut bufs = ColumnChunkBuffers::new(allocator.clone());
             let col_info = QdbMetaCol {
                 column_type: ColumnTypeTag::Date.into_type(),

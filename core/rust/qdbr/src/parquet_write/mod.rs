@@ -195,8 +195,12 @@ mod tests {
     #[test]
     fn test_write_parquet_2m_rows() {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        #[cfg(miri)]
+        let row_count = 1_024;
+        #[cfg(not(miri))]
         let row_count = 1_000_000;
         let fix_col_count = 3;
+        let column_names = ["col0", "col1", "col2"];
 
         let buffers: Vec<Vec<i32>> = (0..fix_col_count)
             .map(|_| (0..row_count).collect())
@@ -206,11 +210,9 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, buffer)| {
-                let column_name = format!("col{}", i);
-                let name: &'static str = Box::leak(column_name.into_boxed_str());
                 Column::from_raw_data(
                     i as i32,
-                    name,
+                    column_names[i],
                     ColumnTypeTag::Int.into_type().code(),
                     0,
                     row_count as usize,
