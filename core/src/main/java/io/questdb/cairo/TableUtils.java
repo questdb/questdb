@@ -1690,9 +1690,10 @@ public final class TableUtils {
      * @param configuration       Cairo configuration for parquet encoder options
      * @param bloomFilterColumns  Comma-separated column names for bloom filters, or null
      * @param bloomFilterFpp      Bloom filter false-positive probability, or NaN for default
-     * @param bloomFilterIndexes  Reusable DirectIntList for bloom filter column indexes. Must be non-null when
-     *                            bloomFilterColumns is set. Callers should keep a single instance and pass it
-     *                            on every call to avoid per-invocation allocation.
+     * @param bloomFilterIndexes  Reusable DirectIntList for bloom filter column indexes. Must be non-null;
+     *                            callers should keep a single instance and pass it on every call to avoid
+     *                            per-invocation allocation. The function clears it on entry and leaves the
+     *                            allocation for the caller to free.
      * @return The length of the produced Parquet file
      */
     public static long produceParquetFromNative(
@@ -1873,48 +1874,44 @@ public final class TableUtils {
                 int bloomFilterColumnCount = 0;
                 double fpp = Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
-                try {
-                    bloomFilterIndexes.reopen();
-                    if (useMetadataBloomFilters) {
-                        // Derive bloom filter columns from per-column metadata flags
-                        int metaDescriptorIndex = 0;
-                        for (int i = 0; i < columnCount; i++) {
-                            final int colType = metadata.getColumnType(i);
-                            if (colType <= 0) {
-                                continue;
-                            }
-                            if (TableUtils.isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
-                                bloomFilterIndexes.add(metaDescriptorIndex);
-                            }
-                            metaDescriptorIndex++;
+                bloomFilterIndexes.clear();
+                if (useMetadataBloomFilters) {
+                    // Derive bloom filter columns from per-column metadata flags
+                    int metaDescriptorIndex = 0;
+                    for (int i = 0; i < columnCount; i++) {
+                        final int colType = metadata.getColumnType(i);
+                        if (colType <= 0) {
+                            continue;
                         }
-                    } else {
-                        // Explicit bloom_filter_columns override from CONVERT PARTITION WITH clause
-                        parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);
+                        if (TableUtils.isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
+                            bloomFilterIndexes.add(metaDescriptorIndex);
+                        }
+                        metaDescriptorIndex++;
                     }
-                    if (bloomFilterIndexes.size() > 0) {
-                        bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
-                        bloomFilterColumnCount = (int) bloomFilterIndexes.size();
-                    }
-
-                    PartitionEncoder.encodeWithOptions(
-                            partitionDescriptor,
-                            other,
-                            ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                            statisticsEnabled,
-                            rawArrayEncoding,
-                            rowGroupSize,
-                            dataPageSize,
-                            parquetVersion,
-                            bloomFilterColumnIndexesPtr,
-                            bloomFilterColumnCount,
-                            fpp,
-                            minCompressionRatio,
-                            squashTracker
-                    );
-                } finally {
-                    Misc.free(bloomFilterIndexes);
+                } else {
+                    // Explicit bloom_filter_columns override from CONVERT PARTITION WITH clause
+                    parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);
                 }
+                if (bloomFilterIndexes.size() > 0) {
+                    bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
+                    bloomFilterColumnCount = (int) bloomFilterIndexes.size();
+                }
+
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        other,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rawArrayEncoding,
+                        rowGroupSize,
+                        dataPageSize,
+                        parquetVersion,
+                        bloomFilterColumnIndexesPtr,
+                        bloomFilterColumnCount,
+                        fpp,
+                        minCompressionRatio,
+                        squashTracker
+                );
                 return ff.length(other.$());
             }
         } catch (CairoException e) {
