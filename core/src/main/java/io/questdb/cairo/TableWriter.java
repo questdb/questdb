@@ -2340,7 +2340,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
 
-        if (txWriter.isPartitionParquetGenerated(partitionIndex) || txWriter.isPartitionParquet(partitionIndex)) {
+        if (txWriter.isPartitionParquet(partitionIndex)) {
+            // Already fully switched to parquet format — nothing to do.
             return true;
         }
 
@@ -2350,6 +2351,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.concat(PARQUET_PARTITION_NAME);
             if (!ff.exists(path.$())) {
                 return false;
+            }
+            // When parquetGenerated is already set, allow re-marking with a potentially
+            // updated file size. This supports the storage-policy recovery path where a
+            // stale parquet was removed and regenerated with different contents. Skip the
+            // commit if the flag and size are both already up to date.
+            if (txWriter.isPartitionParquetGenerated(partitionIndex)
+                    && txWriter.getPartitionParquetFileSize(partitionIndex) == parquetFileSize) {
+                return true;
             }
             txWriter.setPartitionParquetGenerated(partitionIndex, parquetFileSize);
             txWriter.bumpPartitionTableVersion();

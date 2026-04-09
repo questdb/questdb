@@ -53,6 +53,8 @@ import org.junit.Test;
 import java.io.File;
 
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
+import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
+import static io.questdb.tasks.TableWriterTask.getCommandName;
 
 public class TableUtilsTest extends AbstractTest {
     private final static FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
@@ -232,7 +234,7 @@ public class TableUtilsTest extends AbstractTest {
         // Internal background job reasons are NOT unsolicited
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_WRITE_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_RESUME_REASON));
-        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.SP_TABLE_WRITE_REASON));
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_STORAGE_POLICY)));
 
         // Any other reason IS unsolicited
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("ALTER TABLE"));

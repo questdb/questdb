@@ -90,6 +90,8 @@ import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
+import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
+import static io.questdb.tasks.TableWriterTask.getCommandName;
 
 public final class TableUtils {
     public static final int ANY_TABLE_VERSION = -1;
@@ -136,7 +138,6 @@ public final class TableUtils {
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
-    public static final String SP_TABLE_WRITE_REASON = "Storage Policy";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
@@ -1121,7 +1122,7 @@ public final class TableUtils {
         return lockReason != NO_LOCK_REASON
                 && !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
                 && !WAL_2_TABLE_RESUME_REASON.equals(lockReason)
-                && !SP_TABLE_WRITE_REASON.equals(lockReason);
+                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
@@ -1615,10 +1616,6 @@ public final class TableUtils {
      * Both compression and level use +1 encoding so that 0 can serve as a "not set" sentinel
      * while still allowing the user to specify level 0 (e.g., gzip store mode).
      */
-    public static int packParquetConfig(int encoding, int compression, int level) {
-        return packParquetConfig(encoding, compression, level, false);
-    }
-
     public static int packParquetConfig(int encoding, int compression, int level, boolean bloomFilter) {
         int config = (encoding & PARQUET_CONFIG_ENCODING_MASK)
                 | ((compression & PARQUET_CONFIG_COMPRESSION_MASK) << PARQUET_CONFIG_COMPRESSION_SHIFT)
