@@ -1726,8 +1726,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && writeSymbolAsString.get(masterColIndex)
                     && writeSymbolAsString.get(slaveColIndex)) {
                 // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
-                writeSymbolAsString.unset(masterColIndex);
-                writeSymbolAsString.unset(slaveColIndex);
                 keyTypes.set(k, ColumnType.INT);
                 if (masterSymbolKeyCols == null) {
                     masterSymbolKeyCols = new IntList();
@@ -1738,6 +1736,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         if (masterSymbolKeyCols != null) {
+            // Unset writeSymbolAsString AFTER the loop to avoid cross-column
+            // collisions when master and slave column indices overlap
+            for (int i = 0, n = masterSymbolKeyCols.size(); i < n; i++) {
+                writeSymbolAsString.unset(masterSymbolKeyCols.getQuick(i));
+                writeSymbolAsString.unset(slaveSymbolKeyCols.getQuick(i));
+            }
             return new int[][]{masterSymbolKeyCols.toArray(), slaveSymbolKeyCols.toArray()};
         }
         return null;
@@ -1889,8 +1893,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
          */
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
+        final int[][] symbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
         final RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
         final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
+        final int[] masterSymbolKeyCols = symbolKeyIndices != null ? symbolKeyIndices[0] : null;
+        final int[] slaveSymbolKeyCols = symbolKeyIndices != null ? symbolKeyIndices[1] : null;
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
             valueTypes.clear();
@@ -1910,7 +1917,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterKeyCopier,
                         slaveKeyCopier,
                         masterMetadata.getColumnCount(),
-                        context
+                        context,
+                        masterSymbolKeyCols,
+                        slaveSymbolKeyCols
                 );
             }
 
@@ -1930,7 +1939,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterMetadata.getColumnCount(),
                         filter,
                         context,
-                        joinType
+                        joinType,
+                        masterSymbolKeyCols,
+                        slaveSymbolKeyCols
                 );
             }
 
@@ -1945,7 +1956,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveKeyCopier,
                     masterMetadata.getColumnCount(),
                     context,
-                    joinType
+                    joinType,
+                    masterSymbolKeyCols,
+                    slaveSymbolKeyCols
             );
         }
 
@@ -1972,7 +1985,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveKeyCopier,
                     slaveSink,
                     masterMetadata.getColumnCount(),
-                    context
+                    context,
+                    masterSymbolKeyCols,
+                    slaveSymbolKeyCols
             );
         }
 
@@ -1990,7 +2005,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterMetadata.getColumnCount(),
                     filter,
                     context,
-                    joinType
+                    joinType,
+                    masterSymbolKeyCols,
+                    slaveSymbolKeyCols
             );
         }
 
@@ -2006,7 +2023,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slaveSink,
                 masterMetadata.getColumnCount(),
                 context,
-                joinType
+                joinType,
+                masterSymbolKeyCols,
+                slaveSymbolKeyCols
         );
     }
 

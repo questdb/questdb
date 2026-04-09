@@ -5828,6 +5828,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             SelectedRecord
                                 Hash Left Outer Join Light
                                   condition: b.sym=a.sym
+                                  symbolKeyJoin: true
                                     SelectedRecord
                                         Encode sort light
                                           keys: [ts1]
