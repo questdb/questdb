@@ -206,7 +206,11 @@ impl<'a> FileHeader<'a> {
             None
         };
 
-        Ok(Self { raw, data, bloom_filter_columns })
+        Ok(Self {
+            raw,
+            data,
+            bloom_filter_columns,
+        })
     }
 
     /// Minimum byte size required for the header with the given column counts
@@ -269,8 +273,14 @@ impl<'a> FileHeader<'a> {
         }
     }
 
+    /// Returns the effective sorting column count. When SORTING_IS_DTS_ASC is
+    /// set, this returns 1 even though the on-disk count is 0.
     pub fn sorting_column_count(&self) -> u32 {
-        self.raw.sorting_column_count
+        if self.raw.feature_flags.has_sorting_is_dts_asc() {
+            1
+        } else {
+            self.raw.sorting_column_count
+        }
     }
 
     pub fn column_count(&self) -> u32 {
@@ -346,8 +356,19 @@ impl<'a> FileHeader<'a> {
         unsafe { std::slice::from_raw_parts(ptr, self.raw.sorting_column_count as usize) }
     }
 
-    /// Returns the sorting column index at position `index`.
+    /// Returns the effective sorting column index at position `index`.
+    /// When SORTING_IS_DTS_ASC is set, index 0 returns the designated timestamp.
     pub fn sorting_column(&self, index: usize) -> ParquetResult<u32> {
+        if self.raw.feature_flags.has_sorting_is_dts_asc() {
+            if index == 0 {
+                return Ok(self.raw.designated_timestamp as u32);
+            }
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "sorting column index {} out of range [0, 1)",
+                index
+            ));
+        }
         let cols = self.sorting_columns();
         if index >= cols.len() {
             return Err(parquet_meta_err!(
@@ -488,11 +509,24 @@ impl FileHeaderBuilder {
         self
     }
 
+    /// Returns true when sorting can be encoded as the SORTING_IS_DTS_ASC flag
+    /// instead of writing explicit sorting column entries.
+    fn can_use_sorting_is_dts_asc(&self) -> bool {
+        let dts = self.designated_timestamp;
+        if dts < 0 {
+            return false;
+        }
+        let dts_idx = dts as usize;
+        self.sorting_columns.len() == 1
+            && self.sorting_columns[0] == dts_idx as u32
+            && !self.columns[dts_idx].flags.is_descending()
+    }
+
     /// Serializes the header into `buf`. Returns the byte offset past the end
     /// of the header.
     pub fn write_to(&self, buf: &mut Vec<u8>) -> usize {
         let column_count = self.columns.len() as u32;
-        let sorting_count = self.sorting_columns.len() as u32;
+        let use_dts_asc = self.can_use_sorting_is_dts_asc();
 
         // Compute feature flags.
         let mut flags = HeaderFeatureFlags::new();
@@ -501,6 +535,13 @@ impl FileHeaderBuilder {
             if self.bloom_filters_external {
                 flags = flags.with_bloom_filters_external();
             }
+        }
+        let sorting_count;
+        if use_dts_asc {
+            flags = flags.with_sorting_is_dts_asc();
+            sorting_count = 0u32;
+        } else {
+            sorting_count = self.sorting_columns.len() as u32;
         }
 
         // Fixed header fields (24 bytes, field-by-field for alignment safety).
@@ -515,9 +556,11 @@ impl FileHeaderBuilder {
         let descriptors_bytes = self.columns.len() * COLUMN_DESCRIPTOR_SIZE;
         buf.resize(buf.len() + descriptors_bytes, 0);
 
-        // Sorting columns.
-        for &idx in &self.sorting_columns {
-            buf.extend_from_slice(&idx.to_le_bytes());
+        // Sorting columns (omitted when SORTING_IS_DTS_ASC is set).
+        if !use_dts_asc {
+            for &idx in &self.sorting_columns {
+                buf.extend_from_slice(&idx.to_le_bytes());
+            }
         }
 
         // Name strings area: each name is [utf8 bytes].
@@ -779,9 +822,9 @@ mod tests {
         let mut buf = Vec::new();
         builder.write_to(&mut buf);
 
-        // Set unknown optional flag bits (bits 2-31). Bits 0-1 are now defined
-        // (bloom filters), so we skip them to avoid bit-dependency validation.
-        let flags_with_unknown = 0x0000_0000_FFFF_FFFCu64;
+        // Set unknown optional flag bits (bits 3-31). Bits 0-2 are now defined
+        // (bloom filters + sorting_is_dts_asc), so we skip them.
+        let flags_with_unknown = 0x0000_0000_FFFF_FFF8u64;
         buf[4..12].copy_from_slice(&flags_with_unknown.to_le_bytes());
 
         // Reader should accept the file (ignores unknown optional flags).
@@ -917,5 +960,124 @@ mod tests {
         let hdr = FileHeader::new(&buf).unwrap();
         assert!(!hdr.feature_flags().has_bloom_filters());
         assert_eq!(hdr.bloom_filter_column_count(), 0);
+    }
+
+    // ── SORTING_IS_DTS_ASC tests ─────────────────────────────────────
+
+    #[test]
+    fn sorting_is_dts_asc_applied() {
+        // dts=0, single sorting column [0], not descending → flag set.
+        let mut builder = FileHeaderBuilder::new(0);
+        builder.add_column(
+            "ts",
+            0,
+            8,
+            ColumnFlags::new().with_repetition(FieldRepetition::Required),
+            0,
+            0,
+            0,
+            0,
+        );
+        builder.add_column("val", 1, 10, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_sorting_column(0);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(hdr.feature_flags().has_sorting_is_dts_asc());
+        // On-disk sorting_column_count is 0, but effective is 1.
+        assert_eq!(hdr.raw.sorting_column_count, 0);
+        assert_eq!(hdr.sorting_column_count(), 1);
+        assert_eq!(hdr.sorting_column(0).unwrap(), 0);
+        assert!(hdr.sorting_column(1).is_err());
+    }
+
+    #[test]
+    fn sorting_is_dts_asc_not_applied_no_dts() {
+        // dts=-1 → flag NOT set, sorting stored normally.
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_sorting_column(0);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(!hdr.feature_flags().has_sorting_is_dts_asc());
+        assert_eq!(hdr.sorting_column_count(), 1);
+        assert_eq!(hdr.sorting_column(0).unwrap(), 0);
+    }
+
+    #[test]
+    fn sorting_is_dts_asc_not_applied_multiple_sorting_cols() {
+        // dts=0, sorting=[0,1] → flag NOT set.
+        let mut builder = FileHeaderBuilder::new(0);
+        builder.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("key", 1, 12, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_sorting_column(0);
+        builder.add_sorting_column(1);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(!hdr.feature_flags().has_sorting_is_dts_asc());
+        assert_eq!(hdr.sorting_column_count(), 2);
+        assert_eq!(hdr.sorting_column(0).unwrap(), 0);
+        assert_eq!(hdr.sorting_column(1).unwrap(), 1);
+    }
+
+    #[test]
+    fn sorting_is_dts_asc_not_applied_sorting_ne_dts() {
+        // dts=0, sorting=[1] → flag NOT set.
+        let mut builder = FileHeaderBuilder::new(0);
+        builder.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_column("key", 1, 12, ColumnFlags::new(), 0, 0, 0, 0);
+        builder.add_sorting_column(1);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(!hdr.feature_flags().has_sorting_is_dts_asc());
+        assert_eq!(hdr.sorting_column_count(), 1);
+        assert_eq!(hdr.sorting_column(0).unwrap(), 1);
+    }
+
+    #[test]
+    fn sorting_is_dts_asc_not_applied_descending() {
+        // dts=0, sorting=[0] but DESCENDING → flag NOT set.
+        let mut builder = FileHeaderBuilder::new(0);
+        builder.add_column("ts", 0, 8, ColumnFlags::new().with_descending(), 0, 0, 0, 0);
+        builder.add_sorting_column(0);
+
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        let hdr = FileHeader::new(&buf).unwrap();
+        assert!(!hdr.feature_flags().has_sorting_is_dts_asc());
+        assert_eq!(hdr.sorting_column_count(), 1);
+        assert_eq!(hdr.sorting_column(0).unwrap(), 0);
+    }
+
+    #[test]
+    fn sorting_is_dts_asc_saves_4_bytes() {
+        // Same file with and without the optimization — 4 byte difference.
+        let mut with_opt = FileHeaderBuilder::new(0);
+        with_opt.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        with_opt.add_sorting_column(0);
+        let mut buf_with = Vec::new();
+        with_opt.write_to(&mut buf_with);
+
+        // Build the same file but force no optimization by using dts=-1
+        // (sorting column still at index 0, but not matching dts).
+        let mut without_opt = FileHeaderBuilder::new(-1);
+        without_opt.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        without_opt.add_sorting_column(0);
+        let mut buf_without = Vec::new();
+        without_opt.write_to(&mut buf_without);
+
+        assert_eq!(buf_with.len() + 4, buf_without.len());
     }
 }

@@ -95,11 +95,28 @@ fn run_dump(path: &Path, file_size: u64, reader: &ParquetMetaReader) {
         Some(idx) => println!("Designated timestamp: column {}", idx),
         None => println!("Designated timestamp: none"),
     }
+    let flags = reader.feature_flags();
+    if flags.0 != 0 {
+        print!("Feature flags: 0x{:016x}", flags.0);
+        if flags.has_bloom_filters() {
+            print!(" [BLOOM_FILTERS]");
+        }
+        if flags.has_bloom_filters_external() {
+            print!(" [BLOOM_FILTERS_EXTERNAL]");
+        }
+        if flags.has_sorting_is_dts_asc() {
+            print!(" [SORTING_IS_DTS_ASC]");
+        }
+        println!();
+    }
     println!("Sorting columns: {}", reader.sorting_column_count());
     for i in 0..reader.sorting_column_count() as usize {
         if let Ok(col_idx) = reader.sorting_column(i) {
             println!("  [{}] column {}", i, col_idx);
         }
+    }
+    if flags.has_sorting_is_dts_asc() {
+        println!("  (implied by SORTING_IS_DTS_ASC flag)");
     }
     println!();
 

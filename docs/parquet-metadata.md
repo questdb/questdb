@@ -132,8 +132,11 @@ The header contains a single `feature_flags` field (`u64`) reserved for future f
 | --- | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0   | BLOOM_FILTERS          | none       | `4 + bloom_col_count * 4` bytes: `[u32 bloom_col_count][u32; bloom_col_count]` column indices (sorted ascending, unique) | `row_group_count * bloom_col_count * 4` bytes: inlined offsets (`>>3`) into `_pm`; `0` = absent                                                |
 | 1   | BLOOM_FILTERS_EXTERNAL | bit 0      | none (shares bit 0 header section)                                                                                       | entry width grows from 4 to 16 bytes: `[(u64 offset, u64 length); row_group_count * bloom_col_count]` into the parquet file; `(0, 0)` = absent |
+| 2   | SORTING_IS_DTS_ASC     | none       | none                                                                                                                     | none                                                                                                                                           |
 
 Bit 0 is only set when at least one column has a bloom filter. Bit 1 cannot be set without bit 0; the reader rejects the file otherwise. Feature sections are ordered by bit position.
+
+Bit 2 indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The on-disk `SORTING_COLUMN_COUNT` is 0 and the SORTING_COLUMNS section is absent, but readers treat the partition as sorted by `[DESIGNATED_TIMESTAMP]` ascending. The designated timestamp column's DESCENDING flag must not be set. This flag is only valid when `DESIGNATED_TIMESTAMP >= 0`; writers must not set it when `DESIGNATED_TIMESTAMP` is -1.
 
 QuestDB-managed parquet snapshots represented by `_pm` always normalize `column_top` to `0`. Null prefixes are materialized directly into parquet chunks/pages, and `_pm` pruning relies on per-chunk `NULL_COUNT` rather than file-level `column_top` metadata.
 

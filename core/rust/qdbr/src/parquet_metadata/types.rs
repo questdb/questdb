@@ -83,6 +83,12 @@ impl HeaderFeatureFlags {
     /// than inlined in `_pm`. Only meaningful when `BLOOM_FILTERS_BIT` is set.
     pub const BLOOM_FILTERS_EXTERNAL_BIT: u64 = 1 << 1;
 
+    /// Sorting order is implicitly [designated_timestamp] ascending.
+    /// When set, on-disk `SORTING_COLUMN_COUNT` is 0 and the sorting columns
+    /// section is absent, but readers treat the partition as sorted by
+    /// `[DESIGNATED_TIMESTAMP]` ascending. Only valid when `DESIGNATED_TIMESTAMP >= 0`.
+    pub const SORTING_IS_DTS_ASC_BIT: u64 = 1 << 2;
+
     pub const fn new() -> Self {
         Self(0)
     }
@@ -111,6 +117,14 @@ impl HeaderFeatureFlags {
 
     pub const fn with_bloom_filters_external(self) -> Self {
         Self(self.0 | Self::BLOOM_FILTERS_EXTERNAL_BIT)
+    }
+
+    pub const fn has_sorting_is_dts_asc(self) -> bool {
+        self.0 & Self::SORTING_IS_DTS_ASC_BIT != 0
+    }
+
+    pub const fn with_sorting_is_dts_asc(self) -> Self {
+        Self(self.0 | Self::SORTING_IS_DTS_ASC_BIT)
     }
 
     /// Validates bit dependencies: bit 1 (external) requires bit 0 (bloom filters).
