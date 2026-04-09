@@ -1445,6 +1445,11 @@ public class CopyExportTest extends AbstractCairoTest {
                                 0,
                                 1
                         );
+                        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
+                                parquetPath,
+                                configuration.getFilesFacade(),
+                                3
+                        );
                     });
 
             testCopyExport(stmt, test);

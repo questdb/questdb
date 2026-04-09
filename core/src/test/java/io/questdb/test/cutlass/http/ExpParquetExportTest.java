@@ -1631,6 +1631,11 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 0,
                                 1
                         );
+                        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
+                                root + "/export/" + filename,
+                                engine.getConfiguration().getFilesFacade(),
+                                3
+                        );
                     }
                 });
     }
