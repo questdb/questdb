@@ -95,8 +95,6 @@ import io.questdb.griffin.engine.ops.InsertAsSelectOperationImpl;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.engine.table.parquet.ParquetCompression;
-import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -1607,78 +1605,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        // Syntax: ALTER TABLE t ALTER COLUMN c SET PARQUET(encoding [, compression[(level)]])
-        int encoding;
-        int compression = -1;
-        int level = -1;
-
-        CharSequence tok = expectToken(lexer, "'('");
-        if (!Chars.equals(tok, '(')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
-        }
-
         int columnType = tableMetadata.getColumnType(columnIndex);
+        int parquetEncodingConfig = SqlUtil.parseParquetConfig(lexer, columnType);
 
-        tok = expectToken(lexer, "encoding name");
-        int encodingPos = lexer.lastTokenPosition();
-        encoding = ParquetEncoding.getEncoding(tok);
-        if (encoding < 0) {
-            SqlException e = SqlException.$(encodingPos, "invalid parquet encoding '").put(tok).put("', supported values: ");
-            ParquetEncoding.addValidEncodingNamesForType(e, columnType);
-            throw e;
-        }
-        if (encoding != ParquetEncoding.ENCODING_DEFAULT && !ParquetEncoding.isValidForColumnType(encoding, columnType)) {
-            SqlException e = SqlException.$(encodingPos, "encoding '").put(tok).put("' is not valid for column type ").put(ColumnType.nameOf(columnType))
-                    .put(", supported encodings for this type: ");
-            ParquetEncoding.addValidEncodingNamesForType(e, columnType);
-            throw e;
-        }
-
-        tok = expectToken(lexer, "',' or ')'");
-        if (Chars.equals(tok, ',')) {
-            tok = expectToken(lexer, "compression codec name");
-            int codecPos = lexer.lastTokenPosition();
-            compression = ParquetCompression.getCompressionCodec(tok);
-            if (compression < 0) {
-                SqlException e = SqlException.$(codecPos, "invalid parquet compression codec '").put(tok).put("', supported values: ");
-                ParquetCompression.addCodecNamesToException(e);
-                throw e;
-            }
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && Chars.equals(tok, '(')) {
-                tok = expectToken(lexer, "compression level");
-                int levelPos = lexer.lastTokenPosition();
-                try {
-                    level = Numbers.parseInt(tok);
-                    ParquetCompression.validateCompressionLevel(compression, level, levelPos);
-                } catch (NumericException e) {
-                    throw SqlException.$(levelPos, "compression level must be a number");
-                }
-                tok = expectToken(lexer, "')'");
-                if (!Chars.equals(tok, ')')) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
-                }
-                tok = SqlUtil.fetchNext(lexer);
-            }
-        }
-
-        if (tok == null || !Chars.equals(tok, ')')) {
-            throw SqlException.$(lexer.lastTokenPosition(), "')' expected");
-        }
-
-        tok = SqlUtil.fetchNext(lexer);
+        CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
         }
 
-        // In packed form, compression is shifted +1 (0=default, 1=uncompressed, 2=snappy, etc.)
-        // to distinguish "not set" from "explicitly uncompressed".
-        int packedCompression = compression >= 0 ? compression + 1 : 0;
-        // Level is also shifted +1 (0=not set, 1=level 0, 2=level 1, etc.)
-        int packedLevel = level >= 0 ? level + 1 : 0;
-        int parquetEncodingConfig = encoding == ParquetEncoding.ENCODING_DEFAULT && packedCompression == 0
-                ? 0
-                : TableUtils.packParquetConfig(encoding, packedCompression, packedLevel);
         alterOperationBuilder.ofSetParquetEncoding(
                 tableNamePosition,
                 tableToken,
