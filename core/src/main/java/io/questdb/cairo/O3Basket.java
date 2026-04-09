@@ -105,6 +105,7 @@ public class O3Basket implements Mutable {
             }
         } else {
             for (int i = indexCount; i < this.indexCount; i++) {
+                Misc.free(indexers.getQuick(i));
                 indexers.setQuick(i, null);
             }
             indexers.setPos(indexCount);

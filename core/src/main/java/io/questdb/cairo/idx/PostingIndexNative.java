@@ -88,7 +88,11 @@ public final class PostingIndexNative {
      */
     public static void unpackValuesFrom(long srcAddr, int startIndex, int valueCount,
                                         int bitWidth, long minValue, long destAddr) {
-        unpackValuesFrom0(srcAddr, startIndex, valueCount, bitWidth, minValue, destAddr);
+        if (NATIVE_AVAILABLE) {
+            unpackValuesFrom0(srcAddr, startIndex, valueCount, bitWidth, minValue, destAddr);
+        } else {
+            throw new UnsupportedOperationException("native library not available for unpackValuesFrom");
+        }
     }
 
     private static native void packValues0(long valuesAddr, int count, long minValue,

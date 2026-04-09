@@ -894,9 +894,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // PageFrameAddressCache can hold addresses from multiple frames
         // simultaneously (vectorized GROUP BY collects all frames before processing).
         private final LongList allocatedBuffers = new LongList();
+        private final DirectBinarySequence columnBin = new DirectBinarySequence();
         private final IntList columnIndexes;
         private final ColumnMapping columnMapping = new ColumnMapping();
         private final int[] columnSizeBytes;
+        private final io.questdb.std.str.DirectString columnStrA = new io.questdb.std.str.DirectString();
         private final int[] columnTypeTags;
         private final CoveringPageFrame frame;
         // Reusable per-frame arrays (avoid per-frame heap allocation)
@@ -1308,10 +1310,33 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         Unsafe.getUnsafe().putLong(addr + off256 + 16, mem.getLong(rowId * 32 + 16));
                         Unsafe.getUnsafe().putLong(addr + off256 + 24, mem.getLong(rowId * 32 + 24));
                     }
-                    case ColumnType.VARCHAR ->
-                            writeVarcharToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, null);
-                    case ColumnType.STRING ->
-                            writeStringToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, null);
+                    case ColumnType.VARCHAR -> {
+                        int primaryIdx = TableReader.getPrimaryColumnIndex(colBase, readerCol);
+                        MemoryCR dataMem = tableReader.getColumn(primaryIdx);
+                        MemoryCR auxMem = tableReader.getColumn(primaryIdx + 1);
+                        Utf8Sequence value = VarcharTypeDriver.getSplitValue(auxMem, dataMem, rowId, 0);
+                        writeVarcharToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, value);
+                    }
+                    case ColumnType.STRING -> {
+                        int primaryIdx = TableReader.getPrimaryColumnIndex(colBase, readerCol);
+                        MemoryCR strDataMem = tableReader.getColumn(primaryIdx);
+                        MemoryCR strAuxMem = tableReader.getColumn(primaryIdx + 1);
+                        long dataOffset = strAuxMem.getLong(rowId * Long.BYTES);
+                        int len = strDataMem.getInt(dataOffset);
+                        CharSequence strValue = (len == TableUtils.NULL_LEN)
+                                ? null : columnStrA.of(strDataMem.addressOf(dataOffset + Integer.BYTES), len);
+                        writeStringToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, strValue);
+                    }
+                    case ColumnType.BINARY -> {
+                        int primaryIdx = TableReader.getPrimaryColumnIndex(colBase, readerCol);
+                        MemoryCR binDataMem = tableReader.getColumn(primaryIdx);
+                        MemoryCR binAuxMem = tableReader.getColumn(primaryIdx + 1);
+                        long dataOffset = binAuxMem.getLong(rowId * Long.BYTES);
+                        long binLen = binDataMem.getLong(dataOffset);
+                        BinarySequence binValue = (binLen < 0)
+                                ? null : columnBin.of(binDataMem.addressOf(dataOffset + Long.BYTES), binLen);
+                        writeBinaryToFrame(addr, varDataAddrs, varDataPos, varDataCap, q, count, binValue);
+                    }
                     default -> {
                     }
                 }

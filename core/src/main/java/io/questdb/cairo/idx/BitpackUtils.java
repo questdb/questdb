@@ -307,7 +307,7 @@ public final class BitpackUtils {
             bufferBits = 64;
             srcOffset += 8;
         } else {
-            while (bufferBits < skipBits + bitWidth) {
+            while (bufferBits < skipBits + bitWidth && srcOffset < totalBytes) {
                 buffer |= ((Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
                 bufferBits += 8;
                 srcOffset++;
@@ -323,7 +323,7 @@ public final class BitpackUtils {
                     bufferBits = 64;
                     srcOffset += 8;
                 } else {
-                    while (bufferBits < bitWidth) {
+                    while (bufferBits < bitWidth && srcOffset < totalBytes) {
                         buffer |= ((Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
                         bufferBits += 8;
                         srcOffset++;

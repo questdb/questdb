@@ -3998,9 +3998,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         removeFileOrLog(ff, detachedPath.$());
                         valueFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
                         removeFileOrLog(ff, detachedPath.$());
+                        if (IndexType.isPosting(indexTypeAtDetached)) {
+                            removeFileOrLog(ff, PostingIndexUtils.coverInfoFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
+                            for (int c = 0; c < 64; c++) {
+                                LPSZ pcFile = PostingIndexUtils.coverDataFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn, c);
+                                if (!ff.exists(pcFile)) break;
+                                removeFileOrLog(ff, pcFile);
+                            }
+                        }
                     } else if (isIndexedNow
-                            && (!wasIndexedAtDetached || indexValueBlockCapacityNow != indexValueBlockCapacityDetached)) {
-                        // Was not indexed before or value block capacity has changed
+                            && (!wasIndexedAtDetached || indexValueBlockCapacityNow != indexValueBlockCapacityDetached
+                            || indexTypeNow != indexTypeAtDetached)) {
                         detachedPath.trimTo(detachedPartitionRoot);
                         rebuildAttachedPartitionColumnIndex(partitionTimestamp, partitionSize, columnName);
                     }
@@ -9569,13 +9577,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Rebuild bitmap index files for indexed symbol columns from the data
+     * Rebuild index files for indexed symbol columns from the data
      * files in {@code other}.  Both the data files (.d) and the newly
-     * created index files (.k, .v) reside in the same directory whose
+     * created index files reside in the same directory whose
      * length on {@code other} is {@code dirLen}.
      */
     private void rebuildPartitionIndexFiles(long partitionTimestamp, int dirLen, long partitionRowCount) {
-        try (BitmapIndexWriter indexWriter = new BitmapIndexWriter(configuration)) {
+        try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
@@ -9587,12 +9595,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final String columnName = metadata.getColumnName(columnIndex);
                     final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
                     final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
+                    final byte indexType = metadata.getColumnIndexType(columnIndex);
 
                     // Map data file for reading
                     final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
                     final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                    IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
                     try {
-                        // Create new index from scratch in the same directory
                         indexWriter.of(other.trimTo(dirLen), columnName, columnNameTxn, indexValueBlockCapacity);
                         for (long row = columnTop; row < partitionRowCount; row++) {
                             int key = TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dataAddr + (row - columnTop) * Integer.BYTES));
@@ -9600,7 +9609,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
                     } finally {
-                        indexWriter.close();
+                        Misc.free(indexWriter);
                         ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
                     }
                 }
@@ -9814,6 +9823,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (IndexType.isIndexed(indexType)) {
                 removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
                 removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+                if (IndexType.isPosting(indexType)) {
+                    removeCoveringIndexFiles(columnName, columnNameTxn, plen);
+                }
             }
             path.trimTo(pathSize);
         } else {
@@ -10405,7 +10417,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                     if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
-                            || metadata.getColumnIndexType(colIdx) != IndexType.POSTING) {
+                            || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
                         continue;
                     }
 

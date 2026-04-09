@@ -3299,7 +3299,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
      * For non-posting indexes this is a no-op and returns columnNameTxn.
      */
     private static long resolvePostingValueFileTxn(FilesFacade ff, long keyFd, byte indexType, long columnNameTxn) {
-        if (indexType != IndexType.POSTING) {
+        if (!IndexType.isPosting(indexType)) {
             return columnNameTxn;
         }
         long fileSize = ff.length(keyFd);

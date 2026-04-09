@@ -26,6 +26,7 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
 /**
@@ -1073,6 +1074,7 @@ public class CoveringCompressor {
     public static long readLongAt(long srcAddr, int index) {
         long pos = srcAddr;
         int count = Unsafe.getUnsafe().getInt(pos);
+        if (index < 0 || index >= count) return Numbers.LONG_NULL;
         pos += 4;
         int rawBw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
@@ -1109,7 +1111,9 @@ public class CoveringCompressor {
      */
     public static int readIntAt(long srcAddr, int index) {
         long pos = srcAddr;
-        pos += 4; // skip count
+        int count = Unsafe.getUnsafe().getInt(pos);
+        if (index < 0 || index >= count) return Numbers.INT_NULL;
+        pos += 4;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         int forBase = Unsafe.getUnsafe().getInt(pos);
         pos += 4;
@@ -1293,7 +1297,9 @@ public class CoveringCompressor {
 
     public static short readShortAt(long srcAddr, int index) {
         long pos = srcAddr;
-        pos += 4; // skip count
+        int count = Unsafe.getUnsafe().getInt(pos);
+        if (index < 0 || index >= count) return 0;
+        pos += 4;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         long forBase = Unsafe.getUnsafe().getShort(pos); // sign-extend
         pos += 2;
@@ -1303,7 +1309,9 @@ public class CoveringCompressor {
 
     public static byte readByteAt(long srcAddr, int index) {
         long pos = srcAddr;
-        pos += 4; // skip count
+        int count = Unsafe.getUnsafe().getInt(pos);
+        if (index < 0 || index >= count) return 0;
+        pos += 4;
         int bw = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         long forBase = Unsafe.getUnsafe().getByte(pos++); // sign-extend
         if (bw == 0) return (byte) forBase;

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.idx;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
@@ -173,6 +174,7 @@ public final class PostingIndexUtils {
     public static final int GEN_DIR_OFFSET_SIDECAR_OFFSET = 28; // 4 bytes: offset into .pc* sidecar files
     public static final int GEN_DIR_OFFSET_SIZE = 8;
     public static final int KEY_FILE_RESERVED = 8192; // was 64
+    public static final int MAX_BLOCK_COUNT = 1_000_000; // corruption guard: 64M values at BLOCK_CAPACITY=64
     public static final int MAX_COVER_COUNT = 4096; // corruption guard for readCoverCountFromInfoFile
     public static final int MAX_GEN_COUNT = 125; // (4088-64)/32 = 125
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
@@ -269,6 +271,9 @@ public final class PostingIndexUtils {
             return;
         }
         int blockCount = firstWord;
+        if (blockCount < 0 || blockCount > MAX_BLOCK_COUNT) {
+            throw CairoException.critical(0).put("corrupt posting index: invalid blockCount [blockCount=").put(blockCount).put(']');
+        }
         long pos = srcAddr + 4;
 
         // Read valueCounts[]
@@ -366,6 +371,9 @@ public final class PostingIndexUtils {
             return;
         }
         int blockCount = firstWord;
+        if (blockCount < 0 || blockCount > MAX_BLOCK_COUNT) {
+            throw CairoException.critical(0).put("corrupt posting index: invalid blockCount [blockCount=").put(blockCount).put(']');
+        }
         long pos = srcAddr + 4;
 
         ctx.ensureCapacity(blockCount);
