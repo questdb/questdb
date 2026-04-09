@@ -169,6 +169,7 @@ import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
@@ -3255,8 +3256,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.freeObjList(fillValues);
                     return groupByFactory;
                 }
-                final Function fillValueFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
-                fillValues.add(fillValueFunc);
+                // Skip function parsing for keywords handled by the fill cursor
+                if (isPrevKeyword(expr.token) || isNullKeyword(expr.token)) {
+                    fillValues.add(NullConstant.NULL);
+                } else {
+                    final Function fillValueFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
+                    fillValues.add(fillValueFunc);
+                }
             }
 
             if (fillValues.size() == 0 || (fillValues.size() == 1 && isNoneKeyword(fillValues.getQuick(0).getName()))) {
@@ -3314,18 +3320,101 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
 
-            return new FillRangeRecordCursorFactory(
-                    groupByFactory.getMetadata(),
+            // Build per-column fill specification for the unified fill cursor
+            final RecordMetadata groupByMetadata = groupByFactory.getMetadata();
+            final int columnCount = groupByMetadata.getColumnCount();
+            final IntList fillModes = new IntList(columnCount);
+            final ObjList<Function> constantFillFuncs = new ObjList<>(columnCount);
+            boolean hasPrevFill = false;
+
+            // Detect PREV in fill values
+            boolean anyPrev = false;
+            for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
+                if (isPrevKeyword(fillValuesExprs.getQuick(i).token)) {
+                    anyPrev = true;
+                    break;
+                }
+            }
+
+            if (anyPrev && fillValuesExprs.size() == 1 && isPrevKeyword(fillValuesExprs.getQuick(0).token)) {
+                // bare FILL(PREV) — all non-timestamp columns fill from self
+                for (int i = 0; i < columnCount; i++) {
+                    if (i == timestampIndex) {
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                        constantFillFuncs.add(NullConstant.NULL);
+                    } else {
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
+                        constantFillFuncs.add(NullConstant.NULL);
+                    }
+                }
+                hasPrevFill = true;
+            } else {
+                // Per-column: map fill values to columns (skipping timestamp)
+                int fillIdx = 0;
+                for (int col = 0; col < columnCount; col++) {
+                    if (col == timestampIndex) {
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                        constantFillFuncs.add(NullConstant.NULL);
+                        continue;
+                    }
+                    if (fillIdx < fillValuesExprs.size()) {
+                        ExpressionNode fillExpr = fillValuesExprs.getQuick(fillIdx);
+                        if (isPrevKeyword(fillExpr.token)) {
+                            fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
+                            constantFillFuncs.add(NullConstant.NULL);
+                            hasPrevFill = true;
+                        } else if (isNullKeyword(fillExpr.token)) {
+                            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                            constantFillFuncs.add(NullConstant.NULL);
+                        } else {
+                            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                            constantFillFuncs.add(fillValues.getQuick(fillIdx));
+                        }
+                    } else if (fillValuesExprs.size() == 1) {
+                        // Single fill value applies to all columns
+                        ExpressionNode fillExpr = fillValuesExprs.getQuick(0);
+                        if (isPrevKeyword(fillExpr.token)) {
+                            fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
+                            constantFillFuncs.add(NullConstant.NULL);
+                            hasPrevFill = true;
+                        } else if (isNullKeyword(fillExpr.token) || fillValues.getQuick(0).isNullConstant()) {
+                            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                            constantFillFuncs.add(NullConstant.NULL);
+                        } else {
+                            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                            constantFillFuncs.add(fillValues.getQuick(0));
+                        }
+                    } else {
+                        // Not enough fill values — default to NULL
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                        constantFillFuncs.add(NullConstant.NULL);
+                    }
+                    fillIdx++;
+                }
+            }
+
+            // Create RecordSink for RecordChain
+            final EntityColumnFilter columnFilter = new EntityColumnFilter();
+            columnFilter.of(columnCount);
+            final RecordSink recordSink = RecordSinkFactory.getInstance(
+                    configuration, asm, groupByMetadata, columnFilter
+            );
+
+            return new SampleByFillRecordCursorFactory(
+                    configuration,
+                    groupByMetadata,
                     groupByFactory,
                     fillFromFunc,
                     fillToFunc,
                     samplingInterval,
                     samplingIntervalUnit,
                     timestampSampler,
-                    fillValues,
+                    fillModes,
+                    constantFillFuncs,
                     timestampIndex,
-                    timestampType
-
+                    timestampType,
+                    hasPrevFill,
+                    recordSink
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);
