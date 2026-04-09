@@ -7734,8 +7734,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                 RecordCursorFactory factory = compiler.compile("select b, sum(a), k from x sample by 3h fill(linear)", sqlExecutionContext).getRecordCursorFactory();
                                 RecordCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine))
                         ) {
-                            while (cursor.hasNext()) {
-                            }
+                            TestUtils.drainCursor(cursor);
                         }
                         Assert.fail();
                     } catch (CairoException e) {
@@ -15645,7 +15644,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                             TestUtils.drainCursor(cursor);
                                         } catch (Throwable e) {
-                                            e.printStackTrace();
+                                            e.printStackTrace(System.err);
                                             errors.incrementAndGet();
                                         }
                                     }

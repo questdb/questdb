@@ -82,18 +82,11 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         this.rules = new TransitionRule[lastRules.length];
         for (int i = 0, n = lastRules.length; i < n; i++) {
             final ZoneOffsetTransitionRule zr = lastRules[i];
-            final int timeDef;
-            switch (zr.getTimeDefinition()) {
-                case UTC:
-                    timeDef = TransitionRule.UTC;
-                    break;
-                case STANDARD:
-                    timeDef = TransitionRule.STANDARD;
-                    break;
-                default:
-                    timeDef = TransitionRule.WALL;
-                    break;
-            }
+            final int timeDef = switch (zr.getTimeDefinition()) {
+                case UTC -> TransitionRule.UTC;
+                case STANDARD -> TransitionRule.STANDARD;
+                default -> TransitionRule.WALL;
+            };
             final TransitionRule tr = new TransitionRule(
                     zr.getOffsetBefore().getTotalSeconds(),
                     zr.getOffsetAfter().getTotalSeconds(),
