@@ -1389,6 +1389,9 @@ public final class IntervalUtils {
         int numStart = lo;
         for (int i = lo; i < lim; i++) {
             char c = seq.charAt(i);
+            if ((c == '-' || c == '+') && i == numStart) {
+                continue;
+            }
             if ((c >= '0' && c <= '9') || c == '_') {
                 continue;
             }
@@ -1412,6 +1415,17 @@ public final class IntervalUtils {
             throw SqlException.$(position, "Missing unit at end of duration");
         }
         return timestamp;
+    }
+
+    static long resolveDurationLo(long anchor, long endExclusive) {
+        return endExclusive >= anchor ? anchor : endExclusive;
+    }
+
+    static long resolveDurationHi(long anchor, long endExclusive) {
+        if (endExclusive >= anchor) {
+            return endExclusive - 1;
+        }
+        return anchor - 1;
     }
 
     private static void addLinearInterval(long period, int count, LongList out) {
@@ -1870,6 +1884,9 @@ public final class IntervalUtils {
         int numStart = durationLo;
         for (int i = durationLo; i < durationHi; i++) {
             char c = seq.charAt(i);
+            if ((c == '-' || c == '+') && i == numStart) {
+                continue;
+            }
             if (Chars.isAsciiDigit(c) || c == '_') {
                 continue;
             }
@@ -4372,16 +4389,20 @@ public final class IntervalUtils {
             int index = out.size();
             timestampDriver.parseInterval(seq, lo, p, operation, out);
             long low = decodeIntervalLo(out, index);
-            long hi = addDuration(timestampDriver, low, seq, p + 1, lim, position) - 1;
-            replaceHiLoInterval(low, hi, operation, out);
+            long endExclusive = addDuration(timestampDriver, low, seq, p + 1, lim, position);
+            long intervalLo = resolveDurationLo(low, endExclusive);
+            long intervalHi = resolveDurationHi(low, endExclusive);
+            replaceHiLoInterval(intervalLo, intervalHi, operation, out);
             return;
         } catch (NumericException ignore) {
             // try date instead
         }
         try {
             long loMicros = timestampDriver.parseAnyFormat(seq, lo, p);
-            long hiMicros = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position) - 1;
-            encodeInterval(loMicros, hiMicros, operation, out);
+            long endExclusive = addDuration(timestampDriver, loMicros, seq, p + 1, lim, position);
+            long intervalLo = resolveDurationLo(loMicros, endExclusive);
+            long intervalHi = resolveDurationHi(loMicros, endExclusive);
+            encodeInterval(intervalLo, intervalHi, operation, out);
         } catch (NumericException e) {
             throw SqlException.$(position, "Invalid date: ").put(seq, lo, p);
         }

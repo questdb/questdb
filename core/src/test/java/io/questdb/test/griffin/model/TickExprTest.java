@@ -248,15 +248,33 @@ public class TickExprTest {
     }
 
     @Test
-    public void testBracketExpansionErrorNegativeDuration() {
-        // Negative duration - '-' is not a valid start for a duration segment
-        assertBracketIntervalError("2018-01-[10,15]T00:00;-1h", "Expected number before unit");
+    public void testBracketExpansionNegativeDuration() throws SqlException {
+        // Negative duration should create a range that ends at the anchor time
+        assertBracketInterval(
+                "[{lo=2018-01-09T23:00:00.000000Z, hi=2018-01-09T23:59:59.999999Z}," +
+                        "{lo=2018-01-14T23:00:00.000000Z, hi=2018-01-14T23:59:59.999999Z}]",
+                "2018-01-[10,15]T00:00;-1h"
+        );
     }
 
     @Test
-    public void testBracketExpansionErrorNegativeDurationAnyFormat() {
-        // Negative duration via parseAnyFormat path - same error
-        assertBracketIntervalError("2018-01-[10,15]T00:00:00.000000Z;-1h", "Expected number before unit");
+    public void testBracketExpansionNegativeDurationAnyFormat() throws SqlException {
+        assertBracketInterval(
+                "[{lo=2018-01-09T23:00:00.000000Z, hi=2018-01-09T23:59:59.999999Z}," +
+                        "{lo=2018-01-14T23:00:00.000000Z, hi=2018-01-14T23:59:59.999999Z}]",
+                "2018-01-[10,15]T00:00:00.000000Z;-1h"
+        );
+    }
+
+    @Test
+    public void testBracketExpansionNegativeDurationSimpleMonth() throws SqlException {
+        // Bare imprecise month expands per-day; negative duration shifts each day backwards
+        // resulting in a merged window covering the previous 3 days of the first element
+        // through the tail of the month (Dec 29 2025 .. Jan 30 2026)
+        assertShortInterval(
+                "[{lo=2025-12-29T00:00:00.000000Z, hi=2026-01-30T23:59:59.999999Z}]",
+                "2026-01;-3d"
+        );
     }
 
     @Test
@@ -800,6 +818,16 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprDurationOnly() throws SqlException {
         assertCompiledTickExpr("$today;6h30m");
+    }
+
+    @Test
+    public void testCompiledTickExprNegativeDuration() throws SqlException {
+        assertCompiledTickExpr("$today;-3d");
+    }
+
+    @Test
+    public void testCompiledTickExprNegativeDurationWithTimeOverride() throws SqlException {
+        assertCompiledTickExpr("[$today, $tomorrow]T[09:30,14:00];-5m");
     }
 
     @Test
@@ -1431,9 +1459,12 @@ public class TickExprTest {
     }
 
     @Test
-    public void testDateListErrorNegativeDuration() {
-        // '[2025-01-01]T09:30;-5m' - negative duration not supported
-        assertBracketIntervalError("[2025-01-01]T09:30;-5m", "Expected number before unit");
+    public void testDateListNegativeDuration() throws SqlException {
+        // '[2025-01-01]T09:30;-5m' - goes 5 minutes backwards from 09:30
+        assertBracketInterval(
+                "[{lo=2025-01-01T09:25:00.000000Z, hi=2025-01-01T09:29:59.999999Z}]",
+                "[2025-01-01]T09:30;-5m"
+        );
     }
 
     @Test
