@@ -67,22 +67,11 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
             from = ColumnType.getTimestampDriver(timestampType).from(from, ColumnType.getTimestampType(args.getQuick(2).getType()));
         }
 
-        switch (unit) {
-            case 'M':
-            case 'y':
-            case 'w':
-            case 'd':
-            case 'h':
-            case 'm':
-            case 's':
-            case 'T':
-            case 'U':
-            case 'n':
-                return new TimestampFloorOffsetFunction(timestampFunc, unit, stride, from, timestampType);
-            case 0:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
-            default:
-                throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(str).put('\'');
-        }
+        return switch (unit) {
+            case 'M', 'y', 'w', 'd', 'h', 'm', 's', 'T', 'U', 'n' ->
+                    new TimestampFloorOffsetFunction(TimestampFloorFunctionFactory.NAME, timestampFunc, unit, stride, from, timestampType);
+            case 0 -> throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
+            default -> throw SqlException.position(argPositions.getQuick(0)).put("invalid unit '").put(str).put('\'');
+        };
     }
 }

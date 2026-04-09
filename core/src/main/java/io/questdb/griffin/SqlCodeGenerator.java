@@ -146,7 +146,7 @@ import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.griffin.engine.functions.memoization.ArrayFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
@@ -357,10 +357,14 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -1722,8 +1726,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && writeSymbolAsString.get(masterColIndex)
                     && writeSymbolAsString.get(slaveColIndex)) {
                 // This is a non-self-join SYMBOL-SYMBOL pair currently using string comparison
-                writeSymbolAsString.unset(masterColIndex);
-                writeSymbolAsString.unset(slaveColIndex);
                 keyTypes.set(k, ColumnType.INT);
                 if (masterSymbolKeyCols == null) {
                     masterSymbolKeyCols = new IntList();
@@ -1734,6 +1736,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         if (masterSymbolKeyCols != null) {
+            // Unset writeSymbolAsString AFTER the loop to avoid cross-column
+            // collisions when master and slave column indices overlap
+            for (int i = 0, n = masterSymbolKeyCols.size(); i < n; i++) {
+                writeSymbolAsString.unset(masterSymbolKeyCols.getQuick(i));
+                writeSymbolAsString.unset(slaveSymbolKeyCols.getQuick(i));
+            }
             return new int[][]{masterSymbolKeyCols.toArray(), slaveSymbolKeyCols.toArray()};
         }
         return null;
@@ -1885,8 +1893,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
          */
         final RecordMetadata masterMetadata = master.getMetadata();
         final RecordMetadata slaveMetadata = slave.getMetadata();
+        final int[][] symbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
         final RecordSink masterKeyCopier = createRecordCopierMaster(masterMetadata);
         final RecordSink slaveKeyCopier = createRecordCopierSlave(slaveMetadata);
+        final int[] masterSymbolKeyCols = symbolKeyIndices != null ? symbolKeyIndices[0] : null;
+        final int[] slaveSymbolKeyCols = symbolKeyIndices != null ? symbolKeyIndices[1] : null;
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
             valueTypes.clear();
@@ -1906,7 +1917,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterKeyCopier,
                         slaveKeyCopier,
                         masterMetadata.getColumnCount(),
-                        context
+                        context,
+                        masterSymbolKeyCols,
+                        slaveSymbolKeyCols
                 );
             }
 
@@ -1926,7 +1939,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterMetadata.getColumnCount(),
                         filter,
                         context,
-                        joinType
+                        joinType,
+                        masterSymbolKeyCols,
+                        slaveSymbolKeyCols
                 );
             }
 
@@ -1941,7 +1956,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveKeyCopier,
                     masterMetadata.getColumnCount(),
                     context,
-                    joinType
+                    joinType,
+                    masterSymbolKeyCols,
+                    slaveSymbolKeyCols
             );
         }
 
@@ -1968,7 +1985,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     slaveKeyCopier,
                     slaveSink,
                     masterMetadata.getColumnCount(),
-                    context
+                    context,
+                    masterSymbolKeyCols,
+                    slaveSymbolKeyCols
             );
         }
 
@@ -1986,7 +2005,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterMetadata.getColumnCount(),
                     filter,
                     context,
-                    joinType
+                    joinType,
+                    masterSymbolKeyCols,
+                    slaveSymbolKeyCols
             );
         }
 
@@ -2002,7 +2023,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 slaveSink,
                 masterMetadata.getColumnCount(),
                 context,
-                joinType
+                joinType,
+                masterSymbolKeyCols,
+                slaveSymbolKeyCols
         );
     }
 
@@ -3261,15 +3284,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn col = model.getBottomUpColumns().getQuick(i);
                 final ExpressionNode ast = col.getAst();
-                if (ast.type == FUNCTION && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
-                    final CharSequence ts;
-                    // there are three timestamp_floor() overloads, so check all of them
-                    if (ast.paramCount == 3 || ast.paramCount == 5) {
-                        final int idx = ast.paramCount - 2;
-                        ts = ast.args.getQuick(idx).token;
-                    } else {
-                        ts = ast.rhs.token;
-                    }
+                if (SqlUtil.isTimestampFloorFunction(ast)) {
+                    final CharSequence ts = SqlUtil.getTimestampFloorTimestampArg(ast).token;
                     if (Chars.equalsIgnoreCase(ts, currTimestamp)) {
                         alias = col.getAlias();
                     }
@@ -6774,6 +6790,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 sampleToFunc = timestampDriver.getTimestampConstantNull();
                 sampleToFuncPos = 0;
+            }
+
+            // For sub-day strides with a timezone, the old SAMPLE BY cursor receives
+            // FROM/TO as local time but uses them as UTC for bucket anchoring. Convert
+            // FROM/TO to UTC so the cursor anchors correctly.
+            if (timezoneName != null) {
+                ExpressionNode unitNode = model.getSampleByUnit();
+                ExpressionNode strideNode = model.getSampleBy();
+                char unitChar = unitNode != null
+                        ? unitNode.token.charAt(0)
+                        : strideNode.token.charAt(strideNode.token.length() - 1);
+                if (CommonUtils.isSubDayUnit(unitChar)) {
+                    CharSequence tz = timezoneNameFunc.getStrA(null);
+                    if (tz != null) {
+                        try {
+                            TimeZoneRules tzRules = timestampDriver.getTimezoneRules(
+                                    DateLocaleFactory.EN_LOCALE,
+                                    tz
+                            );
+                            if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
+                                int fromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
+                                long fromTs = timestampDriver.from(sampleFromFunc.getTimestamp(null), fromFuncType);
+                                if (fromTs != Numbers.LONG_NULL) {
+                                    sampleFromFunc = TimestampConstant.newInstance(
+                                            timestampDriver.toUTC(fromTs, tzRules),
+                                            timestampType
+                                    );
+                                }
+                            }
+                            if (sampleToFunc != timestampDriver.getTimestampConstantNull()) {
+                                int toFuncType = ColumnType.getTimestampType(sampleToFunc.getType());
+                                long toTs = timestampDriver.from(sampleToFunc.getTimestamp(null), toFuncType);
+                                if (toTs != Numbers.LONG_NULL) {
+                                    sampleToFunc = TimestampConstant.newInstance(
+                                            timestampDriver.toUTC(toTs, tzRules),
+                                            timestampType
+                                    );
+                                }
+                            }
+                        } catch (NumericException e) {
+                            throw SqlException.$(timezoneName.position, "invalid timezone: ").put(tz);
+                        }
+                    }
+                }
             }
 
             final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();

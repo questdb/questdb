@@ -8332,6 +8332,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
+                                      symbolKeyJoin: true
                                         Hash Join Light
                                           condition: t2.t1_id=t1.id
                                             Async JIT Filter workers: 1
@@ -8350,6 +8351,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                                                 Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                     Hash Join Light
                                                       condition: __qdb_outer_ref__0_category=t3.b
+                                                      symbolKeyJoin: true
                                                         PageFrame
                                                             Row forward scan
                                                             Frame forward scan on: t3
