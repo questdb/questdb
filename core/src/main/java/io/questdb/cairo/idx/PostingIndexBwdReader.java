@@ -145,6 +145,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long srcPackedOffsetsAddr;
         private long srcValueCountsAddr;
         private long packedDataStart;
+        private long cursorReloadGeneration;
 
         @Override
         public boolean hasNext() {
@@ -244,6 +245,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         void of(int key, long minValue, long maxValue) {
+            this.cursorReloadGeneration = reloadGeneration;
             // Re-allocate buffer if freed by close()
             if (blockBufferAddr == 0) {
                 blockBufferAddr = Unsafe.malloc((long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
@@ -459,6 +461,16 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
 
         private void loadDenseGenerationCached(int gen) {
+            if (cursorReloadGeneration != reloadGeneration) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
+                this.constantDeltaRemaining = 0;
+                this.isEFMode = false;
+                this.isFlatMode = false;
+                this.flatRemaining = 0;
+                return;
+            }
             this.isCurrentGenDense = true;
             long genFileOffset = genLookup.getGenFileOffset(gen);
             long genDataSize = genLookup.getGenDataSize(gen);
@@ -593,6 +605,16 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         private void loadSparseGenDirect(int gen, int idx) {
+            if (cursorReloadGeneration != reloadGeneration) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
+                this.constantDeltaRemaining = 0;
+                this.isEFMode = false;
+                this.isFlatMode = false;
+                this.flatRemaining = 0;
+                return;
+            }
             this.isCurrentGenDense = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
@@ -635,6 +657,16 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         private void loadSparseGenWithBinarySearch(int gen) {
+            if (cursorReloadGeneration != reloadGeneration) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
+                this.constantDeltaRemaining = 0;
+                this.isEFMode = false;
+                this.isFlatMode = false;
+                this.flatRemaining = 0;
+                return;
+            }
             this.isCurrentGenDense = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);

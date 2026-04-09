@@ -81,6 +81,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     private long spinLockTimeoutMs;
     private long valueFileTxn; // txn suffix of the currently opened .pv file
     private long valueMemSize = -1;
+    protected long reloadGeneration; // incremented when valueMem is remapped; cursors check for staleness
 
     @Override
     public void close() {
@@ -356,6 +357,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             if (newValueFileTxn != valueFileTxn && readerPartitionPath != null && ff != null) {
                 // Value file changed — close old mapping and open new .pv.
                 // Old .pv file stays on disk for other readers with active cursors.
+                reloadGeneration++;
                 valueFileTxn = newValueFileTxn;
                 Misc.free(valueMem);
                 try (Path p = new Path().of(readerPartitionPath)) {
@@ -427,7 +429,11 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     }
 
                     if (valueMemSize > 0) {
+                        long oldAddr = valueMem.addressOf(0);
                         ((MemoryCMR) valueMem).changeSize(valueMemSize);
+                        if (valueMem.addressOf(0) != oldAddr) {
+                            reloadGeneration++;
+                        }
                     }
                     this.activePageOffset = tryPage;
                     this.keyFileSequence = seqStart;

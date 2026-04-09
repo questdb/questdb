@@ -128,6 +128,156 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testConcurrentReadersWhileWriterRollsBack() throws Exception {
+        assertMemoryLeak(64, () -> {
+            final String dbRoot = configuration.getDbRoot();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final AtomicInteger committed = new AtomicInteger(0);
+            final CountDownLatch writerDone = new CountDownLatch(1);
+            final int rounds = 5;
+
+            try (Path path = new Path().of(dbRoot)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "conc_rb", COLUMN_NAME_TXN_NONE)) {
+                    // Seed initial data
+                    for (int v = 0; v < BP_BATCH * 3; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.setMaxValue(BP_BATCH * 3 - 1);
+                    writer.commit();
+                    writer.seal();
+                    committed.set(1);
+
+                    Thread[] readers = new Thread[4];
+                    for (int r = 0; r < readers.length; r++) {
+                        final int id = r;
+                        readers[r] = new Thread(() -> {
+                            try {
+                                readForward(dbRoot, "conc_rb", id, writerDone, committed);
+                            } catch (Throwable t) {
+                                // During rollback, readers may see empty state momentarily
+                                if (!t.getMessage().contains("zero values")) {
+                                    error.compareAndSet(null, t);
+                                }
+                            }
+                        });
+                        readers[r].setDaemon(true);
+                        readers[r].start();
+                    }
+
+                    // Writer does repeated write → rollback cycles
+                    for (int round = 0; round < rounds; round++) {
+                        long base = (long) (round + 1) * BP_BATCH * 3;
+                        for (int v = 0; v < BP_BATCH * 3; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH * 3 - 1);
+                        writer.commit();
+                        committed.incrementAndGet();
+
+                        // Rollback half the data
+                        writer.rollbackValues(base + BP_BATCH - 1);
+                        committed.incrementAndGet();
+                    }
+                    writerDone.countDown();
+
+                    for (Thread t : readers) {
+                        t.join(JOIN_MS);
+                        if (t.isAlive()) t.interrupt();
+                    }
+                    for (Thread t : readers) {
+                        t.join(JOIN_MS);
+                    }
+
+                    if (error.get() != null) {
+                        throw new AssertionError("Concurrent reader failed during rollback", error.get());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentReadersWhileWriterTruncates() throws Exception {
+        assertMemoryLeak(64, () -> {
+            final String dbRoot = configuration.getDbRoot();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final CountDownLatch writerDone = new CountDownLatch(1);
+            final AtomicInteger committed = new AtomicInteger(0);
+            final int rounds = 3;
+
+            try (Path path = new Path().of(dbRoot)) {
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "conc_trunc", COLUMN_NAME_TXN_NONE)) {
+                    // Seed data
+                    for (int v = 0; v < BP_BATCH * 3; v++) {
+                        writer.add(0, v);
+                    }
+                    writer.setMaxValue(BP_BATCH * 3 - 1);
+                    writer.commit();
+                    writer.seal();
+                    committed.set(1);
+
+                    Thread[] readers = new Thread[4];
+                    for (int r = 0; r < readers.length; r++) {
+                        final int id = r;
+                        readers[r] = new Thread(() -> {
+                            try (Path rPath = new Path().of(dbRoot);
+                                 PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                         configuration, rPath, "conc_trunc", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                                while (!Thread.interrupted() && writerDone.getCount() > 0) {
+                                    reader.reloadConditionally();
+                                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                    long prev = -1;
+                                    while (cursor.hasNext()) {
+                                        long val = cursor.next();
+                                        if (val <= prev) {
+                                            throw new AssertionError(
+                                                    "fwd " + id + ": non-ascending " + prev + " -> " + val);
+                                        }
+                                        prev = val;
+                                    }
+                                    // Empty state is OK during truncate cycles
+                                }
+                            } catch (Throwable t) {
+                                error.compareAndSet(null, t);
+                            }
+                        });
+                        readers[r].setDaemon(true);
+                        readers[r].start();
+                    }
+
+                    // Writer does write → truncate → write cycles
+                    for (int round = 0; round < rounds; round++) {
+                        writer.truncate();
+                        committed.incrementAndGet();
+
+                        long base = (long) round * BP_BATCH * 3;
+                        for (int v = 0; v < BP_BATCH * 3; v++) {
+                            writer.add(0, base + v);
+                        }
+                        writer.setMaxValue(base + BP_BATCH * 3 - 1);
+                        writer.commit();
+                        writer.seal();
+                        committed.incrementAndGet();
+                    }
+                    writerDone.countDown();
+
+                    for (Thread t : readers) {
+                        t.join(JOIN_MS);
+                        if (t.isAlive()) t.interrupt();
+                    }
+                    for (Thread t : readers) {
+                        t.join(JOIN_MS);
+                    }
+
+                    if (error.get() != null) {
+                        throw new AssertionError("Concurrent reader failed during truncate", error.get());
+                    }
+                }
+            }
+        });
+    }
+
     private void runConcurrentTest(String name, int numReaders, boolean useFwd, boolean useBwd) throws Exception {
         assertMemoryLeak(64, () -> {
             final String dbRoot = configuration.getDbRoot();

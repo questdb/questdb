@@ -147,6 +147,10 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     public static void initKeyMemory(MemoryMA keyMem, int blockCapacity) {
+        initKeyMemory(keyMem, blockCapacity, -1L);
+    }
+
+    public static void initKeyMemory(MemoryMA keyMem, int blockCapacity, long valueFileTxn) {
         keyMem.jumpTo(0);
         keyMem.truncate();
 
@@ -169,8 +173,8 @@ public class PostingIndexWriter implements IndexWriter {
         // genCount = 0 (already zeroed)
         // formatVersion
         Unsafe.getUnsafe().putInt(baseAddr + PostingIndexUtils.PAGE_OFFSET_FORMAT_VERSION, FORMAT_VERSION);
-        // valueFileTxn = -1 (COLUMN_NAME_TXN_NONE) = use the column's own txn
-        Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN, -1L);
+        // valueFileTxn: -1 means use column's own txn; positive means explicit sealed txn
+        Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN, valueFileTxn);
         // sequence_end = 1
         Unsafe.getUnsafe().storeFence();
         Unsafe.getUnsafe().putLong(baseAddr + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END, 1L);
@@ -945,8 +949,24 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void truncate() {
         freeNativeBuffers();
-        initKeyMemory(keyMem, blockCapacity);
-        valueMem.truncate();
+        if (partitionPath != null) {
+            // Create a new empty .pv file. The old .pv stays on disk so
+            // concurrent readers with active mmaps don't SIGBUS.
+            long newTxn = Math.max(1, columnNameTxn + 1);
+            Misc.free(valueMem);
+            try (Path p = new Path().of(partitionPath)) {
+                LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, newTxn);
+                valueMem.of(ff, fileName,
+                        configuration.getDataIndexValueAppendPageSize(), 0L,
+                        MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
+            }
+            columnNameTxn = newTxn;
+            initKeyMemory(keyMem, blockCapacity, columnNameTxn);
+        } else {
+            // fd-based writer (O3 path): no concurrent readers, safe to truncate in place
+            valueMem.truncate();
+            initKeyMemory(keyMem, blockCapacity);
+        }
         activePageOffset = PostingIndexUtils.PAGE_A_OFFSET;
         keyCount = 0;
         valueMemSize = 0;
@@ -2042,7 +2062,7 @@ public class PostingIndexWriter implements IndexWriter {
      * @param maxValueCutoff Long.MAX_VALUE means no filtering (seal path);
      *                       any other value trims per-key values to those <= cutoff (rollback path)
      */
-    private void reencodeAllGenerations(long maxValue, long maxValueCutoff, boolean inPlace) {
+    private void reencodeAllGenerations(long maxValue, long maxValueCutoff) {
 
         // Phase 1: Count total values per key across all generations
         long totalCountsSize = (long) keyCount * Integer.BYTES;
@@ -2102,10 +2122,8 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             if (totalValueCount == 0) {
-                if (inPlace) {
-                    truncate();
-                    setMaxValue(maxValue);
-                }
+                truncate();
+                setMaxValue(maxValue);
                 return;
             }
 
@@ -2133,8 +2151,8 @@ public class PostingIndexWriter implements IndexWriter {
                 packedResidualsAddr = Unsafe.malloc((long) maxStrideTotal * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
 
-            if (inPlace) {
-                // Rollback path: decode all values first, then filter and re-encode.
+            if (maxValueCutoff < Long.MAX_VALUE) {
+                // Rollback path: monolithic decode + filter + re-encode to new file.
                 // Rollback is rare and operates on small data volumes, so the
                 // monolithic buffer is acceptable here.
                 reencodeMonolithic(maxValue, maxValueCutoff, totalCountsAddr, totalValueCount);
@@ -2506,11 +2524,18 @@ public class PostingIndexWriter implements IndexWriter {
                 }
                 keyCount = newKeyCount;
 
-                // Re-encode into stride-indexed format (in-place into valueMem)
+                // Re-encode into stride-indexed format in a new .pv file.
+                // The old .pv stays on disk for concurrent readers.
+                long newTxn = Math.max(1, columnNameTxn + 1);
+                if (partitionPath != null) {
+                    openSealValueFile(newTxn);
+                } else {
+                    // fd-based writer (O3): no concurrent readers, reuse valueMem
+                    valueMem.jumpTo(0);
+                    sealTarget = valueMem;
+                }
                 int sc = PostingIndexUtils.strideCount(keyCount);
                 int siSize = PostingIndexUtils.strideIndexSize(keyCount);
-                valueMem.jumpTo(0);
-                sealTarget = valueMem;
                 long sealOffset = 0;
                 for (int i = 0; i < siSize; i += Integer.BYTES) {
                     sealTarget.putInt(0);
@@ -2527,19 +2552,11 @@ public class PostingIndexWriter implements IndexWriter {
                 long bpTrialBuf = 0;
                 long bpTrialBufSize = 0;
 
-                long sidecarBuf = 0;
-                long sidecarBufSize = 0;
-                long[] sidecarStrideIndexBufs = null;
-                if (coverCount > 0 && sidecarMems != null) {
-                    sidecarStrideIndexBufs = new long[coverCount];
-                    for (int c = 0; c < coverCount; c++) {
-                        sidecarMems[c].jumpTo(0);
-                        sidecarStrideIndexBufs[c] = Unsafe.malloc(siSize, MemoryTag.NATIVE_INDEX_READER);
-                        for (int i = 0; i < siSize; i += Integer.BYTES) {
-                            sidecarMems[c].putInt(0);
-                        }
-                    }
-                }
+                // Sidecar data is NOT written inline during re-encoding.
+                // writeSidecarsPerColumn() runs after this method and maps each
+                // column file fresh, producing properly compressed sidecar data.
+                // The inline path lacked valid column mappings and produced bloated
+                // NULL-exception data that inflated .pc* file sizes.
 
                 try {
                     for (int s = 0; s < sc; s++) {
@@ -2642,51 +2659,15 @@ public class PostingIndexWriter implements IndexWriter {
                             writeDeltaStride(ks, keyCounts, deltaHeaderSize, bpTrialBuf, bpKeySizes, localHeaderBuf);
                         }
 
-                        int totalStrideValues = (int) Math.min(totalStrideValuesL, Integer.MAX_VALUE);
-                        if (coverCount > 0 && sidecarMems != null && totalStrideValues > 0) {
-                            long neededBuf = totalStrideValuesL * maxCoveredValueSize();
-                            if (neededBuf > sidecarBufSize) {
-                                if (sidecarBuf != 0) {
-                                    Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                                }
-                                sidecarBufSize = neededBuf;
-                                sidecarBuf = Unsafe.malloc(sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                            }
-                            for (int c = 0; c < coverCount; c++) {
-                                Unsafe.getUnsafe().putInt(
-                                        sidecarStrideIndexBufs[c] + (long) s * Integer.BYTES,
-                                        (int) (sidecarMems[c].getAppendOffset() - siSize));
-                            }
-                            writeSidecarStrideData(ks, keyCounts, keyOffsets, allValuesAddr, sidecarBuf);
-                        }
                     }
 
                     int totalStrideBlocksSize = (int) (sealTarget.getAppendOffset() - sealOffset - siSize);
                     Unsafe.getUnsafe().putInt(strideIndexBuf + (long) sc * Integer.BYTES, totalStrideBlocksSize);
                     Unsafe.getUnsafe().copyMemory(strideIndexBuf, sealTarget.addressOf(sealOffset), siSize);
                     valueMemSize = sealTarget.getAppendOffset();
-
-                    if (coverCount > 0 && sidecarStrideIndexBufs != null) {
-                        for (int c = 0; c < coverCount; c++) {
-                            Unsafe.getUnsafe().putInt(
-                                    sidecarStrideIndexBufs[c] + (long) sc * Integer.BYTES,
-                                    (int) (sidecarMems[c].getAppendOffset() - siSize));
-                            Unsafe.getUnsafe().copyMemory(sidecarStrideIndexBufs[c], sidecarMems[c].addressOf(0), siSize);
-                        }
-                    }
                 } finally {
                     if (bpTrialBuf != 0) {
                         Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
-                    }
-                    if (sidecarBuf != 0) {
-                        Unsafe.free(sidecarBuf, sidecarBufSize, MemoryTag.NATIVE_INDEX_READER);
-                    }
-                    if (sidecarStrideIndexBufs != null) {
-                        for (int c = 0; c < coverCount; c++) {
-                            if (sidecarStrideIndexBufs[c] != 0) {
-                                Unsafe.free(sidecarStrideIndexBufs[c], siSize, MemoryTag.NATIVE_INDEX_READER);
-                            }
-                        }
                     }
                     Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
                     Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
@@ -2695,6 +2676,12 @@ public class PostingIndexWriter implements IndexWriter {
                 genCount = 1;
                 valueMemSize = sealTarget.getAppendOffset();
                 sealTarget = null;
+
+                if (partitionPath != null) {
+                    sealValueMem.sync(false);
+                    switchToSealedValueFile(newTxn);
+                }
+
                 Unsafe.getUnsafe().storeFence();
                 writeMetadataPage(genCount, maxValue, sealOffset, valueMemSize - sealOffset, keyCount, 0, keyCount - 1);
             } finally {
@@ -2817,23 +2804,15 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     private void rollbackToMaxValue(long maxValue) {
-        // Rollback writes in-place to the existing valueMem at offset 0 — same
-        // approach as BitmapIndexWriter.rollbackValues() which writes in-place to
-        // keyMem/valueMem. No new .pv file, no columnNameTxn bump.
-        //
-        // Safety: in-place rewrite overwrites MAP_SHARED pages visible to concurrent
-        // readers. This is safe under QuestDB's scoreboard coordination — readers
-        // only access committed data, and rollback only affects uncommitted gens.
-        // Sidecar files are also truncated in the inPlace path (reencodeAllGenerations),
-        // which carries the same concurrent-reader risk as BitmapIndexWriter rollback.
-        reencodeAllGenerations(maxValue, maxValue, true);
+        // Rollback writes to a NEW .pv file (like seal) so concurrent readers
+        // with active mmaps on the old .pv don't SIGSEGV.
+        reencodeAllGenerations(maxValue, maxValue);
     }
 
     private void sealFull() {
         reencodeAllGenerations(
                 keyMem.getLong(activePageOffset + PAGE_OFFSET_MAX_VALUE),
-                Long.MAX_VALUE,
-                false
+                Long.MAX_VALUE
         );
     }
 

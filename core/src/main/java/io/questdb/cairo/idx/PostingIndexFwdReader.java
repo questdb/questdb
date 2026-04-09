@@ -145,6 +145,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long srcMinDeltasAddr;
         private long srcValueCountsAddr;
         private int totalValueCount;
+        private long cursorReloadGeneration;
 
         @Override
         public boolean hasNext() {
@@ -225,6 +226,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         void of(int key, long minValue, long maxValue) {
+            this.cursorReloadGeneration = reloadGeneration;
             // Re-allocate fixed buffers if freed by close()
             if (blockBufferAddr == 0) {
                 blockBufferCapacity = PostingIndexUtils.PACKED_BATCH_SIZE;
@@ -496,6 +498,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         private void loadDenseGenerationCached(int gen) {
+            if (cursorReloadGeneration != reloadGeneration) {
+                clearBlockState();
+                return;
+            }
             this.isCurrentGenDense = true;
             this.sidecarOrdinal = 0;
             long genFileOffset = genLookup.getGenFileOffset(gen);
@@ -618,6 +624,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         private void loadSparseGenDirect(int gen, int idx) {
+            if (cursorReloadGeneration != reloadGeneration) {
+                clearBlockState();
+                return;
+            }
             this.isCurrentGenDense = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);
@@ -653,6 +663,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         private void loadSparseGenWithBinarySearch(int gen) {
+            if (cursorReloadGeneration != reloadGeneration) {
+                clearBlockState();
+                return;
+            }
             this.isCurrentGenDense = false;
             computePerColumnSidecarOffsets(gen);
             long genFileOffset = genLookup.getGenFileOffset(gen);

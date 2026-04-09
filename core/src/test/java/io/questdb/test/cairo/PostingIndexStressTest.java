@@ -39,6 +39,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -3319,6 +3320,364 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals("bwd all 25 batches readable", 25 * BP_BATCH, count);
+                }
+            }
+        });
+    }
+
+    // ===================================================================
+    // New-file safety tests: rollback and truncate create new .pv files
+    // ===================================================================
+
+    @Test
+    public void testRollbackCreatesNewValueFile() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_newfile", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < 200; i++) {
+                        writer.add(0, i);
+                        if ((i + 1) % BP_BATCH == 0) {
+                            writer.setMaxValue(i);
+                            writer.commit();
+                        }
+                    }
+                    writer.setMaxValue(199);
+                    writer.commit();
+
+                    // Seal to create a .pv.1 file
+                    writer.seal();
+
+                    long txnAfterSeal = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue("seal should set VALUE_FILE_TXN > 0", txnAfterSeal > 0);
+
+                    LPSZ sealedFile = PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterSeal);
+                    Assert.assertTrue("sealed .pv file should exist", ff.exists(sealedFile));
+
+                    // Write more data, then rollback
+                    for (int i = 200; i < 300; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(299);
+                    writer.commit();
+
+                    writer.rollbackValues(149);
+
+                    long txnAfterRollback = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue("rollback should bump VALUE_FILE_TXN",
+                            txnAfterRollback > txnAfterSeal);
+
+                    // Old sealed .pv file should still exist on disk (for concurrent readers)
+                    Assert.assertTrue("old sealed .pv should remain on disk",
+                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterSeal)));
+
+                    // New .pv file should exist
+                    Assert.assertTrue("new .pv file should exist after rollback",
+                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterRollback)));
+                }
+
+                // Verify data correctness via reader
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(150, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackToZeroCreatesNewValueFile() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_zero_nf", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 10; i < 100; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+
+                    // Rollback to 5 — all values >= 10, none survive → triggers truncate
+                    writer.rollbackValues(5);
+
+                    long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_zero_nf", COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue("truncate via rollback should set VALUE_FILE_TXN > 0", txn > 0);
+
+                    Assert.assertEquals(0, writer.getKeyCount());
+                    RowCursor cursor = writer.getCursor(0);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+
+                // Verify reader sees empty index
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "rb_zero_nf", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateCreatesNewValueFile() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "trunc_nf", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < BP_BATCH * 3; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(BP_BATCH * 3 - 1);
+                    writer.commit();
+
+                    writer.truncate();
+
+                    long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "trunc_nf", COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue("truncate should set VALUE_FILE_TXN > 0", txn > 0);
+
+                    // Index should be empty
+                    Assert.assertEquals(0, writer.getKeyCount());
+
+                    // Write new data after truncate
+                    for (int i = 0; i < BP_BATCH; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(BP_BATCH - 1);
+                    writer.commit();
+
+                    RowCursor cursor = writer.getCursor(0);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(BP_BATCH, count);
+                }
+
+                // Verify via reader
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "trunc_nf", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(BP_BATCH, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMultipleRollbacksBumpTxnSequentially() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_multi", COLUMN_NAME_TXN_NONE)) {
+                    long prevTxn = -1;
+
+                    for (int round = 0; round < 5; round++) {
+                        // Write data
+                        int base = round * 200;
+                        for (int i = 0; i < 200; i++) {
+                            writer.add(0, base + i);
+                        }
+                        writer.setMaxValue(base + 199);
+                        writer.commit();
+
+                        // Rollback to midpoint
+                        writer.rollbackValues(base + 99);
+
+                        long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                                ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_multi", COLUMN_NAME_TXN_NONE));
+                        Assert.assertTrue("round " + round + ": txn should increase", txn > prevTxn);
+                        prevTxn = txn;
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackThenWriteThenSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_w_seal", COLUMN_NAME_TXN_NONE)) {
+                    // Write 200 values, rollback to 99, write more, seal
+                    for (int i = 0; i < 200; i++) {
+                        writer.add(0, i);
+                        if ((i + 1) % BP_BATCH == 0) {
+                            writer.setMaxValue(i);
+                            writer.commit();
+                        }
+                    }
+                    writer.setMaxValue(199);
+                    writer.commit();
+
+                    writer.rollbackValues(99);
+
+                    // Continue writing after rollback
+                    for (int i = 100; i < 300; i++) {
+                        writer.add(0, i);
+                        if ((i + 1) % BP_BATCH == 0) {
+                            writer.setMaxValue(i);
+                            writer.commit();
+                        }
+                    }
+                    writer.setMaxValue(299);
+                    writer.commit();
+
+                    writer.seal();
+                }
+
+                // Verify all data via reader
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "rb_w_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(300, count);
+                }
+
+                // Also verify backward
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), "rb_w_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(299 - count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(300, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderSurvivesWriterRollback() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_reader", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < 200; i++) {
+                        writer.add(0, i);
+                        if ((i + 1) % BP_BATCH == 0) {
+                            writer.setMaxValue(i);
+                            writer.commit();
+                        }
+                    }
+                    writer.setMaxValue(199);
+                    writer.commit();
+                    writer.seal();
+
+                    // Open reader and start iterating BEFORE rollback
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), "rb_reader", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+
+                        // Read first half
+                        for (int i = 0; i < 100; i++) {
+                            Assert.assertTrue("should have value " + i, cursor.hasNext());
+                            Assert.assertEquals(i, cursor.next());
+                        }
+
+                        // Writer rolls back — creates a new .pv file
+                        // The reader's mmap of the old .pv file stays valid
+                        writer.add(0, 200);
+                        writer.setMaxValue(200);
+                        writer.commit();
+                        writer.rollbackValues(149);
+
+                        // Continue reading from OLD .pv — should NOT crash
+                        int count = 100;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(count, cursor.next());
+                            count++;
+                        }
+                        Assert.assertEquals(200, count);
+
+                        // After reload, reader sees the new (rolled-back) state
+                        reader.reloadConditionally();
+                        RowCursor cursor2 = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                        count = 0;
+                        while (cursor2.hasNext()) {
+                            Assert.assertEquals(count, cursor2.next());
+                            count++;
+                        }
+                        Assert.assertEquals(150, count);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderSurvivesWriterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "trunc_reader", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < BP_BATCH * 3; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(BP_BATCH * 3 - 1);
+                    writer.commit();
+                    writer.seal();
+
+                    // Open reader and iterate BEFORE truncate
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), "trunc_reader", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+
+                        // Read some values
+                        for (int i = 0; i < BP_BATCH; i++) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(i, cursor.next());
+                        }
+
+                        // Writer truncates — old .pv stays on disk
+                        writer.truncate();
+
+                        // Continue reading from OLD .pv — should NOT crash
+                        int count = BP_BATCH;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(count, cursor.next());
+                            count++;
+                        }
+                        Assert.assertEquals(BP_BATCH * 3, count);
+
+                        // After reload, reader sees empty index
+                        reader.reloadConditionally();
+                        RowCursor cursor2 = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                        Assert.assertFalse(cursor2.hasNext());
+                    }
                 }
             }
         });
