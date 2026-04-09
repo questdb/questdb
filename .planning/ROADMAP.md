@@ -43,7 +43,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. A FILL query with `ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'` crossing a DST fall-back transition produces correctly ordered, non-duplicated output
 **Plans:** 1 plan
 Plans:
-- [ ] 02-01-PLAN.md -- Fix infinite loop + resource leaks, add assertion tests for NULL/VALUE/FROM-TO/DST
+- [x] 02-01-PLAN.md -- Fix infinite loop + resource leaks, add assertion tests for NULL/VALUE/FROM-TO/DST
 
 ### Phase 3: Keyed Fill Cursor
 **Goal**: Keyed SAMPLE BY FILL queries produce the cartesian product of all unique keys and all time buckets, with per-key prev tracking
@@ -86,7 +86,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Optimizer Gate | 0/0 | Complete | 2026-04-09 |
-| 2. Non-keyed Fill Cursor | 0/1 | In progress | - |
+| 2. Non-keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
 | 3. Keyed Fill Cursor | 0/0 | Not started | - |
 | 4. Cross-Column Prev | 0/0 | Not started | - |
 | 5. Verification and Hardening | 0/0 | Not started | - |
