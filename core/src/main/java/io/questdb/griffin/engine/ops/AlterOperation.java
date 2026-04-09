@@ -391,6 +391,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public void startAsync() {
     }
 
+    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
+    }
+
     private void applyAddColumn(MetadataService svc) {
         int lParam = 0;
         for (int i = 0, n = activeExtraStrInfo.size(); i < n; i++) {
@@ -821,10 +825,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void squashPartitions(MetadataService svc) {
         svc.squashPartitions();
-    }
-
-    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
-        return new AlterOperation(extraInfo, extraStrInfo);
     }
 
     private interface CharSequenceList extends Mutable {
