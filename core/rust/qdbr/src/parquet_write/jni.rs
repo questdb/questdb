@@ -959,7 +959,7 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
     for (idx, partition) in encoder.pending_partitions.iter().enumerate() {
         let partition_rows = partition.columns[0].row_count;
         let available_rows = if idx == 0 {
-            partition_rows.sub(first_start)
+            partition_rows.saturating_sub(first_start)
         } else {
             partition_rows
         };
