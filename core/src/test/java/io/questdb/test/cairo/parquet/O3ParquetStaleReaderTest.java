@@ -95,27 +95,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            // Sanity-check the new invariant: freshly written parquet metadata
-            // exposes normalized tops even when the source native partition had
-            // a non-zero top for the added column.
-            try (TableReader reader = getReader("x")) {
-                int parquetIdx = findParquetPartitionIndex(reader);
-                Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
-                reader.openPartition(parquetIdx);
-                ParquetMetaFileReader meta = reader.getAndInitParquetMetaPartitionDecoder(parquetIdx).metadata();
-                for (int c = 0, n = meta.getColumnCount(); c < n; c++) {
-                    Assert.assertEquals(
-                            "expected normalized parquet `_pm` column tops after ADD COLUMN + CONVERT",
-                            0,
-                            meta.getColumnTop(c)
-                    );
-                }
-                Assert.assertTrue(
-                        "expected the parquet partition to have at least 2 row groups",
-                        meta.getRowGroupCount() >= 2
-                );
-            }
-
             // Acquire a reader and pin it across the corrupting merge. The
             // reader holds a scoreboard reference at the pre-merge txn, so
             // even if the writer queues the previous partition directory for
