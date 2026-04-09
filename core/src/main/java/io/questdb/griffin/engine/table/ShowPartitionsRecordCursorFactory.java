@@ -28,9 +28,9 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoKeywords;
-import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -49,9 +49,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -162,10 +162,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private long minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
         private long numRows = -1L;
         private long parquetFileSize;
+        private ParquetMetaFileReader parquetMetaReader;
         private int partitionBy = -1;
         private int partitionIndex = -1;
         private long partitionSize = -1L;
-        private ParquetMetaFileReader parquetMetaReader;
         private int rootLen;
         private TableReader tableReader;
         private int timestampType;
@@ -214,6 +214,15 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionIndex = -1;
         }
 
+        private void closeParquetMeta() {
+            if (parquetMetaReader != null && parquetMetaReader.isOpen()) {
+                long addr = parquetMetaReader.getAddr();
+                long size = parquetMetaReader.getFileSize();
+                parquetMetaReader.clear();
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+
         private ShowPartitionsRecordCursor initialize() {
             if (tableReader != null) {//
                 // this call is idempotent
@@ -237,6 +246,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             return this;
         }
 
+        /**
+         * Mmaps the _pm file, initializes the lazy ParquetMetaFileReader, and extracts
+         * the parquet file size. The reader stays open so that min/max timestamps
+         * can be read later in the same loadNextPartition() call. The mmap is
+         * released when the reader is cleared after timestamp extraction.
+         */
         private void loadNextPartition() {
             // Ensure any _pm mmap from a previous iteration is released.
             closeParquetMeta();
@@ -372,12 +387,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         /**
          * Mmaps the _pm file, initializes the lazy ParquetMetaFileReader, and extracts
          * the parquet file size. The reader stays open so that min/max timestamps
-         * can be read later in the same loadNextPartition() call. The mmap is
-         * released when the reader is cleared after timestamp extraction.
-         */
-        /**
-         * Mmaps the _pm file, initializes the lazy ParquetMetaFileReader, and extracts
-         * the parquet file size. The reader stays open so that min/max timestamps
          * can be read later in the same loadNextPartition() call.
          * Call {@link #closeParquetMeta()} to release the mmap.
          */
@@ -401,19 +410,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 // If of() threw before setting addr, the reader is not open.
                 // Munmap the raw address directly to prevent a leak.
                 if (addr != 0 && (parquetMetaReader == null || !parquetMetaReader.isOpen())) {
-                    ff.munmap(addr, parquetMetaFileSize, MemoryTag.MMAP_DEFAULT);
+                    ff.munmap(addr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                 }
             } finally {
                 partitionDirPath.trimTo(dirLen);
-            }
-        }
-
-        private void closeParquetMeta() {
-            if (parquetMetaReader != null && parquetMetaReader.isOpen()) {
-                long addr = parquetMetaReader.getAddr();
-                long size = parquetMetaReader.getFileSize();
-                parquetMetaReader.clear();
-                ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
             }
         }
 

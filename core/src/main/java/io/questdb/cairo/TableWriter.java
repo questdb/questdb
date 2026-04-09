@@ -74,8 +74,8 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
-import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -242,6 +242,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ParquetMetaPartitionDecoder parquetDecoder = new ParquetMetaPartitionDecoder();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final int partitionBy;
+    private final PartitionDecoder partitionDecoder = new PartitionDecoder();
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
@@ -1300,10 +1301,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
         return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
-    }
-
-    public boolean isCheckpointInProgress() {
-        return engine.getCheckpointStatus().isInProgress();
     }
 
     @Override
@@ -2654,6 +2651,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
 
+    public boolean isCheckpointInProgress() {
+        return engine.getCheckpointStatus().isInProgress();
+    }
+
     public boolean isCommitDedupMode() {
         if (!isDeduplicationEnabled()) {
             return false;
@@ -3599,13 +3600,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnCount++;
     }
 
-    private void appendBuffer(long fd, long address, long len) {
-        if (ff.append(fd, address, len) != len) {
-            throw CairoException.critical(ff.errno()).put("cannot append data [fd=")
-                    .put(fd).put(", len=").put(len).put(']');
-        }
-    }
-
     private void appendAllNullFixedChunk(long dstFixFd, int columnType, long rowCount) {
         final long fixSize = rowCount * ColumnType.sizeOf(columnType);
         if (fixSize == 0) {
@@ -3674,6 +3668,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (nullDataBuf != 0) {
                 Unsafe.free(nullDataBuf, dataSize, MemoryTag.NATIVE_TABLE_WRITER);
             }
+        }
+    }
+
+    private void appendBuffer(long fd, long address, long len) {
+        if (ff.append(fd, address, len) != len) {
+            throw CairoException.critical(ff.errno()).put("cannot append data [fd=")
+                    .put(fd).put(", len=").put(len).put(']');
         }
     }
 
@@ -9349,7 +9350,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return parquetMetaReader.getRowGroupMinTimestamp(0, parquetTsIndex);
         } finally {
             if (parquetMetaAddr != 0) {
-                ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
     }
@@ -9439,22 +9440,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    /**
-     * Mmaps the _pm file, reads its metadata, and derives the parquet file size.
-     * Temporarily modifies {@code path} but restores it to point to data.parquet on return.
-     */
-    private long readParquetFileSizeFromParquetMetadata(int partitionDirLen, long parquetMetadataFileSize) {
-        path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
-        long parquetMetaAddr = mapRO(ff, path.$(), LOG, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-        try {
-            parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
-            return parquetMetaReader.getParquetFileSize();
-        } finally {
-            ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
-        }
-    }
-
     // side effect: sets attachMinTimestamp and attachMaxTimestamp, modifies filePath
     // reads from _pm metadata - does NOT mmap the parquet file
     // returns the partition size
@@ -9472,7 +9457,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return parquetMetaReader.getPartitionRowCount();
         } finally {
             if (parquetMetaAddr != 0) {
-                ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
     }
@@ -9482,17 +9467,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long readParquetMinMaxTimestamps(Path filePath, long parquetSize) {
         assert parquetSize > 0;
         long parquetAddr = 0;
-        try (PartitionDecoder tmpDecoder = new PartitionDecoder()) {
+        try {
             parquetAddr = mapRO(ff, filePath.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            tmpDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
+            partitionDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
             final int timestampIndex = metadata.getTimestampIndex();
-            final int parquetTsIndex = findParquetColumnIndex(tmpDecoder.metadata(), timestampIndex);
+            final int parquetTsIndex = findParquetColumnIndex(partitionDecoder.metadata(), timestampIndex);
             assert parquetTsIndex > -1;
-            final int rowGroupCount = tmpDecoder.metadata().getRowGroupCount();
+            final int rowGroupCount = partitionDecoder.metadata().getRowGroupCount();
             assert rowGroupCount > 0;
-            attachMinTimestamp = tmpDecoder.rowGroupMinTimestamp(0, parquetTsIndex);
-            attachMaxTimestamp = tmpDecoder.rowGroupMaxTimestamp(rowGroupCount - 1, parquetTsIndex);
-            return tmpDecoder.metadata().getRowCount();
+            attachMinTimestamp = partitionDecoder.rowGroupMinTimestamp(0, parquetTsIndex);
+            attachMaxTimestamp = partitionDecoder.rowGroupMaxTimestamp(rowGroupCount - 1, parquetTsIndex);
+            return partitionDecoder.metadata().getRowCount();
         } finally {
             if (parquetAddr != 0) {
                 ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
