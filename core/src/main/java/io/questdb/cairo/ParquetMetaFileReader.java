@@ -30,6 +30,8 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8s;
 
 /**
  * Zero-allocation reader for _pm parquet metadata files.
@@ -83,9 +85,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
     // Header offsets
     private static final int HEADER_FORMAT_VERSION_OFF = 0;
-    private static final int HEADER_FEATURE_FLAGS_OFF = 4;
     private static final int HEADER_DESIGNATED_TS_OFF = 12;
-    private static final int HEADER_SORTING_COL_CNT_OFF = 16;
     private static final int HEADER_COLUMN_COUNT_OFF = 20;
     private static final int HEADER_FIXED_SIZE = 24;
 
@@ -107,30 +107,17 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int COL_DESC_NAME_OFFSET_OFF = 0;
     private static final int COL_DESC_ID_OFF = 8;
     private static final int COL_DESC_COL_TYPE_OFF = 12;
-    private static final int COL_DESC_FLAGS_OFF = 16;
-    private static final int COL_DESC_FIXED_BYTE_LEN_OFF = 20;
     private static final int COL_DESC_NAME_LENGTH_OFF = 24;
-    private static final int COL_DESC_PHYSICAL_TYPE_OFF = 28;
-    private static final int COL_DESC_MAX_REP_LEVEL_OFF = 29;
-    private static final int COL_DESC_MAX_DEF_LEVEL_OFF = 30;
 
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
-    private static final int COLUMN_CHUNK_CODEC_OFF = 0;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
-    // Offset 4 is _reserved (u32, must be 0). Previously held bloom filter offsets,
-    // now moved to footer feature sections. Bloom filter consumption happens via
-    // the Rust canSkipRowGroup JNI; Java does not parse the bloom filter sections.
-    private static final int COLUMN_CHUNK_NUM_VALUES_OFF = 8;
-    private static final int COLUMN_CHUNK_BYTE_RANGE_START_OFF = 16;
-    private static final int COLUMN_CHUNK_TOTAL_COMPRESSED_OFF = 24;
-    private static final int COLUMN_CHUNK_NULL_COUNT_OFF = 32;
     private static final int COLUMN_CHUNK_MIN_STAT_OFF = 48;
     private static final int COLUMN_CHUNK_MAX_STAT_OFF = 56;
 
     private long addr;
     private int columnCount;
-    private long featureFlags;
+    private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private long fileSize;
     private long footerAddr;
     // Lazily allocated native handle to a JniParquetMetaReader. Created on
@@ -178,7 +165,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.addr = addr;
         this.fileSize = fileSize;
         this.footerAddr = addr + footerOffset;
-        this.featureFlags = Unsafe.getUnsafe().getLong(addr + HEADER_FEATURE_FLAGS_OFF);
         this.columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
         this.rowGroupCount = Unsafe.getUnsafe().getInt(this.footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
 
@@ -221,7 +207,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.footerAddr = 0;
         this.columnCount = 0;
         this.rowGroupCount = 0;
-        this.featureFlags = 0;
     }
 
     /**
@@ -338,37 +323,17 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_ID_OFF);
     }
 
-    public long getColumnTop(int columnIndex) {
-        return 0;
-    }
-
-    public int getColumnFlags(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_FLAGS_OFF);
-    }
-
-    public int getColumnPhysicalType(int columnIndex) {
-        return Unsafe.getUnsafe().getByte(columnDescriptorAddr(columnIndex) + COL_DESC_PHYSICAL_TYPE_OFF) & 0xFF;
-    }
-
-    public int getColumnFixedByteLen(int columnIndex) {
-        return Unsafe.getUnsafe().getInt(columnDescriptorAddr(columnIndex) + COL_DESC_FIXED_BYTE_LEN_OFF);
-    }
-
     /**
-     * Returns the column name for the given column index.
-     * Reads the name_offset and name_length from the descriptor, then reads
-     * the UTF-8 bytes directly at name_offset.
+     * Returns the column name for the given column index as a flyweight
+     * over the mmaped _pm data. The returned reference is reused across
+     * calls — callers must not hold it past the next call.
      */
-    public CharSequence getColumnName(int columnIndex) {
+    public DirectUtf8String getColumnName(int columnIndex) {
         long descAddr = columnDescriptorAddr(columnIndex);
         long nameOffset = Unsafe.getUnsafe().getLong(descAddr + COL_DESC_NAME_OFFSET_OFF);
         int nameLength = Unsafe.getUnsafe().getInt(descAddr + COL_DESC_NAME_LENGTH_OFF);
         long nameAddr = addr + nameOffset;
-        byte[] bytes = new byte[nameLength];
-        for (int i = 0; i < nameLength; i++) {
-            bytes[i] = Unsafe.getUnsafe().getByte(nameAddr + i);
-        }
-        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        return flyweightColName.of(nameAddr, nameAddr + nameLength, true);
     }
 
     /**
@@ -376,8 +341,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
      */
     public int getColumnIndex(CharSequence name) {
         for (int i = 0; i < columnCount; i++) {
-            CharSequence colName = getColumnName(i);
-            if (io.questdb.std.Chars.equals(colName, name)) {
+            if (Utf8s.equalsUtf16(name, getColumnName(i))) {
                 return i;
             }
         }
