@@ -142,7 +142,7 @@ class LateralJoinRewriter implements Mutable {
     }
 
     public void rewrite(IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
 
@@ -361,7 +361,7 @@ class LateralJoinRewriter implements Mutable {
 
     // Returns true if any lateral join was found in the model tree.
     private boolean analyzeCorrelation(IQueryModel model, int lateralDepth) {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return false;
         }
         boolean hasLateral = false;
@@ -522,6 +522,7 @@ class LateralJoinRewriter implements Mutable {
         CharSequence cloneAlias = characterStore.toImmutable();
 
         IQueryModel origSubquery = outerRefJoinModel.getNestedModel();
+        assert origSubquery instanceof QueryModel;
         IQueryModel sharedDistinct = createSharedRef((QueryModel) origSubquery);
         IQueryModel renamingLayer = queryModelPool.next();
         IQueryModel emptyLayer = queryModelPool.next();
@@ -1144,7 +1145,8 @@ class LateralJoinRewriter implements Mutable {
                     ExpressionNode.deepClone(expressionNodePool, outerJm.getTableNameExpr())
             );
         } else if (outerJm.getNestedModel() != null) {
-            QueryModel nestModel = (QueryModel) outerJm.getNestedModel();
+            IQueryModel iNestModel = outerJm.getNestedModel();
+            QueryModel nestModel = iNestModel instanceof QueryModelWrapper ? ((QueryModelWrapper) iNestModel).getDelegate() : (QueryModel) iNestModel;
             QueryModelWrapper wrapper = queryModelWrapperPool.next();
             nestModel.getSharedRefs().add(wrapper);
             wrapper.of(nestModel, nestModel.getSharedRefs().size());
@@ -1191,7 +1193,7 @@ class LateralJoinRewriter implements Mutable {
     //  5. Degrades the lateral join type to a regular join
     // Bottom-up order ensures nested laterals are decorrelated before their parents.
     private void decorrelate(IQueryModel model, int lateralDepth, IQueryModel parent) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         if (model.getNestedModel() != null) {
@@ -3009,6 +3011,7 @@ class LateralJoinRewriter implements Mutable {
             outerRefJoinModel.setJoinCriteria(joinCrit);
             outerRefJoinModel.setJoinType(IQueryModel.JOIN_INNER);
         }
+        assert outerRefJoinModel.getNestedModel() instanceof QueryModel;
         sharedModels.add((QueryModel) outerRefJoinModel.getNestedModel());
     }
 
@@ -3205,7 +3208,7 @@ class LateralJoinRewriter implements Mutable {
     // the __qdb_outer_ref__ join model from the tree. This converts the decorrelated
     // plan back to a simple join without the synthetic outer-ref data source.
     private void tryEliminateOuterRefs(IQueryModel model, IQueryModel parent) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
         tryEliminateOuterRefs(model.getUnionModel(), null);

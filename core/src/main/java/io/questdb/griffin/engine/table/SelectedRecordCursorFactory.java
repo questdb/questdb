@@ -250,6 +250,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     protected void _close() {
         base.close();
+        Misc.clear(sharedCursors);
     }
 
     // This wrapper handles column remapping for ConcurrentTimeFrameCursor when a

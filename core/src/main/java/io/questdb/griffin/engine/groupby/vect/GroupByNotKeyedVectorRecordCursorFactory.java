@@ -214,6 +214,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         Misc.freeObjListAndKeepObjects(frameMemoryPools);
         Misc.freeObjList(vafList);
         Misc.free(base);
+        Misc.clear(sharedCursors);
     }
 
     private class GroupByNotKeyedVectorRecordCursor implements NoRandomAccessRecordCursor {

@@ -4545,7 +4545,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             Misc.free(queryModel.getTableNameFunction());
             queryModel.setTableNameFunction(null);
-        } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.supportOptimise());
+        } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {

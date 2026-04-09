@@ -34,8 +34,12 @@ import io.questdb.griffin.SqlExecutionContext;
 /**
  * Thin wrapper that delegates to a shared factory's materialized data
  * via {@link RecordCursorFactory#getSharedCursor(SqlExecutionContext, int)}.
- * Multiple instances with different shardIds share the same underlying
+ * Multiple instances with different sharedIds share the same underlying
  * execution without re-scanning the base data.
+ * <p>
+ * This factory does not own {@code primaryFactory} and intentionally
+ * does not override {@code _close()} — ownership belongs to the node
+ * in the main factory tree that holds the primary factory directly.
  */
 public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory primaryFactory;

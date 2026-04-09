@@ -945,6 +945,80 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVectorizedKeyedGroupByOuter() throws Exception {
+        Assume.assumeFalse(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (group_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_qty LONG, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (1, 100, '2024-01-01T00:00:00.000000Z'),
+                    (1, 200, '2024-01-01T01:00:00.000000Z'),
+                    (2,  50, '2024-01-01T02:00:00.000000Z'),
+                    (2,  30, '2024-01-01T03:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (100, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (250, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            group_id\ttotal\trate
+                            1\t300\t0.1
+                            1\t300\t0.2
+                            """,
+                    """
+                            SELECT o.group_id, o.total, sub.rate
+                            FROM (SELECT group_id, sum(qty) AS total FROM orders GROUP BY group_id) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_qty <= o.total
+                            ) sub
+                            ORDER BY o.group_id, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
+    public void testVectorizedNotKeyedGroupByOuter() throws Exception {
+        Assume.assumeFalse(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_qty LONG, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    (100, '2024-01-01T00:00:00.000000Z'),
+                    (200, '2024-01-01T01:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (100, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (250, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            total\trate
+                            300\t0.1
+                            300\t0.2
+                            """,
+                    """
+                            SELECT o.total, sub.rate
+                            FROM (SELECT sum(qty) AS total FROM orders) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_qty <= o.total
+                            ) sub
+                            ORDER BY sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testSharedStringDistinctAgg() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {

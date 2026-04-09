@@ -107,7 +107,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
      */
     static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final IQueryModel model) {
         IQueryModel current = model;
-        while (current != null && current.supportOptimise()) {
+        while (current != null && current.isOptimisable()) {
             if (current.getUnionModel() != null) {
                 backupWhereClause(pool, current.getUnionModel());
             }
@@ -156,7 +156,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
      */
     static void restoreWhereClause(final ObjectPool<ExpressionNode> pool, final IQueryModel model) {
         IQueryModel current = model;
-        while (current != null && current.supportOptimise()) {
+        while (current != null && current.isOptimisable()) {
             if (current.getUnionModel() != null) {
                 restoreWhereClause(pool, current.getUnionModel());
             }
@@ -476,6 +476,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isNestedModelIsSubQuery();
 
+    boolean isOptimisable();
+
     boolean isOrderDescendingByDesignatedTimestampOnly();
 
     boolean isOwnCorrelatedAtDepth(int depth, int flag);
@@ -655,8 +657,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setViewNameExpr(ExpressionNode viewNameExpr);
 
     void setWhereClause(ExpressionNode whereClause);
-
-    boolean supportOptimise();
 
     void toSink0(CharSink<?> sink, boolean joinSlave, boolean showOrderBy);
 

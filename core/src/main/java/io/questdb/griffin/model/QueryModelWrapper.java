@@ -1,7 +1,8 @@
 /*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
- *   | | | | | | |/ _ \/ __| __| | | |  _  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
@@ -777,7 +778,7 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public boolean hasSharedRefs() {
-        return delegate.hasSharedRefs();
+        return false;
     }
 
     @Override
@@ -787,6 +788,7 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void incrementColumnRefCount(CharSequence alias, int refCount) {
+        // Delegates so function memoization sees usage from all wrapper references.
         delegate.incrementColumnRefCount(alias, refCount);
     }
 
@@ -828,6 +830,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean isNestedModelIsSubQuery() {
         return delegate.isNestedModelIsSubQuery();
+    }
+
+    @Override
+    public boolean isOptimisable() {
+        return false;
     }
 
     @Override
@@ -1288,11 +1295,6 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public void setWhereClause(ExpressionNode whereClause) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean supportOptimise() {
-        return false;
     }
 
     @Override

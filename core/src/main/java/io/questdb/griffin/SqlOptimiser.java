@@ -1702,7 +1702,7 @@ public class SqlOptimiser implements Mutable {
     // Semantically, order by must be executed after union. To get there, we will
     // create outer model(s) for the union block and move "order by" there.
     private IQueryModel bubbleUpOrderByAndLimitFromUnion(IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return model;
         }
         IQueryModel m = model.getUnionModel();
@@ -2008,7 +2008,7 @@ public class SqlOptimiser implements Mutable {
      * @param model the starting model.
      */
     private void collapseStackedChooseModels(@Nullable IQueryModel model) {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
 
@@ -2429,7 +2429,7 @@ public class SqlOptimiser implements Mutable {
 
     // order hash is used to determine redundant order when parsing window function definition
     private void createOrderHash(IQueryModel model) {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         LowerCaseCharSequenceIntHashMap hash = model.getOrderHash();
@@ -2877,7 +2877,7 @@ public class SqlOptimiser implements Mutable {
      * @throws SqlException if a dateadd offset exceeds the allowed int range
      */
     private void detectTimestampOffsetsRecursive(IQueryModel model) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
 
@@ -3579,7 +3579,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void enumerateTableColumns(IQueryModel model, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
         final ObjList<IQueryModel> jm = model.getJoinModels();
@@ -3689,7 +3689,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void eraseColumnPrefixInWhereClauses(IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         ObjList<IQueryModel> joinModels = model.getJoinModels();
@@ -4774,7 +4774,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private IQueryModel moveOrderByFunctionsIntoOuterSelect(IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return model;
         }
         // at this point order by should be on the nested model of this model :)
@@ -4840,7 +4840,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void moveTimestampToChooseModel(IQueryModel model) {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         IQueryModel nested = model.getNestedModel();
@@ -4877,7 +4877,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void moveWhereInsideSubQueries(IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         if (
@@ -4948,17 +4948,17 @@ public class SqlOptimiser implements Mutable {
 
                     // Detect if the parent's timestamp column is derived from a dateadd expression
                     // on the nested model's timestamp. This enables timestamp predicate pushdown with offset.
-                    if (nested != null && nested.supportOptimise() && !parent.hasTimestampOffset()) {
+                    if (nested != null && nested.isOptimisable() && !parent.hasTimestampOffset()) {
                         detectTimestampOffset(parent, nested);
                     }
 
-                    if (nested != null && nested.supportOptimise() && !nested.hasSharedRefs() && nested.getUnionModel() != null) {
+                    if (nested != null && nested.isOptimisable() && !nested.hasSharedRefs() && nested.getUnionModel() != null) {
                         // try pushing into each union branch; keep at parent only if some branch wasn't covered
                         if (!tryPushFilterIntoSetOperationBranches(node, parent, nested)) {
                             addWhereNode(parent, node);
                         }
                     } else if (nested == null
-                            || !nested.supportOptimise()
+                            || !nested.isOptimisable()
                             || nested.hasSharedRefs()
                             || nested.getLatestBy().size() > 0
                             || nested.getLimitLo() != null
@@ -5276,7 +5276,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void optimiseBooleanNot(IQueryModel model) {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
         ExpressionNode where = model.getWhereClause();
@@ -5303,7 +5303,7 @@ public class SqlOptimiser implements Mutable {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         ObjList<ExpressionNode> expressionModels = model.getExpressionModels();
@@ -5342,7 +5342,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void optimiseJoins(IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         ObjList<IQueryModel> joinModels = model.getJoinModels();
@@ -5397,7 +5397,7 @@ public class SqlOptimiser implements Mutable {
 
     // removes redundant order by clauses from sub-queries (only those that don't force materialization of other order by clauses )
     private void optimiseOrderBy(IQueryModel model, int topLevelOrderByMnemonic) {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         ObjList<QueryColumn> columns = model.getBottomUpColumns();
@@ -5777,7 +5777,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void propagateHintsTo(IQueryModel targetModel, LowerCaseCharSequenceObjHashMap<CharSequence> hints) {
-        if (targetModel == null || !targetModel.supportOptimise()) {
+        if (targetModel == null || !targetModel.isOptimisable()) {
             return;
         }
 
@@ -5801,7 +5801,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void propagateTopDownColumns(IQueryModel model, boolean allowColumnChange) {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         propagateTopDownColumns0(model, true, null, allowColumnChange);
@@ -5829,7 +5829,7 @@ public class SqlOptimiser implements Mutable {
      * It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
      */
     private void propagateTopDownColumns0(IQueryModel model, boolean topLevel, @Nullable IQueryModel papaModel, boolean allowColumnsChange) {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
 
@@ -6124,7 +6124,7 @@ public class SqlOptimiser implements Mutable {
      * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc limit 100)`
      */
     private void pushLimitFromChooseToNone(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
 
@@ -6143,7 +6143,7 @@ public class SqlOptimiser implements Mutable {
                         && !model.isDistinct()
                         && hasNoAggregateQueryColumns(model)
                         && nested != null
-                        && nested.supportOptimise()
+                        && nested.isOptimisable()
                         && nested.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE
                         && nested.getOrderBy().size() > 1 // only for multi-sort case, to get limited size cursor
                         && nested.getWhereClause() == null
@@ -6731,7 +6731,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void resolveJoinColumns(IQueryModel model) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
         ObjList<IQueryModel> joinModels = model.getJoinModels();
@@ -6791,7 +6791,7 @@ public class SqlOptimiser implements Mutable {
      * dedup, ORDER BY propagation, or literal emission.
      */
     private void resolveNamedWindows(IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         // Window expressions only exist in bottomUpColumns (topDownColumns only contain LITERALs)
@@ -6841,7 +6841,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void resolveWindowInheritance(IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         LowerCaseCharSequenceObjHashMap<WindowExpression> namedWindows = model.getNamedWindows();
@@ -7050,7 +7050,7 @@ public class SqlOptimiser implements Mutable {
     // Rewrites the following:
     // select count(constant) ... -> select count() ...
     private void rewriteCount(IQueryModel model) {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
 
@@ -7089,7 +7089,7 @@ public class SqlOptimiser implements Mutable {
      * </pre>
      */
     private void rewriteCountDistinct(IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         final IQueryModel nested = model.getNestedModel();
@@ -7097,7 +7097,7 @@ public class SqlOptimiser implements Mutable {
 
         if (
                 nested != null
-                        && nested.supportOptimise()
+                        && nested.isOptimisable()
                         && nested.getNestedModel() == null
                         && nested.getTableName() != null
                         && model.getColumns().size() == 1
@@ -7172,7 +7172,7 @@ public class SqlOptimiser implements Mutable {
      * @return either the input model or newly rewritten model.
      */
     private IQueryModel rewriteDistinct(IQueryModel model) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return model;
         }
 
@@ -7348,13 +7348,13 @@ public class SqlOptimiser implements Mutable {
      * @param model input model
      */
     private void rewriteMultipleTermLimitedOrderByPart1(IQueryModel model) {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
         if (
                 model.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE
                         && model.getNestedModel() != null
-                        && model.getNestedModel().supportOptimise()
+                        && model.getNestedModel().isOptimisable()
                         && model.getNestedModel().getSelectModelType() == IQueryModel.SELECT_MODEL_NONE
                         && model.getNestedModel().getOrderBy() != null
                         && model.getNestedModel().getOrderBy().size() > 1
@@ -7448,7 +7448,7 @@ public class SqlOptimiser implements Mutable {
      * @param model the starting point
      */
     private void rewriteMultipleTermLimitedOrderByPart2(IQueryModel model) {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
 
@@ -7498,7 +7498,7 @@ public class SqlOptimiser implements Mutable {
      * @throws SqlException when column names are ambiguous or not found at all.
      */
     private IQueryModel rewriteOrderBy(final IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return model;
         }
         // find base model and check if there is "group-by" model in between
@@ -7736,7 +7736,7 @@ public class SqlOptimiser implements Mutable {
      * @throws SqlException in case of any SQL syntax issues.
      */
     private void rewriteOrderByPosition(final IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         IQueryModel base = model;
@@ -7848,7 +7848,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void rewriteOrderByPositionForUnionModels(final IQueryModel model) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         IQueryModel next = model.getUnionModel();
@@ -7868,7 +7868,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private IQueryModel rewritePivot(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return model;
         }
         final IQueryModel originalModel = model;
@@ -7969,7 +7969,7 @@ public class SqlOptimiser implements Mutable {
      *              list of columns and the inner one with sample by clauses
      */
     private IQueryModel rewriteSampleBy(@Nullable IQueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return model;
         }
         final IQueryModel originalSbModel = model;
@@ -8397,7 +8397,7 @@ public class SqlOptimiser implements Mutable {
      * This is to allow for the generation of an interval scan and minimise reading of un-needed data.
      */
     private void rewriteSampleByFromTo(IQueryModel model) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
         IQueryModel curr;
@@ -8910,7 +8910,7 @@ public class SqlOptimiser implements Mutable {
             SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return model;
         }
         if (model.getUnionModel() != null) {
@@ -8932,7 +8932,7 @@ public class SqlOptimiser implements Mutable {
                     m.setNestedModel(rewritten);
                     // since we have rewritten nested model, we also have to update column hash
                     m.copyColumnsFrom(rewritten, queryColumnPool, expressionNodePool);
-                } else if (!nestedModel.supportOptimise()) {
+                } else if (!nestedModel.isOptimisable()) {
                     // Wrapper (shared model reference) was skipped by rewriteSelectClause,
                     // but the delegate's aliasToColumnMap is already populated because
                     // rewriteSelectClause traverses depth-first left-to-right (joinModels
@@ -8968,7 +8968,7 @@ public class SqlOptimiser implements Mutable {
             SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return model;
         }
         assert model.getNestedModel() != null;
@@ -9773,7 +9773,7 @@ public class SqlOptimiser implements Mutable {
      * Apart from the last() function, also supports single first/min/max functions.
      */
     private void rewriteSingleFirstLastGroupBy(IQueryModel model) {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         final IQueryModel nested = model.getNestedModel();
@@ -9936,7 +9936,7 @@ public class SqlOptimiser implements Mutable {
     // the intent is to either validate top-level columns in select columns or replace them with function calls
     // if columns do not exist
     private void rewriteTopLevelLiteralsToFunctions(IQueryModel model) {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return;
         }
         final IQueryModel nested = model.getNestedModel();
@@ -9998,7 +9998,7 @@ public class SqlOptimiser implements Mutable {
      * </pre>
      */
     private void rewriteTrivialGroupByExpressions(IQueryModel model) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
 
@@ -10641,7 +10641,7 @@ public class SqlOptimiser implements Mutable {
      * @throws SqlException if a window function is found in WHERE, ORDER BY, or JOIN ON clause
      */
     private void validateNoWindowFunctionsInWhereClauses(IQueryModel model) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
 
@@ -10788,7 +10788,7 @@ public class SqlOptimiser implements Mutable {
     private void validateWindowFunctions(
             IQueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
     ) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
 
@@ -10834,7 +10834,7 @@ public class SqlOptimiser implements Mutable {
             SqlExecutionContext sqlExecutionContext,
             int recursionLevel
     ) throws SqlException {
-        if (model == null || !model.supportOptimise()) {
+        if (model == null || !model.isOptimisable()) {
             return;
         }
         if (recursionLevel > maxRecursion) {
@@ -11306,7 +11306,7 @@ public class SqlOptimiser implements Mutable {
             @Transient SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        if (!model.supportOptimise()) {
+        if (!model.isOptimisable()) {
             return model;
         }
         IQueryModel rewrittenModel = model;

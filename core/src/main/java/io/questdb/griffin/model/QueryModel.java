@@ -368,7 +368,8 @@ public class QueryModel implements IQueryModel {
      */
     @Override
     public boolean allowsNestedColumnsChange() {
-        return !nestedModel.hasSharedRefs() && this.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT;
+        return (nestedModel == null || !nestedModel.hasSharedRefs())
+                && this.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT;
     }
 
     @Override
@@ -1291,6 +1292,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isOptimisable() {
+        return true;
+    }
+
+    @Override
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return orderDescendingByDesignatedTimestampOnly;
     }
@@ -1908,12 +1914,6 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setWhereClause(ExpressionNode whereClause) {
         this.whereClause = whereClause;
-    }
-
-
-    @Override
-    public boolean supportOptimise() {
-        return true;
     }
 
     @Override

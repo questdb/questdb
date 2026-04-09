@@ -107,6 +107,7 @@ public class ShardedMapCursor implements MapRecordCursor {
                 shardCursors.add(shards.getQuick(i).newCursor());
             }
         } else {
+            assert shardCursors.size() == shards.size();
             for (int i = 0, n = shards.size(); i < n; i++) {
                 shards.getQuick(i).initCursor(shardCursors.getQuick(i));
             }
