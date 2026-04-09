@@ -382,7 +382,6 @@ pub fn create_row_group_from_partitions(
         ));
     }
     let num_columns = partitions[0].columns.len();
-    let num_partitions = partitions.len();
 
     // Collect unique hash values for bloom filter construction.
     // See comment in create_row_group() for rationale on using HashSet vs direct bloom
@@ -403,9 +402,9 @@ pub fn create_row_group_from_partitions(
     let col_to_iter = |col_idx: usize,
                        options: WriteOptions,
                        bloom_set: Option<Arc<Mutex<HashSet<u64>>>>|
-     -> ParquetResult<
-        DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
-    > {
+                       -> ParquetResult<
+                           DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
+                       > {
         let column_type = &column_types[col_idx];
         let col_encoding = encoding[col_idx];
         let first_partition_column = partitions[0].columns[col_idx];
@@ -460,6 +459,5 @@ pub fn create_row_group_from_partitions(
             .collect::<ParquetResult<Vec<_>>>()?
     };
 
-    let _ = num_partitions; // currently informational only; encode_column_chunk handles partitioning
     Ok((DynIter::new(columns.into_iter().map(Ok)), bloom_hashes))
 }
