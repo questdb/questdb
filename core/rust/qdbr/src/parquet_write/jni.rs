@@ -1014,7 +1014,7 @@ fn write_pending_row_group(encoder: &mut StreamingParquetWriter) -> ParquetResul
         .map(|(idx, p)| {
             let rows = p.columns[0].row_count;
             if idx == 0 {
-                rows.sub(encoder.first_partition_start)
+                rows.saturating_sub(encoder.first_partition_start)
             } else {
                 rows
             }
