@@ -401,6 +401,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return key.init();
     }
 
+    /**
+     * When comparing hash and size for equality, we want to ignore ascii vs non-ascii flag, since it doesn't affect hash collisions or key equality checks.
+     */
+    private static long makePackComparable(long packedHashSizeFlags) {
+        return packedHashSizeFlags & 0x7fffffffffffffffL;
+    }
+
     private UnorderedVarcharMapValue asNew(
             long startAddress,
             long hash,
@@ -486,13 +493,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 }
             }
         }
-    }
-
-    /**
-     * When comparing hash and size for equality, we want to ignore ascii vs non-ascii flag, since it doesn't affect hash collisions or key equality checks.
-     */
-    private static long makePackComparable(long packedHashSizeFlags) {
-        return packedHashSizeFlags & 0x7fffffffffffffffL;
     }
 
     private UnorderedVarcharMapValue probeReadOnly(long startAddress, long ptr, long size, long packedHashSizeFlagsToFind, UnorderedVarcharMapValue value) {

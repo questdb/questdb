@@ -7472,8 +7472,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (columnExpr.type == FUNCTION && columnExpr.paramCount == 0 && isCountKeyword(columnExpr.token)) {
                     // check if count() was not aliased, if it was, we need to generate new baseMetadata, bummer
                     final RecordMetadata metadata = isCountKeyword(columnName)
-                            ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
-                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), LONG));
+                            ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA
+                            : new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), LONG));
                     return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
                 }
             }
