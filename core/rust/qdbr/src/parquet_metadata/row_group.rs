@@ -53,8 +53,7 @@ impl<'a> RowGroupBlockReader<'a> {
                 min_size
             ));
         }
-        // Safety: Row group blocks are 8-byte aligned per spec, so the u64 read is aligned.
-        let num_rows = unsafe { *(data.as_ptr() as *const u64) };
+        let num_rows = u64::from_le_bytes(data[0..8].try_into().unwrap());
         Ok(Self { data, column_count, num_rows })
     }
 
@@ -220,6 +219,15 @@ impl RowGroupBlockBuilder {
                 len
             ));
         }
+        let bitset_len = i32::try_from(bitset.len()).map_err(|_| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "bloom filter bitset too large: {} bytes, max {}",
+                bitset.len(),
+                i32::MAX
+            )
+        })?;
+
         // Pad to 8-byte alignment within the OOL region.
         let padding =
             (BLOCK_ALIGNMENT - (self.out_of_line.len() % BLOCK_ALIGNMENT)) % BLOCK_ALIGNMENT;
@@ -227,7 +235,7 @@ impl RowGroupBlockBuilder {
 
         let ool_offset = self.out_of_line.len();
         self.out_of_line
-            .extend_from_slice(&(bitset.len() as i32).to_le_bytes());
+            .extend_from_slice(&bitset_len.to_le_bytes());
         self.out_of_line.extend_from_slice(bitset);
         self.bloom_filters.push((col_index, ool_offset));
         Ok(self)
