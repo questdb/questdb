@@ -87,7 +87,8 @@ public class PartitionDecoder implements QuietCloseable {
      * @param filePathPtr pointer to UTF-8 file path bytes
      * @param filePathLen length of the file path in bytes
      * @param destAddr    address of a 16-byte buffer to receive [row_count, squash_tracker]
-     * @return true on success, false on error (file not found, corrupt footer, etc.)
+     * @return true on success
+     * @throws io.questdb.cairo.CairoException on I/O errors (file not found, corrupt footer, etc.)
      */
     public static native boolean readPartitionMeta(long filePathPtr, int filePathLen, long destAddr);
 
