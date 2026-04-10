@@ -42,6 +42,8 @@ public class ParquetMetaFileWriter {
 
     public static native void addColumn(long writerPtr, long namePtr, int nameLen, int id, int colType, int flags, int fixedByteLen, int physicalType, int maxRepLevel, int maxDefLevel);
 
+    public static native void addBloomFilter(long writerPtr, int colIndex, long bitsetPtr, int bitsetLen);
+
     public static native void addSortingColumn(long writerPtr, int index);
 
     public static native void addRowGroup(long writerPtr, long numRows) throws CairoException;

@@ -665,4 +665,109 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             }
         });
     }
+
+    // ── Feature flags / bloom filter tests ──────────────────────────────
+
+    @Test
+    public void testBloomFilterEnabledFileAccepted() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFileWithBloomFilter(2, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+
+                Assert.assertTrue(reader.isOpen());
+                Assert.assertEquals(2, reader.getColumnCount());
+                Assert.assertEquals(1, reader.getRowGroupCount());
+                Assert.assertEquals(100, reader.getRowGroupSize(0));
+                reader.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testBloomFilterEnabledCanSkipRowGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFileWithBloomFilter(2, 100)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                reader.of(file.dataPtr, file.dataLen);
+
+                try (DirectLongList filters = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT)) {
+                    Assert.assertFalse(reader.canSkipRowGroup(0, filters, 0));
+                }
+                reader.close();
+            }
+        });
+    }
+
+    @Test
+    public void testUnknownRequiredFeatureFlagRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                // Set bit 32 (a required feature flag) in the header feature flags at offset 4.
+                long originalFlags = Unsafe.getUnsafe().getLong(file.dataPtr + 4);
+                Unsafe.getUnsafe().putLong(file.dataPtr + 4, originalFlags | (1L << 32));
+
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                try {
+                    reader.of(file.dataPtr, file.dataLen);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage().contains("unsupported required _pm feature flags"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExtraFooterBytesWithNoFeaturesRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                // Inflate the footer length by 8 bytes while feature flags remain 0.
+                // This simulates a corrupt file with unexpected trailing bytes.
+                int footerLength = Unsafe.getUnsafe().getInt(file.dataPtr + file.dataLen - 4);
+                Unsafe.getUnsafe().putInt(file.dataPtr + file.dataLen - 4, footerLength + 8);
+
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                try {
+                    reader.of(file.dataPtr, file.dataLen);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage().contains("unexpected _pm footer feature bytes"));
+                }
+            }
+        });
+    }
+
+    // ── Bloom filter test helper ────────────────────────────────────────
+
+    private static PmTestFile buildFileWithBloomFilter(int columnCount, long... rowGroupSizes) {
+        long writerPtr = ParquetMetaFileWriter.create();
+        try {
+            ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, -1);
+            for (int i = 0; i < columnCount; i++) {
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("col_").put(i);
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), i, 5, 0, 0, 0, 0, 0);
+                }
+            }
+            for (long numRows : rowGroupSizes) {
+                ParquetMetaFileWriter.addRowGroup(writerPtr, numRows);
+                // Add a dummy bloom filter bitset (32 bytes) for column 0.
+                long bitsetAddr = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int b = 0; b < 32; b++) {
+                        Unsafe.getUnsafe().putByte(bitsetAddr + b, (byte) 0xFF);
+                    }
+                    ParquetMetaFileWriter.addBloomFilter(writerPtr, 0, bitsetAddr, 32);
+                } finally {
+                    Unsafe.free(bitsetAddr, 32, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+            ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
+            long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+            return new PmTestFile(resultPtr);
+        } finally {
+            ParquetMetaFileWriter.destroyWriter(writerPtr);
+        }
+    }
 }

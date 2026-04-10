@@ -124,6 +124,22 @@ impl ParquetMetaWriter {
         self
     }
 
+    /// Adds a bloom filter bitset to the last row group for the given column.
+    pub fn add_bloom_filter_to_last_row_group(
+        &mut self,
+        col_index: usize,
+        bitset: &[u8],
+    ) -> ParquetResult<&mut Self> {
+        let rg = self.row_groups.last_mut().ok_or_else(|| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "no row group to add bloom filter to"
+            )
+        })?;
+        rg.add_bloom_filter(col_index, bitset)?;
+        Ok(self)
+    }
+
     /// Sets bloom filter column indices (delegates to header builder).
     pub fn set_bloom_filter_columns(&mut self, indices: &[u32]) -> &mut Self {
         self.header_builder.set_bloom_filter_columns(indices);

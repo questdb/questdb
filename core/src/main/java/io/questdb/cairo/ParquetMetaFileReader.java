@@ -152,12 +152,18 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     /**
-     * Releases the native reader handle and resets all in-memory state.
-     * Delegates to {@link #clear()}.
+     * Releases the native reader handle but preserves in-memory state
+     * (addr, fileSize, column/row group counts). This allows long-lived
+     * owners to defensively close without breaking subsequent accessor
+     * reads or canSkipRowGroup calls (which lazily reallocate the handle).
+     * Use {@link #clear()} for a full reset.
      */
     @Override
     public void close() {
-        clear();
+        if (nativeReaderPtr != 0) {
+            destroyNativeReader(nativeReaderPtr);
+            nativeReaderPtr = 0;
+        }
     }
 
     public long getAddr() {
@@ -376,6 +382,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             throw CairoException.critical(0)
                     .put("unsupported required _pm feature flags [flags=0x")
                     .put(Long.toHexString(unknownRequired))
+                    .put(']');
+        }
+        final long footerExtra = footerLengthUnsigned - baseFooterLength;
+        if (footerExtra != 0 && featureFlags == 0) {
+            throw CairoException.critical(0)
+                    .put("unexpected _pm footer feature bytes [bytes=").put(footerExtra)
                     .put(']');
         }
     }

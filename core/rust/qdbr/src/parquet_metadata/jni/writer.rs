@@ -140,6 +140,34 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addBloomFilter(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: *mut JniParquetMetaWriter,
+    col_index: jint,
+    bitset_ptr: *const u8,
+    bitset_len: jint,
+) {
+    check_not_null!(env, ptr, "ParquetMetaFileWriter");
+    if bitset_ptr.is_null() || bitset_len < 0 {
+        let err = parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "invalid bloom filter bitset pointer or length"
+        );
+        return err.into_cairo_exception().throw(&mut env);
+    }
+    let wrapper = unsafe { &mut *ptr };
+    let bitset = unsafe { slice::from_raw_parts(bitset_ptr, bitset_len as usize) };
+    if let Err(mut err) = wrapper
+        .writer
+        .add_bloom_filter_to_last_row_group(col_index as usize, bitset)
+    {
+        err.add_context("error in ParquetMetaFileWriter.addBloomFilter");
+        err.into_cairo_exception().throw::<()>(&mut env);
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addSortingColumn(
     mut env: JNIEnv,
     _class: JClass,
