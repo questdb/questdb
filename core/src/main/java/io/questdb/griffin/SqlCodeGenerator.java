@@ -3493,9 +3493,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterA.copy()
             );
 
+            final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());
+            fillMetadata.setTimestampIndex(timestampIndex);
+
             return new SampleByFillRecordCursorFactory(
                     configuration,
-                    groupByFactory.getMetadata(),
+                    fillMetadata,
                     groupByFactory,
                     fillFromFunc,
                     fillToFunc,
