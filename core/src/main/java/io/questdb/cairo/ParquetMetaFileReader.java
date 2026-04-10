@@ -105,9 +105,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int FOOTER_UNUSED_BYTES_OFF = 16;
     private static final int HEADER_COLUMN_COUNT_OFF = 20;
     private static final int HEADER_DESIGNATED_TS_OFF = 12;
+    private static final long HEADER_FEATURE_FLAGS_OFF = 4;
     private static final int HEADER_FIXED_SIZE = 24;
     // Header offsets
     private static final int HEADER_FORMAT_VERSION_OFF = 0;
+    // Feature flag bits 32-63 are required: unknown bits must cause rejection.
+    private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
     private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private long addr;
     private int columnCount;
@@ -358,18 +361,21 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         }
         this.totalRowCount = rowCount;
 
+        long featureFlags = Unsafe.getUnsafe().getLong(addr + HEADER_FEATURE_FLAGS_OFF);
+        long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK;
+        if (unknownRequired != 0) {
+            throw CairoException.critical(0)
+                    .put("unsupported required _pm feature flags [flags=0x")
+                    .put(Long.toHexString(unknownRequired))
+                    .put(']');
+        }
+
         final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
         final long footerLengthUnsigned = Integer.toUnsignedLong(footerLength);
         if (footerLengthUnsigned < baseFooterLength) {
             throw CairoException.critical(0)
                     .put("invalid _pm footer length [footerLength=").put(footerLengthUnsigned)
                     .put(", min=").put(baseFooterLength)
-                    .put(']');
-        }
-        final long footerExtra = footerLengthUnsigned - baseFooterLength;
-        if (footerExtra != 0) {
-            throw CairoException.critical(0)
-                    .put("unexpected _pm footer feature bytes [bytes=").put(footerExtra)
                     .put(']');
         }
     }
