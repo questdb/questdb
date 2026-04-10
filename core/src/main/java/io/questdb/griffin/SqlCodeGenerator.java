@@ -3440,8 +3440,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            // Build symbolTableColIndices for MapRecord SYMBOL resolution
+            // Build symbolTableColIndices for MapRecord SYMBOL resolution.
+            // The IntList must cover ALL map columns (value columns first,
+            // then key columns). Value columns are never SYMBOLs, so they
+            // get -1. Key columns get the base cursor column index if SYMBOL.
             final IntList symbolTableColIndices = new IntList();
+            // Value slots: keyIndex + hasPrev + aggColumnCount
+            for (int i = 0, n = mapValueTypes.getColumnCount(); i < n; i++) {
+                symbolTableColIndices.add(-1);
+            }
+            // Key slots
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                 int col = keyColIndices.getQuick(i);
                 if (ColumnType.tagOf(groupByMetadata.getColumnType(col)) == ColumnType.SYMBOL) {

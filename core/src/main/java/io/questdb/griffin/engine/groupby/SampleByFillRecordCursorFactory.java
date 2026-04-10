@@ -200,6 +200,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final Function fromFunc;
         private final boolean hasPrevFill;
         private final IntList keyColIndices;
+        private final int keyPosOffset;
         private final RecordSink keySink;
         private final Map keysMap;
         private final int[] outputColToAggSlot;
@@ -263,19 +264,24 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.symbolTableColIndices = symbolTableColIndices;
             this.simplePrev = hasPrevFill ? new long[columnCount] : null;
 
-            // Build outputColToKeyPos and outputColToAggSlot mappings
+            // Build outputColToKeyPos and outputColToAggSlot mappings.
+            // keyPosOffset compensates for value columns preceding key columns
+            // in the MapRecord column index space: value cols are at indices
+            // 0..valueColCount-1, key cols at valueColCount..valueColCount+keyCount-1.
             this.outputColToKeyPos = new int[columnCount];
             this.outputColToAggSlot = new int[columnCount];
             Arrays.fill(outputColToKeyPos, -1);
             Arrays.fill(outputColToAggSlot, -1);
-            for (int i = 0, n = keyColIndices.size(); i < n; i++) {
-                outputColToKeyPos[keyColIndices.getQuick(i)] = i;
-            }
             int aggSlot = 0;
             for (int col = 0; col < columnCount; col++) {
                 if (fillModes.getQuick(col) != FILL_KEY && col != timestampIndex) {
                     outputColToAggSlot[col] = aggSlot++;
                 }
+            }
+            // keyPosOffset = 2 (keyIndex + hasPrev) + aggColumnCount
+            this.keyPosOffset = 2 + aggSlot;
+            for (int i = 0, n = keyColIndices.size(); i < n; i++) {
+                outputColToKeyPos[keyColIndices.getQuick(i)] = keyPosOffset + i;
             }
         }
 
