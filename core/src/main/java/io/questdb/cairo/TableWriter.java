@@ -2136,6 +2136,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionNameTxn(partitionIndex);
     }
 
+    public long getPartitionNameTxnByPartitionTimestamp(long partitionTimestamp) {
+        return txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+    }
+
     public long getPartitionO3SplitThreshold() {
         long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
         return splitMinSizeBytes /
