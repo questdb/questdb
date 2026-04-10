@@ -49,7 +49,6 @@ class EarliestByAllIndexedRecordCursor extends AbstractAscendingRecordListCursor
     private final int columnIndex;
     private final IntHashSet foundKeys;
     private final DirectLongList prefixes;
-    private SqlExecutionCircuitBreaker circuitBreaker;
     private int keyCount;
 
     public EarliestByAllIndexedRecordCursor(
@@ -71,7 +70,6 @@ class EarliestByAllIndexedRecordCursor extends AbstractAscendingRecordListCursor
             isOpen = true;
         }
         super.of(pageFrameCursor, executionContext);
-        circuitBreaker = executionContext.getCircuitBreaker();
         keyCount = -1;
         foundKeys.clear();
     }

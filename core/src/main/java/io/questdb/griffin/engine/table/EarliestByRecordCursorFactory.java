@@ -131,8 +131,8 @@ public class EarliestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.free(rowIndexes);
         Misc.free(cursor);
+        Misc.free(rowIndexes);
         Misc.free(base);
     }
 

@@ -877,6 +877,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
         dst.setLatestByType(latestByType);
 
+        for (int i = 0, n = earliestBy.size(); i < n; i++) {
+            dst.earliestBy.add(ExpressionNode.deepClone(expressionNodePool, earliestBy.getQuick(i)));
+        }
+        dst.setEarliestByType(earliestByType);
+
         if (timestamp != null) {
             dst.setTimestamp(ExpressionNode.deepClone(expressionNodePool, timestamp));
         }
@@ -2245,7 +2250,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 aliasToSink(alias.token, sink);
             }
 
-            if (getLatestByType() != LATEST_BY_NEW && timestamp != null) {
+            if (getLatestByType() != LATEST_BY_NEW && getEarliestByType() != EARLIEST_BY_NEW && timestamp != null) {
                 sink.putAscii(" timestamp (");
                 timestamp.toSink(sink);
                 sink.putAscii(')');
@@ -2269,6 +2274,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         sink.putAscii(',');
                     }
                     getLatestBy().getQuick(i).toSink(sink);
+                }
+            }
+
+            if (getEarliestByType() == EARLIEST_BY_DEPRECATED && getEarliestBy().size() > 0) {
+                sink.putAscii(" earliest by ");
+                for (int i = 0, n = getEarliestBy().size(); i < n; i++) {
+                    if (i > 0) {
+                        sink.putAscii(',');
+                    }
+                    getEarliestBy().getQuick(i).toSink(sink);
                 }
             }
 
@@ -2522,6 +2537,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     sink.put(',');
                 }
                 getLatestBy().getQuick(i).toSink(sink);
+            }
+        }
+
+        if (getEarliestByType() == EARLIEST_BY_NEW && getEarliestBy().size() > 0) {
+            sink.putAscii(" earliest on ");
+            timestamp.toSink(sink);
+            sink.putAscii(" partition by ");
+            for (int i = 0, n = getEarliestBy().size(); i < n; i++) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                getEarliestBy().getQuick(i).toSink(sink);
             }
         }
 

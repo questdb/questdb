@@ -130,8 +130,8 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        Misc.free(base);
+        Misc.free(cursor);
     }
 
     private class EarliestByLightRecordCursor implements RecordCursor {
