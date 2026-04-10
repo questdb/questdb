@@ -1110,6 +1110,10 @@ public class CheckpointTest extends AbstractCairoTest {
                     "SELECT count() FROM t",
                     "count\n11\n"
             );
+            server2.assertSql(
+                    "SELECT count() FROM t WHERE sym = 'A'",
+                    "count\n6\n"
+            );
         }
     }
 
