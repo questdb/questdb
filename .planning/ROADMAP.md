@@ -88,16 +88,17 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Optimizer Gate | 0/0 | Complete | 2026-04-09 |
 | 2. Non-keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
 | 3. Keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
-| 4. Cross-Column Prev | 0/1 | In progress | - |
-| 5. Verification and Hardening | 0/1 | Not started | - |
-| 6. Keyed Fill with FROM/TO Range | 1/1 | Complete   | 2026-04-10 |
+| 4. Cross-Column Prev | 1/1 | Complete | 2026-04-10 |
+| 5. Verification and Hardening | 1/1 | Complete | 2026-04-10 |
+| 6. Keyed Fill with FROM/TO Range | 1/1 | Complete | 2026-04-10 |
+| 7. PREV Type-Safe Fast Path | 0/1 | Not started | - |
 
 ### Phase 6: Keyed Fill with FROM/TO Range
 **Goal**: Keyed FILL queries with FROM/TO range emit the cartesian product of all keys for every bucket in the range, including leading and trailing fill rows for all keys
@@ -112,3 +113,18 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 **Plans:** 1/1 plans complete
 Plans:
 - [x] 06-01-PLAN.md -- Fix SIGSEGV crash + 8 keyed FROM/TO fill tests
+
+### Phase 7: PREV Type-Safe Fast Path
+**Goal**: Make fast-path FILL(PREV/prev(alias)) type-safe by adding a source type support matrix, per-column snapshot tracking, and legacy fallback for unsupported types
+**Depends on**: Phase 4
+**Requirements**: PTSF-01, PTSF-02, PTSF-03, PTSF-04, PTSF-05, PTSF-06
+**Success Criteria** (what must be TRUE):
+  1. No UnsupportedOperationException or implicit-cast failures from fast-path PREV
+  2. Mixed-fill query (one PREV numeric + one non-PREV string/symbol aggregate) does not crash
+  3. `prev(alias)` referencing unsupported type (STRING/SYMBOL/VARCHAR/ARRAY) falls back to legacy path (plan shows `Sample By`, not `Async Group By`)
+  4. Numeric `prev(alias)` with calendar + timezone stays on fast path
+  5. No behavior regressions for existing FILL(PREV) tests (SampleByTest + SampleByFillTest)
+  6. Nanosecond timestamp tests mirror microsecond equivalents
+**Plans:** 1 plan
+Plans:
+- [ ] 07-01-PLAN.md -- Per-column snapshot, type matrix, optimizer gate, legacy fallback, mixed-fill and nano tests
