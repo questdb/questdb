@@ -117,6 +117,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     // the first canSkipRowGroup call and freed by clear()/close().
     private long nativeReaderPtr;
     private int rowGroupCount;
+    private long totalRowCount;
 
     @Override
     public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
@@ -144,6 +145,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.footerAddr = 0;
         this.columnCount = 0;
         this.rowGroupCount = 0;
+        this.totalRowCount = 0;
     }
 
     /**
@@ -219,8 +221,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         return fileSize;
     }
 
-    // ── Column descriptor accessors ──────────────────────────────────────
-
     /**
      * Derives the parquet file size from the _pm footer metadata.
      * parquetFileSize = PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8
@@ -233,14 +233,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     /**
-     * Returns the total number of rows across all row groups.
+     * Returns the total number of rows across all row groups (cached, O(1)).
      */
     public long getPartitionRowCount() {
-        long total = 0;
-        for (int i = 0; i < rowGroupCount; i++) {
-            total += Unsafe.getUnsafe().getLong(rowGroupBlockAddr(i));
-        }
-        return total;
+        return totalRowCount;
     }
 
     /**
@@ -355,6 +351,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.footerAddr = addr + footerOffset;
         this.columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
         this.rowGroupCount = Unsafe.getUnsafe().getInt(this.footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
+
+        long rowCount = 0;
+        for (int i = 0; i < rowGroupCount; i++) {
+            rowCount += Unsafe.getUnsafe().getLong(rowGroupBlockAddr(i));
+        }
+        this.totalRowCount = rowCount;
 
         final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
         final long footerLengthUnsigned = Integer.toUnsignedLong(footerLength);

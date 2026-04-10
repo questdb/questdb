@@ -112,23 +112,24 @@ public final class ParquetRowGroupFilter {
             DirectLongList filterList,
             MemoryCARWImpl filterValues
     ) {
-        return prepareFilterListImpl(metadata::getColumnIndex, pushdownFilterConditions, filterList, filterValues);
+        return prepareFilterListImpl(metadata, null, pushdownFilterConditions, filterList, filterValues);
     }
 
     /**
      * Overload for ParquetMetaFileReader -- resolves columns from the _pm sidecar metadata.
      */
     public static boolean prepareFilterList(
-            ParquetMetaFileReader metadata,
+            ParquetMetaFileReader parquetMetaReader,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
             MemoryCARWImpl filterValues
     ) {
-        return prepareFilterListImpl(metadata::getColumnIndex, pushdownFilterConditions, filterList, filterValues);
+        return prepareFilterListImpl(null, parquetMetaReader, pushdownFilterConditions, filterList, filterValues);
     }
 
     private static boolean prepareFilterListImpl(
-            java.util.function.ToIntFunction<CharSequence> columnIndexLookup,
+            PartitionDecoder.Metadata legacyMetadata,
+            ParquetMetaFileReader parquetMetaReader,
             ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
             DirectLongList filterList,
             MemoryCARWImpl filterValues
@@ -147,7 +148,9 @@ public final class ParquetRowGroupFilter {
                 final ObjList<Function> valueFunctions = condition.getValueFunctions();
                 final int valueCount = valueFunctions.size();
 
-                int columnIndex = columnIndexLookup.applyAsInt(condition.getColumnName());
+                int columnIndex = legacyMetadata != null
+                        ? legacyMetadata.getColumnIndex(condition.getColumnName())
+                        : parquetMetaReader.getColumnIndex(condition.getColumnName());
                 if (columnIndex < 0) {
                     continue;
                 }
