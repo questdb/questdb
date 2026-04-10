@@ -2710,6 +2710,7 @@ public class SqlParser {
                                     && target.getWhereClause() == null
                                     && target.getOrderBy().size() == 0
                                     && target.getLatestBy().size() == 0
+                                    && target.getEarliestBy().size() == 0
                                     && target.getNestedModel() == null
                                     && target.getSampleBy() == null
                                     && target.getGroupBy().size() == 0

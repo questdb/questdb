@@ -2041,5 +2041,37 @@ public class EarliestByTest extends AbstractCairoTest {
             );
         });
     }
+
+    // =====================================================================
+    // Regression: subquery collapse must not strip EARLIEST ON
+    // =====================================================================
+
+    @Test
+    public void testEarliestOnPreservedThroughArtificialStarSubquery() throws Exception {
+        // Verifies that the parser's subquery-collapse optimisation does not
+        // strip EARLIEST ON when it sees an artificial SELECT * wrapper.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', '1970-01-01T00:00:00'), " +
+                    "('b', '1970-01-01T01:00:00'), " +
+                    "('a', '1970-01-01T02:00:00'), " +
+                    "('b', '1970-01-01T03:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // Without the fix, the collapse would turn
+            //   SELECT * FROM (t EARLIEST ON ts PARTITION BY s)
+            // into just "t" — returning all 4 rows instead of 2.
+            assertQuery(
+                    "s\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "b\t1970-01-01T01:00:00.000000" + suffix + "\n",
+                    "SELECT * FROM (SELECT * FROM t EARLIEST ON ts PARTITION BY s)",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
 }
 
