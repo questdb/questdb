@@ -13,10 +13,11 @@ This project moves QuestDB's SAMPLE BY FILL queries from the sequential cursor-b
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Optimizer Gate** - Relax optimizer to rewrite FILL(PREV) and keyed FILL to GROUP BY, preserve ORDER BY
-- [ ] **Phase 2: Non-keyed Fill Cursor** - Streaming fill cursor for non-keyed FILL(NULL/PREV/VALUE) with DST and FROM/TO support
-- [ ] **Phase 3: Keyed Fill Cursor** - Map-based key discovery, cartesian product emission, per-key prev tracking
+- [x] **Phase 2: Non-keyed Fill Cursor** - Streaming fill cursor for non-keyed FILL(NULL/PREV/VALUE) with DST and FROM/TO support
+- [x] **Phase 3: Keyed Fill Cursor** - Map-based key discovery, cartesian product emission, per-key prev tracking
 - [ ] **Phase 4: Cross-Column Prev** - FILL(PREV) referencing a different column from the previous bucket
 - [ ] **Phase 5: Verification and Hardening** - All 302 SampleByTest tests pass, resource leak fixes, parity validation
+- [x] **Phase 6: Keyed Fill with FROM/TO Range** - Keyed fill with FROM/TO range, architecture validation against cursor path (completed 2026-04-10)
 
 ## Phase Details
 
@@ -83,7 +84,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -92,3 +93,18 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 3. Keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
 | 4. Cross-Column Prev | 0/0 | Not started | - |
 | 5. Verification and Hardening | 0/0 | Not started | - |
+| 6. Keyed Fill with FROM/TO Range | 1/1 | Complete   | 2026-04-10 |
+
+### Phase 6: Keyed Fill with FROM/TO Range
+**Goal**: Keyed FILL queries with FROM/TO range emit the cartesian product of all keys for every bucket in the range, including leading and trailing fill rows for all keys
+**Depends on**: Phase 3
+**Requirements**: KFTR-01, KFTR-02, KFTR-03, KFTR-04, KFTR-05
+**Success Criteria** (what must be TRUE):
+  1. `SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-02' FILL(NULL)` emits all keys for every bucket in the [FROM, TO) range
+  2. Leading fill rows (FROM before first data) include all keys with null/constant/prev fill values
+  3. Trailing fill rows (TO after last data) include all keys with correct fill values
+  4. Per-key FILL(PREV) tracks correctly across the full FROM/TO range (including leading buckets before any key has data)
+  5. Architecture validation: output matches the cursor-based path for equivalent queries
+**Plans:** 1/1 plans complete
+Plans:
+- [x] 06-01-PLAN.md -- Fix SIGSEGV crash + 8 keyed FROM/TO fill tests
