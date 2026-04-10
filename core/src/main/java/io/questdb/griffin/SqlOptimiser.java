@@ -213,7 +213,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
-    private final ObjHashSet<QueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
+    private final ObjHashSet<IQueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
@@ -417,8 +417,8 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    private static boolean columnNotExistsInJoinModels(QueryModel baseModel, CharSequence columnName) {
-        final ObjList<QueryModel> joinModels = baseModel.getJoinModels();
+    private static boolean columnNotExistsInJoinModels(IQueryModel baseModel, CharSequence columnName) {
+        final ObjList<IQueryModel> joinModels = baseModel.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             if (joinModels.getQuick(i).getAliasToColumnMap().contains(columnName)) {
                 return false;
@@ -2170,7 +2170,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private boolean columnExistsInJoinTree(QueryModel model, CharSequence columnName) {
+    private boolean columnExistsInJoinTree(IQueryModel model, CharSequence columnName) {
         if (model == null) {
             return false;
         }
@@ -2181,14 +2181,14 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private boolean columnExistsInJoinTree0(QueryModel model, CharSequence columnName, ObjHashSet<QueryModel> visited) {
+    private boolean columnExistsInJoinTree0(IQueryModel model, CharSequence columnName, ObjHashSet<IQueryModel> visited) {
         if (model == null || !visited.add(model)) {
             return false;
         }
         if (!model.getAliasToColumnMap().excludes(columnName)) {
             return true;
         }
-        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             if (columnExistsInJoinTree0(joinModels.getQuick(i), columnName, visited)) {
                 return true;
