@@ -591,7 +591,22 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     sender.flush();
                 }
 
-                Assert.assertTrue(receiver.runSerially());
+                // UDP loopback delivery is not synchronous with send(): the datagram may
+                // still be in flight through the kernel after the sender has closed. Spin
+                // until the receiver observes it. This is safe even under the short commit
+                // interval configured here because nextCommitTime stays at Long.MAX_VALUE
+                // until the first datagram is processed, so the interval-based commit
+                // cannot fire during the wait.
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                boolean received = false;
+                while (System.nanoTime() < deadline) {
+                    if (receiver.runSerially()) {
+                        received = true;
+                        break;
+                    }
+                    Os.pause();
+                }
+                Assert.assertTrue("receiver did not process the datagram", received);
                 drainWalQueue();
                 assertSql("count\n0\n", "SELECT count() FROM timer_commit");
 
@@ -653,6 +668,62 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql("count\n3\n", "SELECT count() FROM datagram_trigger_reset");
+        });
+    }
+
+    @Test
+    public void testDeferredArrayColumnDimensionalityMismatchRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_udp_array_deferred_schema_mismatch (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_deferred_schema_mismatch");
+                    sender.stageNullDoubleArrayForTest("arr");
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "ts\n1970-01-01T00:00:01.000000Z\n",
+                    "SELECT * FROM qwp_udp_array_deferred_schema_mismatch"
+            );
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_deferred_schema_mismatch")
+                            .doubleArray("arr", new double[]{1.0, 2.0})
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "arr\nnull\n[1.0,2.0]\n",
+                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
+            );
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_deferred_schema_mismatch")
+                            .doubleArray("arr", new double[][]{{3.0, 4.0}})
+                            .at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql("count\n2\n", "SELECT count() FROM qwp_udp_array_deferred_schema_mismatch");
+            assertSql(
+                    "arr\nnull\n[1.0,2.0]\n",
+                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
+            );
         });
     }
 
@@ -731,6 +802,56 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     """
                             SELECT "column" FROM table_columns('qwp_udp_array_mixed_dims') ORDER BY "column"
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testMixedNullAndNonNullArrayRowsAutoCreateTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_mixed_batch_new_table");
+                    sender.stageNullDoubleArrayForTest("arr");
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("qwp_udp_array_mixed_batch_new_table")
+                            .doubleArray("arr", cube())
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
+                    "SELECT arr FROM qwp_udp_array_mixed_batch_new_table ORDER BY timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedNullAndNonNullArrayRowsExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_udp_array_mixed_batch_existing (arr DOUBLE[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_mixed_batch_existing");
+                    sender.stageNullDoubleArrayForTest("arr");
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("qwp_udp_array_mixed_batch_existing")
+                            .doubleArray("arr", cube())
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
+                    "SELECT arr FROM qwp_udp_array_mixed_batch_existing ORDER BY ts"
             );
         });
     }
@@ -1012,30 +1133,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMixedNullAndNonNullArrayRowsAutoCreateTable() throws Exception {
-        assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("qwp_udp_array_mixed_batch_new_table");
-                    sender.stageNullDoubleArrayForTest("arr");
-                    sender.at(1_000_000L, ChronoUnit.MICROS);
-                    sender.table("qwp_udp_array_mixed_batch_new_table")
-                            .doubleArray("arr", cube())
-                            .at(2_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                drainReceiver(receiver);
-            }
-
-            drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_mixed_batch_new_table ORDER BY timestamp"
-            );
-        });
-    }
-
-    @Test
     public void testNullOnlyArrayColumnCreationIsDeferredUntilFirstNonNullBatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE qwp_udp_array_deferred (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1070,88 +1167,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             assertSql(
                     "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
                     "SELECT arr FROM qwp_udp_array_deferred ORDER BY ts"
-            );
-        });
-    }
-
-    @Test
-    public void testDeferredArrayColumnDimensionalityMismatchRejected() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE qwp_udp_array_deferred_schema_mismatch (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("qwp_udp_array_deferred_schema_mismatch");
-                    sender.stageNullDoubleArrayForTest("arr");
-                    sender.at(1_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                drainReceiver(receiver);
-            }
-
-            drainWalQueue();
-            assertSql(
-                    "ts\n1970-01-01T00:00:01.000000Z\n",
-                    "SELECT * FROM qwp_udp_array_deferred_schema_mismatch"
-            );
-
-            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("qwp_udp_array_deferred_schema_mismatch")
-                            .doubleArray("arr", new double[]{1.0, 2.0})
-                            .at(2_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                drainReceiver(receiver);
-            }
-
-            drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[1.0,2.0]\n",
-                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
-            );
-
-            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("qwp_udp_array_deferred_schema_mismatch")
-                            .doubleArray("arr", new double[][]{{3.0, 4.0}})
-                            .at(3_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                drainReceiver(receiver);
-            }
-
-            drainWalQueue();
-            assertSql("count\n2\n", "SELECT count() FROM qwp_udp_array_deferred_schema_mismatch");
-            assertSql(
-                    "arr\nnull\n[1.0,2.0]\n",
-                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
-            );
-        });
-    }
-
-    @Test
-    public void testMixedNullAndNonNullArrayRowsExistingTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE qwp_udp_array_mixed_batch_existing (arr DOUBLE[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("qwp_udp_array_mixed_batch_existing");
-                    sender.stageNullDoubleArrayForTest("arr");
-                    sender.at(1_000_000L, ChronoUnit.MICROS);
-                    sender.table("qwp_udp_array_mixed_batch_existing")
-                            .doubleArray("arr", cube())
-                            .at(2_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                drainReceiver(receiver);
-            }
-
-            drainWalQueue();
-            assertSql(
-                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
-                    "SELECT arr FROM qwp_udp_array_mixed_batch_existing ORDER BY ts"
             );
         });
     }
