@@ -11,7 +11,13 @@ all-features = false
 no-default-features = false
 
 [advisories]
-ignore = []
+# qdb-sqllogictest is a test-only tool, not shipped in production.
+# These advisories come from transitive dependencies of older crates
+# (tokio, miniz_oxide) that are not worth upgrading in a test harness.
+ignore = [
+    { id = "RUSTSEC-2025-0056", reason = "adler is a transitive dep of tokio/backtrace, test-only" },
+    { id = "RUSTSEC-2025-0023", reason = "tokio broadcast channel unsoundness, not used in test harness" },
+]
 
 [licenses]
 # Licenses compatible with Apache-2.0 redistribution.
