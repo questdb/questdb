@@ -1877,6 +1877,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         @Override
         public void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+            if (metadata.getColumnIndexQuiet(columnName) < 0) {
+                throw CairoException.nonCritical().put("column does not exist [name=").put(columnName).put(']');
+            }
             structureVersion++;
         }
 

@@ -558,7 +558,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     BitmapIndexReader reader = tableReader.getBitmapIndexReader(
                             frame.getPartitionIndex(), indexColumnIndex, BitmapIndexReader.DIR_FORWARD);
                     RowCursor rc = reader.getCursor(true, TableUtils.toIndexKey(symbolKey),
-                            frame.getRowLo(), frame.getRowHi());
+                            frame.getRowLo(), frame.getRowHi() - 1);
                     if (rc instanceof CoveringRowCursor coveringCursor) {
                         int count = coveringCursor.getCoveredValueCount();
                         if (count >= 0) {
@@ -1860,6 +1860,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private final DirectBinarySequence fallbackBin = new DirectBinarySequence();
         private final io.questdb.std.str.DirectString fallbackStrA = new io.questdb.std.str.DirectString();
         private final io.questdb.std.str.DirectString fallbackStrB = new io.questdb.std.str.DirectString();
+        private final Long256Impl long256A = new Long256Impl();
+        private final Long256Impl long256B = new Long256Impl();
         private final RecordMetadata metadata;
         private final int[] queryColToIncludeIdx;
         private SymbolTable[] includeSymbolTables;
@@ -2025,6 +2027,62 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return columnMem(col).getLong(rowId * Long.BYTES);
             }
             return Long.MIN_VALUE;
+        }
+
+        @Override
+        public long getLong128Hi(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getLong(rowId * 16 + Long.BYTES);
+            }
+            return Long.MIN_VALUE;
+        }
+
+        @Override
+        public long getLong128Lo(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                return columnMem(col).getLong(rowId * 16);
+            }
+            return Long.MIN_VALUE;
+        }
+
+        @Override
+        public void getLong256(int col, CharSink<?> sink) {
+            Long256 val = getLong256A(col);
+            Numbers.appendLong256(val.getLong0(), val.getLong1(), val.getLong2(), val.getLong3(), sink);
+        }
+
+        @Override
+        public Long256 getLong256A(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                MemoryCR mem = columnMem(col);
+                long off = rowId * 32;
+                long256A.setAll(
+                        mem.getLong(off),
+                        mem.getLong(off + Long.BYTES),
+                        mem.getLong(off + 2 * Long.BYTES),
+                        mem.getLong(off + 3 * Long.BYTES)
+                );
+            } else {
+                long256A.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
+            }
+            return long256A;
+        }
+
+        @Override
+        public Long256 getLong256B(int col) {
+            if (getIncludeIdx(col) >= 0 && tableReader != null) {
+                MemoryCR mem = columnMem(col);
+                long off = rowId * 32;
+                long256B.setAll(
+                        mem.getLong(off),
+                        mem.getLong(off + Long.BYTES),
+                        mem.getLong(off + 2 * Long.BYTES),
+                        mem.getLong(off + 3 * Long.BYTES)
+                );
+            } else {
+                long256B.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
+            }
+            return long256B;
         }
 
         @Override

@@ -183,7 +183,12 @@ public final class FSST {
      */
     public static SymbolTable deserialize(long srcAddr) {
         SymbolTable table = new SymbolTable();
-        deserializeInto(srcAddr, table);
+        try {
+            deserializeInto(srcAddr, table);
+        } catch (Throwable e) {
+            table.close();
+            throw e;
+        }
         return table;
     }
 

@@ -31,8 +31,16 @@
 #if defined(__x86_64__) || defined(_M_X64)
 #define HAS_X86_64 1
 #include <immintrin.h>
-#include <cpuid.h>
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+static bool detect_avx2() {
+    int cpuInfo[4];
+    __cpuidex(cpuInfo, 7, 0);
+    return (cpuInfo[1] & (1 << 5)) != 0; // AVX2 bit in EBX
+}
+#else
+#include <cpuid.h>
 static bool detect_avx2() {
     unsigned int eax, ebx, ecx, edx;
     if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
@@ -40,6 +48,14 @@ static bool detect_avx2() {
     }
     return false;
 }
+#endif
+
+// MSVC doesn't support __attribute__((target(...))); use /arch:AVX2 at build level instead.
+#if defined(__GNUC__) || defined(__clang__)
+#define TARGET_AVX2 __attribute__((target("avx2")))
+#else
+#define TARGET_AVX2
+#endif
 
 static const bool HAS_AVX2 = detect_avx2();
 #else
@@ -126,7 +142,7 @@ static void unpack_all_scalar(const uint8_t *src, int32_t value_count,
 
 #if HAS_X86_64
 
-__attribute__((target("avx2")))
+TARGET_AVX2
 static void unpack_8bit_avx2(const uint8_t *src, int32_t count, int64_t min_value, int64_t *dest) {
     int i = 0;
     __m256i base = _mm256_set1_epi64x(min_value);
@@ -143,7 +159,7 @@ static void unpack_8bit_avx2(const uint8_t *src, int32_t count, int64_t min_valu
     }
 }
 
-__attribute__((target("avx2")))
+TARGET_AVX2
 static void unpack_16bit_avx2(const uint8_t *src, int32_t count, int64_t min_value, int64_t *dest) {
     const auto *src16 = reinterpret_cast<const uint16_t*>(src);
     int i = 0;
@@ -160,7 +176,7 @@ static void unpack_16bit_avx2(const uint8_t *src, int32_t count, int64_t min_val
     }
 }
 
-__attribute__((target("avx2")))
+TARGET_AVX2
 static void unpack_32bit_avx2(const uint8_t *src, int32_t count, int64_t min_value, int64_t *dest) {
     const auto *src32 = reinterpret_cast<const uint32_t*>(src);
     int i = 0;
@@ -195,7 +211,7 @@ static void unpack_32bit_avx2(const uint8_t *src, int32_t count, int64_t min_val
 // The widen+store is the bottleneck in the Java scalar path — this eliminates it.
 // Processes 8 values per iteration: scalar extract 8 × uint32, then 2 × AVX2 stores.
 
-__attribute__((target("avx2")))
+TARGET_AVX2
 static void unpack_general_avx2(const uint8_t *src, int32_t count,
                                  int32_t bit_width, int64_t min_value, int64_t *dest) {
     uint32_t mask32 = (bit_width == 32) ? ~0u : (1u << bit_width) - 1;
@@ -229,7 +245,7 @@ static void unpack_general_avx2(const uint8_t *src, int32_t count,
     }
 }
 
-__attribute__((target("avx2")))
+TARGET_AVX2
 static void unpack_from_general_avx2(const uint8_t *src, int32_t start_index, int32_t value_count,
                                       int32_t bit_width, int64_t min_value, int64_t *dest) {
     uint32_t mask32 = (bit_width == 32) ? ~0u : (1u << bit_width) - 1;

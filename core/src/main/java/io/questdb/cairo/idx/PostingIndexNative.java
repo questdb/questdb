@@ -140,9 +140,10 @@ public final class PostingIndexNative {
         int bufferBits = 0;
         int srcOffset = 0;
         long mask = (bitWidth == 64) ? -1L : (1L << bitWidth) - 1;
+        int totalBytes = BitpackUtils.packedDataSize(valueCount, bitWidth);
 
         for (int i = 0; i < valueCount; i++) {
-            while (bufferBits < bitWidth) {
+            while (bufferBits < bitWidth && srcOffset < totalBytes) {
                 long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
                 buffer |= (b << bufferBits);
                 bufferBits += 8;

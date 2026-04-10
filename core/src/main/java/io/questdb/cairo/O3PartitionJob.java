@@ -3309,6 +3309,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         indexWriter.commit();
                     } finally {
                         Misc.free(indexWriter);
+                        indexWriter = null;
                         O3Utils.close(ff, kFd);
                         O3Utils.close(ff, vFd);
                     }

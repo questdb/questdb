@@ -316,6 +316,8 @@ public final class BitpackUtils {
             bufferBits -= skipBits;
         }
 
+        long spillBits = 0;
+        int spillCount = 0;
         for (int i = 0; i < valueCount; i++) {
             if (bufferBits < bitWidth) {
                 if (bufferBits == 0 && srcOffset + 8 <= totalBytes) {
@@ -324,15 +326,34 @@ public final class BitpackUtils {
                     srcOffset += 8;
                 } else {
                     while (bufferBits < bitWidth && srcOffset < totalBytes) {
-                        buffer |= ((Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL) << bufferBits);
-                        bufferBits += 8;
+                        long b = Unsafe.getUnsafe().getByte(srcAddr + srcOffset) & 0xFFL;
                         srcOffset++;
+                        if (bufferBits <= 56) {
+                            buffer |= (b << bufferBits);
+                            bufferBits += 8;
+                        } else {
+                            int fitBits = 64 - bufferBits;
+                            buffer |= (b << bufferBits);
+                            spillBits = b >>> fitBits;
+                            spillCount = 8 - fitBits;
+                            bufferBits = 64;
+                        }
                     }
                 }
             }
             Unsafe.getUnsafe().putLong(destAddr + (long) i * Long.BYTES, minValue + (buffer & mask));
-            buffer >>>= bitWidth;
+            if (bitWidth < 64) {
+                buffer >>>= bitWidth;
+            } else {
+                buffer = 0;
+            }
             bufferBits -= bitWidth;
+
+            if (spillCount > 0) {
+                buffer |= (spillBits << bufferBits);
+                bufferBits += spillCount;
+                spillCount = 0;
+            }
         }
     }
 

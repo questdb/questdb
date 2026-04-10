@@ -1084,7 +1084,11 @@ public final class PostingIndexUtils {
         long lowStart = pos;
         int lowBytes = efLowBytesAligned(n, L);
         long highStart = pos + lowBytes;
-        int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
+        long numHighWordsL = (n + (u >>> L) + 63) / 64;
+        if (numHighWordsL > Integer.MAX_VALUE) {
+            throw CairoException.critical(0).put("EF index too large");
+        }
+        int numHighWords = (int) numHighWordsL;
 
         int outputIdx = 0;
         for (int w = 0; w < numHighWords && outputIdx < n; w++) {
@@ -1117,7 +1121,11 @@ public final class PostingIndexUtils {
         long lowStart = pos;
         int lowBytes = efLowBytesAligned(n, L);
         long highStart = pos + lowBytes;
-        int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
+        long numHighWordsL = (n + (u >>> L) + 63) / 64;
+        if (numHighWordsL > Integer.MAX_VALUE) {
+            throw CairoException.critical(0).put("EF index too large");
+        }
+        int numHighWords = (int) numHighWordsL;
 
         // Pass 1: SIMD bulk-unpack all low bits into destAddr
         if (L > 0) {
@@ -1176,7 +1184,11 @@ public final class PostingIndexUtils {
 
         long highStart = pos;
         long totalHighBits = count + (u >>> L);
-        int numHighWords = (int) ((totalHighBits + 63) / 64);
+        long numHighWordsL = (totalHighBits + 63) / 64;
+        if (numHighWordsL > Integer.MAX_VALUE) {
+            throw CairoException.critical(0).put("EF index too large");
+        }
+        int numHighWords = (int) numHighWordsL;
         int highBytes = numHighWords * 8;
         for (long i = 0; i < highBytes; i += 8) {
             Unsafe.getUnsafe().putLong(highStart + i, 0);

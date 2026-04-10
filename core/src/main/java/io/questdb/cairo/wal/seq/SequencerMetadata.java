@@ -100,7 +100,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     public void addIndex(CharSequence columnName, int indexValueBlockSize, byte indexType, ObjList<CharSequence> coveringColumnNames) {
         int colIdx = columnNameIndexMap.get(columnName);
         if (colIdx < 0) {
-            return;
+            throw CairoException.critical(0).put("column not found for addIndex [name=").put(columnName).put(']');
         }
         TableColumnMetadata colMeta = columnMetadata.getQuick(colIdx);
         colMeta.setIndexType(indexType);
@@ -444,6 +444,8 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                             offset += Byte.BYTES;
                             columnMetadata.getQuick(i).setIndexType(indexType);
                         }
+                    } else if (memSize - offset >= indexTypeCount) {
+                        offset += indexTypeCount;
                     }
                 }
             }

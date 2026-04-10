@@ -67,10 +67,11 @@ final class SplitBlockBloomFilter {
         }
         // m = -8 * ndv / ln(1 - fpp^(1/8))
         double m = -8.0 * numDistinctValues / Math.log(1.0 - Math.pow(fpp, 1.0 / 8.0));
-        int bytes = (int) Math.ceil(m / 8.0);
-        // Round up to next multiple of BLOCK_SIZE, minimum BLOCK_SIZE
-        bytes = Math.max(BLOCK_SIZE, ((bytes + BLOCK_SIZE - 1) >> BLOCK_SIZE_SHIFT) << BLOCK_SIZE_SHIFT);
-        return bytes;
+        long bytes = (long) Math.ceil(m / 8.0);
+        bytes = Math.min(bytes, 128 * 1024 * 1024L);
+        int intBytes = (int) bytes;
+        intBytes = Math.max(BLOCK_SIZE, ((intBytes + BLOCK_SIZE - 1) >> BLOCK_SIZE_SHIFT) << BLOCK_SIZE_SHIFT);
+        return intBytes;
     }
 
     static void free(long addr, int filterSize) {

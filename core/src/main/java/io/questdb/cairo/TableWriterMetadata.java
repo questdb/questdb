@@ -205,6 +205,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                             offset += Integer.BYTES;
                         }
                         columnMetadata.getQuick(i).setCoveringColumnIndices(indices);
+                    } else if (includeCount > 0) {
+                        break;
                     }
                 }
             }

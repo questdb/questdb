@@ -108,7 +108,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
             }
             indexWriter.of(partitionPath, columnName, columnTxn, isEmpty ? indexBlockCapacity : 0);
         } catch (Throwable e) {
-            super.close();
+            close();
             throw e;
         }
     }

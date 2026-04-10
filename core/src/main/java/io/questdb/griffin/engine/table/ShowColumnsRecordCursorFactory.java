@@ -89,6 +89,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     private static class ShowColumnsCursor implements NoRandomAccessRecordCursor {
         private final StringSink includeSink = new StringSink();
+        private final StringSink includeSinkB = new StringSink();
         private final ShowColumnsRecord record = new ShowColumnsRecord();
         private final IntList staticSymbolTableSizes = new IntList();
         private CairoColumn cairoColumn = new CairoColumn();
@@ -226,13 +227,15 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                         return "";
                     }
                     includeSink.clear();
+                    int emitted = 0;
                     for (int i = 0; i < coveringCols.length; i++) {
-                        if (i > 0) {
-                            includeSink.putAscii(',');
-                        }
                         CairoColumn covCol = cairoTable.getColumnQuiet(coveringCols[i]);
                         if (covCol != null) {
+                            if (emitted > 0) {
+                                includeSink.putAscii(',');
+                            }
                             includeSink.put(covCol.getName());
+                            emitted++;
                         }
                     }
                     return includeSink;
@@ -242,6 +245,25 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
             @Override
             public CharSequence getStrB(int col) {
+                if (col == N_INDEX_INCLUDE_COL) {
+                    int[] coveringCols = cairoColumn.getCoveringColumnIndices();
+                    if (coveringCols == null || coveringCols.length == 0) {
+                        return "";
+                    }
+                    includeSinkB.clear();
+                    int emitted = 0;
+                    for (int i = 0; i < coveringCols.length; i++) {
+                        CairoColumn covCol = cairoTable.getColumnQuiet(coveringCols[i]);
+                        if (covCol != null) {
+                            if (emitted > 0) {
+                                includeSinkB.putAscii(',');
+                            }
+                            includeSinkB.put(covCol.getName());
+                            emitted++;
+                        }
+                    }
+                    return includeSinkB;
+                }
                 return getStrA(col);
             }
 

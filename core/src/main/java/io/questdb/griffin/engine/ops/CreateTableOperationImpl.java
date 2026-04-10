@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
@@ -817,7 +818,16 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             if (coverNames != null && coverNames.size() > 0) {
                 int[] indices = new int[coverNames.size()];
                 for (int j = 0, m = coverNames.size(); j < m; j++) {
-                    indices[j] = metadata.getColumnIndexQuiet(coverNames.get(j));
+                    int idx = metadata.getColumnIndexQuiet(coverNames.get(j));
+                    if (idx < 0) {
+                        throw CairoException.nonCritical()
+                                .put("INCLUDE column doesn't exist [column=").put(coverNames.get(j)).put(']');
+                    }
+                    if (idx == i) {
+                        throw CairoException.nonCritical()
+                                .put("INCLUDE must not contain the indexed column [column=").put(coverNames.get(j)).put(']');
+                    }
+                    indices[j] = idx;
                 }
                 if (autoIncludeTimestamp && timestampIndex >= 0
                         && IndexType.isPosting(getIndexType(i))) {

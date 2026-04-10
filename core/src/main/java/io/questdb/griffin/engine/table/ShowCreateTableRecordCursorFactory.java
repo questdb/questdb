@@ -259,13 +259,15 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                         int[] coveringCols = column.getCoveringColumnIndices();
                         if (coveringCols != null && coveringCols.length > 0) {
                             sink.putAscii(" INCLUDE (");
+                            int emitted = 0;
                             for (int ci = 0; ci < coveringCols.length; ci++) {
-                                if (ci > 0) {
-                                    sink.putAscii(", ");
-                                }
                                 CairoColumn covCol = table.getColumnQuiet(coveringCols[ci]);
                                 if (covCol != null) {
+                                    if (emitted > 0) {
+                                        sink.putAscii(", ");
+                                    }
                                     sink.put(covCol.getName());
+                                    emitted++;
                                 }
                             }
                             sink.putAscii(')');

@@ -161,7 +161,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     }
                     if (value >= minValue) {
                         next = value;
-                        sidecarOrdinal++;
+                        if (coverCount > 0) sidecarOrdinal++;
                         cachedSidecarIdx = sidecarValueIdx();
                         return true;
                     }

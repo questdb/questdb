@@ -105,6 +105,9 @@ public final class IndexType {
         if (Chars.equalsIgnoreCase(name, "POSTING")) {
             return POSTING;
         }
+        if (Chars.equalsIgnoreCase(name, "POSTING DELTA") || Chars.equalsIgnoreCase(name, "POSTING_DELTA")) {
+            return POSTING_DELTA;
+        }
         if (Chars.equalsIgnoreCase(name, "NONE")) {
             return NONE;
         }

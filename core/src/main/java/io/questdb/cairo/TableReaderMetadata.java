@@ -544,6 +544,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                             break;
                         }
                     }
+                } else if (includeCount > 0) {
+                    break;
                 }
             }
         }

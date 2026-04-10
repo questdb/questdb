@@ -1788,8 +1788,6 @@ public class PostingIndexWriter implements IndexWriter {
         int newCapacity = Math.max(keyCapacity * 2, minCapacity);
 
         // Realloc counts first (smaller buffer, less likely to OOM).
-        // Only update keyCapacity after BOTH succeed so freePendingBuffers
-        // uses the correct size for each buffer on OOM cleanup.
         long oldCountSize = (long) keyCapacity * Integer.BYTES;
         long newCountSize = (long) newCapacity * Integer.BYTES;
         pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, oldCountSize, newCountSize, MemoryTag.NATIVE_INDEX_READER);
@@ -1797,7 +1795,15 @@ public class PostingIndexWriter implements IndexWriter {
 
         long oldValSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         long newValSize = (long) newCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
-        pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, oldValSize, newValSize, MemoryTag.NATIVE_INDEX_READER);
+        try {
+            pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, oldValSize, newValSize, MemoryTag.NATIVE_INDEX_READER);
+        } catch (Throwable e) {
+            // Counts buffer already resized — update keyCapacity to match so
+            // freePendingBuffers() frees with the correct sizes.
+            keyCapacity = newCapacity;
+            activeKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
+            throw e;
+        }
         Unsafe.getUnsafe().setMemory(pendingValuesAddr + oldValSize, newValSize - oldValSize, (byte) 0);
 
         keyCapacity = newCapacity;
