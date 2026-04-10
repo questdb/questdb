@@ -372,7 +372,11 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     openSidecarFilesIfPresent(p, readerColumnName, columnTxn);
                 }
             } else if (valueMemSize > 0) {
+                long oldAddr = valueMem.addressOf(0);
                 ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
+                if (valueMem.addressOf(0) != oldAddr) {
+                    reloadGeneration++;
+                }
             }
             // snapshotMetadata (inside readIndexMetadataFromBestPage) already
             // reset builtForGenCount, so ensureGenLookup will rebuild the index.

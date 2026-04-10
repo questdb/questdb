@@ -952,8 +952,10 @@ public class PostingIndexWriter implements IndexWriter {
         if (partitionPath != null) {
             // Create a new empty .pv file. The old .pv stays on disk so
             // concurrent readers with active mmaps don't SIGBUS.
+            // If the new file open fails, valueMem is left closed — the writer
+            // is degraded but safe to close() without further I/O errors.
             long newTxn = Math.max(1, columnNameTxn + 1);
-            Misc.free(valueMem);
+            valueMem.close(false, (byte) 0);
             try (Path p = new Path().of(partitionPath)) {
                 LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, newTxn);
                 valueMem.of(ff, fileName,
@@ -1420,27 +1422,28 @@ public class PostingIndexWriter implements IndexWriter {
             spillArraysCapacity = cap;
         } else if (needed > spillArraysCapacity) {
             int newCap = Math.max(keyCapacity, needed);
-            int savedCapacity = spillArraysCapacity;
 
-            long oldAddrsSize = (long) savedCapacity * Long.BYTES;
-            long newAddrsSize = (long) newCap * Long.BYTES;
-            spillKeyAddrsAddr = Unsafe.realloc(spillKeyAddrsAddr, oldAddrsSize, newAddrsSize, MemoryTag.NATIVE_INDEX_READER);
-            Unsafe.getUnsafe().setMemory(spillKeyAddrsAddr + oldAddrsSize, newAddrsSize - oldAddrsSize, (byte) 0);
-
-            // Update spillArraysCapacity after each successful realloc so that
-            // if the next realloc fails OOM, close() computes correct sizes for
-            // already-grown buffers.
-            spillArraysCapacity = newCap;
-
-            long oldCountsSize = (long) savedCapacity * Integer.BYTES;
+            // Realloc all three buffers. Only update spillArraysCapacity after
+            // ALL succeed so freeSpillData() uses the correct size on OOM cleanup.
+            // Realloc smallest buffers first (counts, caps at 4B/slot) before
+            // the largest (addrs at 8B/slot) to minimize tag accounting error if
+            // the last realloc is the one that fails.
+            long oldCountsSize = (long) spillArraysCapacity * Integer.BYTES;
             long newCountsSize = (long) newCap * Integer.BYTES;
             spillKeyCountsAddr = Unsafe.realloc(spillKeyCountsAddr, oldCountsSize, newCountsSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.getUnsafe().setMemory(spillKeyCountsAddr + oldCountsSize, newCountsSize - oldCountsSize, (byte) 0);
 
-            long oldCapsSize = (long) savedCapacity * Integer.BYTES;
+            long oldCapsSize = (long) spillArraysCapacity * Integer.BYTES;
             long newCapsSize = (long) newCap * Integer.BYTES;
             spillKeyCapacitiesAddr = Unsafe.realloc(spillKeyCapacitiesAddr, oldCapsSize, newCapsSize, MemoryTag.NATIVE_INDEX_READER);
             Unsafe.getUnsafe().setMemory(spillKeyCapacitiesAddr + oldCapsSize, newCapsSize - oldCapsSize, (byte) 0);
+
+            long oldAddrsSize = (long) spillArraysCapacity * Long.BYTES;
+            long newAddrsSize = (long) newCap * Long.BYTES;
+            spillKeyAddrsAddr = Unsafe.realloc(spillKeyAddrsAddr, oldAddrsSize, newAddrsSize, MemoryTag.NATIVE_INDEX_READER);
+            Unsafe.getUnsafe().setMemory(spillKeyAddrsAddr + oldAddrsSize, newAddrsSize - oldAddrsSize, (byte) 0);
+
+            spillArraysCapacity = newCap;
         }
     }
 
@@ -1784,22 +1787,20 @@ public class PostingIndexWriter implements IndexWriter {
     private void growKeyBuffers(int minCapacity) {
         int newCapacity = Math.max(keyCapacity * 2, minCapacity);
 
+        // Realloc counts first (smaller buffer, less likely to OOM).
+        // Only update keyCapacity after BOTH succeed so freePendingBuffers
+        // uses the correct size for each buffer on OOM cleanup.
+        long oldCountSize = (long) keyCapacity * Integer.BYTES;
+        long newCountSize = (long) newCapacity * Integer.BYTES;
+        pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, oldCountSize, newCountSize, MemoryTag.NATIVE_INDEX_READER);
+        Unsafe.getUnsafe().setMemory(pendingCountsAddr + oldCountSize, newCountSize - oldCountSize, (byte) 0);
+
         long oldValSize = (long) keyCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         long newValSize = (long) newCapacity * PENDING_SLOT_CAPACITY * Long.BYTES;
         pendingValuesAddr = Unsafe.realloc(pendingValuesAddr, oldValSize, newValSize, MemoryTag.NATIVE_INDEX_READER);
         Unsafe.getUnsafe().setMemory(pendingValuesAddr + oldValSize, newValSize - oldValSize, (byte) 0);
 
-        // Update keyCapacity now so that if the next realloc fails OOM,
-        // freeNativeBuffers() computes the correct size for the already-grown
-        // pendingValuesAddr buffer.
-        int savedCapacity = keyCapacity;
         keyCapacity = newCapacity;
-
-        long oldCountSize = (long) savedCapacity * Integer.BYTES;
-        long newCountSize = (long) newCapacity * Integer.BYTES;
-        pendingCountsAddr = Unsafe.realloc(pendingCountsAddr, oldCountSize, newCountSize, MemoryTag.NATIVE_INDEX_READER);
-        Unsafe.getUnsafe().setMemory(pendingCountsAddr + oldCountSize, newCountSize - oldCountSize, (byte) 0);
-
         activeKeyIds = Arrays.copyOf(activeKeyIds, newCapacity);
     }
 
@@ -2197,7 +2198,7 @@ public class PostingIndexWriter implements IndexWriter {
         int maxDeltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE);
         int maxFlatHeaderSize = PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE);
         int maxLocalHeaderSize = Math.max(maxDeltaHeaderSize, maxFlatHeaderSize);
-        long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+        long localHeaderBuf = 0;
 
         int[] bpKeySizes = strideBpKeySizes;
         int[] keyCounts = strideKeyCounts;
@@ -2206,6 +2207,7 @@ public class PostingIndexWriter implements IndexWriter {
         long bpTrialBufSize = 0;
 
         try {
+            localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
             for (int s = 0; s < sc; s++) {
                 int ks = PostingIndexUtils.keysInStride(keyCount, s);
                 int strideStart = s * PostingIndexUtils.DENSE_STRIDE;
@@ -2371,7 +2373,9 @@ public class PostingIndexWriter implements IndexWriter {
             if (bpTrialBuf != 0) {
                 Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
             }
-            Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+            if (localHeaderBuf != 0) {
+                Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+            }
             Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
         }
 
@@ -2545,20 +2549,15 @@ public class PostingIndexWriter implements IndexWriter {
                 int maxLocalHeaderSize = Math.max(
                         PostingIndexUtils.strideDeltaHeaderSize(PostingIndexUtils.DENSE_STRIDE),
                         PostingIndexUtils.strideFlatHeaderSize(PostingIndexUtils.DENSE_STRIDE));
-                long localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+                long localHeaderBuf = 0;
                 int[] bpKeySizes = strideBpKeySizes;
                 int[] keyCounts = strideKeyCounts;
                 long[] keyOffsets = strideKeyOffsets;
                 long bpTrialBuf = 0;
                 long bpTrialBufSize = 0;
 
-                // Sidecar data is NOT written inline during re-encoding.
-                // writeSidecarsPerColumn() runs after this method and maps each
-                // column file fresh, producing properly compressed sidecar data.
-                // The inline path lacked valid column mappings and produced bloated
-                // NULL-exception data that inflated .pc* file sizes.
-
                 try {
+                    localHeaderBuf = Unsafe.malloc(maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
                     for (int s = 0; s < sc; s++) {
                         int ks = PostingIndexUtils.keysInStride(keyCount, s);
 
@@ -2669,7 +2668,9 @@ public class PostingIndexWriter implements IndexWriter {
                     if (bpTrialBuf != 0) {
                         Unsafe.free(bpTrialBuf, bpTrialBufSize, MemoryTag.NATIVE_INDEX_READER);
                     }
-                    Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+                    if (localHeaderBuf != 0) {
+                        Unsafe.free(localHeaderBuf, maxLocalHeaderSize, MemoryTag.NATIVE_INDEX_READER);
+                    }
                     Unsafe.free(strideIndexBuf, siSize, MemoryTag.NATIVE_INDEX_READER);
                 }
 

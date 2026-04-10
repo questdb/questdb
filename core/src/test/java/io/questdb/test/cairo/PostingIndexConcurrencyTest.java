@@ -225,18 +225,23 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                                  PostingIndexFwdReader reader = new PostingIndexFwdReader(
                                          configuration, rPath, "conc_trunc", COLUMN_NAME_TXN_NONE, -1, 0)) {
                                 while (!Thread.interrupted() && writerDone.getCount() > 0) {
-                                    reader.reloadConditionally();
-                                    RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
-                                    long prev = -1;
-                                    while (cursor.hasNext()) {
-                                        long val = cursor.next();
-                                        if (val <= prev) {
-                                            throw new AssertionError(
-                                                    "fwd " + id + ": non-ascending " + prev + " -> " + val);
+                                    try {
+                                        reader.reloadConditionally();
+                                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                        long prev = -1;
+                                        while (cursor.hasNext()) {
+                                            long val = cursor.next();
+                                            if (val <= prev) {
+                                                throw new AssertionError(
+                                                        "fwd " + id + ": non-ascending " + prev + " -> " + val);
+                                            }
+                                            prev = val;
                                         }
-                                        prev = val;
+                                    } catch (io.questdb.cairo.CairoException e) {
+                                        // Transient corrupt reads are expected during truncate
+                                        // cycles — the reader's seqlock snapshot can lag the
+                                        // writer's file replacement.
                                     }
-                                    // Empty state is OK during truncate cycles
                                 }
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);

@@ -3994,18 +3994,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (!isIndexedNow && wasIndexedAtDetached) {
                         long columnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, colIdx);
-                        keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
-                        removeFileOrLog(ff, detachedPath.$());
-                        valueFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
-                        removeFileOrLog(ff, detachedPath.$());
                         if (IndexType.isPosting(indexTypeAtDetached)) {
+                            // Read VALUE_FILE_TXN before removing .pk, then remove sealed .pv and sidecars
+                            long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                                    ff, keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
+                            if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {
+                                removeFileOrLog(ff, PostingIndexUtils.valueFileName(
+                                        detachedPath.trimTo(detachedPartitionRoot), columnName, valueFileTxn));
+                            }
                             removeFileOrLog(ff, PostingIndexUtils.coverInfoFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
                             for (int c = 0; c < 64; c++) {
                                 LPSZ pcFile = PostingIndexUtils.coverDataFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn, c);
                                 if (!ff.exists(pcFile)) break;
                                 removeFileOrLog(ff, pcFile);
                             }
+                            removeFileOrLog(ff, PostingIndexUtils.distinctKeysFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
                         }
+                        keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
+                        removeFileOrLog(ff, detachedPath.$());
+                        valueFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
+                        removeFileOrLog(ff, detachedPath.$());
                     } else if (isIndexedNow
                             && (!wasIndexedAtDetached || indexValueBlockCapacityNow != indexValueBlockCapacityDetached
                             || indexTypeNow != indexTypeAtDetached)) {
@@ -9609,8 +9617,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
                     } finally {
-                        Misc.free(indexWriter);
                         ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                        Misc.free(indexWriter);
                     }
                 }
             }
@@ -9821,11 +9829,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             removeFileOrLog(ff, dFile(path, columnName, columnNameTxn));
             removeFileOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
             if (IndexType.isIndexed(indexType)) {
-                removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-                removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
                 if (IndexType.isPosting(indexType)) {
+                    removeSealedValueFile(indexType, columnName, columnNameTxn, plen);
                     removeCoveringIndexFiles(columnName, columnNameTxn, plen);
                 }
+                removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+                removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
             }
             path.trimTo(pathSize);
         } else {
@@ -9847,6 +9856,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             removeFileOrLog(ff, pcFile);
         }
+        // Remove distinct keys file (.pd)
+        removeFileOrLog(ff, PostingIndexUtils.distinctKeysFileName(path.trimTo(plen), columnName, columnNameTxn));
+    }
+
+    private void removeSealedValueFile(byte indexType, CharSequence columnName, long columnNameTxn, int plen) {
+        // Read VALUE_FILE_TXN from .pk metadata BEFORE the .pk is deleted.
+        // The sealed .pv.{valueFileTxn} has a different txn than the base .pv.
+        long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+        if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {
+            removeFileOrLog(ff, PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, valueFileTxn));
+        }
     }
 
     private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
@@ -9855,10 +9876,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         byte indexType = metadata.getColumnIndexType(columnIndex);
         if (IndexType.isIndexed(indexType)) {
+            if (IndexType.isPosting(indexType)) {
+                // Read VALUE_FILE_TXN from .pk before deleting it, then remove
+                // the sealed .pv.{valueFileTxn} and sidecar files.
+                removeSealedValueFile(indexType, columnName, columnNameTxn, plen);
+                removeCoveringIndexFiles(columnName, columnNameTxn, plen);
+            }
             removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
             removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-            // Remove covering index sidecar files
-            removeCoveringIndexFiles(columnName, columnNameTxn, plen);
         }
         path.trimTo(pathSize);
     }

@@ -401,6 +401,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.isEFMode = false;
             this.efOutputCount = 0;
             this.efTotalCount = 0;
+            this.isFlatMode = false;
+            this.flatRemaining = 0;
+            this.totalValueCount = 0;
         }
 
         private void decodeNextBlock() {
