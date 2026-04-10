@@ -4008,7 +4008,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 if (!ff.exists(pcFile)) break;
                                 removeFileOrLog(ff, pcFile);
                             }
-                            removeFileOrLog(ff, PostingIndexUtils.distinctKeysFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
                         }
                         keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
                         removeFileOrLog(ff, detachedPath.$());
@@ -9856,8 +9855,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             removeFileOrLog(ff, pcFile);
         }
-        // Remove distinct keys file (.pd)
-        removeFileOrLog(ff, PostingIndexUtils.distinctKeysFileName(path.trimTo(plen), columnName, columnNameTxn));
     }
 
     private void removeSealedValueFile(byte indexType, CharSequence columnName, long columnNameTxn, int plen) {
