@@ -180,17 +180,12 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 }
                 reusableArray.applyShape();
 
-                // Copy data from cursor to reusable array
+                // Bulk copy data from cursor to reusable array.
+                // Wire format and storage format are both 8-byte little-endian,
+                // so we can use a single memcpy instead of element-by-element.
                 MemoryA arrayMem = reusableArray.startMemoryA();
-                long srcAddr = cursor.getValuesAddress();
-                if (cursor.isDoubleArray()) {
-                    for (int i = 0; i < totalElements; i++) {
-                        arrayMem.putDouble(Unsafe.getUnsafe().getDouble(srcAddr + (long) i * 8));
-                    }
-                } else {
-                    for (int i = 0; i < totalElements; i++) {
-                        arrayMem.putLong(Unsafe.getUnsafe().getLong(srcAddr + (long) i * 8));
-                    }
+                if (totalElements > 0) {
+                    arrayMem.putBlockOfBytes(cursor.getValuesAddress(), (long) totalElements * 8);
                 }
 
                 ArrayTypeDriver.appendValue(auxMem, dataMem, reusableArray);
@@ -278,7 +273,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             if (cursor.isNull()) {
                 StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
             } else {
-                StringTypeDriver.appendValue(auxMem, dataMem, Boolean.toString(cursor.getValue()));
+                strSink.clear();
+                strSink.put(Boolean.toString(cursor.getValue()));
+                StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);

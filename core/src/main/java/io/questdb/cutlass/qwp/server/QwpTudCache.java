@@ -277,7 +277,7 @@ public class QwpTudCache implements QuietCloseable {
     public WalTableUpdateDetails getTableUpdateDetails(
             SecurityContext securityContext,
             Utf8Sequence tableNameUtf8,
-            QwpColumnDef[] schema,
+            ObjList<QwpColumnDef> schema,
             QwpTableBlockCursor cursor,
             int maxTables
     ) {
@@ -345,7 +345,7 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     private TableToken getOrCreateTable(SecurityContext securityContext, StringSink tableNameUtf16,
-                                        QwpColumnDef[] schema, QwpTableBlockCursor cursor) {
+                                        ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor) {
         int maxFileNameLength = engine.getConfiguration().getMaxFileNameLength();
         if (!TableUtils.isValidTableName(tableNameUtf16, maxFileNameLength)) {
             return null;
@@ -395,11 +395,11 @@ public class QwpTudCache implements QuietCloseable {
         private final CairoConfiguration configuration;
         private final QwpTableBlockCursor cursor;
         private final int partitionBy;
-        private final QwpColumnDef[] schema;
+        private final ObjList<QwpColumnDef> schema;
         private final String tableName;
         private int timestampIndex = -1;
 
-        QwpTableStructureAdapter(CairoConfiguration configuration, String tableName, QwpColumnDef[] schema,
+        QwpTableStructureAdapter(CairoConfiguration configuration, String tableName, ObjList<QwpColumnDef> schema,
                                  QwpTableBlockCursor cursor, int partitionBy) {
             this.configuration = configuration;
             this.tableName = tableName;
@@ -408,9 +408,9 @@ public class QwpTudCache implements QuietCloseable {
             this.partitionBy = partitionBy;
 
             // Find designated timestamp column - empty name with TIMESTAMP or TIMESTAMP_NANOS type
-            for (int i = 0; i < schema.length; i++) {
-                byte typeCode = schema[i].getTypeCode();
-                if (schema[i].getName().isEmpty() &&
+            for (int i = 0, n = schema.size(); i < n; i++) {
+                byte typeCode = schema.getQuick(i).getTypeCode();
+                if (schema.getQuick(i).getName().isEmpty() &&
                         (typeCode == QwpConstants.TYPE_TIMESTAMP || typeCode == QwpConstants.TYPE_TIMESTAMP_NANOS)) {
                     timestampIndex = i;
                     break;
@@ -422,7 +422,7 @@ public class QwpTudCache implements QuietCloseable {
         @Override
         public int getColumnCount() {
             // If no timestamp column in schema, add one automatically
-            return timestampIndex == -1 ? schema.length + 1 : schema.length;
+            return timestampIndex == -1 ? schema.size() + 1 : schema.size();
         }
 
         @Override
@@ -436,7 +436,7 @@ public class QwpTudCache implements QuietCloseable {
             if (columnIndex == timestampIndex) {
                 return DEFAULT_TIMESTAMP_FIELD;
             }
-            return schema[columnIndex].getName();
+            return schema.getQuick(columnIndex).getName();
         }
 
         @Override
@@ -445,7 +445,7 @@ public class QwpTudCache implements QuietCloseable {
             if (columnIndex == getTimestampIndex() && timestampIndex == -1) {
                 return ColumnType.TIMESTAMP;
             }
-            byte typeCode = schema[columnIndex].getTypeCode();
+            byte typeCode = schema.getQuick(columnIndex).getTypeCode();
             // For decimal types, get the scale from the cursor
             if (typeCode == QwpConstants.TYPE_DECIMAL64 ||
                     typeCode == QwpConstants.TYPE_DECIMAL128 ||
@@ -496,7 +496,7 @@ public class QwpTudCache implements QuietCloseable {
         @Override
         public int getTimestampIndex() {
             // If no timestamp column in schema, it's the auto-added one at the end
-            return timestampIndex == -1 ? schema.length : timestampIndex;
+            return timestampIndex == -1 ? schema.size() : timestampIndex;
         }
 
         @Override

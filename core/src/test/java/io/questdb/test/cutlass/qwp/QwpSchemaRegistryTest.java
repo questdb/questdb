@@ -186,7 +186,7 @@ public class QwpSchemaRegistryTest {
         // Re-registration replaces the cached schema
         QwpSchema updated = createTestSchema("col1_v2", QwpConstants.TYPE_LONG);
         registry.put(1, updated);
-        Assert.assertEquals("col1_v2", registry.get(1).getColumns()[0].getName());
+        Assert.assertEquals("col1_v2", registry.get(1).getColumns().getQuick(0).getName());
     }
 
     @Test

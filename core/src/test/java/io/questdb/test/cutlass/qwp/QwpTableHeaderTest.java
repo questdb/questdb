@@ -324,6 +324,39 @@ public class QwpTableHeaderTest {
         }
     }
 
+    /**
+     * Verifies that the table header parser rejects a name length varint
+     * whose value exceeds int range, even when the truncated (int) value
+     * would fall within the valid [1, 127] range. Without the fix, the
+     * varint value 0x100000001L (4294967297) would silently truncate to 1,
+     * bypassing the length check.
+     */
+    @Test
+    public void testTableNameLengthVarintOverflow() {
+        // Encode a name length varint of (1L << 32) + 1 = 0x100000001L.
+        // When truncated to int, this becomes 1, which would pass the
+        // MAX_TABLE_NAME_LENGTH (127) check.
+        long overflowLen = (1L << 32) + 1;
+        byte[] varintBuf = new byte[QwpVarint.MAX_VARINT_BYTES];
+        int varintLen = QwpVarint.encode(varintBuf, 0, overflowLen);
+
+        // Build a buffer: overflowing name length varint + dummy byte
+        byte[] buf = new byte[varintLen + 1];
+        System.arraycopy(varintBuf, 0, buf, 0, varintLen);
+        buf[varintLen] = 'x'; // dummy byte in case the length passes
+
+        long address = copyToDirectMemory(buf);
+        try {
+            QwpTableHeader header = new QwpTableHeader();
+            header.parse(address, buf.length);
+            Assert.fail("Expected QwpParseException for name length varint exceeding int range");
+        } catch (QwpParseException e) {
+            Assert.assertTrue(e.getMessage().contains("table name too long"));
+        } finally {
+            Unsafe.free(address, buf.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     @Test
     public void testTableNameEmpty() {
         // Empty table name should fail
