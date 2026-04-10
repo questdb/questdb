@@ -394,6 +394,93 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevCrossColumnBadAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, sum(val) AS s FROM x SAMPLE BY 1h FILL(PREV(nonexistent)) ALIGN TO CALENDAR",
+                    55,
+                    "column not found"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            // Two keys (A, B) with gaps at different times.
+            // FILL(PREV, PREV(s)) means column `a` fills from column `s`'s per-key prev.
+            // Each key independently carries forward its own `s` prev into `a`.
+            execute("CREATE TABLE x (key VARCHAR, val DOUBLE, ival INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', 1.0, 10, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, 20, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, 30, '2024-01-01T02:00:00.000000Z')");
+            // At 01:00: A is a gap (s=prev(1.0), a=prev(s)=1.0), B is a gap (s=prev(2.0), a=prev(s)=2.0)
+            // At 02:00: A has data (s=3.0, a=30.0), B is a gap (s=prev(2.0), a=prev(s)=2.0)
+            assertSql(
+                    """
+                            ts\tkey\ts\ta
+                            2024-01-01T00:00:00.000000Z\tA\t1.0\t10.0
+                            2024-01-01T00:00:00.000000Z\tB\t2.0\t20.0
+                            2024-01-01T01:00:00.000000Z\tA\t1.0\t1.0
+                            2024-01-01T01:00:00.000000Z\tB\t2.0\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0\t30.0
+                            2024-01-01T02:00:00.000000Z\tB\t2.0\t2.0
+                            """,
+                    "SELECT ts, key, sum(val) AS s, sum(ival::DOUBLE) AS a " +
+                    "FROM x SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnMixedFill() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(a), NULL) — column `s` fills from column `a`'s prev, column `a` fills with null.
+            // This multi-fill spec must reach the GROUP BY fast path (not old cursor path).
+            execute("CREATE TABLE x (val DOUBLE, ival INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, 10, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30, '2024-01-01T02:00:00.000000Z')");
+            // At 01:00 gap: s=prev(a)=10.0, a=null
+            assertSql(
+                    """
+                            ts\ts\ta
+                            2024-01-01T00:00:00.000000Z\t1.0\t10.0
+                            2024-01-01T01:00:00.000000Z\t10.0\tnull
+                            2024-01-01T02:00:00.000000Z\t3.0\t30.0
+                            """,
+                    "SELECT ts, sum(val) AS s, sum(ival::DOUBLE) AS a " +
+                    "FROM x SAMPLE BY 1h FILL(PREV(a), NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevCrossColumnNonKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV, PREV(s)) — column `s` fills from self prev, column `a` fills from `s`'s prev.
+            execute("CREATE TABLE x (val DOUBLE, ival INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, 10, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30, '2024-01-01T02:00:00.000000Z')");
+            // At 01:00 gap: s=1.0 (self-prev), a=1.0 (cross-column from s's prev)
+            assertSql(
+                    """
+                            ts\ts\ta
+                            2024-01-01T00:00:00.000000Z\t1.0\t10.0
+                            2024-01-01T01:00:00.000000Z\t1.0\t1.0
+                            2024-01-01T02:00:00.000000Z\t3.0\t30.0
+                            """,
+                    "SELECT ts, sum(val) AS s, sum(ival::DOUBLE) AS a " +
+                    "FROM x SAMPLE BY 1h FILL(PREV, PREV(s)) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevKeyedIndependent() throws Exception {
         assertMemoryLeak(() -> {
             // Tests that per-key prev tracking does not bleed between keys.
