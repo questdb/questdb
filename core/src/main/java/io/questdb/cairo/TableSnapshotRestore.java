@@ -608,7 +608,6 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             // Set path to parquet partition and mmap
             TableUtils.setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            path.concat(TableUtils.PARQUET_PARTITION_NAME).$();
 
             if (!ff.exists(path.$())) {
                 LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
