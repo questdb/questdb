@@ -92,7 +92,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             LongList rgO3Ranges = new LongList();
             LongList gapO3Ranges = new LongList();
 
-            // --- Case 1: totalRows <= maxRowGroupSize -> single COPY_O3, no split ---
+            // Case 1: totalRows <= maxRowGroupSize -> single COPY_O3, no split
             // 10 O3 rows with maxRowGroupSize=10 -> fits in 1 chunk
             long addr = allocateSortedTimestamps(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
             try {
@@ -108,7 +108,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, 10);
             }
 
-            // --- Case 2: totalRows = maxRowGroupSize + 1 -> 2 chunks: full + remainder of 1 ---
+            // Case 2: totalRows = maxRowGroupSize + 1 -> 2 chunks: full + remainder of 1
             long[] ts11 = new long[11];
             for (int i = 0; i < 11; i++) {
                 ts11[i] = i + 1;
@@ -132,7 +132,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, 11);
             }
 
-            // --- Case 3: totalRows = 3x -> 3 chunks of exactly maxRowGroupSize ---
+            // Case 3: totalRows = 3x -> 3 chunks of exactly maxRowGroupSize
             long[] ts30 = new long[30];
             for (int i = 0; i < 30; i++) {
                 ts30[i] = i + 1;
@@ -152,7 +152,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, 30);
             }
 
-            // --- Case 4: totalRows = 3x + 7 -> 3 full chunks + remainder of 7 ---
+            // Case 4: totalRows = 3x + 7 -> 3 full chunks + remainder of 7
             // e.g. 1.07M rows with 100K max -> 10 full + 70K remainder
             long[] ts37 = new long[37];
             for (int i = 0; i < 37; i++) {
@@ -177,7 +177,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, 37);
             }
 
-            // --- Case 5: single row -> 1 chunk of 1 row ---
+            // Case 5: single row -> 1 chunk of 1 row
             addr = allocateSortedTimestamps(42);
             try {
                 int n = O3ParquetMergeStrategy.computeMergeActions(
@@ -192,7 +192,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, 1);
             }
 
-            // --- Case 6: splitting in gap between existing row groups ---
+            // Case 6: splitting in gap between existing row groups
             rowGroupBounds.clear();
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 1, 10, 10_000);
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 100, 110, 10_000);
@@ -221,7 +221,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, 25);
             }
 
-            // --- Case 7: 1_010_000 rows, maxRgSize=100K, threshold=25K ---
+            // Case 7: 1_010_000 rows, maxRgSize=100K, threshold=25K
             // Remainder of 10K < 25K threshold -> absorbed into last chunk: 9x100K + 110K
             int totalRows = 1_010_000;
             int maxRgSize = 100_000;
@@ -249,7 +249,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, totalRows);
             }
 
-            // --- Case 8: 1_070_000 rows, remainder >= threshold -> no absorption ---
+            // Case 8: 1_070_000 rows, remainder >= threshold -> no absorption
             // Remainder of 70K >= 25K threshold -> kept separate: 10x100K + 70K
             totalRows = 1_070_000;
             long[] tsLarge2 = new long[totalRows];
@@ -353,7 +353,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
 
             int maxRgSize = 100_000;
 
-            // --- Case 1: MERGE total > 1.5x maxRowGroupSize triggers multi-chunk downstream ---
+            // Case 1: MERGE total > 1.5x maxRowGroupSize triggers multi-chunk downstream
             // Row group 120K rows + 40K overlapping O3 = 160K total (> 1.5 * 100K = 150K)
             rowGroupBounds.clear();
             int rgRows = 120_000;
@@ -384,7 +384,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, o3Rows);
             }
 
-            // --- Case 2: Large MERGE: 400K rg + 200K o3 = 600K total (4x maxRowGroupSize) ---
+            // Case 2: Large MERGE: 400K rg + 200K o3 = 600K total (4x maxRowGroupSize)
             rowGroupBounds.clear();
             rgRows = 400_000;
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 1, 400_000, rgRows);
@@ -410,7 +410,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, o3Rows);
             }
 
-            // --- Case 3: Exactly at 1.5x threshold -> no split ---
+            // Case 3: Exactly at 1.5x threshold -> no split
             // 100K rg + 50K o3 = 150K = exactly 1.5x
             rowGroupBounds.clear();
             rgRows = 100_000;
@@ -434,7 +434,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, o3Rows);
             }
 
-            // --- Case 4: Multiple row groups, one small (absorbs gap), one large MERGE ---
+            // Case 4: Multiple row groups, one small (absorbs gap), one large MERGE
             // rg0: 100 rows [1..100] (small < 4096, absorbs gap O3)
             // rg1: 200K rows [20K..220K] (large, overlap with O3 -> 250K total > 1.5x)
             rowGroupBounds.clear();
@@ -479,7 +479,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 freeSortedTimestamps(addr, gapO3 + overlapO3);
             }
 
-            // --- Case 5: MERGE + gap COPY_O3 with independent splitting ---
+            // Case 5: MERGE + gap COPY_O3 with independent splitting
             // rg0: 200K rows, O3: 50K overlap + 25 gap rows
             rowGroupBounds.clear();
             rgRows = 200_000;

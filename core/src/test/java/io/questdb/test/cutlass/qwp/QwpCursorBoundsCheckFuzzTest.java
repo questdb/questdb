@@ -79,66 +79,31 @@ public class QwpCursorBoundsCheckFuzzTest {
     private static final Log LOG = LogFactory.getLog(QwpCursorBoundsCheckFuzzTest.class);
 
     @Test
-    public void testByteCorruption() throws QwpParseException {
-        Rnd rnd = TestUtils.generateRandom(LOG, 42661209174423L, 1775678559100L);
-        int iterations = 50;
-        int corruptionsPerMessage = 30;
+    public void testByteCorruption() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG, 42661209174423L, 1775678559100L);
+            int iterations = 50;
+            int corruptionsPerMessage = 30;
 
-        for (int iter = 0; iter < iterations; iter++) {
-            byte[] message = generateValidMessage(rnd);
-            verifyFullParse(message);
+            for (int iter = 0; iter < iterations; iter++) {
+                byte[] message = generateValidMessage(rnd);
+                verifyFullParse(message);
 
-            for (int c = 0; c < corruptionsPerMessage; c++) {
-                byte[] corrupted = message.clone();
-                // Corrupt 1-3 bytes in the payload area
-                int nCorrupt = 1 + rnd.nextInt(3);
-                for (int i = 0; i < nCorrupt; i++) {
-                    int pos = rnd.nextInt(corrupted.length);
-                    corrupted[pos] = (byte) rnd.nextInt(256);
-                }
+                for (int c = 0; c < corruptionsPerMessage; c++) {
+                    byte[] corrupted = message.clone();
+                    // Corrupt 1-3 bytes in the payload area
+                    int nCorrupt = 1 + rnd.nextInt(3);
+                    for (int i = 0; i < nCorrupt; i++) {
+                        int pos = rnd.nextInt(corrupted.length);
+                        corrupted[pos] = (byte) rnd.nextInt(256);
+                    }
 
-                long address = Unsafe.malloc(corrupted.length, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    copyToNative(corrupted, address);
-                    parseAndIterate(address, corrupted.length);
-                } catch (QwpParseException ignored) {
-                    // Expected: parser rejects corrupted data
-                } catch (IllegalStateException ignored) {
-                    // Also acceptable: e.g. "No more tables" from corrupted table count
-                } catch (AssertionError ignored) {
-                    // Java assertions from debug checks
-                } catch (Throwable t) {
-                    Assert.fail(
-                            "Unexpected " + t.getClass().getSimpleName()
-                                    + " at corruption iter=" + iter + " c=" + c
-                                    + ": " + t.getMessage()
-                    );
-                } finally {
-                    Unsafe.free(address, corrupted.length, MemoryTag.NATIVE_DEFAULT);
-                }
-            }
-        }
-    }
-
-    @Test
-    public void testTruncationAtEveryBytePosition() throws QwpParseException {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        int iterations = 50;
-
-        for (int iter = 0; iter < iterations; iter++) {
-            byte[] message = generateValidMessage(rnd);
-            verifyFullParse(message);
-
-            // Allocate native memory for the full message once, then pass shorter lengths.
-            long address = Unsafe.malloc(message.length, MemoryTag.NATIVE_DEFAULT);
-            try {
-                copyToNative(message, address);
-
-                for (int truncLen = 0; truncLen < message.length; truncLen++) {
+                    long address = Unsafe.malloc(corrupted.length, MemoryTag.NATIVE_DEFAULT);
                     try {
-                        parseAndIterate(address, truncLen);
+                        copyToNative(corrupted, address);
+                        parseAndIterate(address, corrupted.length);
                     } catch (QwpParseException ignored) {
-                        // Expected: parser rejects truncated data
+                        // Expected: parser rejects corrupted data
                     } catch (IllegalStateException ignored) {
                         // Also acceptable: e.g. "No more tables" from corrupted table count
                     } catch (AssertionError ignored) {
@@ -146,17 +111,56 @@ public class QwpCursorBoundsCheckFuzzTest {
                     } catch (Throwable t) {
                         Assert.fail(
                                 "Unexpected " + t.getClass().getSimpleName()
-                                        + " at truncLen=" + truncLen
-                                        + " (full=" + message.length + ")"
-                                        + " iter=" + iter
+                                        + " at corruption iter=" + iter + " c=" + c
                                         + ": " + t.getMessage()
                         );
+                    } finally {
+                        Unsafe.free(address, corrupted.length, MemoryTag.NATIVE_DEFAULT);
                     }
                 }
-            } finally {
-                Unsafe.free(address, message.length, MemoryTag.NATIVE_DEFAULT);
             }
-        }
+        });
+    }
+
+    @Test
+    public void testTruncationAtEveryBytePosition() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            int iterations = 50;
+
+            for (int iter = 0; iter < iterations; iter++) {
+                byte[] message = generateValidMessage(rnd);
+                verifyFullParse(message);
+
+                // Allocate native memory for the full message once, then pass shorter lengths.
+                long address = Unsafe.malloc(message.length, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    copyToNative(message, address);
+
+                    for (int truncLen = 0; truncLen < message.length; truncLen++) {
+                        try {
+                            parseAndIterate(address, truncLen);
+                        } catch (QwpParseException ignored) {
+                            // Expected: parser rejects truncated data
+                        } catch (IllegalStateException ignored) {
+                            // Also acceptable: e.g. "No more tables" from corrupted table count
+                        } catch (AssertionError ignored) {
+                            // Java assertions from debug checks
+                        } catch (Throwable t) {
+                            Assert.fail(
+                                    "Unexpected " + t.getClass().getSimpleName()
+                                            + " at truncLen=" + truncLen
+                                            + " (full=" + message.length + ")"
+                                            + " iter=" + iter
+                                            + ": " + t.getMessage()
+                            );
+                        }
+                    }
+                } finally {
+                    Unsafe.free(address, message.length, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
     }
 
     private static void copyToNative(byte[] src, long address) {

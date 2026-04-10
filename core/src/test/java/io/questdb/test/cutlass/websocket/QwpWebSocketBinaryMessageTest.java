@@ -80,7 +80,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                         "ts TIMESTAMP" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-                // --- Step 1: send a crafted zero-row QWP message ---
+                // Step 1: send a crafted zero-row QWP message
                 URI uri = new URI("ws://localhost:" + httpPort + "/write/v4");
                 CountDownLatch openLatch = new CountDownLatch(1);
                 CountDownLatch binaryLatch = new CountDownLatch(1);
@@ -130,7 +130,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
                 webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done")
                         .get(5, TimeUnit.SECONDS);
 
-                // --- Step 2: send real rows on a fresh connection ---
+                // Step 2: send real rows on a fresh connection
                 try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", httpPort)) {
                     for (int i = 0; i < 5; i++) {
                         sender.table("zero_row_test")

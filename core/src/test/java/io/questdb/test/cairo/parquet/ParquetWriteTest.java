@@ -635,7 +635,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     "SELECT * FROM x WHERE x = 897"
             );
 
-            // === Queue ALL critical operations for a single writer session ===
+            // Queue ALL critical operations for a single writer session
 
             // 1. native→parquet (column_top=896→zeroed to 0)
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01T00'");

@@ -30,12 +30,14 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.ColumnarRowAppender;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpDecimalColumnCursor;
@@ -918,6 +920,92 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong256_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_long256_nulls", PartitionBy.HOUR)
+                    .col("value", ColumnType.LONG256)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            int valueCount = 2;
+            long valuesAddr = Unsafe.malloc((long) valueCount * 32, MemoryTag.NATIVE_DEFAULT);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmapTestUtil.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmapTestUtil.setNull(nullBitmapAddr, 1);
+                QwpNullBitmapTestUtil.setNull(nullBitmapAddr, 3);
+
+                // Long256 value 1: (10, 20, 30, 40)
+                Unsafe.getUnsafe().putLong(valuesAddr, 10L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 8, 20L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 16, 30L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 24, 40L);
+                // Long256 value 2: (50, 60, 70, 80)
+                Unsafe.getUnsafe().putLong(valuesAddr + 32, 50L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 40, 60L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 48, 70L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 56, 80L);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumn(0, valuesAddr, valueCount, 32, nullBitmapAddr, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    // Row 0: non-null (10, 20, 30, 40)
+                    assertTrue(cursor.hasNext());
+                    assertEquals(10L, record.getLong256A(0).getLong0());
+                    assertEquals(20L, record.getLong256A(0).getLong1());
+                    assertEquals(30L, record.getLong256A(0).getLong2());
+                    assertEquals(40L, record.getLong256A(0).getLong3());
+
+                    // Row 1: null
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Numbers.LONG_NULL, record.getLong256A(0).getLong0());
+                    assertEquals(Numbers.LONG_NULL, record.getLong256A(0).getLong1());
+                    assertEquals(Numbers.LONG_NULL, record.getLong256A(0).getLong2());
+                    assertEquals(Numbers.LONG_NULL, record.getLong256A(0).getLong3());
+
+                    // Row 2: non-null (50, 60, 70, 80)
+                    assertTrue(cursor.hasNext());
+                    assertEquals(50L, record.getLong256A(0).getLong0());
+                    assertEquals(60L, record.getLong256A(0).getLong1());
+                    assertEquals(70L, record.getLong256A(0).getLong2());
+                    assertEquals(80L, record.getLong256A(0).getLong3());
+
+                    // Row 3: null
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Numbers.LONG_NULL, record.getLong256A(0).getLong0());
+                    assertEquals(Numbers.LONG_NULL, record.getLong256A(0).getLong1());
+                    assertEquals(Numbers.LONG_NULL, record.getLong256A(0).getLong2());
+                    assertEquals(Numbers.LONG_NULL, record.getLong256A(0).getLong3());
+
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) valueCount * 32, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(nullBitmapAddr, bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testMultipleColumns_AllTypes() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(new TableModel(configuration, "test_multi_all", PartitionBy.HOUR)
@@ -995,6 +1083,677 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 Unsafe.free(intAddr, (long) rowCount * 4, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(longAddr, (long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(doubleAddr, (long) rowCount * 8, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_1D_Double_AllNull() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_allnull", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, true)) {
+                for (int i = 0; i < rowCount; i++) {
+                    wf.addNullRow(i);
+                }
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        ArrayView arr = record.getArray(0, columnType);
+                        assertTrue("row " + row + " should be null", arr.isNull());
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_1D_Double_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_nn", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 10;
+            int elementsPerRow = 4;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
+                for (int i = 0; i < rowCount; i++) {
+                    double[] values = new double[elementsPerRow];
+                    for (int j = 0; j < elementsPerRow; j++) {
+                        values[j] = i * 100.0 + j + 0.5;
+                    }
+                    wf.addDoubleRow(new int[]{elementsPerRow}, values);
+                }
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        ArrayView arr = record.getArray(0, columnType);
+                        assertFalse("row " + row + " should not be null", arr.isNull());
+                        assertEquals(1, arr.getDimCount());
+                        assertEquals(elementsPerRow, arr.getDimLen(0));
+                        for (int j = 0; j < elementsPerRow; j++) {
+                            assertEquals(row * 100.0 + j + 0.5, arr.getDouble(j), 1e-15);
+                        }
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_1D_Double_SingleElement() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_single", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
+                wf.addDoubleRow(new int[]{1}, new double[]{42.0});
+                wf.addDoubleRow(new int[]{1}, new double[]{-1.5});
+                wf.addDoubleRow(new int[]{1}, new double[]{0.0});
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                double[] expected = {42.0, -1.5, 0.0};
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        ArrayView arr = record.getArray(0, columnType);
+                        assertFalse(arr.isNull());
+                        assertEquals(1, arr.getDimLen(0));
+                        assertEquals(expected[row], arr.getDouble(0), 1e-15);
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_1D_Double_SpecialValues() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_special", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            double[] specialValues = {
+                    Double.MAX_VALUE, Double.MIN_VALUE, -Double.MAX_VALUE,
+                    Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN, -0.0
+            };
+
+            int rowCount = 1;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
+                wf.addDoubleRow(new int[]{specialValues.length}, specialValues);
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    ArrayView arr = record.getArray(0, columnType);
+                    assertFalse(arr.isNull());
+                    assertEquals(specialValues.length, arr.getDimLen(0));
+                    assertEquals(Double.MAX_VALUE, arr.getDouble(0), 0);
+                    assertEquals(Double.MIN_VALUE, arr.getDouble(1), 0);
+                    assertEquals(-Double.MAX_VALUE, arr.getDouble(2), 0);
+                    assertEquals(Double.POSITIVE_INFINITY, arr.getDouble(3), 0);
+                    assertEquals(Double.NEGATIVE_INFINITY, arr.getDouble(4), 0);
+                    assertTrue(Double.isNaN(arr.getDouble(5)));
+                    assertEquals(-0.0, arr.getDouble(6), 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_1D_Double_WithNulls_Alternating() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_alt", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 6;
+            int elementsPerRow = 3;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, true)) {
+                for (int i = 0; i < rowCount; i++) {
+                    if (i % 2 == 0) {
+                        wf.addNullRow(i);
+                    } else {
+                        double[] values = new double[elementsPerRow];
+                        for (int j = 0; j < elementsPerRow; j++) {
+                            values[j] = i * 10.0 + j;
+                        }
+                        wf.addDoubleRow(new int[]{elementsPerRow}, values);
+                    }
+                }
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        ArrayView arr = record.getArray(0, columnType);
+                        if (row % 2 == 0) {
+                            assertTrue("row " + row + " should be null", arr.isNull());
+                        } else {
+                            assertFalse("row " + row + " should not be null", arr.isNull());
+                            assertEquals(elementsPerRow, arr.getDimLen(0));
+                            for (int j = 0; j < elementsPerRow; j++) {
+                                assertEquals(row * 10.0 + j, arr.getDouble(j), 1e-15);
+                            }
+                        }
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_1D_Double_WithNulls_FirstNull() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_fn", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, true)) {
+                wf.addNullRow(0);
+                wf.addDoubleRow(new int[]{2}, new double[]{1.0, 2.0});
+                wf.addDoubleRow(new int[]{2}, new double[]{3.0, 4.0});
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertTrue(record.getArray(0, columnType).isNull());
+                    assertTrue(cursor.hasNext());
+                    ArrayView arr1 = record.getArray(0, columnType);
+                    assertEquals(1.0, arr1.getDouble(0), 1e-15);
+                    assertEquals(2.0, arr1.getDouble(1), 1e-15);
+                    assertTrue(cursor.hasNext());
+                    ArrayView arr2 = record.getArray(0, columnType);
+                    assertEquals(3.0, arr2.getDouble(0), 1e-15);
+                    assertEquals(4.0, arr2.getDouble(1), 1e-15);
+                    assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_1D_Double_WithNulls_LastNull() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_ln", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, true)) {
+                wf.addDoubleRow(new int[]{2}, new double[]{1.0, 2.0});
+                wf.addDoubleRow(new int[]{2}, new double[]{3.0, 4.0});
+                wf.addNullRow(2);
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertFalse(record.getArray(0, columnType).isNull());
+                    assertTrue(cursor.hasNext());
+                    assertFalse(record.getArray(0, columnType).isNull());
+                    assertTrue(cursor.hasNext());
+                    assertTrue(record.getArray(0, columnType).isNull());
+                    assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_1D_Double_VaryingLengths() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_varlen", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            int[][] lengths = {{1}, {5}, {2}, {10}};
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
+                for (int i = 0; i < rowCount; i++) {
+                    int len = lengths[i][0];
+                    double[] values = new double[len];
+                    for (int j = 0; j < len; j++) {
+                        values[j] = i * 100.0 + j;
+                    }
+                    wf.addDoubleRow(new int[]{len}, values);
+                }
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        ArrayView arr = record.getArray(0, columnType);
+                        assertFalse(arr.isNull());
+                        int len = lengths[row][0];
+                        assertEquals(len, arr.getDimLen(0));
+                        for (int j = 0; j < len; j++) {
+                            assertEquals(row * 100.0 + j, arr.getDouble(j), 1e-15);
+                        }
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_2D_Double_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 2;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_2d", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 3;
+            int dim0 = 2, dim1 = 3;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
+                for (int i = 0; i < rowCount; i++) {
+                    double[] values = new double[dim0 * dim1];
+                    for (int j = 0; j < values.length; j++) {
+                        values[j] = i * 100.0 + j;
+                    }
+                    wf.addDoubleRow(new int[]{dim0, dim1}, values);
+                }
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        ArrayView arr = record.getArray(0, columnType);
+                        assertFalse(arr.isNull());
+                        assertEquals(2, arr.getDimCount());
+                        assertEquals(dim0, arr.getDimLen(0));
+                        assertEquals(dim1, arr.getDimLen(1));
+                        for (int j = 0; j < dim0 * dim1; j++) {
+                            assertEquals(row * 100.0 + j, arr.getDouble(j), 1e-15);
+                        }
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_2D_Double_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 2;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_2d_nulls", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            int dim0 = 2, dim1 = 2;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, true)) {
+                wf.addDoubleRow(new int[]{dim0, dim1}, new double[]{1.0, 2.0, 3.0, 4.0});
+                wf.addNullRow(1);
+                wf.addDoubleRow(new int[]{dim0, dim1}, new double[]{5.0, 6.0, 7.0, 8.0});
+                wf.addNullRow(3);
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    ArrayView a0 = record.getArray(0, columnType);
+                    assertFalse(a0.isNull());
+                    assertEquals(1.0, a0.getDouble(0), 1e-15);
+                    assertTrue(cursor.hasNext());
+                    assertTrue(record.getArray(0, columnType).isNull());
+                    assertTrue(cursor.hasNext());
+                    ArrayView a2 = record.getArray(0, columnType);
+                    assertFalse(a2.isNull());
+                    assertEquals(5.0, a2.getDouble(0), 1e-15);
+                    assertTrue(cursor.hasNext());
+                    assertTrue(record.getArray(0, columnType).isNull());
+                    assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_3D_Double_NoNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 3;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_3d", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 2;
+            int d0 = 2, d1 = 3, d2 = 2;
+            int totalElements = d0 * d1 * d2;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
+                for (int i = 0; i < rowCount; i++) {
+                    double[] values = new double[totalElements];
+                    for (int j = 0; j < totalElements; j++) {
+                        values[j] = i * 1000.0 + j;
+                    }
+                    wf.addDoubleRow(new int[]{d0, d1, d2}, values);
+                }
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        ArrayView arr = record.getArray(0, columnType);
+                        assertFalse(arr.isNull());
+                        assertEquals(3, arr.getDimCount());
+                        assertEquals(d0, arr.getDimLen(0));
+                        assertEquals(d1, arr.getDimLen(1));
+                        assertEquals(d2, arr.getDimLen(2));
+                        for (int j = 0; j < totalElements; j++) {
+                            assertEquals(row * 1000.0 + j, arr.getDouble(j), 1e-15);
+                        }
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_LargeArray() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_large", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            int elemCount = 10_000;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
+                double[] values = new double[elemCount];
+                for (int j = 0; j < elemCount; j++) {
+                    values[j] = j * 0.001;
+                }
+                wf.addDoubleRow(new int[]{elemCount}, values);
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    ArrayView arr = record.getArray(0, columnType);
+                    assertFalse(arr.isNull());
+                    assertEquals(elemCount, arr.getDimLen(0));
+                    assertEquals(0.0, arr.getDouble(0), 1e-15);
+                    assertEquals(5000 * 0.001, arr.getDouble(5000), 1e-12);
+                    assertEquals((elemCount - 1) * 0.001, arr.getDouble(elemCount - 1), 1e-12);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPutArrayColumn_SingleRow() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_single_row", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 1;
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
+                wf.addDoubleRow(new int[]{3}, new double[]{1.1, 2.2, 3.3});
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    ArrayView arr = record.getArray(0, columnType);
+                    assertFalse(arr.isNull());
+                    assertEquals(3, arr.getDimLen(0));
+                    assertEquals(1.1, arr.getDouble(0), 1e-15);
+                    assertEquals(2.2, arr.getDouble(1), 1e-15);
+                    assertEquals(3.3, arr.getDouble(2), 1e-15);
+                    assertFalse(cursor.hasNext());
+                }
             }
         });
     }
@@ -2253,6 +3012,64 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutFixedColumn_Date_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_date_nulls", PartitionBy.HOUR)
+                    .col("value", ColumnType.DATE)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            int valueCount = 2;
+            long valuesAddr = Unsafe.malloc((long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmapTestUtil.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmapTestUtil.setNull(nullBitmapAddr, 1);
+                QwpNullBitmapTestUtil.setNull(nullBitmapAddr, 3);
+
+                Unsafe.getUnsafe().putLong(valuesAddr, 1_700_000_000_000L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 8, 1_600_000_000_000L);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumn(0, valuesAddr, valueCount, 8, nullBitmapAddr, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertEquals(1_700_000_000_000L, record.getDate(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Numbers.LONG_NULL, record.getDate(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(1_600_000_000_000L, record.getDate(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Numbers.LONG_NULL, record.getDate(0));
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) valueCount * 8, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(nullBitmapAddr, bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testPutFixedColumn_Double_NaN_IsNull() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(new TableModel(configuration, "test_double_nan", PartitionBy.HOUR)
@@ -2517,6 +3334,67 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
             } finally {
                 Unsafe.free(valuesAddr, (long) rowCount * 4, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedColumn_Float_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_float_nulls", PartitionBy.HOUR)
+                    .col("value", ColumnType.FLOAT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 6;
+            int valueCount = 3;
+            long valuesAddr = Unsafe.malloc((long) valueCount * 4, MemoryTag.NATIVE_DEFAULT);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmapTestUtil.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmapTestUtil.setNull(nullBitmapAddr, 0);
+                QwpNullBitmapTestUtil.setNull(nullBitmapAddr, 2);
+                QwpNullBitmapTestUtil.setNull(nullBitmapAddr, 4);
+
+                Unsafe.getUnsafe().putFloat(valuesAddr, 1.5f);
+                Unsafe.getUnsafe().putFloat(valuesAddr + 4, 2.5f);
+                Unsafe.getUnsafe().putFloat(valuesAddr + 8, 3.5f);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumn(0, valuesAddr, valueCount, 4, nullBitmapAddr, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        if (row % 2 == 0) {
+                            assertTrue("Row " + row + " should be NaN (null)", Float.isNaN(record.getFloat(0)));
+                        } else {
+                            assertEquals(row / 2 * 1.0f + 1.5f, record.getFloat(0), 1e-6f);
+                        }
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) valueCount * 4, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(nullBitmapAddr, bitmapSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -3169,6 +4047,72 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 }
             } finally {
                 Unsafe.free(valuesAddr, (long) rowCount * 16, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testPutFixedColumn_UUID_WithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_uuid_nulls", PartitionBy.HOUR)
+                    .col("value", ColumnType.UUID)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            int valueCount = 2;
+            long valuesAddr = Unsafe.malloc((long) valueCount * 16, MemoryTag.NATIVE_DEFAULT);
+            int bitmapSize = QwpNullBitmap.sizeInBytes(rowCount);
+            long nullBitmapAddr = Unsafe.malloc(bitmapSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                QwpNullBitmapTestUtil.fillNoneNull(nullBitmapAddr, rowCount);
+                QwpNullBitmapTestUtil.setNull(nullBitmapAddr, 0);
+                QwpNullBitmapTestUtil.setNull(nullBitmapAddr, 2);
+
+                // UUID 1: lo=1, hi=2
+                Unsafe.getUnsafe().putLong(valuesAddr, 1L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 8, 2L);
+                // UUID 2: lo=3, hi=4
+                Unsafe.getUnsafe().putLong(valuesAddr + 16, 3L);
+                Unsafe.getUnsafe().putLong(valuesAddr + 24, 4L);
+
+                long[] timestamps = makeTimestamps(rowCount);
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumn(0, valuesAddr, valueCount, 16, nullBitmapAddr, rowCount);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Numbers.LONG_NULL, record.getLong128Lo(0));
+                    assertEquals(Numbers.LONG_NULL, record.getLong128Hi(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(1L, record.getLong128Lo(0));
+                    assertEquals(2L, record.getLong128Hi(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(Numbers.LONG_NULL, record.getLong128Lo(0));
+                    assertEquals(Numbers.LONG_NULL, record.getLong128Hi(0));
+                    assertTrue(cursor.hasNext());
+                    assertEquals(3L, record.getLong128Lo(0));
+                    assertEquals(4L, record.getLong128Hi(0));
+                    assertFalse(cursor.hasNext());
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) valueCount * 16, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(nullBitmapAddr, bitmapSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -7762,6 +8706,116 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         @Override
         public void close() {
             Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Helper to build QwpArrayColumnCursor wire format data.
+     * <p>
+     * Wire format:
+     * <pre>
+     * [null bitmap flag: 1 byte]
+     * [null bitmap: ceil(rowCount/8) bytes, if flag != 0]
+     * For each non-null row:
+     *   [nDims: 1 byte]
+     *   [dim sizes: nDims * 4 bytes, int32 LE each]
+     *   [values: totalElements * 8 bytes, LE]
+     * </pre>
+     */
+    private static class ArrayColumnWireFormat implements AutoCloseable {
+        final QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
+        final boolean hasNulls;
+        final int nDims;
+        final int rowCount;
+        private final java.io.ByteArrayOutputStream dataStream = new java.io.ByteArrayOutputStream();
+        private final boolean[] nullFlags;
+        long dataAddress;
+        int dataLength;
+
+        private boolean isLongArray;
+
+        ArrayColumnWireFormat(int rowCount, int nDims, boolean hasNulls) {
+            this.rowCount = rowCount;
+            this.nDims = nDims;
+            this.hasNulls = hasNulls;
+            this.nullFlags = new boolean[rowCount];
+        }
+
+        void addDoubleRow(int[] shape, double[] values) {
+            assert shape.length == nDims;
+            dataStream.write((byte) nDims);
+            for (int dimSize : shape) {
+                writeInt(dimSize);
+            }
+            for (double v : values) {
+                writeLong(Double.doubleToRawLongBits(v));
+            }
+        }
+
+        void addLongRow(int[] shape, long[] values) {
+            assert shape.length == nDims;
+            isLongArray = true;
+            dataStream.write((byte) nDims);
+            for (int dimSize : shape) {
+                writeInt(dimSize);
+            }
+            for (long v : values) {
+                writeLong(v);
+            }
+        }
+
+        void addNullRow(int rowIndex) {
+            nullFlags[rowIndex] = true;
+        }
+
+        void build() throws QwpParseException {
+            byte[] rowData = dataStream.toByteArray();
+
+            int bitmapSize = hasNulls ? QwpNullBitmap.sizeInBytes(rowCount) : 0;
+            dataLength = 1 + bitmapSize + rowData.length;
+            dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+
+            long addr = dataAddress;
+            Unsafe.getUnsafe().putByte(addr, (byte) (hasNulls ? 1 : 0));
+            addr++;
+
+            if (hasNulls) {
+                QwpNullBitmapTestUtil.fillNoneNull(addr, rowCount);
+                for (int i = 0; i < rowCount; i++) {
+                    if (nullFlags[i]) {
+                        QwpNullBitmapTestUtil.setNull(addr, i);
+                    }
+                }
+                addr += bitmapSize;
+            }
+
+            for (int i = 0; i < rowData.length; i++) {
+                Unsafe.getUnsafe().putByte(addr + i, rowData[i]);
+            }
+
+            byte typeCode = isLongArray ? QwpConstants.TYPE_LONG_ARRAY : QwpConstants.TYPE_DOUBLE_ARRAY;
+            cursor.of(dataAddress, dataLength, rowCount, typeCode);
+        }
+
+        @Override
+        public void close() {
+            if (dataAddress != 0) {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+                dataAddress = 0;
+            }
+        }
+
+        private void writeInt(int value) {
+            dataStream.write(value & 0xFF);
+            dataStream.write((value >> 8) & 0xFF);
+            dataStream.write((value >> 16) & 0xFF);
+            dataStream.write((value >> 24) & 0xFF);
+        }
+
+        private void writeLong(long value) {
+            for (int i = 0; i < 8; i++) {
+                dataStream.write((int) ((value >> (i * 8)) & 0xFF));
+            }
         }
     }
 }
