@@ -68,7 +68,9 @@ Plans:
   1. Syntax for cross-column prev is defined and documented (e.g., `FILL(PREV(col_name))` or equivalent)
   2. A query using cross-column prev fills a gap row's column with the value of a different column from the previous bucket
   3. Cross-column prev works correctly with both keyed and non-keyed queries
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 04-01-PLAN.md -- Optimizer gate relaxation, PREV(col_name) detection in generateFill, keyed prevValue fix, cross-column tests
 
 ### Phase 5: Verification and Hardening
 **Goal**: The fast-path fill implementation passes all existing tests and produces output identical to the cursor path
@@ -91,7 +93,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 1. Optimizer Gate | 0/0 | Complete | 2026-04-09 |
 | 2. Non-keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
 | 3. Keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
-| 4. Cross-Column Prev | 0/0 | Not started | - |
+| 4. Cross-Column Prev | 0/1 | In progress | - |
 | 5. Verification and Hardening | 0/0 | Not started | - |
 | 6. Keyed Fill with FROM/TO Range | 1/1 | Complete   | 2026-04-10 |
 
