@@ -91,14 +91,15 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
             RecordCursor cursor,
             Map keyMap,
             RecordSink recordSink,
-            LongChain rowIDChain
+            LongChain rowIDChain,
+            Record keyRecord
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
             MapKey key = keyMap.withKey();
-            key.put(record, recordSink);
+            key.put(keyRecord, recordSink);
             MapValue value = key.createValue();
             if (value.isNew()) {
                 value.putInt(0, rowIDChain.put(record.getRowId(), -1));
@@ -113,14 +114,15 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
             RecordCursor cursor,
             Map keyMap,
             RecordSink recordSink,
-            LongChain rowIDChain
+            LongChain rowIDChain,
+            Record keyRecord
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
             MapKey key = keyMap.withKey();
-            key.put(record, recordSink);
+            key.put(keyRecord, recordSink);
             MapValue value = key.createValue();
             if (value.isNew()) {
                 value.putInt(0, rowIDChain.put(record.getRowId(), -1));
