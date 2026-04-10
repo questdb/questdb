@@ -315,6 +315,74 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevMixedNano() throws Exception {
+        assertMemoryLeak(() -> {
+            // Nanosecond parity for mixed PREV+NULL fill. PREV on sum(val)
+            // (DOUBLE, supported) and NULL on first(sym) (SYMBOL, not PREV).
+            // The query stays on the fast path.
+            execute("CREATE TABLE x (val DOUBLE, sym SYMBOL, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("INSERT INTO x VALUES " +
+                    "(1.0, 'A', '2024-01-01T00:00:00.000000000Z')," +
+                    "(3.0, 'B', '2024-01-01T02:00:00.000000000Z')");
+            assertSql(
+                    """
+                            sum\tfirst\tts
+                            1.0\tA\t2024-01-01T00:00:00.000000000Z
+                            1.0\t\t2024-01-01T01:00:00.000000000Z
+                            3.0\tB\t2024-01-01T02:00:00.000000000Z
+                            """,
+                    "SELECT sum(val), first(sym), ts FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevNumericWithTimezoneNano() throws Exception {
+        assertMemoryLeak(() -> {
+            // Nanosecond parity for numeric PREV with timezone.
+            execute("CREATE TABLE x AS (" +
+                    "SELECT x::DOUBLE AS val, " +
+                    "timestamp_sequence_ns(cast('2024-01-01T00:00:00' AS TIMESTAMP_NS), 7_200_000_000_000) AS ts " +
+                    "FROM long_sequence(3)) TIMESTAMP(ts)");
+            assertSql(
+                    """
+                            sum\tts
+                            1.0\t2024-01-01T00:00:00.000000000Z
+                            1.0\t2024-01-01T01:00:00.000000000Z
+                            2.0\t2024-01-01T02:00:00.000000000Z
+                            2.0\t2024-01-01T03:00:00.000000000Z
+                            3.0\t2024-01-01T04:00:00.000000000Z
+                            """,
+                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevSymbolLegacyFallbackNano() throws Exception {
+        assertMemoryLeak(() -> {
+            // Nanosecond parity for legacy fallback: PREV on first(s) where
+            // s is STRING triggers legacy path.
+            execute("CREATE TABLE x AS (" +
+                    "SELECT rnd_str('hello','world') s, x::DOUBLE val, " +
+                    "timestamp_sequence_ns(cast('2024-01-01T00:00:00' AS TIMESTAMP_NS), 3_600_000_000_000) ts " +
+                    "FROM long_sequence(3)) TIMESTAMP(ts)");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, first(s), sum(val) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR",
+                    """
+                            Sample By
+                              fill: value
+                              range: (,)
+                              values: [first(s),sum(val)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFillValueException() throws SqlException {
         execute("create table telem (created timestamp_ns, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 

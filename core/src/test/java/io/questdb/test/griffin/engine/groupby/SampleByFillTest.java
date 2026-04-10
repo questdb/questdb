@@ -475,6 +475,31 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevCrossColumnUnsupportedFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            // PREV(s) targets a STRING column via cross-column reference.
+            // The optimizer gate detects the unsupported type and skips the
+            // fast-path rewrite; the query falls back to the legacy cursor.
+            execute("CREATE TABLE x (s STRING, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('hello', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('world', 2.0, '2024-01-01T02:00:00.000000Z')");
+            // Plan should show legacy path (Sample By), not Async Group By
+            assertPlanNoLeakCheck(
+                    "SELECT ts, first(s), sum(val) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR",
+                    """
+                            Sample By
+                              fill: value
+                              values: [first(s),sum(val)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevKeyedIndependent() throws Exception {
         assertMemoryLeak(() -> {
             // Tests that per-key prev tracking does not bleed between keys.
@@ -560,6 +585,66 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevMixedWithSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV, NULL): PREV on sum(val) (DOUBLE, supported) and NULL
+            // on first(sym) (SYMBOL, not PREV-targeted). The query stays on the
+            // fast path because the PREV column is numeric; the SYMBOL column
+            // uses NULL fill and is never snapshotted.
+            execute("CREATE TABLE x AS (" +
+                    "SELECT x::DOUBLE val, rnd_symbol('A','B') sym, " +
+                    "timestamp_sequence(0, 7_200_000_000) ts " +
+                    "FROM long_sequence(3)) TIMESTAMP(ts)");
+            // Verify the plan shows fast path (Sample By Fill, not Sample By)
+            assertPlanNoLeakCheck(
+                    "SELECT ts, sum(val), first(sym) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR",
+                    """
+                            Sample By Fill
+                              stride: '1h'
+                              fill: prev
+                                Sort
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(val),first(sym)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevMixedWithSymbolKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            // Same as testFillPrevMixedWithSymbol but with a key column.
+            // FILL(PREV, NULL) with a SYMBOL key should not crash.
+            execute("CREATE TABLE x (key SYMBOL, val DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('K1', 1.0, 'A', '2024-01-01T00:00:00.000000Z')," +
+                    "('K2', 2.0, 'B', '2024-01-01T00:00:00.000000Z')," +
+                    "('K1', 3.0, 'C', '2024-01-01T02:00:00.000000Z')");
+            // At 01:00: K1 gap -> sum=prev(1.0), sym=null; K2 gap -> sum=prev(2.0), sym=null
+            // At 02:00: K1 data -> sum=3.0, sym=C; K2 gap -> sum=prev(2.0), sym=null
+            assertSql(
+                    """
+                            ts\tkey\tsum\tfirst
+                            2024-01-01T00:00:00.000000Z\tK1\t1.0\tA
+                            2024-01-01T00:00:00.000000Z\tK2\t2.0\tB
+                            2024-01-01T01:00:00.000000Z\tK1\t1.0\t
+                            2024-01-01T01:00:00.000000Z\tK2\t2.0\t
+                            2024-01-01T02:00:00.000000Z\tK1\t3.0\tC
+                            2024-01-01T02:00:00.000000Z\tK2\t2.0\t
+                            """,
+                    "SELECT ts, key, sum(val), first(sym) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevNonKeyed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (" +
@@ -575,6 +660,69 @@ public class SampleByFillTest extends AbstractCairoTest {
                             3.0\t2024-01-01T04:00:00.000000Z
                             """,
                     "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevNumericWithTimezone() throws Exception {
+        assertMemoryLeak(() -> {
+            // Numeric PREV with timezone stays on fast path.
+            execute("CREATE TABLE x AS (" +
+                    "SELECT x::DOUBLE AS val, timestamp_sequence('2024-01-01', 7_200_000_000) AS ts " +
+                    "FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertSql(
+                    """
+                            sum\tts
+                            1.0\t2024-01-01T00:00:00.000000Z
+                            1.0\t2024-01-01T01:00:00.000000Z
+                            2.0\t2024-01-01T02:00:00.000000Z
+                            2.0\t2024-01-01T03:00:00.000000Z
+                            3.0\t2024-01-01T04:00:00.000000Z
+                            """,
+                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'"
+            );
+            // Verify fast path plan (Sample By Fill, not Sample By)
+            assertPlanNoLeakCheck(
+                    "SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                    """
+                            Sample By Fill
+                              stride: '1h'
+                              fill: prev
+                                Sort
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
+                                      values: [sum(val)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevSymbolLegacyFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            // PREV on first(s) where s is STRING — unsupported type triggers
+            // legacy fallback. The query plan shows Sample By (not Async Group By).
+            execute("CREATE TABLE x AS (" +
+                    "SELECT rnd_str('hello','world') s, x::DOUBLE val, " +
+                    "timestamp_sequence(0, 3_600_000_000) ts " +
+                    "FROM long_sequence(3)) TIMESTAMP(ts)");
+            assertPlanNoLeakCheck(
+                    "SELECT ts, first(s), sum(val) FROM x SAMPLE BY 1h FILL(PREV, NULL) ALIGN TO CALENDAR",
+                    """
+                            Sample By
+                              fill: value
+                              values: [first(s),sum(val)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """
             );
         });
     }
