@@ -293,6 +293,29 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorruptedRowGroupCountValidatedBeforeLoop() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                // Compute footer address: trailer (last 4 bytes) holds footer length
+                int footerLength = Unsafe.getUnsafe().getInt(file.dataPtr + file.dataLen - 4);
+                long footerAddr = file.dataPtr + file.dataLen - 4 - Integer.toUnsignedLong(footerLength);
+
+                // Corrupt rowGroupCount to a huge value. Without the validation-before-loop
+                // fix, this causes an out-of-bounds read (SIGSEGV) instead of a clean exception.
+                Unsafe.getUnsafe().putInt(footerAddr + 12, 1_000_000_000);
+
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                try {
+                    reader.of(file.dataPtr, file.dataLen);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage().contains("invalid _pm footer length"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFileTooSmall() throws Exception {
         assertMemoryLeak(() -> {
             // Allocate a tiny buffer that's too small for any valid _pm file

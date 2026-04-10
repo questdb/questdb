@@ -355,6 +355,15 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
         this.rowGroupCount = Unsafe.getUnsafe().getInt(this.footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
 
+        final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
+        final long footerLengthUnsigned = Integer.toUnsignedLong(footerLength);
+        if (footerLengthUnsigned < baseFooterLength) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm footer length [footerLength=").put(footerLengthUnsigned)
+                    .put(", min=").put(baseFooterLength)
+                    .put(']');
+        }
+
         long rowCount = 0;
         for (int i = 0; i < rowGroupCount; i++) {
             rowCount += Unsafe.getUnsafe().getLong(rowGroupBlockAddr(i));
@@ -367,15 +376,6 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             throw CairoException.critical(0)
                     .put("unsupported required _pm feature flags [flags=0x")
                     .put(Long.toHexString(unknownRequired))
-                    .put(']');
-        }
-
-        final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
-        final long footerLengthUnsigned = Integer.toUnsignedLong(footerLength);
-        if (footerLengthUnsigned < baseFooterLength) {
-            throw CairoException.critical(0)
-                    .put("invalid _pm footer length [footerLength=").put(footerLengthUnsigned)
-                    .put(", min=").put(baseFooterLength)
                     .put(']');
         }
     }
