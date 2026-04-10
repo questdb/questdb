@@ -16,13 +16,12 @@ use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
-    lock_bloom_set, partition_chunk_slice, write_utf8_from_utf16_iter,
+    column_chunk_row_count, lock_bloom_set, partition_chunk_slice, write_utf8_from_utf16_iter,
+    FlatValidity,
 };
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
-use crate::parquet_write::util::{
-    bit_width, build_plain_page, encode_primitive_def_levels, MaxMin,
-};
+use crate::parquet_write::util::{bit_width, build_plain_page, MaxMin};
 
 mod fixed;
 mod primitive;
@@ -50,17 +49,21 @@ impl Repetition {
 struct ColumnChunkDictState<S> {
     num_rows: usize,
     keys: Vec<u32>,
-    is_not_null: Vec<bool>,
+    validity: Option<FlatValidity>,
     null_count: usize,
     stats: Option<S>,
 }
 
 impl<S> ColumnChunkDictState<S> {
-    fn new(stats: Option<S>) -> Self {
+    fn new(repetition: Repetition, num_rows: usize, stats: Option<S>) -> Self {
+        let mut validity = (!repetition.is_required()).then(FlatValidity::new);
+        if let Some(validity) = validity.as_mut() {
+            validity.reset(num_rows);
+        }
         Self {
             num_rows: 0,
             keys: Vec::new(),
-            is_not_null: Vec::new(),
+            validity,
             null_count: 0,
             stats,
         }
@@ -70,14 +73,20 @@ impl<S> ColumnChunkDictState<S> {
     fn push_optional_null(&mut self) {
         self.num_rows += 1;
         self.null_count += 1;
-        self.is_not_null.push(false);
+        self.validity
+            .as_mut()
+            .expect("optional dictionary state must track validity")
+            .push_null();
     }
 
     #[inline]
     fn push_optional_value(&mut self, key: u32) {
         self.num_rows += 1;
         self.keys.push(key);
-        self.is_not_null.push(true);
+        self.validity
+            .as_mut()
+            .expect("optional dictionary state must track validity")
+            .push_present();
     }
 
     #[inline]
@@ -88,10 +97,9 @@ impl<S> ColumnChunkDictState<S> {
 
     #[inline]
     fn extend_optional_nulls(&mut self, count: usize) {
-        self.num_rows += count;
-        self.null_count += count;
-        self.is_not_null
-            .resize(self.is_not_null.len() + count, false);
+        for _ in 0..count {
+            self.push_optional_null();
+        }
     }
 
     #[inline]
@@ -123,10 +131,14 @@ where
     G: Fn(T) -> P,
 {
     let num_partitions = columns.len();
+    let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
     let mut dict_entries: Vec<P> = Vec::new();
-    let mut state =
-        ColumnChunkDictState::<MaxMin<P>>::new(options.write_statistics.then(MaxMin::<P>::new));
+    let mut state = ColumnChunkDictState::<MaxMin<P>>::new(
+        repetition,
+        total_rows,
+        options.write_statistics.then(MaxMin::<P>::new),
+    );
 
     for (part_idx, column) in columns.iter().enumerate() {
         let chunk = partition_chunk_slice(
@@ -197,7 +209,7 @@ where
         .map(|s| build_primitive_stats(Some(state.null_count as i64), s, primitive_type.clone()));
     let data_page = build_primitive_dict_data_page(
         &state.keys,
-        &state.is_not_null,
+        state.validity.as_ref(),
         state.num_rows,
         state.null_count,
         dict_entry_count,
@@ -259,7 +271,7 @@ fn build_primitive_stats<P: NativeType>(
 #[allow(clippy::too_many_arguments)]
 fn build_primitive_dict_data_page(
     keys: &[u32],
-    is_not_null: &[bool],
+    validity: Option<&FlatValidity>,
     num_rows: usize,
     null_count: usize,
     dict_entry_count: usize,
@@ -275,12 +287,9 @@ fn build_primitive_dict_data_page(
     let mut buffer: Vec<u8> = Vec::new();
 
     if !required {
-        encode_primitive_def_levels(
-            &mut buffer,
-            is_not_null.iter().copied(),
-            num_rows,
-            options.version,
-        )?;
+        validity
+            .expect("optional dictionary data page must have validity")
+            .encode_def_levels(&mut buffer, options.version)?;
     }
     let definition_levels_byte_length = buffer.len();
 
@@ -314,7 +323,7 @@ fn build_primitive_dict_data_page(
 #[allow(clippy::too_many_arguments)]
 fn build_var_dict_data_page(
     keys: &[u32],
-    is_not_null: &[bool],
+    validity: Option<&FlatValidity>,
     num_rows: usize,
     null_count: usize,
     dict_entry_count: usize,
@@ -325,7 +334,7 @@ fn build_var_dict_data_page(
 ) -> ParquetResult<parquet2::page::DataPage> {
     build_primitive_dict_data_page(
         keys,
-        is_not_null,
+        validity,
         num_rows,
         null_count,
         dict_entry_count,

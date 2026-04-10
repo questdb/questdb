@@ -10,7 +10,9 @@ use parquet2::write::DynIter;
 use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::encoders::helpers::{column_chunk_row_count, partition_chunk_slice};
+use crate::parquet_write::encoders::helpers::{
+    column_chunk_row_count, partition_chunk_slice, FlatValidity,
+};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
@@ -222,51 +224,31 @@ pub(crate) fn binary_columns_to_page(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let segments = collect_binary_segments(columns, first_partition_start, last_partition_end);
+    let segments = segments.as_slice();
     let num_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut buffer = vec![];
-    for segment in &segments {
-        visit_binary_entries(segment.offsets, segment.data, |_| Ok(()))?;
-    }
-    let mut null_count = 0usize;
-
-    let mut segment_idx = 0usize;
-    let mut segment_started = false;
-    let mut top_remaining = 0usize;
-    let mut entry_idx = 0usize;
-    let def_levels = std::iter::from_fn(|| loop {
-        let segment = segments.get(segment_idx)?;
-
-        if !segment_started {
-            top_remaining = segment.adjusted_column_top;
-            segment_started = true;
+    let mut validity = FlatValidity::new();
+    validity.reset(num_rows);
+    for segment in segments {
+        for _ in 0..segment.adjusted_column_top {
+            validity.push_null();
         }
-
-        if top_remaining > 0 {
-            top_remaining -= 1;
-            null_count += 1;
-            return Some(false);
-        }
-
-        if let Some(&offset) = segment.offsets.get(entry_idx) {
-            entry_idx += 1;
-            let present = binary_get_slice_validated(segment.data, offset).is_some();
-            if !present {
-                null_count += 1;
+        visit_binary_entries(segment.offsets, segment.data, |entry| {
+            if entry.is_some() {
+                validity.push_present();
+            } else {
+                validity.push_null();
             }
-            return Some(present);
-        }
-
-        segment_idx += 1;
-        segment_started = false;
-        entry_idx = 0;
-    });
-    encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)?;
-
-    let definition_levels_byte_length = buffer.len();
+            Ok(())
+        })?;
+    }
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+    let null_count = def_levels.null_count;
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     match encoding {
         Encoding::Plain => {
-            for segment in &segments {
+            for segment in segments {
                 for &offset in segment.offsets {
                     if let Some(value) = binary_get_slice_validated(segment.data, offset) {
                         let len = value.len();
@@ -292,7 +274,7 @@ pub(crate) fn binary_columns_to_page(
             let lengths = ExactSizedIter::new(lengths, non_null_count);
             delta_bitpacked::encode(lengths, &mut buffer);
 
-            for segment in &segments {
+            for segment in segments {
                 for &offset in segment.offsets {
                     if let Some(value) = binary_get_slice_validated(segment.data, offset) {
                         buffer.extend_from_slice(value);
@@ -340,51 +322,31 @@ pub(crate) fn string_columns_to_page(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let segments = collect_string_segments(columns, first_partition_start, last_partition_end);
+    let segments = segments.as_slice();
     let num_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut buffer = vec![];
-    for segment in &segments {
-        visit_string_entries(segment.offsets, segment.data, |_| Ok(()))?;
-    }
-    let mut null_count = 0usize;
-
-    let mut segment_idx = 0usize;
-    let mut segment_started = false;
-    let mut top_remaining = 0usize;
-    let mut entry_idx = 0usize;
-    let def_levels = std::iter::from_fn(|| loop {
-        let segment = segments.get(segment_idx)?;
-
-        if !segment_started {
-            top_remaining = segment.adjusted_column_top;
-            segment_started = true;
+    let mut validity = FlatValidity::new();
+    validity.reset(num_rows);
+    for segment in segments {
+        for _ in 0..segment.adjusted_column_top {
+            validity.push_null();
         }
-
-        if top_remaining > 0 {
-            top_remaining -= 1;
-            null_count += 1;
-            return Some(false);
-        }
-
-        if let Some(&offset) = segment.offsets.get(entry_idx) {
-            entry_idx += 1;
-            let present = string_get_utf16_validated(segment.data, offset).is_some();
-            if !present {
-                null_count += 1;
+        visit_string_entries(segment.offsets, segment.data, |entry| {
+            if entry.is_some() {
+                validity.push_present();
+            } else {
+                validity.push_null();
             }
-            return Some(present);
-        }
-
-        segment_idx += 1;
-        segment_started = false;
-        entry_idx = 0;
-    });
-    encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)?;
-
-    let definition_levels_byte_length = buffer.len();
+            Ok(())
+        })?;
+    }
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+    let null_count = def_levels.null_count;
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     match encoding {
         Encoding::Plain => {
-            for segment in &segments {
+            for segment in segments {
                 for &offset in segment.offsets {
                     if let Some(utf16) = string_get_utf16_validated(segment.data, offset) {
                         let len_offset = buffer.len();
@@ -414,7 +376,7 @@ pub(crate) fn string_columns_to_page(
             let lengths = ExactSizedIter::new(lengths, non_null_count);
             delta_bitpacked::encode(lengths, &mut buffer);
 
-            for segment in &segments {
+            for segment in segments {
                 for &offset in segment.offsets {
                     if let Some(utf16) = string_get_utf16_validated(segment.data, offset) {
                         let utf8_start = buffer.len();
@@ -464,51 +426,31 @@ pub(crate) fn varchar_columns_to_page(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let segments = collect_varchar_segments(columns, first_partition_start, last_partition_end);
+    let segments = segments.as_slice();
     let num_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut buffer = vec![];
-    for segment in &segments {
-        visit_varchar_entries(segment.aux, segment.data, |_| Ok(()))?;
-    }
-    let mut null_count = 0usize;
-
-    let mut segment_idx = 0usize;
-    let mut segment_started = false;
-    let mut top_remaining = 0usize;
-    let mut entry_idx = 0usize;
-    let def_levels = std::iter::from_fn(|| loop {
-        let segment = segments.get(segment_idx)?;
-
-        if !segment_started {
-            top_remaining = segment.adjusted_column_top;
-            segment_started = true;
+    let mut validity = FlatValidity::new();
+    validity.reset(num_rows);
+    for segment in segments {
+        for _ in 0..segment.adjusted_column_top {
+            validity.push_null();
         }
-
-        if top_remaining > 0 {
-            top_remaining -= 1;
-            null_count += 1;
-            return Some(false);
-        }
-
-        if let Some(entry) = segment.aux.get(entry_idx) {
-            entry_idx += 1;
-            let present = varchar_get_slice_validated(entry, segment.data).is_some();
-            if !present {
-                null_count += 1;
+        visit_varchar_entries(segment.aux, segment.data, |entry| {
+            if entry.is_some() {
+                validity.push_present();
+            } else {
+                validity.push_null();
             }
-            return Some(present);
-        }
-
-        segment_idx += 1;
-        segment_started = false;
-        entry_idx = 0;
-    });
-    encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)?;
-
-    let definition_levels_byte_length = buffer.len();
+            Ok(())
+        })?;
+    }
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+    let null_count = def_levels.null_count;
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     match encoding {
         Encoding::Plain => {
-            for segment in &segments {
+            for segment in segments {
                 for entry in segment.aux {
                     if let Some(value) = varchar_get_slice_validated(entry, segment.data) {
                         let len = value.len();
@@ -534,7 +476,7 @@ pub(crate) fn varchar_columns_to_page(
             let lengths = ExactSizedIter::new(lengths, non_null_count);
             delta_bitpacked::encode(lengths, &mut buffer);
 
-            for segment in &segments {
+            for segment in segments {
                 for entry in segment.aux {
                     if let Some(value) = varchar_get_slice_validated(entry, segment.data) {
                         buffer.extend_from_slice(value);

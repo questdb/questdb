@@ -19,8 +19,8 @@ use crate::parquet_write::util::{transmute_slice, BinaryMaxMinStats, MaxMin};
 use crate::parquet_write::Nullable;
 
 use super::{
-    build_dict_page, build_var_dict_data_page, lock_bloom_set, partition_chunk_slice,
-    upsert_dict_entry, ColumnChunkDictState, Repetition,
+    build_dict_page, build_var_dict_data_page, column_chunk_row_count, lock_bloom_set,
+    partition_chunk_slice, upsert_dict_entry, ColumnChunkDictState, Repetition,
 };
 
 /// Encode a Decimal{8,16,32,64,128,256} column as RleDictionary pages.
@@ -58,11 +58,14 @@ pub fn encode_fixed_len_bytes<const N: usize>(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
     let num_partitions = columns.len();
+    let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let null_value = fixed_len_null_value::<N>();
 
     let mut dict_map: RapidHashMap<[u8; N], u32> = RapidHashMap::default();
     let mut dict_entries: Vec<[u8; N]> = Vec::new();
     let mut state = ColumnChunkDictState::<BinaryMaxMinStats>::new(
+        Repetition::Optional,
+        total_rows,
         options
             .write_statistics
             .then(|| BinaryMaxMinStats::new(primitive_type)),
@@ -122,7 +125,7 @@ pub fn encode_fixed_len_bytes<const N: usize>(
     let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
     let data_page = build_var_dict_data_page(
         &state.keys,
-        &state.is_not_null,
+        state.validity.as_ref(),
         state.num_rows,
         state.null_count,
         dict_entry_count,
@@ -150,10 +153,14 @@ where
     T::Bytes: Eq + Hash,
 {
     let num_partitions = columns.len();
+    let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
     let mut dict_entries: Vec<T> = Vec::new();
-    let mut state =
-        ColumnChunkDictState::<MaxMin<T>>::new(options.write_statistics.then(MaxMin::<T>::new));
+    let mut state = ColumnChunkDictState::<MaxMin<T>>::new(
+        Repetition::Optional,
+        total_rows,
+        options.write_statistics.then(MaxMin::<T>::new),
+    );
 
     for (part_idx, column) in columns.iter().enumerate() {
         let chunk = partition_chunk_slice(
@@ -199,7 +206,7 @@ where
     });
     let data_page = build_var_dict_data_page(
         &state.keys,
-        &state.is_not_null,
+        state.validity.as_ref(),
         state.num_rows,
         state.null_count,
         dict_entry_count,

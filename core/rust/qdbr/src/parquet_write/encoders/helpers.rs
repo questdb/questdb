@@ -26,11 +26,16 @@
 use std::char::DecodeUtf16Error;
 use std::cmp;
 use std::collections::HashSet;
+use std::io;
 use std::sync::{Arc, Mutex};
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
+use crate::parquet_write::util::{
+    encode_all_ones_def_levels, encode_all_zeros_def_levels, encode_primitive_def_levels,
+};
+use parquet2::write::Version;
 
 /// Decode a UTF-16 iterator and append the resulting UTF-8 bytes to `dest`.
 /// Returns the number of UTF-8 bytes written.
@@ -221,6 +226,98 @@ impl<T> TypedChunkSegment<'_, T> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DefLevelsMeta {
+    pub definition_levels_byte_length: usize,
+    pub null_count: usize,
+}
+
+#[derive(Debug, Default)]
+pub struct FlatValidity {
+    bits: Vec<u8>,
+    write_idx: usize,
+    num_rows: usize,
+    null_count: usize,
+}
+
+impl FlatValidity {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset(&mut self, num_rows: usize) {
+        self.write_idx = 0;
+        self.num_rows = num_rows;
+        self.null_count = 0;
+
+        let required_bytes = num_rows.saturating_add(7) / 8;
+        if self.bits.len() < required_bytes {
+            self.bits.resize(required_bytes, 0);
+        }
+    }
+
+    #[inline]
+    pub fn push_present(&mut self) {
+        debug_assert!(self.write_idx < self.num_rows);
+        let byte_idx = self.write_idx / 8;
+        let bit_idx = self.write_idx % 8;
+        self.bits[byte_idx] |= 1u8 << bit_idx;
+        self.write_idx += 1;
+    }
+
+    #[inline]
+    pub fn push_null(&mut self) {
+        debug_assert!(self.write_idx < self.num_rows);
+        let byte_idx = self.write_idx / 8;
+        let bit_idx = self.write_idx % 8;
+        self.bits[byte_idx] &= !(1u8 << bit_idx);
+        self.write_idx += 1;
+        self.null_count += 1;
+    }
+
+    pub fn encode_def_levels(
+        &self,
+        buffer: &mut Vec<u8>,
+        version: Version,
+    ) -> io::Result<DefLevelsMeta> {
+        debug_assert_eq!(self.write_idx, self.num_rows);
+
+        let start = buffer.len();
+        if self.num_rows == 0 {
+            return Ok(DefLevelsMeta {
+                definition_levels_byte_length: 0,
+                null_count: self.null_count,
+            });
+        }
+
+        if self.null_count == 0 {
+            encode_all_ones_def_levels(buffer, self.num_rows, version);
+        } else if self.null_count == self.num_rows {
+            encode_all_zeros_def_levels(buffer, self.num_rows, version);
+        } else {
+            encode_primitive_def_levels(
+                buffer,
+                (0..self.num_rows).map(|row_idx| self.is_present(row_idx)),
+                self.num_rows,
+                version,
+            )?;
+        }
+
+        Ok(DefLevelsMeta {
+            definition_levels_byte_length: buffer.len() - start,
+            null_count: self.null_count,
+        })
+    }
+
+    #[inline]
+    fn is_present(&self, row_idx: usize) -> bool {
+        debug_assert!(row_idx < self.num_rows);
+        let byte_idx = row_idx / 8;
+        let bit_idx = row_idx % 8;
+        (self.bits[byte_idx] & (1u8 << bit_idx)) != 0
+    }
+}
+
 /// Build borrowed typed segments for the selected column chunk without
 /// materializing a whole-chunk value buffer.
 pub fn collect_typed_chunk_segments<'a, T, F>(
@@ -323,6 +420,31 @@ pub fn lock_bloom_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parquet2::encoding::bitpacked;
+    use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
+    use parquet2::write::Version;
+
+    fn decode_def_levels(buffer: &[u8], num_rows: usize, version: Version) -> Vec<u8> {
+        let data = match version {
+            Version::V1 => &buffer[4..],
+            Version::V2 => buffer,
+        };
+        let decoder = Decoder::new(data, 1);
+        let mut result = Vec::new();
+        for run in decoder {
+            match run.unwrap() {
+                HybridEncoded::Bitpacked(values) => {
+                    let remaining = num_rows - result.len();
+                    result.extend(bitpacked::Decoder::<u8>::try_new(values, 1, remaining).unwrap());
+                }
+                HybridEncoded::Rle(value, count) => {
+                    let bit = value[0] & 1;
+                    result.extend(std::iter::repeat_n(bit, count));
+                }
+            }
+        }
+        result
+    }
 
     #[test]
     fn compute_chunk_slice_no_top() {
@@ -502,5 +624,98 @@ mod tests {
         };
         assert_eq!(rows_per_page(&opts, 32), 1);
         assert_eq!(rows_per_page(&opts, 1024), 1);
+    }
+
+    #[test]
+    fn flat_validity_reset_reuses_backing_bits() {
+        let mut validity = FlatValidity::new();
+        validity.reset(10);
+        for _ in 0..10 {
+            validity.push_present();
+        }
+
+        validity.reset(3);
+        validity.push_null();
+        validity.push_present();
+        validity.push_null();
+
+        let mut buffer = Vec::new();
+        let meta = validity
+            .encode_def_levels(&mut buffer, Version::V2)
+            .unwrap();
+        assert_eq!(meta.null_count, 2);
+        assert_eq!(meta.definition_levels_byte_length, 2);
+        assert_eq!(decode_def_levels(&buffer, 3, Version::V2), vec![0, 1, 0]);
+    }
+
+    #[test]
+    fn flat_validity_crosses_byte_boundary() {
+        let mut validity = FlatValidity::new();
+        validity.reset(10);
+        for idx in 0..10 {
+            if idx % 3 == 0 {
+                validity.push_null();
+            } else {
+                validity.push_present();
+            }
+        }
+
+        let mut buffer = Vec::new();
+        let meta = validity
+            .encode_def_levels(&mut buffer, Version::V2)
+            .unwrap();
+        assert_eq!(meta.null_count, 4);
+        assert_eq!(
+            decode_def_levels(&buffer, 10, Version::V2),
+            vec![0, 1, 1, 0, 1, 1, 0, 1, 1, 0]
+        );
+    }
+
+    #[test]
+    fn flat_validity_all_present_uses_rle() {
+        let mut validity = FlatValidity::new();
+        validity.reset(9);
+        for _ in 0..9 {
+            validity.push_present();
+        }
+
+        let mut buffer = Vec::new();
+        let meta = validity
+            .encode_def_levels(&mut buffer, Version::V2)
+            .unwrap();
+        assert_eq!(meta.null_count, 0);
+        assert_eq!(meta.definition_levels_byte_length, 2);
+        assert_eq!(decode_def_levels(&buffer, 9, Version::V2), vec![1; 9]);
+    }
+
+    #[test]
+    fn flat_validity_all_null_uses_rle() {
+        let mut validity = FlatValidity::new();
+        validity.reset(9);
+        for _ in 0..9 {
+            validity.push_null();
+        }
+
+        let mut buffer = Vec::new();
+        let meta = validity
+            .encode_def_levels(&mut buffer, Version::V2)
+            .unwrap();
+        assert_eq!(meta.null_count, 9);
+        assert_eq!(meta.definition_levels_byte_length, 2);
+        assert_eq!(decode_def_levels(&buffer, 9, Version::V2), vec![0; 9]);
+    }
+
+    #[test]
+    fn flat_validity_zero_rows_encodes_nothing() {
+        let mut validity = FlatValidity::new();
+        validity.reset(0);
+
+        let mut buffer = vec![1, 2, 3];
+        let meta = validity
+            .encode_def_levels(&mut buffer, Version::V2)
+            .unwrap();
+        assert_eq!(meta.null_count, 0);
+        assert_eq!(meta.definition_levels_byte_length, 0);
+        assert_eq!(buffer, vec![1, 2, 3]);
     }
 }

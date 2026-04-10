@@ -37,13 +37,13 @@ use parquet2::write::DynIter;
 use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
     column_chunk_row_count, lock_bloom_set, partition_chunk_slice, write_utf8_from_utf16_iter,
+    FlatValidity,
 };
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util;
 use crate::parquet_write::util::{
-    build_plain_page, encode_all_ones_def_levels, encode_primitive_def_levels, transmute_slice,
-    BinaryMaxMinStats, ExactSizedIter,
+    build_plain_page, transmute_slice, BinaryMaxMinStats, ExactSizedIter,
 };
 
 pub struct SymbolGlobalInfo {
@@ -80,6 +80,8 @@ pub fn encode(
     let chars = first_column.secondary_data;
 
     let mut merged_keys = Vec::with_capacity(total_rows);
+    let mut validity = FlatValidity::new();
+    validity.reset(total_rows);
     let mut used_keys = HashSet::new();
     let mut max_key = 0u32;
     let mut null_count = 0usize;
@@ -93,6 +95,9 @@ pub fn encode(
         );
         null_count += chunk.adjusted_column_top;
         merged_keys.resize(merged_keys.len() + chunk.adjusted_column_top, -1);
+        for _ in 0..chunk.adjusted_column_top {
+            validity.push_null();
+        }
         // SAFETY: JNI-backed, page-aligned, valid `i32` symbol keys.
         let all_keys: &[i32] = unsafe { transmute_slice(column.primary_data) };
         let chunk_keys = &all_keys[chunk.lower_bound..chunk.upper_bound];
@@ -101,8 +106,10 @@ pub fn encode(
                 let key = key as u32;
                 used_keys.insert(key);
                 max_key = max_key.max(key);
+                validity.push_present();
             } else {
                 null_count += 1;
+                validity.push_null();
             }
         }
         merged_keys.extend_from_slice(chunk_keys);
@@ -128,13 +135,13 @@ pub fn encode(
     let mut pages = Vec::with_capacity(2);
     pages.push(Page::Dict(dict_page));
 
-    let data_page = symbol_to_data_page_only(
+    let data_page = symbol_to_data_page_with_validity(
         &merged_keys,
-        0,
+        total_rows,
         global_info.max_key,
         options,
         primitive_type.clone(),
-        merged_keys.iter().all(|&key| key >= 0),
+        &validity,
         page_stats,
     )?;
     pages.push(data_page);
@@ -172,18 +179,16 @@ pub(crate) fn prepare_symbol_dictionary(
     ))
 }
 
-pub fn symbol_to_data_page_only(
+fn symbol_to_data_page_with_validity(
     column_values: &[i32],
-    column_top: usize,
+    num_rows: usize,
     max_key: u32,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    not_null_hint: bool,
+    validity: &FlatValidity,
     page_stats: Option<ParquetStatistics>,
 ) -> ParquetResult<Page> {
-    let num_rows = column_top + column_values.len();
     let mut data_buffer = vec![];
-
     debug_assert!(
         column_values
             .iter()
@@ -193,30 +198,14 @@ pub fn symbol_to_data_page_only(
     );
 
     // Always encode def levels so the file-level schema stays OPTIONAL
-    // across O3 merges. When there are no nulls (not_null_hint from Java),
-    // a single RLE run of 1s is ~3 bytes regardless of row count.
-    // The hint can be stale, so fall back to per-row def levels when
-    // nulls are actually present (column_top > 0).
-    let (definition_levels_byte_length, data_null_count) = if not_null_hint && column_top == 0 {
-        encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
-        (data_buffer.len(), 0)
-    } else {
-        let data_null_count = column_values.iter().filter(|&&k| k < 0).count();
-        let def_levels = (0..num_rows).map(|i| {
-            if i < column_top {
-                false
-            } else {
-                column_values[i - column_top] >= 0
-            }
-        });
-
-        encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-        (data_buffer.len(), data_null_count)
-    };
-    let total_null_count = column_top + data_null_count;
+    // across O3 merges. All-present chunks collapse to a single RLE run of
+    // 1s; otherwise we fall back to per-row def levels.
+    let def_levels = validity.encode_def_levels(&mut data_buffer, options.version)?;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+    let total_null_count = def_levels.null_count;
 
     let bits_per_key = util::bit_width(max_key as u64);
-    let non_null_len = column_values.len() - data_null_count;
+    let non_null_len = column_values.iter().filter(|&&value| value >= 0).count();
     let local_keys =
         column_values
             .iter()
@@ -238,6 +227,22 @@ pub fn symbol_to_data_page_only(
     )?;
 
     Ok(Page::Data(data_page))
+}
+
+fn build_symbol_validity(column_values: &[i32], column_top: usize) -> FlatValidity {
+    let mut validity = FlatValidity::new();
+    validity.reset(column_top + column_values.len());
+    for _ in 0..column_top {
+        validity.push_null();
+    }
+    for &value in column_values {
+        if value >= 0 {
+            validity.push_present();
+        } else {
+            validity.push_null();
+        }
+    }
+    validity
 }
 
 const UTF16_LEN_SIZE: usize = 4;
@@ -323,13 +328,13 @@ fn build_dict_buffer(
     Ok(dict_buffer)
 }
 
-fn encode_symbols_dict<'a>(
-    column_vals: &'a [i32],
+fn encode_symbols_dict(
+    column_vals: &[i32],
     offsets: &[u64],
     chars: &[u8],
     stats: &mut BinaryMaxMinStats,
     bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<(Vec<u8>, impl Iterator<Item = u32> + 'a, u32)> {
+) -> ParquetResult<(Vec<u8>, u32)> {
     let mut values_set = HashSet::with_capacity(offsets.len());
     for &value in column_vals {
         if value >= 0 {
@@ -347,12 +352,7 @@ fn encode_symbols_dict<'a>(
         bloom_hashes,
     )?;
 
-    let local_keys =
-        column_vals
-            .iter()
-            .filter_map(|&value| if value >= 0 { Some(value as u32) } else { None });
-
-    Ok((dict_buffer, local_keys, max_key))
+    Ok((dict_buffer, max_key))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -363,37 +363,15 @@ pub fn symbol_to_pages(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    not_null_hint: bool,
+    _not_null_hint: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let num_rows = column_top + column_values.len();
-    let mut data_buffer = vec![];
-
-    // Always encode def levels so the file-level schema stays OPTIONAL
-    // across O3 merges. When there are no nulls (not_null_hint from Java),
-    // a single RLE run of 1s is ~3 bytes regardless of row count.
-    // The hint can be stale, so fall back to per-row def levels when
-    // nulls are actually present (column_top > 0).
-    let (definition_levels_byte_length, data_null_count) = if not_null_hint && column_top == 0 {
-        encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
-        (data_buffer.len(), 0)
-    } else {
-        let data_null_count = column_values.iter().filter(|&&key| key < 0).count();
-        let def_levels = (0..num_rows).map(|i| {
-            if i < column_top {
-                false
-            } else {
-                column_values[i - column_top] >= 0
-            }
-        });
-
-        encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-        (data_buffer.len(), data_null_count)
-    };
-    let total_null_count = column_top + data_null_count;
+    let validity = build_symbol_validity(column_values, column_top);
+    let total_null_count = column_top + column_values.iter().filter(|&&key| key < 0).count();
 
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
-    let (dict_buffer, keys, max_key) = {
+    let (dict_buffer, max_key) = {
         let mut bloom_guard = bloom_set
             .as_ref()
             .map(|arc| {
@@ -410,28 +388,22 @@ pub fn symbol_to_pages(
         )
         .context("could not write symbols dict map page")?
     };
-
-    let bits_per_key = util::bit_width(max_key as u64);
-    let non_null_len = column_values.len() - data_null_count;
-    let keys = ExactSizedIter::new(keys, non_null_len);
-    data_buffer.push(bits_per_key);
-    encode_u32(&mut data_buffer, keys, non_null_len, bits_per_key as u32)?;
-
-    let data_page = build_plain_page(
-        data_buffer,
+    let data_page = match symbol_to_data_page_with_validity(
+        column_values,
         num_rows,
-        total_null_count,
-        definition_levels_byte_length,
+        max_key,
+        options,
+        primitive_type.clone(),
+        &validity,
         if options.write_statistics {
             Some(stats.into_parquet_stats(total_null_count))
         } else {
             None
         },
-        primitive_type,
-        options,
-        Encoding::RleDictionary,
-        false,
-    )?;
+    )? {
+        Page::Data(data_page) => data_page,
+        Page::Dict(_) => unreachable!("symbol data-page builder returned dict page"),
+    };
 
     let unique_count = if !dict_buffer.is_empty() {
         max_key + 1

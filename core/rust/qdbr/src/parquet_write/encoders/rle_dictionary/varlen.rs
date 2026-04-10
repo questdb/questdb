@@ -13,8 +13,8 @@ use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{transmute_slice, BinaryMaxMinStats};
 
 use super::{
-    build_dict_page, build_var_dict_data_page, lock_bloom_set, partition_chunk_slice,
-    write_utf8_from_utf16_iter, ColumnChunkDictState, Repetition,
+    build_dict_page, build_var_dict_data_page, column_chunk_row_count, lock_bloom_set,
+    partition_chunk_slice, write_utf8_from_utf16_iter, ColumnChunkDictState, Repetition,
 };
 
 type ByteSliceIter<'a> = Box<dyn Iterator<Item = ParquetResult<Option<&'a [u8]>>> + 'a>;
@@ -29,10 +29,13 @@ pub fn encode_string(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
     let num_partitions = columns.len();
+    let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut dict_map: RapidHashMap<&[u16], u32> = RapidHashMap::default();
     let mut dict_entries: Vec<&[u16]> = Vec::new();
     let mut total_dict_bytes = 0usize;
     let mut state = ColumnChunkDictState::<BinaryMaxMinStats>::new(
+        Repetition::Optional,
+        total_rows,
         options
             .write_statistics
             .then(|| BinaryMaxMinStats::new(primitive_type)),
@@ -113,7 +116,7 @@ pub fn encode_string(
     let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
     let data_page = build_var_dict_data_page(
         &state.keys,
-        &state.is_not_null,
+        state.validity.as_ref(),
         state.num_rows,
         state.null_count,
         dict_entry_count,
@@ -217,10 +220,13 @@ where
     ) -> ParquetResult<ByteSliceIter<'a>>,
 {
     let num_partitions = columns.len();
+    let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
     let mut total_keys_bytes = 0usize;
     let mut state = ColumnChunkDictState::<BinaryMaxMinStats>::new(
+        Repetition::Optional,
+        total_rows,
         options
             .write_statistics
             .then(|| BinaryMaxMinStats::new(primitive_type)),
@@ -277,7 +283,7 @@ where
     let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
     let data_page = build_var_dict_data_page(
         &state.keys,
-        &state.is_not_null,
+        state.validity.as_ref(),
         state.num_rows,
         state.null_count,
         dict_entry_count,

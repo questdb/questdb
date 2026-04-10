@@ -18,7 +18,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::encoders::helpers::TypedChunkSegment;
+use crate::parquet_write::encoders::helpers::{DefLevelsMeta, FlatValidity, TypedChunkSegment};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
@@ -56,45 +56,26 @@ fn encode_segmented_def_levels<T, F>(
     segments: &[TypedChunkSegment<'_, T>],
     options: WriteOptions,
     mut is_present: F,
-) -> ParquetResult<usize>
+) -> ParquetResult<DefLevelsMeta>
 where
     F: FnMut(&T) -> bool,
 {
-    let mut null_count = 0usize;
+    let mut validity = FlatValidity::new();
     let num_rows = segment_num_rows(segments);
-    let mut segment_idx = 0usize;
-    let mut segment_started = false;
-    let mut top_remaining = 0usize;
-    let mut value_idx = 0usize;
-    let def_levels = std::iter::from_fn(|| loop {
-        let segment = segments.get(segment_idx)?;
-
-        if !segment_started {
-            top_remaining = segment.adjusted_column_top;
-            segment_started = true;
+    validity.reset(num_rows);
+    for segment in segments {
+        for _ in 0..segment.adjusted_column_top {
+            validity.push_null();
         }
-
-        if top_remaining > 0 {
-            top_remaining -= 1;
-            null_count += 1;
-            return Some(false);
-        }
-
-        if let Some(value) = segment.slice.get(value_idx) {
-            value_idx += 1;
-            let present = is_present(value);
-            if !present {
-                null_count += 1;
+        for value in segment.slice {
+            if is_present(value) {
+                validity.push_present();
+            } else {
+                validity.push_null();
             }
-            return Some(present);
         }
-
-        segment_idx += 1;
-        segment_started = false;
-        value_idx = 0;
-    });
-    encode_primitive_def_levels(buffer, def_levels, num_rows, options.version)?;
-    Ok(null_count)
+    }
+    Ok(validity.encode_def_levels(buffer, options.version)?)
 }
 
 pub fn decimal_segments_to_page_plain<T>(
@@ -110,9 +91,10 @@ where
 
     let num_rows = segment_num_rows(segments);
     let mut buffer = vec![];
-    let null_count =
+    let def_levels =
         encode_segmented_def_levels(&mut buffer, segments, options, |value| !value.is_null())?;
-    let definition_levels_byte_length = buffer.len();
+    let null_count = def_levels.null_count;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
 
     let mut statistics = MaxMin::new();
     for segment in segments {
@@ -170,9 +152,10 @@ where
 
     let num_rows = segment_num_rows(segments);
     let mut buffer = vec![];
-    let null_count =
+    let def_levels =
         encode_segmented_def_levels(&mut buffer, segments, options, |value| !value.is_null())?;
-    let definition_levels_byte_length = buffer.len();
+    let null_count = def_levels.null_count;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
     let non_null_count = num_rows - null_count;
 
     let statistics = if options.write_statistics || bloom_hashes.is_some() {
@@ -906,9 +889,10 @@ pub fn slice_segments_to_page_simd<T: SimdEncodable>(
 
     let num_rows = segment_num_rows(segments);
     let mut buffer = vec![];
-    let null_count =
+    let def_levels =
         encode_segmented_def_levels(&mut buffer, segments, options, |value| !value.is_null())?;
-    let definition_levels_byte_length = buffer.len();
+    let null_count = def_levels.null_count;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
     let non_null_count = num_rows - null_count;
 
     let statistics = if options.write_statistics {

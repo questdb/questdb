@@ -402,9 +402,9 @@ pub fn create_row_group_from_partitions(
     let col_to_iter = |col_idx: usize,
                        options: WriteOptions,
                        bloom_set: Option<Arc<Mutex<HashSet<u64>>>>|
-                       -> ParquetResult<
-                           DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
-                       > {
+     -> ParquetResult<
+        DynStreamingIterator<'static, parquet2::page::CompressedPage, ParquetError>,
+    > {
         let column_type = &column_types[col_idx];
         let col_encoding = encoding[col_idx];
         let first_partition_column = partitions[0].columns[col_idx];

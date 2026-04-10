@@ -48,6 +48,18 @@ fn v2_header(page: &Page) -> (i32, i32, i32) {
     }
 }
 
+fn v2_header_with_def_levels(page: &Page) -> (i32, i32, i32, i32) {
+    match data_page_header(page) {
+        DataPageHeader::V2(h) => (
+            h.num_values,
+            h.num_nulls,
+            h.definition_levels_byte_length,
+            h.encoding.0,
+        ),
+        DataPageHeader::V1(_) => panic!("expected V2 header"),
+    }
+}
+
 #[test]
 fn encode_simd_int_single_partition_round_trip() {
     let data: Vec<i32> = (0..100i32)
@@ -76,9 +88,13 @@ fn encode_simd_int_multi_partition_single_page() {
     let pt = primitive_type_for(ColumnTypeTag::Int);
     let pages = encode_simd::<i32>(&columns, 0, 25, &pt, write_options(), None).expect("encode");
     assert_eq!(pages.len(), 1);
-    let (num_values, num_nulls, enc) = v2_header(&pages[0]);
+    let (num_values, num_nulls, def_levels_len, enc) = v2_header_with_def_levels(&pages[0]);
     assert_eq!(num_values, 100);
     assert_eq!(num_nulls, 0);
+    assert_eq!(
+        def_levels_len, 3,
+        "all-present chunks should use a single RLE run"
+    );
     assert_eq!(enc, 0);
 }
 
@@ -122,9 +138,13 @@ fn encode_simd_all_nulls_partition() {
     let pt = primitive_type_for(ColumnTypeTag::Int);
     let pages = encode_simd::<i32>(&[col], 0, 50, &pt, write_options(), None).expect("encode");
     assert_eq!(pages.len(), 1);
-    let (num_values, num_nulls, _) = v2_header(&pages[0]);
+    let (num_values, num_nulls, def_levels_len, _) = v2_header_with_def_levels(&pages[0]);
     assert_eq!(num_values, 50);
     assert_eq!(num_nulls, 50);
+    assert_eq!(
+        def_levels_len, 2,
+        "all-null chunks should use a single RLE run"
+    );
 }
 
 #[test]
@@ -281,9 +301,10 @@ fn encode_string_utf16_round_trip() {
     let pages =
         encode_string(&[col], 0, offsets.len(), &pt, write_options(), None).expect("encode");
     assert_eq!(pages.len(), 1);
-    let (num_values, num_nulls, _) = v2_header(&pages[0]);
+    let (num_values, num_nulls, def_levels_len, _) = v2_header_with_def_levels(&pages[0]);
     assert_eq!(num_values, 3);
     assert_eq!(num_nulls, 0);
+    assert_eq!(def_levels_len, 2);
 }
 
 #[test]
@@ -360,9 +381,10 @@ fn encode_fixed_len_bytes_uuid_no_reverse() {
         encode_fixed_len_bytes::<16>(&[col], 0, data.len(), &pt, write_options(), false, None)
             .expect("encode");
     assert_eq!(pages.len(), 1);
-    let (num_values, num_nulls, _) = v2_header(&pages[0]);
+    let (num_values, num_nulls, def_levels_len, _) = v2_header_with_def_levels(&pages[0]);
     assert_eq!(num_values, 5);
     assert_eq!(num_nulls, 0);
+    assert_eq!(def_levels_len, 2);
 }
 
 #[test]

@@ -9,7 +9,9 @@ use parquet2::write::DynIter;
 use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::encoders::helpers::{collect_typed_chunk_segments, TypedChunkSegment};
+use crate::parquet_write::encoders::helpers::{
+    collect_typed_chunk_segments, FlatValidity, TypedChunkSegment,
+};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
@@ -106,42 +108,23 @@ fn bytes_segments_to_page<const N: usize>(
     let num_rows: usize = segments.iter().map(TypedChunkSegment::num_rows).sum();
     let null_value = fixed_null_value::<N>();
     let mut buffer = vec![];
-    let mut null_count = 0usize;
-
-    let mut segment_idx = 0usize;
-    let mut segment_started = false;
-    let mut top_remaining = 0usize;
-    let mut value_idx = 0usize;
-    let def_levels = std::iter::from_fn(|| loop {
-        let segment = segments.get(segment_idx)?;
-
-        if !segment_started {
-            top_remaining = segment.adjusted_column_top;
-            segment_started = true;
+    let mut validity = FlatValidity::new();
+    validity.reset(num_rows);
+    for segment in segments {
+        for _ in 0..segment.adjusted_column_top {
+            validity.push_null();
         }
-
-        if top_remaining > 0 {
-            top_remaining -= 1;
-            null_count += 1;
-            return Some(false);
-        }
-
-        if let Some(value) = segment.slice.get(value_idx) {
-            value_idx += 1;
-            let present = *value != null_value;
-            if !present {
-                null_count += 1;
+        for &value in segment.slice {
+            if value == null_value {
+                validity.push_null();
+            } else {
+                validity.push_present();
             }
-            return Some(present);
         }
-
-        segment_idx += 1;
-        segment_started = false;
-        value_idx = 0;
-    });
-    encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)?;
-
-    let definition_levels_byte_length = buffer.len();
+    }
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+    let null_count = def_levels.null_count;
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     if reverse {
         for segment in segments {

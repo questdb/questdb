@@ -256,30 +256,44 @@ pub fn encode_primitive_def_levels<I: Iterator<Item = bool>>(
 /// Uses a single RLE run which is ~3 bytes regardless of row count,
 /// vs the general bitpacked path that scales with row count.
 pub fn encode_all_ones_def_levels(buffer: &mut Vec<u8>, num_rows: usize, version: Version) {
+    encode_constant_def_levels(buffer, num_rows, version, true);
+}
+
+/// Encode def levels where every value is null (all 0s).
+pub fn encode_all_zeros_def_levels(buffer: &mut Vec<u8>, num_rows: usize, version: Version) {
+    encode_constant_def_levels(buffer, num_rows, version, false);
+}
+
+fn encode_constant_def_levels(
+    buffer: &mut Vec<u8>,
+    num_rows: usize,
+    version: Version,
+    present: bool,
+) {
     match version {
         Version::V1 => {
             // 4-byte LE length prefix, then RLE payload
             let start = buffer.len();
             buffer.extend_from_slice(&[0; 4]);
             let payload_start = buffer.len();
-            encode_rle_ones(buffer, num_rows);
+            encode_rle_bool(buffer, num_rows, present);
             let payload_len = (buffer.len() - payload_start) as i32;
             buffer[start..start + 4].copy_from_slice(&payload_len.to_le_bytes());
         }
         Version::V2 => {
-            encode_rle_ones(buffer, num_rows);
+            encode_rle_bool(buffer, num_rows, present);
         }
     }
 }
 
-/// Emit an RLE run of `count` ones with bit_width=1.
-/// Format: varint header (count << 1, even = RLE) + 1 value byte (0x01).
-fn encode_rle_ones(buffer: &mut Vec<u8>, count: usize) {
+/// Emit an RLE run of `count` constant def levels with bit_width=1.
+/// Format: varint header (count << 1, even = RLE) + 1 value byte.
+fn encode_rle_bool(buffer: &mut Vec<u8>, count: usize, present: bool) {
     let header = (count as u64) << 1; // even = RLE mode
     let mut container = [0u8; 10];
     let used = uleb128::encode(header, &mut container);
     buffer.extend_from_slice(&container[..used]);
-    buffer.push(0x01); // value = 1 in 1 byte (ceil(bit_width/8) = 1)
+    buffer.push(u8::from(present)); // ceil(bit_width/8) = 1
 }
 
 fn encode_group_levels_v1<I: Iterator<Item = u32>>(
@@ -657,6 +671,79 @@ mod tests {
         }
     }
 
+    #[test]
+    fn encode_all_zeros_v1() {
+        use super::encode_all_zeros_def_levels;
+
+        for &num_rows in &[1, 7, 8, 14, 100, 1000, 100_000] {
+            let mut buff = vec![];
+            encode_all_zeros_def_levels(&mut buff, num_rows, parquet2::write::Version::V1);
+
+            let length = i32::from_le_bytes(buff[..4].try_into().unwrap()) as usize;
+            assert_eq!(
+                length,
+                buff.len() - 4,
+                "V1 length prefix mismatch for num_rows={num_rows}"
+            );
+
+            let mut decoder = Decoder::new(&buff[4..], 1);
+            let run = decoder.next().unwrap().unwrap();
+            match run {
+                HybridEncoded::Rle(value, count) => {
+                    assert_eq!(
+                        value[0] & 1,
+                        0,
+                        "RLE value should be 0 for num_rows={num_rows}"
+                    );
+                    assert_eq!(
+                        count, num_rows,
+                        "RLE count mismatch for num_rows={num_rows}"
+                    );
+                }
+                HybridEncoded::Bitpacked(_) => {
+                    panic!("expected RLE run, got Bitpacked for num_rows={num_rows}");
+                }
+            }
+            assert!(
+                decoder.next().is_none(),
+                "expected single RLE run for num_rows={num_rows}"
+            );
+        }
+    }
+
+    #[test]
+    fn encode_all_zeros_v2() {
+        use super::encode_all_zeros_def_levels;
+
+        for &num_rows in &[1, 7, 8, 14, 100, 1000, 100_000] {
+            let mut buff = vec![];
+            encode_all_zeros_def_levels(&mut buff, num_rows, parquet2::write::Version::V2);
+
+            let mut decoder = Decoder::new(buff.as_slice(), 1);
+            let run = decoder.next().unwrap().unwrap();
+            match run {
+                HybridEncoded::Rle(value, count) => {
+                    assert_eq!(
+                        value[0] & 1,
+                        0,
+                        "RLE value should be 0 for num_rows={num_rows}"
+                    );
+                    assert_eq!(
+                        count, num_rows,
+                        "RLE count mismatch for num_rows={num_rows}"
+                    );
+                }
+                HybridEncoded::Bitpacked(_) => {
+                    panic!("expected RLE run, got Bitpacked for num_rows={num_rows}");
+                }
+            }
+            assert!(
+                decoder.next().is_none(),
+                "expected single RLE run for num_rows={num_rows}"
+            );
+        }
+    }
+
     /// Verify that encode_all_ones_def_levels produces output that decodes
     /// identically to encode_primitive_def_levels with all-true input.
     #[test]
@@ -716,6 +803,65 @@ mod tests {
                 assert_eq!(optimized_decoded.len(), num_rows);
                 assert!(general_decoded.iter().all(|&v| v == 1));
                 assert!(optimized_decoded.iter().all(|&v| v == 1));
+            }
+        }
+    }
+
+    #[test]
+    fn encode_all_zeros_matches_general_encoder() {
+        use super::{encode_all_zeros_def_levels, encode_primitive_def_levels};
+
+        for &version in &[parquet2::write::Version::V1, parquet2::write::Version::V2] {
+            for &num_rows in &[1, 14, 100] {
+                let mut general_buf = vec![];
+                encode_primitive_def_levels(
+                    &mut general_buf,
+                    std::iter::repeat_n(false, num_rows),
+                    num_rows,
+                    version,
+                )
+                .unwrap();
+
+                let mut optimized_buf = vec![];
+                encode_all_zeros_def_levels(&mut optimized_buf, num_rows, version);
+
+                assert!(
+                    optimized_buf.len() <= general_buf.len(),
+                    "optimized should be <= general for num_rows={num_rows}, version={version:?}: {} vs {}",
+                    optimized_buf.len(),
+                    general_buf.len(),
+                );
+
+                let decode = |buf: &[u8], skip_prefix: bool| -> Vec<u8> {
+                    let data = if skip_prefix { &buf[4..] } else { buf };
+                    let decoder = Decoder::new(data, 1);
+                    let mut result = Vec::new();
+                    for run in decoder {
+                        match run.unwrap() {
+                            HybridEncoded::Bitpacked(values) => {
+                                let remaining = num_rows - result.len();
+                                result.extend(
+                                    bitpacked::Decoder::<u8>::try_new(values, 1, remaining)
+                                        .unwrap(),
+                                );
+                            }
+                            HybridEncoded::Rle(value, count) => {
+                                let val = value[0] & 1;
+                                result.extend(std::iter::repeat_n(val, count));
+                            }
+                        }
+                    }
+                    result
+                };
+
+                let is_v1 = matches!(version, parquet2::write::Version::V1);
+                let general_decoded = decode(&general_buf, is_v1);
+                let optimized_decoded = decode(&optimized_buf, is_v1);
+
+                assert_eq!(general_decoded.len(), num_rows);
+                assert_eq!(optimized_decoded.len(), num_rows);
+                assert!(general_decoded.iter().all(|&v| v == 0));
+                assert!(optimized_decoded.iter().all(|&v| v == 0));
             }
         }
     }
