@@ -387,6 +387,12 @@ public class QwpTableBlockCursor implements Mutable {
             QwpColumnDef colDef = columnDefs[i];
             byte typeCode = colDef.getTypeCode();
 
+            if (offset < 0 || offset > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "column data exceeds table block bounds before column " + i
+                );
+            }
             int consumed = initializeColumnCursor(
                     i,
                     dataAddress + offset,

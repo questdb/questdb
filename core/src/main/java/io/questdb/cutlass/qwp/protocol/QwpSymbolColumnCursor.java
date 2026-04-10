@@ -308,6 +308,12 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             }
         }
 
+        if (offset < 0 || offset > dataLength) {
+            throw QwpParseException.create(
+                    QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                    "symbol column data truncated after dictionary parsing"
+            );
+        }
         this.indicesAddress = dataAddress + offset;
         this.indicesEnd = limit;
 
