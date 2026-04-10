@@ -118,11 +118,6 @@ public class QwpSymbolDecoderTest {
 
     @Test
     public void testDeltaSymbolDictIntegerOverflow() throws Exception {
-        // deltaStartId = Integer.MAX_VALUE, deltaCount = 1.
-        // deltaStartId + deltaCount overflows int, producing a negative requiredSize.
-        // The while loop is skipped, then setQuick(Integer.MAX_VALUE, ...) causes
-        // ArrayIndexOutOfBoundsException. The parser should detect the overflow and
-        // throw QwpParseException instead.
         assertMemoryLeak(() -> {
             long deltaStartId = Integer.MAX_VALUE;
             int deltaCount = 1;
