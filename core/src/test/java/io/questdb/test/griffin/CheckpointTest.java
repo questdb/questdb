@@ -1022,10 +1022,10 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointRestoreSkipsParquetPartitionsForIndexRebuild() throws Exception {
-        // Verify that rebuildBitmapIndexes skips parquet partitions during
-        // checkpoint/backup recovery. Bitmap indexes for parquet partitions
-        // are rebuilt by the table writer on first open, not during recovery.
+    public void testCheckpointRestoreRebuildsBitmapIndexesOnParquetAfterDropColumn() throws Exception {
+        // Bug 1: getIndexedParquetColumnIndex uses reader index instead of
+        // writer index. Bug 4: doubled parquet path. Both in the parquet
+        // bitmap index rebuild during checkpoint/backup recovery.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (
@@ -1047,7 +1047,6 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("ALTER TABLE t DROP COLUMN dummy");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
-            // rebuildTableFiles must not crash on parquet partitions.
             TableToken tableToken = engine.verifyTableName("t");
             try (
                     Path tablePath = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
@@ -1057,9 +1056,45 @@ public class CheckpointTest extends AbstractCairoTest {
                 restoreAgent.finalizeParallelTasks();
             }
 
-            // Data must still be accessible after recovery.
             assertSql("count\n3\n",
                     "SELECT count() FROM t WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreRebuildsBitmapIndexesOnParquetMultiColumn() throws Exception {
+        // Reproduces the enterprise backup test setup: 9 columns with an
+        // indexed SYMBOL, convert a partition to parquet, then rebuild.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            x AS c1,
+                            rnd_symbol('AB', 'BC', 'CD') c2,
+                            timestamp_sequence('2022-02-24', 1_000_000) ts,
+                            rnd_symbol('DE', null, 'EF', 'FG') sym2,
+                            CAST(x AS INT) c3,
+                            rnd_bin() c4,
+                            to_long128(3 * x, 6 * x) c5,
+                            rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') c6,
+                            rnd_boolean() bool1
+                        FROM long_sequence(1000)
+                    ), INDEX(sym2) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            try (
+                    Path tablePath = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new java.util.concurrent.atomic.AtomicInteger(), true);
+                restoreAgent.finalizeParallelTasks();
+            }
+
+            assertSql("count\n1000\n",
+                    "SELECT count() FROM t");
         });
     }
 

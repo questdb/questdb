@@ -303,6 +303,14 @@ public class TableSnapshotRestore implements QuietCloseable {
                 rebuildBitmapIndexes(tablePath, pathTableLen);
             }
 
+            // Drain all parallel tasks (symbol rebuilds + bitmap index rebuilds)
+            // before returning, because tableMetadata and columnVersionReader are
+            // reused across tables. Without this, a parquet bitmap rebuild task
+            // from this table could still be running when the caller loads the
+            // next table's metadata into the same objects.
+            finalizeParallelTasks();
+            futures.clear();
+
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)
                         .$(", walLagRowCount=").$(txWriter.getLagRowCount())
@@ -681,8 +689,18 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                // Skip parquet partitions — bitmap indexes for parquet
-                // partitions are rebuilt by the table writer on first open.
+                final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+
+                futures.add(executor.submit(() -> rebuildBitmapIndexForParquetPartition(
+                        tablePathStr,
+                        pathTableLen,
+                        partitionTimestamp,
+                        partitionRowCount,
+                        partitionNameTxn,
+                        parquetSize,
+                        partitionBy,
+                        timestampType
+                )));
             } else {
                 rebuildBitmapIndexForNativePartition(pathTableLen, columnCount, partitionTimestamp, partitionRowCount, partitionNameTxn, tablePathStr, partitionBy, timestampType);
             }
