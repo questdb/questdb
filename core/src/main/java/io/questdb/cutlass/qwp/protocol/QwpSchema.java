@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 import java.nio.charset.StandardCharsets;
@@ -54,9 +55,9 @@ public final class QwpSchema {
      */
     public static final byte SCHEMA_MODE_REFERENCE = 0x01;
 
-    private final QwpColumnDef[] columns;
+    private final ObjList<QwpColumnDef> columns;
 
-    private QwpSchema(QwpColumnDef[] columns) {
+    private QwpSchema(ObjList<QwpColumnDef> columns) {
         this.columns = columns;
     }
 
@@ -67,7 +68,11 @@ public final class QwpSchema {
      * @return the schema
      */
     public static QwpSchema create(QwpColumnDef[] columns) {
-        return new QwpSchema(columns.clone());
+        ObjList<QwpColumnDef> list = new ObjList<>(columns.length);
+        for (QwpColumnDef col : columns) {
+            list.add(col);
+        }
+        return new QwpSchema(list);
     }
 
     /**
@@ -195,7 +200,8 @@ public final class QwpSchema {
         long pos = address + 1;
         pos = QwpVarint.encode(pos, schemaId);
 
-        for (QwpColumnDef col : columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QwpColumnDef col = columns.getQuick(i);
             byte[] nameBytes = col.getNameUtf8();
             pos = QwpVarint.encode(pos, nameBytes.length);
             for (byte b : nameBytes) {
@@ -219,7 +225,8 @@ public final class QwpSchema {
         buf[offset++] = SCHEMA_MODE_FULL;
         offset = QwpVarint.encode(buf, offset, schemaId);
 
-        for (QwpColumnDef col : columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QwpColumnDef col = columns.getQuick(i);
             byte[] nameBytes = col.getNameUtf8();
             offset = QwpVarint.encode(buf, offset, nameBytes.length);
             System.arraycopy(nameBytes, 0, buf, offset, nameBytes.length);
@@ -239,7 +246,8 @@ public final class QwpSchema {
     public int encodedSize(int schemaId) {
         int size = 1; // schema mode byte
         size += QwpVarint.encodedLength(schemaId);
-        for (QwpColumnDef col : columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QwpColumnDef col = columns.getQuick(i);
             byte[] nameBytes = col.getNameUtf8();
             size += QwpVarint.encodedLength(nameBytes.length);
             size += nameBytes.length;
@@ -255,30 +263,30 @@ public final class QwpSchema {
      * @return column definition
      */
     public QwpColumnDef getColumn(int index) {
-        return columns[index];
+        return columns.getQuick(index);
     }
 
     /**
      * Gets the number of columns in this schema.
      */
     public int getColumnCount() {
-        return columns.length;
+        return columns.size();
     }
 
     /**
      * Gets all column definitions.
      * <p>
-     * Returns the internal array directly (no copy) for zero-allocation access.
-     * Callers must not modify the returned array.
+     * Returns the internal list directly (no copy) for zero-allocation access.
+     * Callers must not modify the returned list.
      *
-     * @return column definitions array (do not modify)
+     * @return column definitions list (do not modify)
      */
-    public QwpColumnDef[] getColumns() {
+    public ObjList<QwpColumnDef> getColumns() {
         return columns;
     }
 
     private static void parseFullSchema(long address, int length, int columnCount, int offset, ParseResult result) throws QwpParseException {
-        QwpColumnDef[] columns = new QwpColumnDef[columnCount];
+        ObjList<QwpColumnDef> columns = new ObjList<>(columnCount);
         QwpVarint.DecodeResult decodeResult = result.decodeResult;
         long limit = address + length; // Absolute end address
 
@@ -320,15 +328,16 @@ public final class QwpSchema {
             byte typeCode = Unsafe.getUnsafe().getByte(address + offset);
             offset++;
 
-            columns[i] = new QwpColumnDef(columnName, typeCode);
-            columns[i].validate();
+            QwpColumnDef colDef = new QwpColumnDef(columnName, typeCode);
+            colDef.validate();
+            columns.add(colDef);
         }
 
         result.setFullSchema(new QwpSchema(columns), schemaId, offset);
     }
 
     private static ParseResult parseFullSchemaFromArray(byte[] buf, int bufOffset, int length, int columnCount, int offset) throws QwpParseException {
-        QwpColumnDef[] columns = new QwpColumnDef[columnCount];
+        ObjList<QwpColumnDef> columns = new ObjList<>(columnCount);
         QwpVarint.DecodeResult decodeResult = new QwpVarint.DecodeResult();
         int limit = bufOffset + length; // Absolute end position
 
@@ -365,8 +374,9 @@ public final class QwpSchema {
             byte typeCode = buf[bufOffset + offset];
             offset++;
 
-            columns[i] = new QwpColumnDef(columnName, typeCode);
-            columns[i].validate();
+            QwpColumnDef colDef = new QwpColumnDef(columnName, typeCode);
+            colDef.validate();
+            columns.add(colDef);
         }
 
         return ParseResult.fullSchema(new QwpSchema(columns), schemaId, offset);

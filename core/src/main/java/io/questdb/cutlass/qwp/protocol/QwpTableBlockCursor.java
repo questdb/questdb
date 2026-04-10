@@ -64,7 +64,7 @@ public class QwpTableBlockCursor implements Mutable {
     // Wire position tracking
     private int columnCount;
     // Column definitions from schema
-    private QwpColumnDef[] columnDefs;
+    private ObjList<QwpColumnDef> columnDefs;
     // Cached null flags per column for current row (avoids megamorphic isNull() calls)
     private boolean[] columnNullFlags = new boolean[16];
     // Delta symbol dictionary support
@@ -160,7 +160,7 @@ public class QwpTableBlockCursor implements Mutable {
      * Returns the column definition at the specified index.
      */
     public QwpColumnDef getColumnDef(int index) {
-        return columnDefs[index];
+        return columnDefs.getQuick(index);
     }
 
     /**
@@ -195,7 +195,7 @@ public class QwpTableBlockCursor implements Mutable {
      * Returns the column definitions array for schema access.
      * Note: Returns internal array directly (no copy) for zero-allocation.
      */
-    public QwpColumnDef[] getSchema() {
+    public ObjList<QwpColumnDef> getSchema() {
         return columnDefs;
     }
 
@@ -384,9 +384,15 @@ public class QwpTableBlockCursor implements Mutable {
         arrayColumnCount = 0;
         decimalColumnCount = 0;
         for (int i = 0; i < columnCount; i++) {
-            QwpColumnDef colDef = columnDefs[i];
+            QwpColumnDef colDef = columnDefs.getQuick(i);
             byte typeCode = colDef.getTypeCode();
 
+            if (offset < 0 || offset > dataLength) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "column data exceeds table block bounds before column " + i
+                );
+            }
             int consumed = initializeColumnCursor(
                     i,
                     dataAddress + offset,

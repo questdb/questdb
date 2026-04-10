@@ -33,8 +33,6 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
 import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.MemoryTag;
@@ -270,7 +268,7 @@ public class QwpWebSocketUpgradeProcessorResumeSendTest extends AbstractCairoTes
         }
 
         @Override
-        public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        public void send(int size) {
             sentSize = size;
         }
     }

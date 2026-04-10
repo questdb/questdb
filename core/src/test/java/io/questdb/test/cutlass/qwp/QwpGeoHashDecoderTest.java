@@ -46,6 +46,42 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class QwpGeoHashDecoderTest {
 
+    /**
+     * Verifies that the GeoHash cursor rejects a precision varint whose value
+     * exceeds int range, even when the truncated (int) value would fall within
+     * the valid [1, 60] range. Without the fix, the varint value 0x100000001L
+     * (4294967297) would silently truncate to 1, bypassing the precision check.
+     */
+    @Test
+    public void testAddGeoHashInvalidPrecisionVarintOverflow() {
+        // Craft a buffer with: no-null-bitmap flag (1 byte) + precision varint
+        // that encodes (1L << 32) + 1 = 0x100000001L. When truncated to int,
+        // this becomes 1, which is within the valid precision range [1, 60].
+        long overflowPrecision = (1L << 32) + 1;
+        byte[] varintBuf = new byte[QwpVarint.MAX_VARINT_BYTES];
+        int varintLen = QwpVarint.encode(varintBuf, 0, overflowPrecision);
+        int bufSize = 1 + varintLen;
+
+        long address = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // No null bitmap
+            Unsafe.getUnsafe().putByte(address, (byte) 0);
+            // Write overflowing precision varint
+            for (int i = 0; i < varintLen; i++) {
+                Unsafe.getUnsafe().putByte(address + 1 + i, varintBuf[i]);
+            }
+
+            QwpGeoHashColumnCursor cursor = new QwpGeoHashColumnCursor();
+            cursor.of(address, bufSize, 1);
+            Assert.fail("Expected QwpParseException for precision varint exceeding int range");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_COLUMN_TYPE, e.getErrorCode());
+            Assert.assertTrue(e.getMessage().contains("invalid GeoHash precision"));
+        } finally {
+            Unsafe.free(address, bufSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     @Test
     public void testAddGeoHashInvalidPrecisionTooLarge() throws Exception {
         assertMemoryLeak(() -> {

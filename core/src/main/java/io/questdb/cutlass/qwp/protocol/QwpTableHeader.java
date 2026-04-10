@@ -120,19 +120,21 @@ public class QwpTableHeader {
         QwpVarint.decode(address + offset, limit, decodeResult);
         offset += decodeResult.bytesRead;
 
-        int nameLenInt = (int) decodeResult.value;
-        if (nameLenInt <= 0) {
+        // Validate on long before casting to int to prevent truncation
+        // from bypassing the range check
+        if (decodeResult.value <= 0) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_TABLE_NAME,
                     "empty table name"
             );
         }
-        if (nameLenInt > QwpConstants.MAX_TABLE_NAME_LENGTH) {
+        if (decodeResult.value > QwpConstants.MAX_TABLE_NAME_LENGTH) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_TABLE_NAME,
-                    "table name too long: " + nameLenInt + " bytes (max " + QwpConstants.MAX_TABLE_NAME_LENGTH + ")"
+                    "table name too long: " + decodeResult.value + " bytes (max " + QwpConstants.MAX_TABLE_NAME_LENGTH + ")"
             );
         }
+        int nameLenInt = (int) decodeResult.value;
         if (offset + nameLenInt > length) {
             throw QwpParseException.headerTooShort();
         }

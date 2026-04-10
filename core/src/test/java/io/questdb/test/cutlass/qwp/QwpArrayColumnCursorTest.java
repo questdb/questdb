@@ -104,7 +104,7 @@ public class QwpArrayColumnCursorTest {
                 Assert.assertFalse(cursor.isNull());
                 Assert.assertEquals(1, cursor.getNDims());
                 Assert.assertEquals(1, cursor.getTotalElements());
-                Assert.assertEquals((double) i, Unsafe.getUnsafe().getDouble(cursor.getValuesAddress()), 0.0);
+                Assert.assertEquals(i, Unsafe.getUnsafe().getDouble(cursor.getValuesAddress()), 0.0);
             }
         } finally {
             Unsafe.free(addr, bufferSize, MemoryTag.NATIVE_DEFAULT);

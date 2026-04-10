@@ -350,7 +350,7 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
-    public void testSymbolIndexRejectsNegativeVarintValue() throws Exception {
+    public void testSymbolIndexRejectsNegativeVarintValue() {
         int size = 64;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -363,15 +363,12 @@ public class QwpSymbolDecoderTest {
             pos = QwpVarint.encode(pos, Long.MIN_VALUE);
 
             QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
+            // Validation now happens in of() instead of advanceRow()
             cursor.of(address, (int) (pos - address), 1);
-
-            try {
-                cursor.advanceRow();
-                Assert.fail("Expected QwpParseException for negative symbol index varint");
-            } catch (QwpParseException e) {
-                Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
-                Assert.assertTrue(e.getMessage().contains("symbol index out of int range"));
-            }
+            Assert.fail("Expected QwpParseException for negative symbol index varint");
+        } catch (QwpParseException e) {
+            Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
+            Assert.assertTrue(e.getMessage().contains("symbol index out of int range"));
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }

@@ -146,18 +146,17 @@ public final class QwpGeoHashColumnCursor implements QwpColumnCursor {
             nullCount = 0;
         }
 
-        // Parse precision
+        // Parse and validate precision (validate on long before casting to int
+        // to prevent truncation from bypassing the range check)
         QwpVarint.decode(dataAddress + offset, limit, decodeResult);
-        this.precision = (int) decodeResult.value;
-        offset += decodeResult.bytesRead;
-
-        // Validate precision
-        if (precision < ColumnType.GEOBYTE_MIN_BITS || precision > ColumnType.GEOLONG_MAX_BITS) {
+        if (decodeResult.value < ColumnType.GEOBYTE_MIN_BITS || decodeResult.value > ColumnType.GEOLONG_MAX_BITS) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,
-                    "invalid GeoHash precision: " + precision
+                    "invalid GeoHash precision: " + decodeResult.value
             );
         }
+        this.precision = (int) decodeResult.value;
+        offset += decodeResult.bytesRead;
 
         this.valueSize = (precision + 7) / 8;
         int valueCount = rowCount - nullCount;

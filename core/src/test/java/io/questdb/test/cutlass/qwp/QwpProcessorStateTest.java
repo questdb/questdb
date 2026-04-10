@@ -49,6 +49,7 @@ import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -140,7 +141,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                     @Override
                     public WalTableUpdateDetails getTableUpdateDetails(
                             SecurityContext secCtx, Utf8Sequence tableName,
-                            QwpColumnDef[] schema, QwpTableBlockCursor cursor, int maxTables) {
+                            ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor, int maxTables) {
                         throw CairoException.critical(0).put("simulated critical error");
                     }
                 });
@@ -512,10 +513,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             try (QwpTudCache cache = new QwpTudCache(
                     engine, true, true, defaultColumnTypes, PartitionBy.DAY)
             ) {
-                QwpColumnDef[] schema = {
-                        new QwpColumnDef("val", QwpConstants.TYPE_INT),
-                        new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP_NANOS)
-                };
+                ObjList<QwpColumnDef> schema = new ObjList<>();
+                schema.add(new QwpColumnDef("val", QwpConstants.TYPE_INT));
+                schema.add(new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP_NANOS));
 
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE,
@@ -615,9 +615,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 };
 
                 final String tableName = "invalid_deferred_array_col";
-                final QwpColumnDef[] schema = {
-                        new QwpColumnDef("bad-name", QwpConstants.TYPE_DOUBLE_ARRAY)
-                };
+                final ObjList<QwpColumnDef> schema = new ObjList<>();
+                schema.add(new QwpColumnDef("bad-name", QwpConstants.TYPE_DOUBLE_ARRAY));
 
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE,
@@ -643,10 +642,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             try (QwpTudCache cache = new QwpTudCache(
                     engine, true, true, defaultColumnTypes, PartitionBy.DAY)
             ) {
-                QwpColumnDef[] schema = {
-                        new QwpColumnDef("inv?lid", QwpConstants.TYPE_INT),
-                        new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP)
-                };
+                ObjList<QwpColumnDef> schema = new ObjList<>();
+                schema.add(new QwpColumnDef("inv?lid", QwpConstants.TYPE_INT));
+                schema.add(new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP));
 
                 WalTableUpdateDetails tud = cache.getTableUpdateDetails(
                         AllowAllSecurityContext.INSTANCE,

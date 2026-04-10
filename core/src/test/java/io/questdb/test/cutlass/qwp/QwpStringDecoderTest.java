@@ -170,7 +170,7 @@ public class QwpStringDecoderTest {
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
             cursor.of(address, size, rowCount, TYPE_STRING);
 
-            // Row 0: offset 0..10 is valid
+            // Row 0: offset 0..10 is valid (stringDataLength=10)
             cursor.advanceRow();
             Assert.assertEquals(10, cursor.getUtf8Value().size());
 
@@ -180,7 +180,7 @@ public class QwpStringDecoderTest {
                 Assert.fail("expected QwpParseException for non-monotonic offset array");
             } catch (QwpParseException e) {
                 Assert.assertEquals(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY, e.getErrorCode());
-                Assert.assertTrue(e.getMessage().contains("invalid QWP string offset array"));
+                Assert.assertTrue(e.getMessage().contains("exceeds string data size"));
             }
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);

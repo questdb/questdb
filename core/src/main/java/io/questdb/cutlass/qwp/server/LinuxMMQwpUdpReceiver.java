@@ -25,15 +25,11 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import org.jetbrains.annotations.Nullable;
 
 public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
-    private static final Log LOG = LogFactory.getLog(LinuxMMQwpUdpReceiver.class);
-
     private final int msgCount;
     private long msgVec;
 

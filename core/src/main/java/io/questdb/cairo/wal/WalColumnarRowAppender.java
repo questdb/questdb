@@ -180,17 +180,12 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 }
                 reusableArray.applyShape();
 
-                // Copy data from cursor to reusable array
+                // Bulk copy data from cursor to reusable array.
+                // Wire format and storage format are both 8-byte little-endian,
+                // so we can use a single memcpy instead of element-by-element.
                 MemoryA arrayMem = reusableArray.startMemoryA();
-                long srcAddr = cursor.getValuesAddress();
-                if (cursor.isDoubleArray()) {
-                    for (int i = 0; i < totalElements; i++) {
-                        arrayMem.putDouble(Unsafe.getUnsafe().getDouble(srcAddr + (long) i * 8));
-                    }
-                } else {
-                    for (int i = 0; i < totalElements; i++) {
-                        arrayMem.putLong(Unsafe.getUnsafe().getLong(srcAddr + (long) i * 8));
-                    }
+                if (totalElements > 0) {
+                    arrayMem.putBlockOfBytes(cursor.getValuesAddress(), (long) totalElements * 8);
                 }
 
                 ArrayTypeDriver.appendValue(auxMem, dataMem, reusableArray);
@@ -278,7 +273,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             if (cursor.isNull()) {
                 StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
             } else {
-                StringTypeDriver.appendValue(auxMem, dataMem, Boolean.toString(cursor.getValue()));
+                strSink.clear();
+                strSink.put(Boolean.toString(cursor.getValue()));
+                StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
@@ -1597,62 +1594,58 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         boolean deltaMode = cursor.isDeltaMode();
 
         cursor.resetRowPosition();
-        try {
-            if (deltaMode && columnCache != null) {
-                for (int row = 0; row < rowCount; row++) {
-                    cursor.advanceRow();
-                    if (cursor.isNull()) {
-                        dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                        walWriter.markSymbolMapNull(columnIndex);
-                        continue;
-                    }
-
-                    int clientSymbolId = cursor.getSymbolIndex();
-                    int symbolKey = columnCache.get(clientSymbolId);
-                    if (symbolKey != ClientSymbolCache.NO_ENTRY) {
-                        symbolCache.recordHit();
-                        dataMem.putInt(symbolKey);
-                        continue;
-                    }
-
-                    symbolCache.recordMiss();
-                    CharSequence symbolValue = cursor.getSymbolCharSequence();
-                    if (symbolValue == null) {
-                        dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                        walWriter.markSymbolMapNull(columnIndex);
-                        continue;
-                    }
-
-                    symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
-                    dataMem.putInt(symbolKey);
-                    if (symbolKey < initialSymbolCount) {
-                        columnCache.put(clientSymbolId, symbolKey);
-                    }
+        if (deltaMode && columnCache != null) {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                    walWriter.markSymbolMapNull(columnIndex);
+                    continue;
                 }
-            } else {
-                for (int row = 0; row < rowCount; row++) {
-                    cursor.advanceRow();
-                    if (cursor.isNull()) {
-                        dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                        walWriter.markSymbolMapNull(columnIndex);
-                        continue;
-                    }
 
-                    DirectUtf8Sequence utf8Value = cursor.getSymbolUtf8();
-                    if (utf8Value == null) {
-                        dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                        walWriter.markSymbolMapNull(columnIndex);
-                        continue;
-                    }
-
-                    strSink.clear();
-                    CharSequence symbolValue = Utf8s.directUtf8ToUtf16(utf8Value, strSink);
-                    int symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
+                int clientSymbolId = cursor.getSymbolIndex();
+                int symbolKey = columnCache.get(clientSymbolId);
+                if (symbolKey != ClientSymbolCache.NO_ENTRY) {
+                    symbolCache.recordHit();
                     dataMem.putInt(symbolKey);
+                    continue;
+                }
+
+                symbolCache.recordMiss();
+                CharSequence symbolValue = cursor.getSymbolCharSequence();
+                if (symbolValue == null) {
+                    dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                    walWriter.markSymbolMapNull(columnIndex);
+                    continue;
+                }
+
+                symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
+                dataMem.putInt(symbolKey);
+                if (symbolKey < initialSymbolCount) {
+                    columnCache.put(clientSymbolId, symbolKey);
                 }
             }
-        } catch (QwpParseException e) {
-            throw CairoException.nonCritical().put("failed to parse SYMBOL column");
+        } else {
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                    walWriter.markSymbolMapNull(columnIndex);
+                    continue;
+                }
+
+                DirectUtf8Sequence utf8Value = cursor.getSymbolUtf8();
+                if (utf8Value == null) {
+                    dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+                    walWriter.markSymbolMapNull(columnIndex);
+                    continue;
+                }
+
+                strSink.clear();
+                CharSequence symbolValue = Utf8s.directUtf8ToUtf16(utf8Value, strSink);
+                int symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
+                dataMem.putInt(symbolKey);
+            }
         }
 
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
@@ -1665,22 +1658,18 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
-        try {
-            for (int row = 0; row < rowCount; row++) {
-                cursor.advanceRow();
-                if (cursor.isNull()) {
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
+            } else {
+                CharSequence symbolValue = cursor.getSymbolCharSequence();
+                if (symbolValue == null) {
                     StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
                 } else {
-                    CharSequence symbolValue = cursor.getSymbolCharSequence();
-                    if (symbolValue == null) {
-                        StringTypeDriver.INSTANCE.appendNull(auxMem, dataMem);
-                    } else {
-                        StringTypeDriver.appendValue(auxMem, dataMem, symbolValue);
-                    }
+                    StringTypeDriver.appendValue(auxMem, dataMem, symbolValue);
                 }
             }
-        } catch (QwpParseException e) {
-            throw CairoException.nonCritical().put("failed to convert SYMBOL to STRING");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -1691,30 +1680,26 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
         MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
         cursor.resetRowPosition();
-        try {
-            for (int row = 0; row < rowCount; row++) {
-                cursor.advanceRow();
-                if (cursor.isNull()) {
-                    VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                VarcharTypeDriver.appendValue(auxMem, dataMem, null);
+            } else {
+                DirectUtf8Sequence utf8Value = cursor.getSymbolUtf8();
+                if (utf8Value != null) {
+                    VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Value);
                 } else {
-                    DirectUtf8Sequence utf8Value = cursor.getSymbolUtf8();
-                    if (utf8Value != null) {
-                        VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Value);
+                    // delta mode: getSymbolUtf8() returns null, fall back to CharSequence
+                    CharSequence symbolValue = cursor.getSymbolCharSequence();
+                    if (symbolValue == null) {
+                        VarcharTypeDriver.appendValue(auxMem, dataMem, null);
                     } else {
-                        // delta mode: getSymbolUtf8() returns null, fall back to CharSequence
-                        CharSequence symbolValue = cursor.getSymbolCharSequence();
-                        if (symbolValue == null) {
-                            VarcharTypeDriver.appendValue(auxMem, dataMem, null);
-                        } else {
-                            this.utf8Sink.clear();
-                            this.utf8Sink.put(symbolValue);
-                            VarcharTypeDriver.appendValue(auxMem, dataMem, this.utf8Sink);
-                        }
+                        this.utf8Sink.clear();
+                        this.utf8Sink.put(symbolValue);
+                        VarcharTypeDriver.appendValue(auxMem, dataMem, this.utf8Sink);
                     }
                 }
             }
-        } catch (QwpParseException e) {
-            throw CairoException.nonCritical().put("failed to convert SYMBOL to VARCHAR");
         }
         walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
@@ -1777,7 +1762,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnType,
             boolean isDesignated,
             long serverTimestamp
-    ) throws QwpParseException {
+    ) {
         checkInColumnarWrite();
 
         MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
