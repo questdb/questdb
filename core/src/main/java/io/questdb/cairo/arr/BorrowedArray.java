@@ -52,10 +52,6 @@ public class BorrowedArray extends MutableArray implements Mutable {
 
     public BorrowedArray of(int columnType, long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum) {
         assert ColumnType.isArray(columnType) : "type class is not Array";
-        setType(columnType);
-        short elemType = ColumnType.decodeArrayElementType(columnType);
-        final int elemSize = ColumnType.sizeOf(elemType);
-        final int dims = ColumnType.decodeArrayDimensionality(columnType);
         final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(rowNum);
         assert auxAddr + ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES <= auxLim;
         final long crcAndOffset = Unsafe.getUnsafe().getLong(auxAddr + rowOffset);
@@ -64,6 +60,11 @@ public class BorrowedArray extends MutableArray implements Mutable {
             ofNull();
             return this;
         }
+
+        setType(columnType);
+        short elemType = ColumnType.decodeArrayElementType(columnType);
+        final int elemSize = ColumnType.sizeOf(elemType);
+        final int dims = ColumnType.decodeArrayDimensionality(columnType);
 
         assert dataAddr + sizeBytes <= dataLim : "dataAddr + sizeBytes > dataLim";
         final long offset = crcAndOffset & ArrayTypeDriver.OFFSET_MAX;

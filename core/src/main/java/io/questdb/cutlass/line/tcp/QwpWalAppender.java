@@ -191,6 +191,38 @@ public class QwpWalAppender implements QuietCloseable {
                 .put(']');
     }
 
+    private static int getArrayBatchDimensionality(
+            QwpArrayColumnCursor cursor,
+            int rowCount,
+            QwpTableBlockCursor tableBlock,
+            int colIndex
+    ) {
+        int batchDims = -1;
+        cursor.resetRowPosition();
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                continue;
+            }
+
+            final int rowDims = cursor.getNDims();
+            if (batchDims == -1) {
+                batchDims = rowDims;
+            } else if (batchDims != rowDims) {
+                throw CairoException.nonCritical()
+                        .put("array dimensionality mismatch in QWP batch [column=")
+                        .put(tableBlock.getColumnDef(colIndex).getName())
+                        .put(", expectedDims=")
+                        .put(batchDims)
+                        .put(", actualDims=")
+                        .put(rowDims)
+                        .put(']');
+            }
+        }
+        cursor.resetRowPosition();
+        return batchDims;
+    }
+
     /**
      * Checks whether a fixed-width wire type can be coerced to the target column type.
      * Only types within the same family are allowed (e.g., integer↔integer, float↔float),
@@ -261,6 +293,12 @@ public class QwpWalAppender implements QuietCloseable {
         }
     }
 
+    private static boolean shouldDeferMissingArrayColumnCreation(byte qwpType, int columnType) {
+        return qwpType == TYPE_DOUBLE_ARRAY
+                && ColumnType.isArray(columnType)
+                && ColumnType.decodeWeakArrayDimensionality(columnType) == -1;
+    }
+
     /**
      * Creates a CairoException for type mismatches.
      */
@@ -275,6 +313,31 @@ public class QwpWalAppender implements QuietCloseable {
                 .put(", type=")
                 .put(ColumnType.nameOf(columnType))
                 .put(']');
+    }
+
+    private static void validateArrayColumnType(
+            CharSequence columnName,
+            int columnType,
+            int batchDims
+    ) {
+        if (batchDims < 1 || !ColumnType.isArray(columnType)) {
+            return;
+        }
+
+        final short elemType = ColumnType.decodeArrayElementType(columnType);
+        final int strongType = ColumnType.encodeArrayType(elemType, batchDims, false);
+        final int existingDims = ColumnType.decodeWeakArrayDimensionality(columnType);
+        assert existingDims != -1 : "weak array dimensionality must not be persisted";
+        if (existingDims != batchDims) {
+            throw CairoException.nonCritical()
+                    .put("array dimensionality mismatch [column=")
+                    .put(columnName)
+                    .put(", expected=")
+                    .put(ColumnType.nameOf(columnType))
+                    .put(", actual=")
+                    .put(ColumnType.nameOf(strongType))
+                    .put(']');
+        }
     }
 
     /**
@@ -389,6 +452,9 @@ public class QwpWalAppender implements QuietCloseable {
             // Write each column
             for (int col = 0; col < columnCount; col++) {
                 int columnIndex = columnIndexMap[col];
+                if (columnIndex < 0) {
+                    continue;
+                }
                 int columnType = columnTypeMap[col];
                 byte qwpType = qwpTypes[col];
                 QwpColumnCursor cursor = tableBlock.getColumn(col);
@@ -757,6 +823,14 @@ public class QwpWalAppender implements QuietCloseable {
             qwpTypes[i] = colType;
 
             int columnWriterIndex;
+            final int batchDims = colType == TYPE_DOUBLE_ARRAY
+                    ? getArrayBatchDimensionality(
+                    tableBlock.getArrayColumn(i),
+                    rowCount,
+                    tableBlock,
+                    i
+            )
+                    : Integer.MIN_VALUE;
 
             if (columnName.isEmpty() && (colType == TYPE_TIMESTAMP || colType == TYPE_TIMESTAMP_NANOS)) {
                 if (timestampIndex < 0) {
@@ -772,15 +846,26 @@ public class QwpWalAppender implements QuietCloseable {
 
                 if (columnWriterIndex < 0) {
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
-                        securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
-                        try {
-                            int newColumnType = mapQwpTypeToQuestDB(colDef.getTypeCode(), tableBlock, i);
-                            writer.addColumn(columnName, newColumnType, securityContext);
-                            columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
-                        } catch (CairoException e) {
-                            columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
-                            if (columnWriterIndex < 0) {
-                                throw e;
+                        final int newColumnType;
+                        if (colType == TYPE_DOUBLE_ARRAY) {
+                            newColumnType = batchDims > 0
+                                    ? ColumnType.encodeArrayType(ColumnType.DOUBLE, batchDims)
+                                    : ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, false);
+                        } else {
+                            newColumnType = mapQwpTypeToQuestDB(colDef.getTypeCode(), tableBlock, i);
+                        }
+                        if (shouldDeferMissingArrayColumnCreation(colType, newColumnType)) {
+                            columnWriterIndex = -1;
+                        } else {
+                            try {
+                                securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
+                                writer.addColumn(columnName, newColumnType, securityContext);
+                                columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+                            } catch (CairoException e) {
+                                columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
+                                if (columnWriterIndex < 0) {
+                                    throw e;
+                                }
                             }
                         }
                     } else if (!autoCreateNewColumns) {
@@ -805,7 +890,10 @@ public class QwpWalAppender implements QuietCloseable {
                 }
             }
 
-            int columnType = metadata.getColumnType(columnWriterIndex);
+            int columnType = columnWriterIndex >= 0 ? metadata.getColumnType(columnWriterIndex) : ColumnType.UNDEFINED;
+            if (colType == TYPE_DOUBLE_ARRAY && ColumnType.isArray(columnType)) {
+                validateArrayColumnType(columnName, columnType, batchDims);
+            }
             columnIndexMap[i] = columnWriterIndex;
             columnTypeMap[i] = columnType;
         }
