@@ -1021,6 +1021,99 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsBitmapIndexesOnParquetAfterDropColumn() throws Exception {
+        // Regression test for getIndexedParquetColumnIndex() comparing parquet
+        // field_id (= writer index) with the reader index instead of the writer
+        // index. After a DROP COLUMN, reader indices shift while writer indices
+        // (stored as field_id in parquet) stay the same. The buggy lookup finds
+        // a DOUBLE column whose field_id matches the SYMBOL column's reader
+        // index, then tries to decode DOUBLE data as SYMBOL, producing:
+        //   "requested column type 12 (symbol) does not match file column type
+        //    10 (double)"
+        //
+        // Column layout (writer indices in parentheses):
+        //   dummy (0) — DOUBLE, will be dropped
+        //   val   (1) — DOUBLE
+        //   sym   (2) — SYMBOL INDEX
+        //   ts    (3) — TIMESTAMP designated
+        //
+        // After DROP COLUMN dummy, reader indices shift:
+        //   val   reader=0, writer=1  →  field_id 1 in parquet
+        //   sym   reader=1, writer=2  →  field_id 2 in parquet
+        //   ts    reader=2, writer=3  →  field_id 3 in parquet
+        //
+        // Bug: getIndexedParquetColumnIndex searches for field_id == 1 (sym's
+        // reader index) instead of field_id == 2 (sym's writer index), and
+        // finds 'val' (DOUBLE) at field_id 1.
+
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+
+        File dir1 = temp.newFolder("server1_parquet_drop_col");
+        File dir2 = temp.newFolder("server2_parquet_drop_col");
+
+        // Server 1: create table, drop column, convert to parquet, checkpoint.
+        try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+            server1.execute(
+                    "CREATE TABLE t (" +
+                            "dummy DOUBLE, " +
+                            "val DOUBLE, " +
+                            "sym SYMBOL INDEX, " +
+                            "ts TIMESTAMP" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            server1.execute(
+                    "INSERT INTO t " +
+                            "SELECT rnd_double(), rnd_double(), " +
+                            "CASE WHEN x <= 5 THEN 'A'::SYMBOL ELSE 'B'::SYMBOL END, " +
+                            "timestamp_sequence('2024-01-01', 1_000_000) ts " +
+                            "FROM long_sequence(10)"
+            );
+            server1.execute("INSERT INTO t VALUES(0, 0, 'A', '2024-01-02')");
+
+            TestUtils.assertEventually(() -> server1.assertSql(
+                    "SELECT count() FROM t",
+                    "count\n11\n"
+            ));
+
+            server1.execute("ALTER TABLE t DROP COLUMN dummy");
+            server1.execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TestUtils.assertEventually(() -> server1.assertSql(
+                    "SELECT count() FROM t WHERE sym = 'A'",
+                    "count\n6\n"
+            ));
+
+            server1.execute("CHECKPOINT CREATE");
+            copyDirectory(dir1, dir2);
+            server1.execute("CHECKPOINT RELEASE");
+        }
+
+        // Create trigger file to force checkpoint recovery.
+        try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+            Files.touch(triggerPath.$());
+        }
+
+        // Server 2: recover from checkpoint with index rebuild enabled.
+        // This triggers rebuildParquetPartitionIndexes() which must use
+        // the writer index (field_id) to locate the SYMBOL column in parquet.
+        // Before the fix, getIndexedParquetColumnIndex() found the DOUBLE
+        // column (field_id 1) instead of the SYMBOL column (field_id 2),
+        // causing decodeRowGroup to fail with a type mismatch error that
+        // corrupted the recovery.
+        try (TestServerMain server2 = startServerMain(
+                dir2.getAbsolutePath(),
+                CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES.getEnvVarName(), "true"
+        )) {
+            // The table must be queryable after recovery — no type mismatch
+            // errors from the parquet decoder.
+            server2.assertSql(
+                    "SELECT count() FROM t",
+                    "count\n11\n"
+            );
+        }
+    }
+
+    @Test
     public void testCheckpointRestoresDroppedView() throws Exception {
         final String snapshotId = "id1";
         assertMemoryLeak(() -> {

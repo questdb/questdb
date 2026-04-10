@@ -439,7 +439,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
 
         for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
-            if (parquetMetadata.getColumnId(idx) == columnIndex) {
+            if (parquetMetadata.getColumnId(idx) == writerIndex) {
                 return idx;
             }
         }
