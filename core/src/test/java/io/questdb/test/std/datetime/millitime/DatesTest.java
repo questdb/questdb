@@ -127,6 +127,22 @@ public class DatesTest {
     }
 
     @Test
+    public void testAddYearsLeapFeb29Backward() {
+        // Feb 29 in leap year - 1y clamps to Feb 28 in non-leap year
+        long millis = DateFormatUtils.parseUTCDate("2024-02-29T12:30:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addYears(millis, -1));
+        TestUtils.assertEquals("2023-02-28T12:30:00.000Z", sink);
+    }
+
+    @Test
+    public void testAddYearsLeapFeb29Forward() {
+        // Feb 29 in leap year + 1y clamps to Feb 28 in non-leap year
+        long millis = DateFormatUtils.parseUTCDate("2024-02-29T12:30:00.000Z");
+        DateFormatUtils.appendDateTime(sink, Dates.addYears(millis, 1));
+        TestUtils.assertEquals("2025-02-28T12:30:00.000Z", sink);
+    }
+
+    @Test
     public void testAddYearsNonLeapToLeap() {
         long millis = DateFormatUtils.parseUTCDate("2015-01-01T00:00:00.000Z");
         DateFormatUtils.appendDateTime(sink, Dates.addYears(millis, 1));
