@@ -3257,6 +3257,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.freeObjList(fillValues);
                     return groupByFactory;
                 }
+                if (isPrevKeyword(expr.token)) {
+                    // PREV is a fill keyword, not a function — add a placeholder
+                    fillValues.add(NullConstant.NULL);
+                    continue;
+                }
                 final Function fillValueFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
                 fillValues.add(fillValueFunc);
             }
@@ -3332,11 +3337,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            // Detect key columns: output columns whose AST expression is a
+            // LITERAL (column reference) that is not the timestamp floor function.
+            // Key columns get FILL_KEY and do NOT consume a fill expression index.
+            final ObjList<QueryColumn> bottomUpCols = model.getBottomUpColumns();
+
             if (anyPrev && fillValuesExprs.size() == 1 && isPrevKeyword(fillValuesExprs.getQuick(0).token)) {
-                // bare FILL(PREV) — all non-timestamp columns fill from self
+                // bare FILL(PREV) — key columns get FILL_KEY, aggregates fill from self
                 for (int i = 0; i < columnCount; i++) {
                     if (i == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                        constantFillFuncs.add(NullConstant.NULL);
+                    } else if (isKeyColumn(i, bottomUpCols, timestampIndex)) {
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
                         constantFillFuncs.add(NullConstant.NULL);
                     } else {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
@@ -3345,13 +3358,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 hasPrevFill = true;
             } else {
-                // Per-column fill spec
+                // Per-column fill spec — key columns get FILL_KEY and skip fillIdx
                 int fillIdx = 0;
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         constantFillFuncs.add(NullConstant.NULL);
                         continue;
+                    }
+                    if (isKeyColumn(col, bottomUpCols, timestampIndex)) {
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
+                        constantFillFuncs.add(NullConstant.NULL);
+                        continue; // do NOT increment fillIdx
                     }
                     ExpressionNode fillExpr = fillIdx < fillValuesExprs.size()
                             ? fillValuesExprs.getQuick(fillIdx)
@@ -3372,6 +3390,67 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
+            // Collect key column indices (non-timestamp columns with FILL_KEY mode)
+            final IntList keyColIndices = new IntList();
+            for (int col = 0; col < columnCount; col++) {
+                if (fillModes.getQuick(col) == SampleByFillRecordCursorFactory.FILL_KEY) {
+                    keyColIndices.add(col);
+                }
+            }
+
+            // Build mapKeyTypes for the keysMap (SYMBOL stored as INT)
+            final ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
+            for (int i = 0, n = keyColIndices.size(); i < n; i++) {
+                int col = keyColIndices.getQuick(i);
+                int colType = groupByMetadata.getColumnType(col);
+                if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
+                    mapKeyTypes.add(ColumnType.INT);
+                } else {
+                    mapKeyTypes.add(colType);
+                }
+            }
+
+            // Count aggregate columns (non-timestamp, non-key) for prev slots
+            int aggColumnCount = 0;
+            for (int col = 0; col < columnCount; col++) {
+                int mode = fillModes.getQuick(col);
+                if (mode != SampleByFillRecordCursorFactory.FILL_KEY
+                        && col != timestampIndex) {
+                    aggColumnCount++;
+                }
+            }
+
+            // Build mapValueTypes: [keyIndex: LONG, hasPrev: LONG, prevCol0..N: LONG]
+            final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
+            mapValueTypes.add(ColumnType.LONG); // slot 0: keyIndex
+            mapValueTypes.add(ColumnType.LONG); // slot 1: hasPrev
+            for (int i = 0; i < aggColumnCount; i++) {
+                mapValueTypes.add(ColumnType.LONG); // per-agg prev slot
+            }
+
+            // Build keySink: RecordSink for key columns only
+            RecordSink keySink = null;
+            if (keyColIndices.size() > 0) {
+                final ListColumnFilter keyColFilter = new ListColumnFilter();
+                for (int i = 0, n = keyColIndices.size(); i < n; i++) {
+                    keyColFilter.add(keyColIndices.getQuick(i) + 1); // 1-based
+                }
+                keySink = RecordSinkFactory.getInstance(
+                        configuration, asm, groupByMetadata, keyColFilter
+                );
+            }
+
+            // Build symbolTableColIndices for MapRecord SYMBOL resolution
+            final IntList symbolTableColIndices = new IntList();
+            for (int i = 0, n = keyColIndices.size(); i < n; i++) {
+                int col = keyColIndices.getQuick(i);
+                if (ColumnType.tagOf(groupByMetadata.getColumnType(col)) == ColumnType.SYMBOL) {
+                    symbolTableColIndices.add(col);
+                } else {
+                    symbolTableColIndices.add(-1);
+                }
+            }
+
             // Sort the GROUP BY output by timestamp ascending. The fill cursor
             // requires sorted input. We build the sort factory explicitly because
             // the optimizer strips the ORDER BY added by rewriteSampleBy before
@@ -3389,13 +3468,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     listColumnFilterA.copy()
             );
 
-            // Create RecordSink for key column extraction (keysMap)
-            final EntityColumnFilter columnFilter = new EntityColumnFilter();
-            columnFilter.of(groupByFactory.getMetadata().getColumnCount());
-            final RecordSink recordSink = RecordSinkFactory.getInstance(
-                    configuration, asm, groupByFactory.getMetadata(), columnFilter
-            );
-
             return new SampleByFillRecordCursorFactory(
                     configuration,
                     groupByFactory.getMetadata(),
@@ -3410,7 +3482,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     timestampIndex,
                     timestampType,
                     hasPrevFill,
-                    recordSink
+                    keySink,
+                    mapKeyTypes,
+                    mapValueTypes,
+                    keyColIndices,
+                    symbolTableColIndices
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);
@@ -3420,6 +3496,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(groupByFactory);
             throw e;
         }
+    }
+
+    /**
+     * Returns true if the column at output index {@code col} is a GROUP BY key
+     * column (as opposed to an aggregate function or the timestamp floor).
+     * A column is a key column if its AST node is a LITERAL (plain column
+     * reference) and it is not the timestamp floor function column.
+     */
+    private static boolean isKeyColumn(int col, ObjList<QueryColumn> bottomUpCols, int timestampIndex) {
+        if (col == timestampIndex) {
+            return false;
+        }
+        if (col < bottomUpCols.size()) {
+            final ExpressionNode ast = bottomUpCols.getQuick(col).getAst();
+            return ast.type == ExpressionNode.LITERAL;
+        }
+        return false;
     }
 
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -7730,8 +7823,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw e;
                     }
 
-                    guardAgainstFillWithKeyedGroupBy(model, keyTypes);
-
                     return generateFill(
                             model,
                             new GroupByRecordCursorFactory(
@@ -7886,8 +7977,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
 
-                    guardAgainstFillWithKeyedGroupBy(model, keyTypes);
-
                     ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
                             executionContext,
                             model.getColumns(),
@@ -7953,8 +8042,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         valueTypes.getColumnCount()
                 );
             }
-
-            guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
             return generateFill(
                     model,

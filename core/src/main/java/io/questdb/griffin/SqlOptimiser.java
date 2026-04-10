@@ -7877,7 +7877,7 @@ public class SqlOptimiser implements Mutable {
                             && timestamp != null
                             // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
                             && sampleByOffset != null
-                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
+                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
@@ -7998,20 +7998,6 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
 
-                    if (isKeyed) {
-                        // drop out early, since we don't handle keyed
-                        nested.setNestedModel(rewriteSampleBy(nested.getNestedModel(), sqlExecutionContext));
-
-                        // join models
-                        for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
-                            QueryModel joinModel = nested.getJoinModels().getQuick(j);
-                            joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel(), sqlExecutionContext));
-                        }
-
-                        // unions
-                        model.setUnionModel(rewriteSampleBy(model.getUnionModel(), sqlExecutionContext));
-                        return model;
-                    }
                 }
 
                 // These lists collect timestamp copies that we remove from the group-by model.
