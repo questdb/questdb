@@ -1817,15 +1817,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.nonCritical().put("partition path does not exist [path=").put(path).put(']');
         }
 
-        final long parquetMetaAddr = mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-        parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
-
-        final long parquetSize = parquetMetaReader.getParquetFileSize();
-        setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        final long parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-
+        long parquetMetaAddr = 0;
+        long parquetAddr = 0;
+        long parquetSize = 0;
         long parquetRowCount = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)) {
+            parquetMetaAddr = mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
+
+            parquetSize = parquetMetaReader.getParquetFileSize();
+            setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             parquetDecoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
             final ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
 
@@ -1958,8 +1960,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             columnFdAndDataSize.resetCapacity();
             parquetDecoder.close();
-            ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
         }
 
         LOG.info().$("rebuilding index files after parquet decode [path=").$substr(pathRootSize, other).I$();
