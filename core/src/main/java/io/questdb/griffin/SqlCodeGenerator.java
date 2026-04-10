@@ -308,6 +308,7 @@ import io.questdb.griffin.engine.table.EarliestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByAllSymbolsFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByDeferredListValuesFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestBySubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
@@ -5660,11 +5661,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // key column must always be the same as earliest by column
                 assert earliestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
 
-                // Route all key-value cases through EarliestByDeferredListValuesFiltered
+                if (intrinsicModel.keySubQuery != null) {
+                    RecordCursorFactory rcf = null;
+                    final Record.CharSequenceFunction func;
+                    try {
+                        rcf = generate(intrinsicModel.keySubQuery, executionContext);
+                        func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
+                    } catch (Throwable th) {
+                        Misc.free(rcf);
+                        throw th;
+                    }
+
+                    return new EarliestBySubQueryRecordCursorFactory(
+                            configuration,
+                            metadata,
+                            partitionFrameCursorFactory,
+                            earliestByIndex,
+                            rcf,
+                            filter,
+                            func,
+                            columnIndexes,
+                            columnSizeShifts
+                    );
+                }
+
                 final int nKeyValues = intrinsicModel.keyValueFuncs.size();
                 final int nExcludedKeyValues = intrinsicModel.keyExcludedValueFuncs.size();
 
-                if (intrinsicModel.keySubQuery != null || nKeyValues > 1 || nExcludedKeyValues > 0) {
+                if (nKeyValues > 1 || nExcludedKeyValues > 0) {
                     return new EarliestByDeferredListValuesFilteredRecordCursorFactory(
                             configuration,
                             metadata,

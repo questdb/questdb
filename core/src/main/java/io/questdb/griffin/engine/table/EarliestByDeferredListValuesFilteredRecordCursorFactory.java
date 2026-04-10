@@ -67,8 +67,8 @@ public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends Abs
             @NotNull IntList columnSizeShifts
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
-        this.includedSymbolFuncs = includedSymbolFuncs != null ? new ObjList<>(includedSymbolFuncs) : null;
-        this.excludedSymbolFuncs = excludedSymbolFuncs != null ? new ObjList<>(excludedSymbolFuncs) : null;
+        this.includedSymbolFuncs = includedSymbolFuncs != null && includedSymbolFuncs.size() > 0 ? new ObjList<>(includedSymbolFuncs) : null;
+        this.excludedSymbolFuncs = excludedSymbolFuncs != null && excludedSymbolFuncs.size() > 0 ? new ObjList<>(excludedSymbolFuncs) : null;
         this.filter = filter;
         this.columnIndex = columnIndex;
         cursor = new EarliestByValueListRecordCursor(

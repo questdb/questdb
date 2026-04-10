@@ -1801,7 +1801,7 @@ public class EarliestByTest extends AbstractCairoTest {
                     "ts\ts\ttotal\n" +
                             "1970-01-01T00:00:00.000000" + suffix + "\ta\t40\n" +
                             "1970-01-01T01:00:00.000000" + suffix + "\tb\t60\n",
-                    "SELECT ts, s, total FROM (SELECT s, sum(v) total, ts FROM t TIMESTAMP(ts)) EARLIEST ON ts PARTITION BY s"
+                    "SELECT ts, s, total FROM (SELECT s, sum(v) total, min(ts) ts FROM t GROUP BY s) EARLIEST ON ts PARTITION BY s"
             );
         });
     }
@@ -1839,11 +1839,8 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestOnManyDistinctKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t as (" +
-                    "SELECT rnd_symbol('s' || x::string) s, " +
-                    "timestamp_sequence(0, 60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
-                    "FROM long_sequence(1000)" +
-                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT 's' || x, timestamp_sequence(0, 60*1000*1000L)::" + timestampType.getTypeName() + " FROM long_sequence(1000)");
 
             // Should return one row per distinct symbol — verify count
             assertSql(
