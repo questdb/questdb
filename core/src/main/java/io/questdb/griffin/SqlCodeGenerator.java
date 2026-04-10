@@ -165,6 +165,7 @@ import io.questdb.griffin.engine.functions.memoization.SymbolFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.VarcharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.table.DescribeRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -326,6 +327,7 @@ import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.DescribeModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.HorizonJoinContext;
@@ -708,6 +710,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     public RecordCursorFactory generate(@Transient QueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
         return generateQuery(model, executionContext, true);
+    }
+
+    public RecordCursorFactory generateDescribe(@Transient DescribeModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
+        final QueryModel queryModel = model.getInnerExecutionModel().getQueryModel();
+        if (queryModel == null) {
+            throw SqlException.$(0, "query expected for describe");
+        }
+        RecordCursorFactory factory = generate(queryModel, executionContext);
+        try {
+            RecordMetadata metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
+            return new DescribeRecordCursorFactory(metadata);
+        } finally {
+            Misc.free(factory);
+        }
+    }
+
+    public RecordCursorFactory generateExplain(RecordCursorFactory factory, int format) {
+        return new ExplainPlanFactory(factory, format);
     }
 
     public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {

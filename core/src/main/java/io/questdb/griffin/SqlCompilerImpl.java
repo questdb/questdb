@@ -96,6 +96,7 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.CompileViewModel;
+import io.questdb.griffin.model.DescribeModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
@@ -2784,13 +2785,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
         final ExecutionModel model = parser.parse(lexer, executionContext, this);
         try {
-            if (model.getModelType() != ExecutionModel.EXPLAIN) {
-                return compileExecutionModel0(executionContext, model);
-            } else {
-                final ExplainModel explainModel = (ExplainModel) model;
-                final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
-                explainModel.setModel(innerModel);
-                return explainModel;
+            switch (model.getModelType()) {
+                case ExecutionModel.EXPLAIN: {
+                    final ExplainModel explainModel = (ExplainModel) model;
+                    final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
+                    explainModel.setModel(innerModel);
+                    return explainModel;
+                }
+                case ExecutionModel.DESCRIBE: {
+                    final DescribeModel describeModel = (DescribeModel) model;
+                    describeModel.setModel(compileExecutionModel0(executionContext, describeModel.getInnerExecutionModel()));
+                    return describeModel;
+                }
+                default:
+                    return compileExecutionModel0(executionContext, model);
             }
         } catch (Throwable e) {
             if (generateCompileViewEvents) {
@@ -2822,6 +2830,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
                     return model;
                 }
+            case ExecutionModel.DESCRIBE: {
+                final DescribeModel describeModel = (DescribeModel) model;
+                describeModel.setModel(compileExecutionModel0(executionContext, describeModel.getInnerExecutionModel()));
+                return describeModel;
+            }
             default:
                 return model;
         }
@@ -3636,6 +3649,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
+                    break;
+                case ExecutionModel.DESCRIBE:
+                    sqlId = queryRegistry.register(sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    compiledQuery.ofPseudoSelect(generateDescribe((DescribeModel) executionModel, executionContext));
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 case ExecutionModel.EXPLAIN:
                     sqlId = queryRegistry.register(sqlText, executionContext);
@@ -4542,19 +4561,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } while ((queryModel = queryModel.getNestedModel()) != null);
     }
 
+    private RecordCursorFactory generateDescribe(DescribeModel model, SqlExecutionContext executionContext) throws SqlException {
+        return codeGenerator.generateDescribe(model, executionContext);
+    }
+
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
-        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
-            QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
-            final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-            final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
-                    updateQueryModel.getUpdateTableToken(),
-                    selectQueryModel,
-                    updateQueryModel,
-                    executionContext
-            );
-            return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
-        } else {
-            return codeGenerator.generateExplain(model, executionContext);
+        switch (model.getInnerExecutionModel().getModelType()) {
+            case ExecutionModel.UPDATE: {
+                QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
+                final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+                final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
+                        updateQueryModel.getUpdateTableToken(),
+                        selectQueryModel,
+                        updateQueryModel,
+                        executionContext
+                );
+                return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
+            }
+            case ExecutionModel.DESCRIBE: {
+                RecordCursorFactory describeFactory = generateDescribe((DescribeModel) model.getInnerExecutionModel(), executionContext);
+                return codeGenerator.generateExplain(describeFactory, model.getFormat());
+            }
+            default:
+                return codeGenerator.generateExplain(model, executionContext);
         }
     }
 

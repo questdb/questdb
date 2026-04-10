@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.ops.CreateViewOperationBuilderImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.CompileViewModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
+import io.questdb.griffin.model.DescribeModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
@@ -118,6 +119,7 @@ public class SqlParser {
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = createMatViewOperationBuilder.getCreateTableOperationBuilder();
     private final CreateViewOperationBuilderImpl createViewOperationBuilder = new CreateViewOperationBuilderImpl();
+    private final ObjectPool<DescribeModel> describeModelPool;
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -180,6 +182,7 @@ public class SqlParser {
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
         this.compileViewModelPool = new ObjectPool<>(CompileViewModel.FACTORY, configuration.getCompileViewModelPoolCapacity());
         this.copyModelPool = new ObjectPool<>(ExportModel.FACTORY, configuration.getCopyPoolCapacity());
+        this.describeModelPool = new ObjectPool<>(DescribeModel.FACTORY, configuration.getExplainPoolCapacity());
         this.explainModelPool = new ObjectPool<>(ExplainModel.FACTORY, configuration.getExplainPoolCapacity());
         this.pivotQueryColumnPool = new ObjectPool<>(PivotForColumn.FACTORY, configuration.getPivotColumnPoolCapacity());
         this.traversalAlgo = traversalAlgo;
@@ -2241,6 +2244,37 @@ public class SqlParser {
         }
     }
 
+    private ExecutionModel parseDescribe(
+            GenericLexer lexer,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final int describePos = lexer.lastTokenPosition();
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.position(describePos).put("query expected after 'describe'");
+        }
+
+        QueryModel innerModel;
+        if (Chars.equals(tok, '(')) {
+            // DESCRIBE (SELECT ...) or DESCRIBE(SELECT ...)
+            innerModel = parseAsSubQueryAndExpectClosingBrace(lexer, null, false, sqlParserCallback, null);
+        } else if (isSelectKeyword(tok)) {
+            innerModel = (QueryModel) parseSelect(lexer, sqlParserCallback, null);
+        } else if (isWithKeyword(tok)) {
+            ExecutionModel withModel = parseWith(lexer, sqlParserCallback, null);
+            if (!(withModel instanceof QueryModel qm)) {
+                throw SqlException.position(describePos).put("query expected after 'describe'");
+            }
+            innerModel = qm;
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'(' or query expected after 'describe'");
+        }
+
+        DescribeModel describeModel = describeModelPool.next();
+        describeModel.setModel(innerModel);
+        return describeModel;
+    }
+
     private QueryModel parseDml(
             GenericLexer lexer,
             int modelPosition,
@@ -2618,9 +2652,13 @@ public class SqlParser {
             return parseWith(lexer, sqlParserCallback, null);
         }
 
+        if (isDescribeKeyword(tok)) {
+            return parseDescribe(lexer, sqlParserCallback);
+        }
+
         if (isDropKeyword(tok) || isAlterKeyword(tok) || isRefreshKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put(
-                    "'create', 'format', 'insert', 'update', 'select' or 'with'"
+                    "'create', 'describe', 'format', 'insert', 'update', 'select' or 'with'"
             ).put(" expected");
         }
 
@@ -5203,6 +5241,7 @@ public class SqlParser {
         expressionTreeBuilder.reset();
         copyModelPool.clear();
         topLevelWithModel.clear();
+        describeModelPool.clear();
         explainModelPool.clear();
         viewLexers.clear();
         digit = 1;
@@ -5257,6 +5296,10 @@ public class SqlParser {
             explainModel.setFormat(format);
             explainModel.setModel(model);
             return explainModel;
+        }
+
+        if (isDescribeKeyword(tok)) {
+            return parseDescribe(lexer, sqlParserCallback);
         }
 
         if (isSelectKeyword(tok)) {
