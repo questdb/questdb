@@ -3300,6 +3300,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
+            // When the same timestamp column appears multiple times (e.g. SELECT k, k),
+            // the alias may resolve to a renamed duplicate. Fall back to the original
+            // timestamp token if it yields a valid, earlier column index.
+            if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
+                int origIndex = groupByFactory.getMetadata().getColumnIndexQuiet(timestamp.token);
+                if (origIndex >= 0 && (timestampIndex < 0 || origIndex < timestampIndex)) {
+                    timestampIndex = origIndex;
+                }
+            }
             int timestampType = groupByFactory.getMetadata().getColumnType(timestampIndex);
             TimestampDriver driver = getTimestampDriver(timestampType);
             fillFromFunc = driver.getTimestampConstantNull();
