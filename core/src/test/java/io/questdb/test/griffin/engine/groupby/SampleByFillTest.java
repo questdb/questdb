@@ -89,6 +89,173 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullKeyedFromTo() throws Exception {
+        assertMemoryLeak(() -> {
+            // 6 buckets (00:00..05:00) x 2 keys = 12 rows.
+            // Leading fill at 00:00, 01:00 (null for both keys).
+            // Data at 02:00-04:00 with nulls for missing keys.
+            // Trailing fill at 05:00 (null for both).
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('Paris', 21.0, '2024-01-01T03:00:00.000000Z')," +
+                    "('London', 11.0, '2024-01-01T04:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tcity\tavg
+                            2024-01-01T00:00:00.000000Z\tLondon\tnull
+                            2024-01-01T00:00:00.000000Z\tParis\tnull
+                            2024-01-01T01:00:00.000000Z\tLondon\tnull
+                            2024-01-01T01:00:00.000000Z\tParis\tnull
+                            2024-01-01T02:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T02:00:00.000000Z\tParis\t20.0
+                            2024-01-01T03:00:00.000000Z\tParis\t21.0
+                            2024-01-01T03:00:00.000000Z\tLondon\tnull
+                            2024-01-01T04:00:00.000000Z\tLondon\t11.0
+                            2024-01-01T04:00:00.000000Z\tParis\tnull
+                            2024-01-01T05:00:00.000000Z\tLondon\tnull
+                            2024-01-01T05:00:00.000000Z\tParis\tnull
+                            """,
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedFromToAfterData() throws Exception {
+        assertMemoryLeak(() -> {
+            // FROM is after all data — triggers the SIGSEGV fix.
+            // Expect empty result: zero keys discovered means zero rows.
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T01:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tcity\tavg
+                            """,
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-05' TO '2024-01-06' FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedFromToBeforeDataToWithinData() throws Exception {
+        assertMemoryLeak(() -> {
+            // FROM before all data, TO within data range.
+            // 4 buckets (00:00..03:00) x 2 keys = 8 rows.
+            // Leading fill at 00:00, 01:00, 02:00. Data at 03:00.
+            // London at 04:00 is outside TO range and NOT included.
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T03:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T03:00:00.000000Z')," +
+                    "('London', 11.0, '2024-01-01T04:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tcity\tavg
+                            2024-01-01T00:00:00.000000Z\tLondon\tnull
+                            2024-01-01T00:00:00.000000Z\tParis\tnull
+                            2024-01-01T01:00:00.000000Z\tLondon\tnull
+                            2024-01-01T01:00:00.000000Z\tParis\tnull
+                            2024-01-01T02:00:00.000000Z\tLondon\tnull
+                            2024-01-01T02:00:00.000000Z\tParis\tnull
+                            2024-01-01T03:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T03:00:00.000000Z\tParis\t20.0
+                            """,
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedFromToEmptyRange() throws Exception {
+        assertMemoryLeak(() -> {
+            // FROM == TO — empty range, expect zero rows.
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T01:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tcity\tavg
+                            """,
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01T05:00:00.000000Z' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedFromToKeyAppearsMidRange() throws Exception {
+        assertMemoryLeak(() -> {
+            // Berlin appears only at 03:00 but is discovered in pass 1.
+            // 5 buckets (00:00..04:00) x 3 keys = 15 rows.
+            // Berlin gets null fill for buckets 00:00-02:00 and 04:00.
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('Berlin', 5.0, '2024-01-01T03:00:00.000000Z')," +
+                    "('London', 12.0, '2024-01-01T03:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tcity\tavg
+                            2024-01-01T00:00:00.000000Z\tLondon\tnull
+                            2024-01-01T00:00:00.000000Z\tParis\tnull
+                            2024-01-01T00:00:00.000000Z\tBerlin\tnull
+                            2024-01-01T01:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T01:00:00.000000Z\tParis\t20.0
+                            2024-01-01T01:00:00.000000Z\tBerlin\tnull
+                            2024-01-01T02:00:00.000000Z\tLondon\tnull
+                            2024-01-01T02:00:00.000000Z\tParis\tnull
+                            2024-01-01T02:00:00.000000Z\tBerlin\tnull
+                            2024-01-01T03:00:00.000000Z\tBerlin\t5.0
+                            2024-01-01T03:00:00.000000Z\tLondon\t12.0
+                            2024-01-01T03:00:00.000000Z\tParis\tnull
+                            2024-01-01T04:00:00.000000Z\tLondon\tnull
+                            2024-01-01T04:00:00.000000Z\tParis\tnull
+                            2024-01-01T04:00:00.000000Z\tBerlin\tnull
+                            """,
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedFromToMultipleAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            // Two aggregate columns (sum(val), sum(ival)) with keyed FROM/TO.
+            // 4 buckets (00:00..03:00) x 2 keys = 8 rows.
+            execute("CREATE TABLE x (key STRING, val DOUBLE, ival INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', 1.0, 10, '2024-01-01T01:00:00.000000Z')," +
+                    "('B', 2.0, 20, '2024-01-01T01:00:00.000000Z')," +
+                    "('A', 3.0, 30, '2024-01-01T03:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tkey\tsum\tsum1
+                            2024-01-01T00:00:00.000000Z\tA\tnull\tnull
+                            2024-01-01T00:00:00.000000Z\tB\tnull\tnull
+                            2024-01-01T01:00:00.000000Z\tA\t1.0\t10
+                            2024-01-01T01:00:00.000000Z\tB\t2.0\t20
+                            2024-01-01T02:00:00.000000Z\tA\tnull\tnull
+                            2024-01-01T02:00:00.000000Z\tB\tnull\tnull
+                            2024-01-01T03:00:00.000000Z\tA\t3.0\t30
+                            2024-01-01T03:00:00.000000Z\tB\tnull\tnull
+                            """,
+                    "SELECT ts, key, sum(val), sum(ival) FROM x " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
     public void testFillNullKeyedSymbol() throws Exception {
         assertMemoryLeak(() -> {
             // Tests SYMBOL key column with setSymbolTableResolver for correct
@@ -257,6 +424,39 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevKeyedFromTo() throws Exception {
+        assertMemoryLeak(() -> {
+            // Per-key FILL(PREV) with FROM/TO.
+            // 5 buckets (00:00..04:00) x 2 keys = 10 rows.
+            // At 00:00 both keys have null (no prev yet).
+            // At 01:00 data for both. At 02:00 prev. At 03:00 London data,
+            // Paris prev. At 04:00 both prev.
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('London', 12.0, '2024-01-01T03:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tcity\tavg
+                            2024-01-01T00:00:00.000000Z\tLondon\tnull
+                            2024-01-01T00:00:00.000000Z\tParis\tnull
+                            2024-01-01T01:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T01:00:00.000000Z\tParis\t20.0
+                            2024-01-01T02:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T02:00:00.000000Z\tParis\t20.0
+                            2024-01-01T03:00:00.000000Z\tLondon\t12.0
+                            2024-01-01T03:00:00.000000Z\tParis\t20.0
+                            2024-01-01T04:00:00.000000Z\tLondon\t12.0
+                            2024-01-01T04:00:00.000000Z\tParis\t20.0
+                            """,
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(PREV) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevKeyedNoPrevYet() throws Exception {
         assertMemoryLeak(() -> {
             // London appears at 00:00, Paris first appears at 01:00.
@@ -318,6 +518,40 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\tParis\t0.0
                             """,
                     "SELECT ts, city, avg(temp) FROM weather SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillValueKeyedFromTo() throws Exception {
+        assertMemoryLeak(() -> {
+            // Same data as testFillNullKeyedFromTo but with FILL(0).
+            // 6 buckets (00:00..05:00) x 2 keys = 12 rows.
+            // Fill values are 0.0 instead of null.
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('Paris', 21.0, '2024-01-01T03:00:00.000000Z')," +
+                    "('London', 11.0, '2024-01-01T04:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tcity\tavg
+                            2024-01-01T00:00:00.000000Z\tLondon\t0.0
+                            2024-01-01T00:00:00.000000Z\tParis\t0.0
+                            2024-01-01T01:00:00.000000Z\tLondon\t0.0
+                            2024-01-01T01:00:00.000000Z\tParis\t0.0
+                            2024-01-01T02:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T02:00:00.000000Z\tParis\t20.0
+                            2024-01-01T03:00:00.000000Z\tParis\t21.0
+                            2024-01-01T03:00:00.000000Z\tLondon\t0.0
+                            2024-01-01T04:00:00.000000Z\tLondon\t11.0
+                            2024-01-01T04:00:00.000000Z\tParis\t0.0
+                            2024-01-01T05:00:00.000000Z\tLondon\t0.0
+                            2024-01-01T05:00:00.000000Z\tParis\t0.0
+                            """,
+                    "SELECT ts, city, avg(temp) FROM weather " +
+                    "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T06:00:00.000000Z' FILL(0) ALIGN TO CALENDAR"
             );
         });
     }
