@@ -39,6 +39,7 @@ import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpSchema;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
@@ -59,6 +60,30 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 
 public class QwpProcessorStateTest extends AbstractCairoTest {
+
+    @Test
+    public void testAddDataIgnoresZeroLengthInput() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // lo == hi → len=0 → early return
+                long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_HTTP_CONN);
+                try {
+                    state.addData(ptr, ptr);
+                    Assert.assertTrue(state.isOk());
+                } finally {
+                    Unsafe.free(ptr, 64, MemoryTag.NATIVE_HTTP_CONN);
+                }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
 
     @Test
     public void testAddDataRejectsWhenExceedingMaxBufferSize() throws Exception {
@@ -90,30 +115,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                     Assert.assertFalse("should reject when exceeding max buffer size", state.isOk());
                 } finally {
                     Unsafe.free(ptr, 100, MemoryTag.NATIVE_HTTP_CONN);
-                }
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testAddDataIgnoresZeroLengthInput() throws Exception {
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-
-                // lo == hi → len=0 → early return
-                long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_HTTP_CONN);
-                try {
-                    state.addData(ptr, ptr);
-                    Assert.assertTrue(state.isOk());
-                } finally {
-                    Unsafe.free(ptr, 64, MemoryTag.NATIVE_HTTP_CONN);
                 }
             } finally {
                 state.onDisconnected();
@@ -586,6 +587,53 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableUpdateDetailsRejectsInvalidDeferredArrayColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            final long addr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                Unsafe.getUnsafe().putByte(addr, (byte) 1);
+                Unsafe.getUnsafe().putByte(addr + 1, (byte) 0x01);
+
+                final QwpArrayColumnCursor arrayCursor = new QwpArrayColumnCursor();
+                arrayCursor.of(addr, 2, 1, QwpConstants.TYPE_DOUBLE_ARRAY);
+
+                final QwpTableBlockCursor cursor = new QwpTableBlockCursor() {
+                    @Override
+                    public QwpArrayColumnCursor getArrayColumn(int index) {
+                        return arrayCursor;
+                    }
+
+                    @Override
+                    public int getRowCount() {
+                        return 1;
+                    }
+                };
+
+                final String tableName = "invalid_deferred_array_col";
+                final ObjList<QwpColumnDef> schema = new ObjList<>();
+                schema.add(new QwpColumnDef("bad-name", QwpConstants.TYPE_DOUBLE_ARRAY));
+
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String(tableName),
+                        schema,
+                        cursor,
+                        1
+                );
+                Assert.assertNull(tud);
+                Assert.assertNull(engine.getTableTokenIfExists(tableName));
+            } finally {
+                Unsafe.free(addr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testGetTableUpdateDetailsReturnsNullForInvalidColumnName() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -761,6 +809,44 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProcessMessageRejectsSchemaMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Pre-register schema 0 with 2 columns via reflection
+                Field decoderField = QwpProcessorState.class.getDeclaredField("streamingDecoder");
+                decoderField.setAccessible(true);
+                Object decoder = decoderField.get(state);
+                Field registryField = decoder.getClass().getDeclaredField("schemaRegistry");
+                registryField.setAccessible(true);
+                QwpSchemaRegistry registry = (QwpSchemaRegistry) registryField.get(decoder);
+                registry.put(0, QwpSchema.create(new QwpColumnDef[]{
+                        new QwpColumnDef("val", QwpConstants.TYPE_INT),
+                        new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP)
+                }));
+
+                // Reference schema 0 but declare 3 columns (mismatch with 2)
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        7, 's', 'm', '_', 't', 'e', 's', 't',
+                        0,                              // rowCount=0
+                        3,                              // columnCount=3 (schema has 2)
+                        0x01,                           // SCHEMA_MODE_REFERENCE
+                        0                               // schemaId=0
+                }));
+                state.processMessage();
+                Assert.assertEquals(QwpProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testProcessMessageReturnsEarlyWhenBufferEmpty() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -802,44 +888,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 // processMessage returns early because !isOk()
                 state.processMessage();
                 Assert.assertEquals("initial error", state.getErrorText());
-            } finally {
-                state.onDisconnected();
-                state.close();
-            }
-        });
-    }
-
-    @Test
-    public void testProcessMessageRejectsSchemaMismatch() throws Exception {
-        assertMemoryLeak(() -> {
-            LineHttpProcessorConfiguration lineConfig =
-                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
-            try {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-
-                // Pre-register schema 0 with 2 columns via reflection
-                Field decoderField = QwpProcessorState.class.getDeclaredField("streamingDecoder");
-                decoderField.setAccessible(true);
-                Object decoder = decoderField.get(state);
-                Field registryField = decoder.getClass().getDeclaredField("schemaRegistry");
-                registryField.setAccessible(true);
-                QwpSchemaRegistry registry = (QwpSchemaRegistry) registryField.get(decoder);
-                registry.put(0, QwpSchema.create(new QwpColumnDef[]{
-                        new QwpColumnDef("val", QwpConstants.TYPE_INT),
-                        new QwpColumnDef("", QwpConstants.TYPE_TIMESTAMP)
-                }));
-
-                // Reference schema 0 but declare 3 columns (mismatch with 2)
-                addNativeData(state, wrapQwpPayload(new byte[]{
-                        7, 's', 'm', '_', 't', 'e', 's', 't',
-                        0,                              // rowCount=0
-                        3,                              // columnCount=3 (schema has 2)
-                        0x01,                           // SCHEMA_MODE_REFERENCE
-                        0                               // schemaId=0
-                }));
-                state.processMessage();
-                Assert.assertEquals(QwpProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -952,24 +1000,6 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         return ((LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails>) field.get(cache)).size();
     }
 
-    private static byte[] wrapQwpPayload(byte[] payload) {
-        byte[] message = new byte[12 + payload.length];
-        message[0] = 'Q';
-        message[1] = 'W';
-        message[2] = 'P';
-        message[3] = '1';
-        message[4] = 1; // version
-        message[5] = 0; // flags
-        message[6] = 1; // tableCount low byte
-        message[7] = 0; // tableCount high byte
-        message[8] = (byte) payload.length;
-        message[9] = (byte) (payload.length >>> 8);
-        message[10] = (byte) (payload.length >>> 16);
-        message[11] = (byte) (payload.length >>> 24);
-        System.arraycopy(payload, 0, message, 12, payload.length);
-        return message;
-    }
-
     private static void replaceWriterWithFake(WalTableUpdateDetails tud, boolean isTableDropped) throws Exception {
         TableToken tableToken = tud.getTableToken();
         Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
@@ -993,5 +1023,23 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                     default -> throw new UnsupportedOperationException(method.getName());
                 }
         ));
+    }
+
+    private static byte[] wrapQwpPayload(byte[] payload) {
+        byte[] message = new byte[12 + payload.length];
+        message[0] = 'Q';
+        message[1] = 'W';
+        message[2] = 'P';
+        message[3] = '1';
+        message[4] = 1; // version
+        message[5] = 0; // flags
+        message[6] = 1; // tableCount low byte
+        message[7] = 0; // tableCount high byte
+        message[8] = (byte) payload.length;
+        message[9] = (byte) (payload.length >>> 8);
+        message[10] = (byte) (payload.length >>> 16);
+        message[11] = (byte) (payload.length >>> 24);
+        System.arraycopy(payload, 0, message, 12, payload.length);
+        return message;
     }
 }

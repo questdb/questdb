@@ -123,6 +123,56 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAutoCreatedMultiDimArrayColumnReadsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_udp_array_exec (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_exec")
+                            .doubleArray("arr", cube())
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            arr
+                            [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
+                            """,
+                    "SELECT arr FROM qwp_udp_array_exec"
+            );
+        });
+    }
+
+    @Test
+    public void testAutoCreatedTableWithMultiDimArrayReadsBack() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_new_table")
+                            .doubleArray("arr", cube())
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    """
+                            arr
+                            [[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]
+                            """,
+                    "SELECT arr FROM qwp_udp_array_new_table"
+            );
+        });
+    }
+
+    @Test
     public void testAutoFlushManyColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
@@ -159,84 +209,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                             """,
                     "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp DESC LIMIT 1"
             );
-        });
-    }
-
-    @Test
-    public void testCommitIntervalDelaysSparseDatagramCommit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table timer_commit (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=1000, o3MaxLag=1s");
-
-            try (QwpUdpReceiver receiver = receiverFactory.create(TIMER_COMMIT_CONF, engine)) {
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("timer_commit")
-                            .longColumn("v", 1)
-                            .at(1_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                Assert.assertTrue(receiver.runSerially());
-                drainWalQueue();
-                assertSql("count\n0\n", "SELECT count() FROM timer_commit");
-
-                TestUtils.assertEventually(() -> {
-                    receiver.runSerially();
-                    drainWalQueue();
-                    assertSql("count\n1\n", "SELECT count() FROM timer_commit");
-                }, 5);
-            }
-        });
-    }
-
-    @Test
-    public void testDatagramTriggeredCommitResetsUncommittedDatagramCount() throws Exception {
-        final QwpUdpReceiverConfiguration conf = new DefaultQwpUdpReceiverConfiguration() {
-            @Override
-            public long getCommitInterval() {
-                return TimeUnit.SECONDS.toMillis(5);
-            }
-
-            @Override
-            public int getMaxUncommittedDatagrams() {
-                return 2;
-            }
-
-            @Override
-            public int getPort() {
-                return PORT;
-            }
-
-            @Override
-            public boolean isOwnThread() {
-                return false;
-            }
-        };
-
-        assertMemoryLeak(() -> {
-            execute("create table datagram_trigger_reset (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=2, o3MaxLag=1s");
-
-            try (InspectingQwpUdpReceiver receiver = new InspectingQwpUdpReceiver(conf, engine)) {
-                sendSingleRow("datagram_trigger_reset", 1L, 1_000_000L);
-                drainReceiver(receiver);
-                drainWalQueue();
-                assertSql("count\n0\n", "SELECT count() FROM datagram_trigger_reset");
-                Assert.assertEquals(1, receiver.getTotalCount());
-
-                sendSingleRow("datagram_trigger_reset", 2L, 2_000_000L);
-                drainReceiver(receiver);
-                drainWalQueue();
-                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
-                Assert.assertEquals(0, receiver.getTotalCount());
-
-                sendSingleRow("datagram_trigger_reset", 3L, 3_000_000L);
-                drainReceiver(receiver);
-                drainWalQueue();
-                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
-                Assert.assertEquals(1, receiver.getTotalCount());
-            }
-
-            drainWalQueue();
-            assertSql("count\n3\n", "SELECT count() FROM datagram_trigger_reset");
         });
     }
 
@@ -607,6 +579,108 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitIntervalDelaysSparseDatagramCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table timer_commit (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=1000, o3MaxLag=1s");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(TIMER_COMMIT_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("timer_commit")
+                            .longColumn("v", 1)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                Assert.assertTrue(receiver.runSerially());
+                drainWalQueue();
+                assertSql("count\n0\n", "SELECT count() FROM timer_commit");
+
+                TestUtils.assertEventually(() -> {
+                    receiver.runSerially();
+                    drainWalQueue();
+                    assertSql("count\n1\n", "SELECT count() FROM timer_commit");
+                }, 5);
+            }
+        });
+    }
+
+    @Test
+    public void testDatagramTriggeredCommitResetsUncommittedDatagramCount() throws Exception {
+        final QwpUdpReceiverConfiguration conf = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public long getCommitInterval() {
+                return TimeUnit.SECONDS.toMillis(5);
+            }
+
+            @Override
+            public int getMaxUncommittedDatagrams() {
+                return 2;
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            execute("create table datagram_trigger_reset (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=2, o3MaxLag=1s");
+
+            try (InspectingQwpUdpReceiver receiver = new InspectingQwpUdpReceiver(conf, engine)) {
+                sendSingleRow("datagram_trigger_reset", 1L, 1_000_000L);
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertSql("count\n0\n", "SELECT count() FROM datagram_trigger_reset");
+                Assert.assertEquals(1, receiver.getTotalCount());
+
+                sendSingleRow("datagram_trigger_reset", 2L, 2_000_000L);
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                Assert.assertEquals(0, receiver.getTotalCount());
+
+                sendSingleRow("datagram_trigger_reset", 3L, 3_000_000L);
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                Assert.assertEquals(1, receiver.getTotalCount());
+            }
+
+            drainWalQueue();
+            assertSql("count\n3\n", "SELECT count() FROM datagram_trigger_reset");
+        });
+    }
+
+    @Test
+    public void testExistingArrayColumnDimensionalityMismatchRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_udp_array_schema_mismatch (arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_schema_mismatch")
+                            .doubleArray("arr", new double[][]{{1.0, 2.0}})
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql("count\n0\n", "SELECT count() FROM qwp_udp_array_schema_mismatch");
+            assertSql(
+                    "column\narr\nts\n",
+                    "SELECT \"column\" FROM table_columns('qwp_udp_array_schema_mismatch') ORDER BY \"column\""
+            );
+        });
+    }
+
+    @Test
     public void testManyDatagramsWithLowCommitRate() throws Exception {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
@@ -625,6 +699,38 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
             assertSql(
                     "count\tsum\n20\t190\n",
                     "SELECT count(), sum(v) FROM low_commit"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedArrayDimensionalityBatchRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_udp_array_mixed_dims (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_mixed_dims")
+                            .doubleArray("arr", new double[]{1.0, 2.0})
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("qwp_udp_array_mixed_dims")
+                            .doubleArray("arr", new double[][]{{3.0, 4.0}})
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql("count\n0\n", "SELECT count() FROM qwp_udp_array_mixed_dims");
+            assertSql(
+                    """
+                            column
+                            ts
+                            """,
+                    """
+                            SELECT "column" FROM table_columns('qwp_udp_array_mixed_dims') ORDER BY "column"
+                            """
             );
         });
     }
@@ -869,6 +975,188 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullOnlyArrayColumnCreationIsDeferredDuringTableAutoCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_new_table_deferred");
+                    sender.stageNullDoubleArrayForTest("arr");
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "timestamp\n1970-01-01T00:00:01.000000Z\n",
+                    "SELECT * FROM qwp_udp_array_new_table_deferred"
+            );
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_new_table_deferred")
+                            .doubleArray("arr", cube())
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
+                    "SELECT arr FROM qwp_udp_array_new_table_deferred ORDER BY timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedNullAndNonNullArrayRowsAutoCreateTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_mixed_batch_new_table");
+                    sender.stageNullDoubleArrayForTest("arr");
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("qwp_udp_array_mixed_batch_new_table")
+                            .doubleArray("arr", cube())
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
+                    "SELECT arr FROM qwp_udp_array_mixed_batch_new_table ORDER BY timestamp"
+            );
+        });
+    }
+
+    @Test
+    public void testNullOnlyArrayColumnCreationIsDeferredUntilFirstNonNullBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_udp_array_deferred (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_deferred");
+                    sender.stageNullDoubleArrayForTest("arr");
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "ts\n1970-01-01T00:00:01.000000Z\n",
+                    "SELECT * FROM qwp_udp_array_deferred"
+            );
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_deferred")
+                            .doubleArray("arr", cube())
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
+                    "SELECT arr FROM qwp_udp_array_deferred ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testDeferredArrayColumnDimensionalityMismatchRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_udp_array_deferred_schema_mismatch (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_deferred_schema_mismatch");
+                    sender.stageNullDoubleArrayForTest("arr");
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "ts\n1970-01-01T00:00:01.000000Z\n",
+                    "SELECT * FROM qwp_udp_array_deferred_schema_mismatch"
+            );
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_deferred_schema_mismatch")
+                            .doubleArray("arr", new double[]{1.0, 2.0})
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "arr\nnull\n[1.0,2.0]\n",
+                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
+            );
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_deferred_schema_mismatch")
+                            .doubleArray("arr", new double[][]{{3.0, 4.0}})
+                            .at(3_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql("count\n2\n", "SELECT count() FROM qwp_udp_array_deferred_schema_mismatch");
+            assertSql(
+                    "arr\nnull\n[1.0,2.0]\n",
+                    "SELECT arr FROM qwp_udp_array_deferred_schema_mismatch ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedNullAndNonNullArrayRowsExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_udp_array_mixed_batch_existing (arr DOUBLE[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("qwp_udp_array_mixed_batch_existing");
+                    sender.stageNullDoubleArrayForTest("arr");
+                    sender.at(1_000_000L, ChronoUnit.MICROS);
+                    sender.table("qwp_udp_array_mixed_batch_existing")
+                            .doubleArray("arr", cube())
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n",
+                    "SELECT arr FROM qwp_udp_array_mixed_batch_existing ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testNullableColumn() throws Exception {
         assertMemoryLeak(() -> {
             try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
@@ -1064,6 +1352,19 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         });
     }
 
+    private static double[][][] cube() {
+        return new double[][][]{
+                {
+                        {1.0, 2.0},
+                        {3.0, 4.0}
+                },
+                {
+                        {5.0, 6.0},
+                        {7.0, 8.0}
+                }
+        };
+    }
+
     private static void drainReceiver(QwpUdpReceiver receiver) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
         boolean everReceived = false;
@@ -1079,12 +1380,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         Assert.assertTrue("timeout: receiver did not process any datagrams", everReceived);
     }
 
-    private static QwpUdpSender newSender() {
-        return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0);
-    }
-
     private static QwpUdpSender newSender(int maxDatagramSize) {
         return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0, maxDatagramSize);
+    }
+
+    private static QwpUdpSender newSender() {
+        return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0);
     }
 
     private static void sendSingleRow(String table, long value, long timestampMicros) {
@@ -1096,6 +1397,11 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         }
     }
 
+    @FunctionalInterface
+    public interface ReceiverFactory {
+        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
+    }
+
     private static class InspectingQwpUdpReceiver extends QwpUdpReceiver {
         private InspectingQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine) {
             super(configuration, engine);
@@ -1104,10 +1410,5 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         private long getTotalCount() {
             return totalCount;
         }
-    }
-
-    @FunctionalInterface
-    public interface ReceiverFactory {
-        QwpUdpReceiver create(QwpUdpReceiverConfiguration config, CairoEngine engine);
     }
 }

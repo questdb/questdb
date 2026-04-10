@@ -42,6 +42,7 @@ import java.util.Collection;
 import java.util.concurrent.TimeUnit;
 
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_DATE;
+import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_DOUBLE_ARRAY;
 import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
 
 /**
@@ -194,6 +195,56 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertSql("SELECT count() FROM ws_test_3d_double_array", "count\n1\n");
+        });
+    }
+
+    @Test
+    public void testMixedNullAndNonNullArrayRowsAutoCreateTable() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                sender.getTableBuffer("ws_mixed_null_array_new_table")
+                        .getOrCreateColumn("arr", TYPE_DOUBLE_ARRAY, true)
+                        .addNull();
+                sender.at(1_000_000_000L, ChronoUnit.MICROS);
+
+                double[][][] cube = {{{1.0, 2.0}, {3.0, 4.0}}, {{5.0, 6.0}, {7.0, 8.0}}};
+                sender.table("ws_mixed_null_array_new_table")
+                        .doubleArray("arr", cube)
+                        .at(2_000_000_000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT arr FROM ws_mixed_null_array_new_table ORDER BY timestamp",
+                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedNullAndNonNullArrayRowsExistingTable() throws Exception {
+        runInContext((port) -> {
+            execute("CREATE TABLE ws_mixed_null_array_existing (arr DOUBLE[][][], timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = createSender(port)) {
+                sender.getTableBuffer("ws_mixed_null_array_existing")
+                        .getOrCreateColumn("arr", TYPE_DOUBLE_ARRAY, true)
+                        .addNull();
+                sender.at(1_000_000_000L, ChronoUnit.MICROS);
+
+                double[][][] cube = {{{1.0, 2.0}, {3.0, 4.0}}, {{5.0, 6.0}, {7.0, 8.0}}};
+                sender.table("ws_mixed_null_array_existing")
+                        .doubleArray("arr", cube)
+                        .at(2_000_000_000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT arr FROM ws_mixed_null_array_existing ORDER BY timestamp",
+                    "arr\nnull\n[[[1.0,2.0],[3.0,4.0]],[[5.0,6.0],[7.0,8.0]]]\n"
+            );
         });
     }
 

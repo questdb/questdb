@@ -45,10 +45,12 @@ import io.questdb.cutlass.line.tcp.SymbolCache;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Decimals;
+import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -344,6 +346,15 @@ public class QwpTudCache implements QuietCloseable {
         this.isDistressed = true;
     }
 
+    private static boolean isValidQwpSchemaColumnName(QwpColumnDef columnDef, int maxFileNameLength) {
+        final String columnName = columnDef.getName();
+        if (columnName.isEmpty()) {
+            final byte typeCode = columnDef.getTypeCode();
+            return typeCode == QwpConstants.TYPE_TIMESTAMP || typeCode == QwpConstants.TYPE_TIMESTAMP_NANOS;
+        }
+        return TableUtils.isValidColumnName(columnName, maxFileNameLength);
+    }
+
     private TableToken getOrCreateTable(SecurityContext securityContext, StringSink tableNameUtf16,
                                         ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor) {
         int maxFileNameLength = engine.getConfiguration().getMaxFileNameLength();
@@ -358,6 +369,12 @@ public class QwpTudCache implements QuietCloseable {
             }
             if (!autoCreateNewColumns) {
                 return null;
+            }
+
+            for (int i = 0; i < schema.size(); i++) {
+                if (!isValidQwpSchemaColumnName(schema.getQuick(i), maxFileNameLength)) {
+                    return null;
+                }
             }
 
             // Create table using QWP v1 schema
@@ -392,12 +409,15 @@ public class QwpTudCache implements QuietCloseable {
      */
     private static class QwpTableStructureAdapter implements TableStructure {
         private static final String DEFAULT_TIMESTAMP_FIELD = "timestamp";
+        private final IntList columnTypes = new IntList();
         private final CairoConfiguration configuration;
         private final QwpTableBlockCursor cursor;
+        private final IntList includedSchemaIndexes = new IntList();
+        private final int outputTimestampIndex;
         private final int partitionBy;
         private final ObjList<QwpColumnDef> schema;
         private final String tableName;
-        private int timestampIndex = -1;
+        private int timestampSchemaIndex = -1;
 
         QwpTableStructureAdapter(CairoConfiguration configuration, String tableName, ObjList<QwpColumnDef> schema,
                                  QwpTableBlockCursor cursor, int partitionBy) {
@@ -412,50 +432,49 @@ public class QwpTudCache implements QuietCloseable {
                 byte typeCode = schema.getQuick(i).getTypeCode();
                 if (schema.getQuick(i).getName().isEmpty() &&
                         (typeCode == QwpConstants.TYPE_TIMESTAMP || typeCode == QwpConstants.TYPE_TIMESTAMP_NANOS)) {
-                    timestampIndex = i;
+                    timestampSchemaIndex = i;
                     break;
                 }
             }
+            for (int i = 0; i < schema.size(); i++) {
+                final int columnType = getSchemaColumnType(i);
+                if (columnType == ColumnType.UNDEFINED) {
+                    continue;
+                }
+                includedSchemaIndexes.add(i);
+                columnTypes.add(columnType);
+            }
+            outputTimestampIndex = timestampSchemaIndex == -1 ? includedSchemaIndexes.size() : includedSchemaIndexes.binarySearchUniqueList(timestampSchemaIndex);
             // If no designated timestamp found, we'll add one automatically (see getColumnCount)
         }
 
         @Override
         public int getColumnCount() {
             // If no timestamp column in schema, add one automatically
-            return timestampIndex == -1 ? schema.size() + 1 : schema.size();
+            return timestampSchemaIndex == -1 ? includedSchemaIndexes.size() + 1 : includedSchemaIndexes.size();
         }
 
         @Override
         public CharSequence getColumnName(int columnIndex) {
             // If this is the auto-added timestamp column (no designated timestamp in schema)
-            if (columnIndex == getTimestampIndex() && timestampIndex == -1) {
+            if (columnIndex == getTimestampIndex() && timestampSchemaIndex == -1) {
                 return DEFAULT_TIMESTAMP_FIELD;
             }
             // If this is the designated timestamp column from schema, use default name
             // (the schema column name is empty for TYPE_DESIGNATED_TIMESTAMP)
-            if (columnIndex == timestampIndex) {
+            if (columnIndex == outputTimestampIndex) {
                 return DEFAULT_TIMESTAMP_FIELD;
             }
-            return schema.getQuick(columnIndex).getName();
+            return schema.getQuick(includedSchemaIndexes.get(columnIndex)).getName();
         }
 
         @Override
         public int getColumnType(int columnIndex) {
             // If this is the auto-added timestamp column
-            if (columnIndex == getTimestampIndex() && timestampIndex == -1) {
+            if (columnIndex == getTimestampIndex() && timestampSchemaIndex == -1) {
                 return ColumnType.TIMESTAMP;
             }
-            byte typeCode = schema.getQuick(columnIndex).getTypeCode();
-            // For decimal types, get the scale from the cursor
-            if (typeCode == QwpConstants.TYPE_DECIMAL64 ||
-                    typeCode == QwpConstants.TYPE_DECIMAL128 ||
-                    typeCode == QwpConstants.TYPE_DECIMAL256) {
-                int scale = cursor.getDecimalColumn(columnIndex).getScale() & 0xFF;
-                int tag = QwpWalAppender.mapQwpTypeToQuestDB(typeCode);
-                int precision = Decimals.getDecimalTagPrecision(tag);
-                return ColumnType.getDecimalType(tag, precision, scale);
-            }
-            return QwpWalAppender.mapQwpTypeToQuestDB(typeCode);
+            return columnTypes.get(columnIndex);
         }
 
         @Override
@@ -496,7 +515,7 @@ public class QwpTudCache implements QuietCloseable {
         @Override
         public int getTimestampIndex() {
             // If no timestamp column in schema, it's the auto-added one at the end
-            return timestampIndex == -1 ? schema.size() : timestampIndex;
+            return outputTimestampIndex;
         }
 
         @Override
@@ -512,6 +531,61 @@ public class QwpTudCache implements QuietCloseable {
         @Override
         public boolean isWalEnabled() {
             return true; // QWP v1 uses WAL
+        }
+
+        private static int getArrayBatchDimensionality(
+                QwpArrayColumnCursor cursor,
+                int rowCount,
+                CharSequence columnName
+        ) {
+            int batchDims = -1;
+            cursor.resetRowPosition();
+            for (int row = 0; row < rowCount; row++) {
+                cursor.advanceRow();
+                if (cursor.isNull()) {
+                    continue;
+                }
+
+                final int rowDims = cursor.getNDims();
+                if (batchDims == -1) {
+                    batchDims = rowDims;
+                } else if (batchDims != rowDims) {
+                    throw CairoException.nonCritical()
+                            .put("array dimensionality mismatch in QWP batch [column=")
+                            .put(columnName)
+                            .put(", expectedDims=")
+                            .put(batchDims)
+                            .put(", actualDims=")
+                            .put(rowDims)
+                            .put(']');
+                }
+            }
+            cursor.resetRowPosition();
+            return batchDims;
+        }
+
+        private int getSchemaColumnType(int schemaIndex) {
+            final byte typeCode = schema.getQuick(schemaIndex).getTypeCode();
+            if (typeCode == QwpConstants.TYPE_DECIMAL64 ||
+                    typeCode == QwpConstants.TYPE_DECIMAL128 ||
+                    typeCode == QwpConstants.TYPE_DECIMAL256) {
+                final int scale = cursor.getDecimalColumn(schemaIndex).getScale() & 0xFF;
+                final int tag = QwpWalAppender.mapQwpTypeToQuestDB(typeCode);
+                final int precision = Decimals.getDecimalTagPrecision(tag);
+                return ColumnType.getDecimalType(tag, precision, scale);
+            }
+            if (typeCode == QwpConstants.TYPE_DOUBLE_ARRAY) {
+                final int nDims = getArrayBatchDimensionality(
+                        cursor.getArrayColumn(schemaIndex),
+                        cursor.getRowCount(),
+                        schema.getQuick(schemaIndex).getName()
+                );
+                if (nDims < 1) {
+                    return ColumnType.UNDEFINED;
+                }
+                return ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            }
+            return QwpWalAppender.mapQwpTypeToQuestDB(typeCode);
         }
     }
 }
