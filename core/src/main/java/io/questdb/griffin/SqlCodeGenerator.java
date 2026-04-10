@@ -3342,7 +3342,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Key columns get FILL_KEY and do NOT consume a fill expression index.
             final ObjList<QueryColumn> bottomUpCols = model.getBottomUpColumns();
 
-            if (anyPrev && fillValuesExprs.size() == 1 && isPrevKeyword(fillValuesExprs.getQuick(0).token)) {
+            if (anyPrev && fillValuesExprs.size() == 1
+                    && isPrevKeyword(fillValuesExprs.getQuick(0).token)
+                    && fillValuesExprs.getQuick(0).type == ExpressionNode.LITERAL) {
                 // bare FILL(PREV) — key columns get FILL_KEY, aggregates fill from self
                 for (int i = 0; i < columnCount; i++) {
                     if (i == timestampIndex) {
@@ -3375,7 +3377,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ? fillValuesExprs.getQuick(fillIdx)
                             : (fillValuesExprs.size() == 1 ? fillValuesExprs.getQuick(0) : null);
                     if (fillExpr != null && isPrevKeyword(fillExpr.token)) {
-                        fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
+                        if (fillExpr.type == ExpressionNode.FUNCTION
+                                && fillExpr.paramCount == 1
+                                && fillExpr.rhs != null
+                                && fillExpr.rhs.type == ExpressionNode.LITERAL) {
+                            // PREV(col_name) — cross-column prev
+                            CharSequence srcAlias = fillExpr.rhs.token;
+                            int srcColIdx = groupByMetadata.getColumnIndexQuiet(srcAlias);
+                            if (srcColIdx < 0) {
+                                throw SqlException.$(fillExpr.rhs.position,
+                                        "PREV(col): column not found in output: ").put(srcAlias);
+                            }
+                            fillModes.add(srcColIdx);
+                        } else {
+                            // bare PREV — self-prev
+                            fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
+                        }
                         constantFillFuncs.add(NullConstant.NULL);
                         hasPrevFill = true;
                     } else if (fillExpr == null || isNullKeyword(fillExpr.token)) {

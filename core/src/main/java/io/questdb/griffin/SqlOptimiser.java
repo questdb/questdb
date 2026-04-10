@@ -439,6 +439,15 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
+        for (int i = 0, n = fill.size(); i < n; i++) {
+            if (isLinearKeyword(fill.getQuick(i).token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Returns true when every leaf in the expression tree is a literal constant
     // (no function calls, bind variables, or column references). Used to decide
     // whether a constWhereClause can be evaluated at compile time by the code
@@ -7877,7 +7886,7 @@ public class SqlOptimiser implements Mutable {
                             && timestamp != null
                             // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
                             && sampleByOffset != null
-                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isLinearKeyword(sampleByFill.getQuick(0).token)))
+                            && !hasLinearFill(sampleByFill)
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {

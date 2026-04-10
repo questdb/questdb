@@ -551,7 +551,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!hasPrev) {
                     return Numbers.LONG_NULL;
                 }
-                int aggSlot = outputColToAggSlot[col];
+                int mode = fillMode(col);
+                int sourceCol = mode >= 0 ? mode : col;
+                int aggSlot = outputColToAggSlot[sourceCol];
                 if (aggSlot >= 0) {
                     return value.getLong(PREV_START_SLOT + aggSlot);
                 }
