@@ -75,6 +75,9 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * <p>
  * <b>Thread Safety:</b> Not thread-safe. Each WalWriter should have its own instance.
  */
+//TODO [mtopolnik]: This class shouldn't have a dependency to the Wire protocol layer.
+// This works for now because QWP is the only user of columnar appending. When introducing
+// the second user, clean up the architecture.
 public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseable {
 
     private final Decimal256 decimal = new Decimal256();
