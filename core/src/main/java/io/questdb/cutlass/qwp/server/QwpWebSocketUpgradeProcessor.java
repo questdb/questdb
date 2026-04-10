@@ -252,10 +252,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         // Read QWP version negotiation headers
         int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
-        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
-                QwpWebSocketHttpProcessor.computeAcceptKey(wsKey),
-                negotiatedVersion
-        );
+        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
+        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, negotiatedVersion);
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -277,8 +275,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
 
-        // Write the 101 Switching Protocols response
-        int bytesWritten = writeHandshakeResponse(bufferAddr, bufferSize, wsKey, negotiatedVersion);
+        // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
+        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
