@@ -55,7 +55,9 @@ Plans:
   3. Key order within each bucket is stable and consistent across all buckets
   4. Key column values in fill rows match the actual key values discovered during pass 1 (not null or garbage)
   5. Fill rows for missing (key, bucket) pairs use the correct fill mode (null, constant, or per-key prev)
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [x] 03-01-PLAN.md -- Optimizer gates, keyed fill cursor implementation, and integration tests
 
 ### Phase 4: Cross-Column Prev
 **Goal**: FILL(PREV) can reference a specific source column from the previous bucket rather than always filling from self
@@ -87,6 +89,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Optimizer Gate | 0/0 | Complete | 2026-04-09 |
 | 2. Non-keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
-| 3. Keyed Fill Cursor | 0/0 | Not started | - |
+| 3. Keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
 | 4. Cross-Column Prev | 0/0 | Not started | - |
 | 5. Verification and Hardening | 0/0 | Not started | - |

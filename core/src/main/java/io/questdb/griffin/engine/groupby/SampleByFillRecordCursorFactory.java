@@ -483,6 +483,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     }
                 }
                 keyCount = keyIdx;
+                if (keyCount == 0) {
+                    // No keys discovered — empty GROUP BY output.
+                    // With FROM/TO, emit zero rows (no keys to fill).
+                    // Without FROM/TO, also emit zero rows (no data).
+                    baseCursorExhausted = true;
+                    maxTimestamp = Long.MIN_VALUE;
+                    nextBucketTimestamp = Long.MAX_VALUE;
+                    return;
+                }
                 if (keyPresent == null || keyPresent.length < keyCount) {
                     keyPresent = new boolean[Math.max(keyCount, 1)];
                 } else {
