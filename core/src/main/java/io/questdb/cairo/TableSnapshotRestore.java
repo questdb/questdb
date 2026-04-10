@@ -681,18 +681,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
-
-                futures.add(executor.submit(() -> rebuildBitmapIndexForParquetPartition(
-                        tablePathStr,
-                        pathTableLen,
-                        partitionTimestamp,
-                        partitionRowCount,
-                        partitionNameTxn,
-                        parquetSize,
-                        partitionBy,
-                        timestampType
-                )));
+                // Skip parquet partitions — bitmap indexes for parquet
+                // partitions are rebuilt by the table writer on first open.
             } else {
                 rebuildBitmapIndexForNativePartition(pathTableLen, columnCount, partitionTimestamp, partitionRowCount, partitionNameTxn, tablePathStr, partitionBy, timestampType);
             }

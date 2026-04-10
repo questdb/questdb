@@ -1022,26 +1022,10 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointRestoreRebuildsBitmapIndexesOnParquetAfterDropColumn() throws Exception {
-        // Regression test for two bugs in rebuildBitmapIndexForParquetPartition:
-        //
-        // Bug 4: setPathForParquetPartition() already appends data.parquet, but
-        // the caller appended it again → doubled path → file not found → silently
-        // skipped all parquet partitions.
-        //
-        // Bug 1: getIndexedParquetColumnIndex() compared parquet field_id (writer
-        // index) with columnIndex (reader index). After DROP COLUMN, sym's reader
-        // index (1) collides with val's field_id (1), so the decoder gets DOUBLE
-        // instead of SYMBOL → "requested column type 12 does not match file
-        // column type 10".
-        //
-        // Column layout:
-        //   dummy (0, DOUBLE) — dropped
-        //   val   (1, DOUBLE)        → field_id 1 in parquet
-        //   sym   (2, SYMBOL INDEX)  → field_id 2 in parquet
-        //   ts    (3, TIMESTAMP)     → field_id 3 in parquet
-        //
-        // After DROP dummy: sym reader=1, writer=2.
+    public void testCheckpointRestoreSkipsParquetPartitionsForIndexRebuild() throws Exception {
+        // Verify that rebuildBitmapIndexes skips parquet partitions during
+        // checkpoint/backup recovery. Bitmap indexes for parquet partitions
+        // are rebuilt by the table writer on first open, not during recovery.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t (
@@ -1063,12 +1047,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("ALTER TABLE t DROP COLUMN dummy");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
-            assertSql("count\n3\n",
-                    "SELECT count() FROM t WHERE sym = 'A'");
-
-            // Call rebuildTableFiles directly with rebuildPartitionColumnIndexes=true.
-            // This exercises rebuildParquetPartitionIndexes →
-            // getIndexedParquetColumnIndex (the fixed line 442).
+            // rebuildTableFiles must not crash on parquet partitions.
             TableToken tableToken = engine.verifyTableName("t");
             try (
                     Path tablePath = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
@@ -1078,11 +1057,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 restoreAgent.finalizeParallelTasks();
             }
 
-            // The bitmap index must be intact after the rebuild. If
-            // getIndexedParquetColumnIndex used columnIndex (reader) instead
-            // of writerIndex, decodeRowGroup would have thrown
-            // CairoException: "requested column type 12 (symbol) does not
-            // match file column type 10 (double)".
+            // Data must still be accessible after recovery.
             assertSql("count\n3\n",
                     "SELECT count() FROM t WHERE sym = 'A'");
         });
