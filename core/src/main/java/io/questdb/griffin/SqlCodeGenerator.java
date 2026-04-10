@@ -3448,17 +3448,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Safety-net type check: verify all PREV source columns have supported types
-            for (int i = 0, n = prevSourceCols.size(); i < n; i++) {
+            // Safety-net type check: if a PREV source column has an unsupported type,
+            // it's likely a key column that isKeyColumn() missed (e.g., CTE/subquery
+            // context). Reclassify it as FILL_KEY and remove from prevSourceCols.
+            for (int i = prevSourceCols.size() - 1; i >= 0; i--) {
                 int col = prevSourceCols.getQuick(i);
                 int mode = fillModes.getQuick(col);
                 int sourceCol = mode >= 0 ? mode : col;
                 short tag = ColumnType.tagOf(groupByMetadata.getColumnType(sourceCol));
                 if (!isFastPathPrevSupportedType(tag)) {
-                    throw SqlException.$(0, "FILL(PREV) is not supported for column '")
-                            .put(groupByMetadata.getColumnName(sourceCol))
-                            .put("' of type ")
-                            .put(ColumnType.nameOf(tag));
+                    // Reclassify as key column
+                    fillModes.setQuick(col, SampleByFillRecordCursorFactory.FILL_KEY);
+                    prevSourceCols.removeIndex(i);
                 }
             }
 
