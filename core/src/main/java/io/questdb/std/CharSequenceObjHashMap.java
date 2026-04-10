@@ -30,7 +30,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 
 
-public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
+public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet implements CharSequenceObjMap<V> {
     private final ObjList<CharSequence> list;
     private V[] values;
 

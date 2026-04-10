@@ -1509,6 +1509,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final int timestampIndex = metadata.getTimestampIndex();
                 partitionDescriptor.of(getTableToken().getTableName(), partitionRowCount, timestampIndex);
 
+                final boolean useMetadataBloomFilters = bloomFilterColumns == null || bloomFilterColumns.isEmpty();
                 final int columnCount = metadata.getColumnCount();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     final int columnType = metadata.getColumnType(columnIndex);
@@ -1676,9 +1677,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 double fpp = Double.isNaN(bloomFilterFpp) ? config.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
                 try {
-                    if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
-                        bloomFilterIndexes.reopen();
+                    bloomFilterIndexes.reopen();
+                    if (useMetadataBloomFilters) {
+                        // Derive bloom filter columns from per-column metadata flags
+                        int metaDescriptorIndex = 0;
+                        for (int i = 0; i < columnCount; i++) {
+                            final int colType = metadata.getColumnType(i);
+                            if (colType <= 0) {
+                                continue;
+                            }
+                            if (TableUtils.isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
+                                bloomFilterIndexes.add(metaDescriptorIndex);
+                            }
+                            metaDescriptorIndex++;
+                        }
+                    } else {
+                        // Explicit bloom_filter_columns override from CONVERT PARTITION WITH clause
                         parseBloomFilterColumnIndexes(bloomFilterColumns, bloomFilterIndexes);
+                    }
+                    if (bloomFilterIndexes.size() > 0) {
                         bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
                         bloomFilterColumnCount = (int) bloomFilterIndexes.size();
                     }
@@ -5510,6 +5527,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         Misc.free(dedupColumnCommitAddresses);
+        Misc.free(bloomFilterIndexes);
         Misc.free(parquetDecoder);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);

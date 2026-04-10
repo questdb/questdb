@@ -557,6 +557,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: b.vendor_id=a.vendor_id
+                                  symbolKeyJoin: true
                                     PageFrame
                                         Row forward scan
                                         Interval forward scan on: t1

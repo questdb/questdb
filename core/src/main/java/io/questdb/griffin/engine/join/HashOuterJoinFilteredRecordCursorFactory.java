@@ -43,11 +43,13 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory.outerJoinTypeToString;
 
@@ -61,6 +63,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
     private final int joinType;
     private final RecordSink masterSink;
     private final RecordSink slaveKeySink;
+    private final SymbolTranslatingRecord symbolTranslatingRecord;
     private AbstractHashOuterJoinRecordCursor cursor;
     private Map joinKeyMap;
     private Map matchIdsMap;
@@ -79,7 +82,9 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             int columnSplit,
             @NotNull Function filter,
             JoinContext joinContext,
-            int joinType
+            int joinType,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         try {
@@ -96,6 +101,9 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY);
             }
             this.filter = filter;
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                    ? new SymbolTranslatingRecord(slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices)
+                    : null;
         } catch (Throwable th) {
             close();
             throw th;
@@ -174,6 +182,9 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         sink.type("Hash ").val(outerJoinTypeToString(joinType)).val(" Outer Join");
         sink.optAttr("condition", joinContext);
         sink.attr("filter").val(filter);
+        if (symbolTranslatingRecord != null) {
+            sink.attr("symbolKeyJoin").val(true);
+        }
         sink.child(masterFactory);
         sink.child("Hash", slaveFactory);
     }
@@ -188,6 +199,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         Misc.free(joinKeyMap);
         Misc.free(slaveChain);
         Misc.free(matchIdsMap);
+        Misc.free(symbolTranslatingRecord);
     }
 
     private class HashFullOuterJoinFilteredRecordCursor extends AbstractHashOuterJoinRecordCursor {
@@ -226,7 +238,8 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         public boolean hasNext() {
             if (!isMapBuilt) {
-                populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                final Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
+                populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
                 record.hasMaster(true);
                 mapCursor = joinKeyMap.getCursor();
@@ -317,6 +330,10 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             filter.init(this, sqlExecutionContext);
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.of(slaveCursor.getRecord());
+                symbolTranslatingRecord.initSources(slaveCursor, masterCursor);
+            }
             this.mapCursor = Misc.free(mapCursor);
         }
     }
@@ -343,7 +360,8 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         public boolean hasNext() {
             if (!isMapBuilt) {
-                populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                final Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
+                populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
             }
 
@@ -389,6 +407,10 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             filter.init(this, sqlExecutionContext);
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.of(slaveCursor.getRecord());
+                symbolTranslatingRecord.initSources(slaveCursor, masterCursor);
+            }
         }
     }
 
@@ -427,7 +449,8 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         public boolean hasNext() {
             if (!isMapBuilt) {
-                populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                final Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
+                populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
                 record.hasMaster(true);
                 mapCursor = joinKeyMap.getCursor();
@@ -511,6 +534,10 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             super.of(masterCursor, slaveCursor, sqlExecutionContext);
             record.of(masterRecord, slaveRecord);
             filter.init(this, sqlExecutionContext);
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.of(slaveCursor.getRecord());
+                symbolTranslatingRecord.initSources(slaveCursor, masterCursor);
+            }
             this.mapCursor = Misc.free(mapCursor);
         }
     }

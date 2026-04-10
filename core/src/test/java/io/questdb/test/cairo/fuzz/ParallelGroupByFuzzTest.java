@@ -978,6 +978,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [max(array_position(arr, a))]
                                               filter: null
                                                 PageFrame
@@ -1003,6 +1004,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [max(array_position(arr, a))]
                                               filter: null
                                                 PageFrame
@@ -1028,6 +1030,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [min(insertion_point(arr,a))]
                                               filter: null
                                                 PageFrame
@@ -1053,6 +1056,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_count(arr))]
                                               filter: null
                                                 PageFrame
@@ -1078,6 +1082,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_avg(arr))]
                                               filter: null
                                                 PageFrame
@@ -1103,6 +1108,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts, array_sum]
                                             Async Group By workers: 4
                                               keys: [ts,array_sum]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts),array_sum(array_cum_sum(arr))]
                                               values: [sum(a)]
                                               filter: null
                                                 PageFrame
@@ -1133,6 +1139,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts,dot_product]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts),dot_product(arr,2)]
                                               values: [first(a)]
                                               filter: null
                                                 PageFrame
@@ -1163,6 +1170,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_sum(arr*5+3-1/2))]
                                               filter: null
                                                 PageFrame
@@ -1188,6 +1196,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_sum(arr[a::int:a::int+2]))]
                                               filter: null
                                                 PageFrame
