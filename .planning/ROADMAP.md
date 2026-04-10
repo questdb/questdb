@@ -81,7 +81,9 @@ Plans:
   2. `assertMemoryLeak` passes for all fill-related tests (no native memory leaks)
   3. Query plans for eligible FILL queries show `Async Group By` or `GroupBy vectorized` (parallel execution confirmed)
   4. Resource leak in `generateFill` error path is fixed (`sorted` factory and `constantFillFuncs` freed on exception)
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 05-01-PLAN.md -- Fix generateFill() metadata timestamp index, resolve all 65 test failures across 8 categories
 
 ## Progress
 
@@ -94,7 +96,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | 2. Non-keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
 | 3. Keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
 | 4. Cross-Column Prev | 0/1 | In progress | - |
-| 5. Verification and Hardening | 0/0 | Not started | - |
+| 5. Verification and Hardening | 0/1 | Not started | - |
 | 6. Keyed Fill with FROM/TO Range | 1/1 | Complete   | 2026-04-10 |
 
 ### Phase 6: Keyed Fill with FROM/TO Range
