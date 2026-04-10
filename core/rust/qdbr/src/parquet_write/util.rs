@@ -3,6 +3,7 @@ use std::{cmp, io, mem, slice};
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
 use parquet2::compression::CompressionOptions;
+use parquet2::encoding::ceil8;
 use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
 use parquet2::encoding::uleb128;
 use parquet2::encoding::Encoding;
@@ -249,6 +250,73 @@ pub fn encode_primitive_def_levels<I: Iterator<Item = bool>>(
     match version {
         Version::V1 => encode_primitive_def_levels_v1(buffer, iter, length),
         Version::V2 => encode_primitive_def_levels_v2(buffer, iter, length),
+    }
+}
+
+fn encode_bitmap_def_levels_payload(
+    buffer: &mut Vec<u8>,
+    bits: &[u8],
+    length: usize,
+) -> io::Result<()> {
+    let mut header = ceil8(length) as u64;
+    header <<= 1;
+    header |= 1;
+
+    let mut container = [0; 10];
+    let used = uleb128::encode(header, &mut container);
+    buffer.extend_from_slice(&container[..used]);
+
+    let used_bytes = length.saturating_add(7) / 8;
+    if used_bytes == 0 {
+        return Ok(());
+    }
+
+    let full_bytes = length / 8;
+    buffer.extend_from_slice(&bits[..full_bytes]);
+    if full_bytes < used_bytes {
+        let trailing_bits = length % 8;
+        if trailing_bits == 0 {
+            buffer.extend_from_slice(&bits[full_bytes..used_bytes]);
+        } else {
+            let mask = ((1u16 << trailing_bits) - 1) as u8;
+            buffer.push(bits[full_bytes] & mask);
+        }
+    }
+    Ok(())
+}
+
+fn encode_primitive_def_levels_from_bitmap_v1(
+    buffer: &mut Vec<u8>,
+    bits: &[u8],
+    length: usize,
+) -> io::Result<()> {
+    buffer.extend_from_slice(&[0; 4]);
+    let start = buffer.len();
+    encode_bitmap_def_levels_payload(buffer, bits, length)?;
+    let end = buffer.len();
+    let length_bytes = end - start;
+    let length_bytes = (length_bytes as i32).to_le_bytes();
+    (0..4).for_each(|i| buffer[start - 4 + i] = length_bytes[i]);
+    Ok(())
+}
+
+fn encode_primitive_def_levels_from_bitmap_v2(
+    buffer: &mut Vec<u8>,
+    bits: &[u8],
+    length: usize,
+) -> io::Result<()> {
+    encode_bitmap_def_levels_payload(buffer, bits, length)
+}
+
+pub fn encode_primitive_def_levels_from_bitmap(
+    buffer: &mut Vec<u8>,
+    bits: &[u8],
+    length: usize,
+    version: Version,
+) -> io::Result<()> {
+    match version {
+        Version::V1 => encode_primitive_def_levels_from_bitmap_v1(buffer, bits, length),
+        Version::V2 => encode_primitive_def_levels_from_bitmap_v2(buffer, bits, length),
     }
 }
 
@@ -863,6 +931,42 @@ mod tests {
                 assert!(general_decoded.iter().all(|&v| v == 0));
                 assert!(optimized_decoded.iter().all(|&v| v == 0));
             }
+        }
+    }
+
+    #[test]
+    fn encode_bitmap_def_levels_matches_general_encoder() {
+        use super::{encode_primitive_def_levels, encode_primitive_def_levels_from_bitmap};
+
+        let values = [
+            true, false, true, true, false, false, true, false, true, true, false,
+        ];
+        let mut bitmap = vec![0b0100_1101, 0b1111_1011];
+        bitmap[1] |= 0b1111_0000;
+
+        for &version in &[parquet2::write::Version::V1, parquet2::write::Version::V2] {
+            let mut general_buf = vec![];
+            encode_primitive_def_levels(
+                &mut general_buf,
+                values.into_iter(),
+                values.len(),
+                version,
+            )
+            .unwrap();
+
+            let mut bitmap_buf = vec![];
+            encode_primitive_def_levels_from_bitmap(
+                &mut bitmap_buf,
+                &bitmap,
+                values.len(),
+                version,
+            )
+            .unwrap();
+
+            assert_eq!(
+                bitmap_buf, general_buf,
+                "bitmap path should match general encoder for version={version:?}"
+            );
         }
     }
 

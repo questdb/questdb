@@ -33,7 +33,8 @@ use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
-    encode_all_ones_def_levels, encode_all_zeros_def_levels, encode_primitive_def_levels,
+    encode_all_ones_def_levels, encode_all_zeros_def_levels,
+    encode_primitive_def_levels_from_bitmap,
 };
 use parquet2::write::Version;
 
@@ -212,14 +213,14 @@ pub fn column_chunk_slices<'a>(
     })
 }
 
-/// Borrowed typed view of a logical chunk segment from a single partition.
+/// Borrowed typed view of one partition's contribution to a logical chunk.
 #[derive(Clone, Copy, Debug)]
-pub struct TypedChunkSegment<'a, T> {
+pub struct PartitionChunkView<'a, T> {
     pub adjusted_column_top: usize,
     pub slice: &'a [T],
 }
 
-impl<T> TypedChunkSegment<'_, T> {
+impl<T> PartitionChunkView<'_, T> {
     #[inline]
     pub fn num_rows(&self) -> usize {
         self.adjusted_column_top + self.slice.len()
@@ -295,9 +296,10 @@ impl FlatValidity {
         } else if self.null_count == self.num_rows {
             encode_all_zeros_def_levels(buffer, self.num_rows, version);
         } else {
-            encode_primitive_def_levels(
+            let used_bytes = self.num_rows.saturating_add(7) / 8;
+            encode_primitive_def_levels_from_bitmap(
                 buffer,
-                (0..self.num_rows).map(|row_idx| self.is_present(row_idx)),
+                &self.bits[..used_bytes],
                 self.num_rows,
                 version,
             )?;
@@ -308,28 +310,20 @@ impl FlatValidity {
             null_count: self.null_count,
         })
     }
-
-    #[inline]
-    fn is_present(&self, row_idx: usize) -> bool {
-        debug_assert!(row_idx < self.num_rows);
-        let byte_idx = row_idx / 8;
-        let bit_idx = row_idx % 8;
-        (self.bits[byte_idx] & (1u8 << bit_idx)) != 0
-    }
 }
 
-/// Build borrowed typed segments for the selected column chunk without
+/// Build borrowed typed partition chunk views for the selected column chunk without
 /// materializing a whole-chunk value buffer.
-pub fn collect_typed_chunk_segments<'a, T, F>(
+pub fn collect_partition_chunk_views<'a, T, F>(
     columns: &'a [Column],
     first_partition_start: usize,
     last_partition_end: usize,
     mut transmuter: F,
-) -> ParquetResult<Vec<TypedChunkSegment<'a, T>>>
+) -> ParquetResult<Vec<PartitionChunkView<'a, T>>>
 where
     F: FnMut(&'a Column) -> ParquetResult<&'a [T]>,
 {
-    let mut segments = Vec::with_capacity(columns.len());
+    let mut views = Vec::with_capacity(columns.len());
 
     for (column, chunk) in columns.iter().zip(column_chunk_slices(
         columns,
@@ -337,13 +331,13 @@ where
         last_partition_end,
     )) {
         let typed = transmuter(column)?;
-        segments.push(TypedChunkSegment {
+        views.push(PartitionChunkView {
             adjusted_column_top: chunk.adjusted_column_top,
             slice: &typed[chunk.lower_bound..chunk.upper_bound],
         });
     }
 
-    Ok(segments)
+    Ok(views)
 }
 
 /// Iterator over sub-chunks of a partition that respects `rows_per_page`.

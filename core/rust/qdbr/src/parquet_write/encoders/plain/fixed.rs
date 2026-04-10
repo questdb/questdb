@@ -10,7 +10,7 @@ use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
-    collect_typed_chunk_segments, FlatValidity, TypedChunkSegment,
+    collect_partition_chunk_views, FlatValidity, PartitionChunkView,
 };
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
@@ -32,7 +32,7 @@ pub fn encode_fixed_len_bytes<const N: usize>(
     reverse: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    let segments = collect_typed_chunk_segments(
+    let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
         last_partition_end,
@@ -99,13 +99,13 @@ fn encode_fixed_plain<const N: usize>(
 }
 
 fn bytes_segments_to_page<const N: usize>(
-    segments: &[TypedChunkSegment<'_, [u8; N]>],
+    segments: &[PartitionChunkView<'_, [u8; N]>],
     reverse: bool,
     options: WriteOptions,
     primitive_type: PrimitiveType,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    let num_rows: usize = segments.iter().map(TypedChunkSegment::num_rows).sum();
+    let num_rows: usize = segments.iter().map(PartitionChunkView::num_rows).sum();
     let null_value = fixed_null_value::<N>();
     let mut buffer = vec![];
     let mut validity = FlatValidity::new();

@@ -12,7 +12,7 @@ use parquet2::statistics::{
 use parquet2::types::NativeType;
 
 use crate::parquet::error::ParquetResult;
-use crate::parquet_write::encoders::helpers::{collect_typed_chunk_segments, TypedChunkSegment};
+use crate::parquet_write::encoders::helpers::{collect_partition_chunk_views, PartitionChunkView};
 use crate::parquet_write::encoders::numeric::{self, SimdEncodable, StatsUpdater};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
@@ -34,7 +34,7 @@ pub fn encode_simd<T>(
 where
     T: SimdEncodable,
 {
-    let segments = collect_typed_chunk_segments(
+    let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
         last_partition_end,
@@ -74,7 +74,7 @@ where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Default + num_traits::AsPrimitive<P> + Debug + Copy,
 {
-    let segments = collect_typed_chunk_segments(
+    let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
         last_partition_end,
@@ -115,7 +115,7 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Debug + Copy,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
-    let segments = collect_typed_chunk_segments(
+    let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
         last_partition_end,
@@ -154,7 +154,7 @@ pub fn encode_decimal<T>(
 where
     T: Nullable + NativeType + Debug + Copy,
 {
-    let segments = collect_typed_chunk_segments(
+    let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
         last_partition_end,
@@ -189,7 +189,7 @@ pub fn encode_boolean(
     options: WriteOptions,
     _bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    let segments = collect_typed_chunk_segments(
+    let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
         last_partition_end,
@@ -205,11 +205,11 @@ pub fn encode_boolean(
 }
 
 fn boolean_segments_to_page(
-    segments: &[TypedChunkSegment<'_, u8>],
+    segments: &[PartitionChunkView<'_, u8>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
-    let num_rows: usize = segments.iter().map(TypedChunkSegment::num_rows).sum();
+    let num_rows: usize = segments.iter().map(PartitionChunkView::num_rows).sum();
     let mut buffer = vec![];
     let mut stats = MaxMin::new();
     let iter = segments

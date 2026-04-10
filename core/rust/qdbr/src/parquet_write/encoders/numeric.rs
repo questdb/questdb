@@ -18,7 +18,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::encoders::helpers::{DefLevelsMeta, FlatValidity, TypedChunkSegment};
+use crate::parquet_write::encoders::helpers::{DefLevelsMeta, FlatValidity, PartitionChunkView};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
@@ -39,12 +39,12 @@ use qdb_core::col_type::nulls;
 use rapidhash::RapidHashMap;
 
 #[inline]
-fn segment_num_rows<T>(segments: &[TypedChunkSegment<'_, T>]) -> usize {
-    segments.iter().map(TypedChunkSegment::num_rows).sum()
+fn segment_num_rows<T>(segments: &[PartitionChunkView<'_, T>]) -> usize {
+    segments.iter().map(PartitionChunkView::num_rows).sum()
 }
 
 #[inline]
-fn segment_column_top<T>(segments: &[TypedChunkSegment<'_, T>]) -> usize {
+fn segment_column_top<T>(segments: &[PartitionChunkView<'_, T>]) -> usize {
     segments
         .iter()
         .map(|segment| segment.adjusted_column_top)
@@ -53,7 +53,7 @@ fn segment_column_top<T>(segments: &[TypedChunkSegment<'_, T>]) -> usize {
 
 fn encode_segmented_def_levels<T, F>(
     buffer: &mut Vec<u8>,
-    segments: &[TypedChunkSegment<'_, T>],
+    segments: &[PartitionChunkView<'_, T>],
     options: WriteOptions,
     mut is_present: F,
 ) -> ParquetResult<DefLevelsMeta>
@@ -79,7 +79,7 @@ where
 }
 
 pub fn decimal_segments_to_page_plain<T>(
-    segments: &[TypedChunkSegment<'_, T>],
+    segments: &[PartitionChunkView<'_, T>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
@@ -137,7 +137,7 @@ where
 }
 
 pub fn int_segments_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
-    segments: &[TypedChunkSegment<'_, T>],
+    segments: &[PartitionChunkView<'_, T>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
@@ -229,7 +229,7 @@ where
 }
 
 pub fn int_segments_to_page_notnull<T, P>(
-    segments: &[TypedChunkSegment<'_, T>],
+    segments: &[PartitionChunkView<'_, T>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
@@ -702,7 +702,7 @@ pub trait SimdEncodable: NativeType {
 
     /// Encode data with delta encoding across multiple logical chunk segments.
     fn encode_delta_segments(
-        segments: &[TypedChunkSegment<'_, Self>],
+        segments: &[PartitionChunkView<'_, Self>],
         non_null_count: usize,
         buffer: &mut Vec<u8>,
     ) -> bool
@@ -786,7 +786,7 @@ impl SimdEncodable for i64 {
     }
 
     fn encode_delta_segments(
-        segments: &[TypedChunkSegment<'_, Self>],
+        segments: &[PartitionChunkView<'_, Self>],
         non_null_count: usize,
         buffer: &mut Vec<u8>,
     ) -> bool {
@@ -826,7 +826,7 @@ impl SimdEncodable for i32 {
     }
 
     fn encode_delta_segments(
-        segments: &[TypedChunkSegment<'_, Self>],
+        segments: &[PartitionChunkView<'_, Self>],
         non_null_count: usize,
         buffer: &mut Vec<u8>,
     ) -> bool {
@@ -879,7 +879,7 @@ impl SimdEncodable for f32 {
 
 /// Generic page encoder for nullable SIMD-backed chunk segments.
 pub fn slice_segments_to_page_simd<T: SimdEncodable>(
-    segments: &[TypedChunkSegment<'_, T>],
+    segments: &[PartitionChunkView<'_, T>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
