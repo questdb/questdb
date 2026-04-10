@@ -163,8 +163,8 @@ public class PartitionEncoder {
 
     public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor) throws CairoException {
         final TableReaderMetadata metadata = tableReader.getMetadata();
-        final int readerTsIdx = metadata.getTimestampIndex();
-        final int timestampIndex = readerTsIdx >= 0 ? metadata.getWriterIndex(readerTsIdx) : -1;
+        final int readerTimestampIndex = metadata.getTimestampIndex();
+        final int timestampIndex = readerTimestampIndex >= 0 ? metadata.getWriterIndex(readerTimestampIndex) : -1;
         descriptor.of(tableReader.getTableToken().getTableName(), 0, timestampIndex);
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final int columnType = metadata.getColumnType(i);
@@ -191,8 +191,8 @@ public class PartitionEncoder {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
         final TableReaderMetadata metadata = tableReader.getMetadata();
-        final int readerTsIdx = metadata.getTimestampIndex();
-        final int timestampIndex = readerTsIdx >= 0 ? metadata.getWriterIndex(readerTsIdx) : -1;
+        final int readerTimestampIndex = metadata.getTimestampIndex();
+        final int timestampIndex = readerTimestampIndex >= 0 ? metadata.getWriterIndex(readerTimestampIndex) : -1;
         descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex);
         final int columnCount = metadata.getColumnCount();
         final int columnBase = tableReader.getColumnBase(partitionIndex);

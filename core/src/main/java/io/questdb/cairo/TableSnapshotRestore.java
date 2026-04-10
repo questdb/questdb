@@ -308,8 +308,11 @@ public class TableSnapshotRestore implements QuietCloseable {
             // reused across tables. Without this, a parquet bitmap rebuild task
             // from this table could still be running when the caller loads the
             // next table's metadata into the same objects.
-            finalizeParallelTasks();
-            futures.clear();
+            try {
+                finalizeParallelTasks();
+            } finally {
+                futures.clear();
+            }
 
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)

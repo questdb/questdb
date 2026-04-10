@@ -43,8 +43,8 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableSnapshotRestore;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableSnapshotRestore;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -1047,16 +1047,20 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("ALTER TABLE t DROP COLUMN dummy");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
+            // Capture expected count before rebuild to verify bitmap index
+            sink.clear();
+            printSql("SELECT count() FROM t WHERE sym = 'A'");
+            final String symACountBefore = sink.toString();
+
             TableToken tableToken = engine.verifyTableName("t");
             try (
                     Path tablePath = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
                     TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
             ) {
                 restoreAgent.rebuildTableFiles(tablePath, new java.util.concurrent.atomic.AtomicInteger(), true);
-                restoreAgent.finalizeParallelTasks();
             }
 
-            assertSql("count\n3\n",
+            assertSql(symACountBefore,
                     "SELECT count() FROM t WHERE sym = 'A'");
         });
     }
@@ -1082,6 +1086,11 @@ public class CheckpointTest extends AbstractCairoTest {
                     ), INDEX(sym2) TIMESTAMP(ts) PARTITION BY DAY
                     """);
 
+            // Capture expected count before rebuild to verify bitmap index
+            sink.clear();
+            printSql("SELECT count() FROM t WHERE sym2 = 'DE'");
+            final String sym2DECountBefore = sink.toString();
+
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
 
             TableToken tableToken = engine.verifyTableName("t");
@@ -1090,11 +1099,10 @@ public class CheckpointTest extends AbstractCairoTest {
                     TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
             ) {
                 restoreAgent.rebuildTableFiles(tablePath, new java.util.concurrent.atomic.AtomicInteger(), true);
-                restoreAgent.finalizeParallelTasks();
             }
 
-            assertSql("count\n1000\n",
-                    "SELECT count() FROM t");
+            assertSql(sym2DECountBefore,
+                    "SELECT count() FROM t WHERE sym2 = 'DE'");
         });
     }
 
