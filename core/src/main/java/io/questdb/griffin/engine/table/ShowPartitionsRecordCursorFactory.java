@@ -357,7 +357,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
             if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
                 if (isParquet && parquetMetaReader != null && parquetMetaReader.isOpen()) {
-                    int tsIndex = tableReader.getMetadata().getTimestampIndex();
+                    int tsIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();
                     int rowGroupCount = parquetMetaReader.getRowGroupCount();
                     if (rowGroupCount > 0) {
                         minTimestamp = parquetMetaReader.getRowGroupMinTimestamp(0, tsIndex);
