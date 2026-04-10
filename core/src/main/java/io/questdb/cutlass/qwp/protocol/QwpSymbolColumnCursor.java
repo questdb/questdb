@@ -287,7 +287,7 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
                 offset += decodeResult.bytesRead;
 
                 long availableBytes = (long) dataLength - offset;
-                if (decodeResult.value < 0 || decodeResult.value > Integer.MAX_VALUE) {
+                if (offset > dataLength || decodeResult.value < 0 || decodeResult.value > Integer.MAX_VALUE) {
                     throw QwpParseException.create(
                             QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                             "dictionary string length out of int range: " + decodeResult.value
