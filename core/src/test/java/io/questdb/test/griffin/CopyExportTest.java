@@ -533,6 +533,37 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetEmptyPartitionAfterDropColumn() throws Exception {
+        // Regression test for populateEmptyPartition() timestamp index fix.
+        // When the table is empty, the exporter calls populateEmptyPartition
+        // instead of populateFromTableReader. After DROP COLUMN, the reader
+        // timestamp index diverges from the writer index. Without the fix,
+        // the Rust encoder misidentifies the designated timestamp column.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        dummy INT,
+                        val DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+
+            execute("ALTER TABLE t DROP COLUMN dummy");
+
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("COPY t TO 'empty_drop_col' WITH FORMAT parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> assertSql(
+                            "status\nfinished\n",
+                            "SELECT status FROM \"sys.copy_export_log\" LIMIT -1"
+                    ));
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
     public void testCopyParquetFailsWithIllegalSql() throws Exception {
         assertException(
                 "copy (select x from non_existing_table) to 'tmp' with format parquet",
