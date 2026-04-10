@@ -811,16 +811,42 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         let path_bytes = unsafe { slice::from_raw_parts(file_path_ptr, file_path_len as usize) };
         let path_str = std::str::from_utf8(path_bytes)
             .map_err(|e| fmt_err!(InvalidLayout, "invalid UTF-8 in file path: {}", e))?;
-        let mut file = std::fs::File::open(path_str)
-            .map_err(|e| fmt_err!(InvalidLayout, "cannot open parquet file \"{}\": {}", path_str, e))?;
-        let file_size = file.metadata()
-            .map_err(|e| fmt_err!(InvalidLayout, "cannot read file metadata \"{}\": {}", path_str, e))?
+        let mut file = std::fs::File::open(path_str).map_err(|e| {
+            fmt_err!(
+                InvalidLayout,
+                "cannot open parquet file \"{}\": {}",
+                path_str,
+                e
+            )
+        })?;
+        let file_size = file
+            .metadata()
+            .map_err(|e| {
+                fmt_err!(
+                    InvalidLayout,
+                    "cannot read file metadata \"{}\": {}",
+                    path_str,
+                    e
+                )
+            })?
             .len();
-        let file_metadata = parquet2::read::read_metadata_with_size(&mut file, file_size)
-            .map_err(|e| fmt_err!(InvalidLayout, "cannot read parquet footer \"{}\": {}", path_str, e))?;
+        let file_metadata =
+            parquet2::read::read_metadata_with_size(&mut file, file_size).map_err(|e| {
+                fmt_err!(
+                    InvalidLayout,
+                    "cannot read parquet footer \"{}\": {}",
+                    path_str,
+                    e
+                )
+            })?;
 
-        let row_count = i64::try_from(file_metadata.num_rows)
-            .map_err(|_| fmt_err!(InvalidLayout, "num_rows exceeds i64::MAX in \"{}\"", path_str))?;
+        let row_count = i64::try_from(file_metadata.num_rows).map_err(|_| {
+            fmt_err!(
+                InvalidLayout,
+                "num_rows exceeds i64::MAX in \"{}\"",
+                path_str
+            )
+        })?;
         let squash_tracker = match crate::parquet_read::meta::extract_qdb_meta(&file_metadata) {
             Ok(Some(meta)) => meta.squash_tracker,
             _ => -1i64,
