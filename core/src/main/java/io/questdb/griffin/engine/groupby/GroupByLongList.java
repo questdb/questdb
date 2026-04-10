@@ -94,6 +94,10 @@ public class GroupByLongList {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
     }
 
+    public long dataPtr() {
+        return ptr + HEADER_SIZE;
+    }
+
     public void checkCapacity(int capacity) {
         if (capacity < 0) {
             throw new IllegalArgumentException("Negative capacity. Integer overflow may be?");
