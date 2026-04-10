@@ -6412,11 +6412,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
             }
         }
-        // Distinct keys file (.pd)
-        linkFile(ff,
-                PostingIndexUtils.distinctKeysFileName(path.trimTo(srcDirLen), columnName, columnNameTxn),
-                PostingIndexUtils.distinctKeysFileName(other.trimTo(dstDirLen), columnName, columnNameTxn)
-        );
     }
 
     private void lock() {

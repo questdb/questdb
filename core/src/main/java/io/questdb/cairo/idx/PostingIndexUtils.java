@@ -439,13 +439,7 @@ public final class PostingIndexUtils {
         }
     }
 
-    public static LPSZ distinctKeysFileName(Path path, CharSequence name, long columnNameTxn) {
-        path.concat(name).put(".pd");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
+
 
     /**
      * Encodes sorted values for a single key using delta + FoR64 bitpacking.
@@ -885,8 +879,6 @@ public final class PostingIndexUtils {
                 ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, columnVersion, c));
             }
         }
-        // Remove distinct keys file (.pd) if present
-        ff.removeQuiet(distinctKeysFileName(path.trimTo(pathTrimTo), columnName, columnVersion));
     }
 
     /**
@@ -1208,43 +1200,7 @@ public final class PostingIndexUtils {
     // Elias-Fano support methods for readers
     // ==================================================================================
 
-    /**
-     * O(1) point access to value at given index in an EF-encoded key.
-     */
-    public static long efAccessValue(long encodedAddr, long rankDirAddr, int numHighWords, int index) {
-        long pos = encodedAddr + 4;
-        int L = Unsafe.getUnsafe().getByte(pos + 4) & 0xFF;
-        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
-        long lowStart = pos + 4 + 1 + 8;
-        int n = Unsafe.getUnsafe().getInt(pos);
-        int lowBytes = efLowBytesAligned(n, L);
-        long highStart = lowStart + lowBytes;
-        long low = readBitsWord(lowStart, (long) index * L, L) & lowMask;
-        long selectPos = efSelect(highStart, rankDirAddr, numHighWords, index);
-        return ((selectPos - index) << L) | low;
-    }
 
-    /**
-     * Builds rank directory from high bits of an EF-encoded key.
-     */
-    public static int efBuildRankDirectory(long encodedAddr, long rankDirAddr) {
-        long pos = encodedAddr + 4;
-        int n = Unsafe.getUnsafe().getInt(pos);
-        pos += 4;
-        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF;
-        pos += 1;
-        long u = Unsafe.getUnsafe().getLong(pos);
-        pos += 8;
-        int lowBytes = efLowBytesAligned(n, L);
-        long highStart = pos + lowBytes;
-        int numHighWords = (int) ((n + (u >>> L) + 63) / 64);
-        int cumulative = 0;
-        for (int w = 0; w < numHighWords; w++) {
-            Unsafe.getUnsafe().putInt(rankDirAddr + (long) w * Integer.BYTES, cumulative);
-            cumulative += Long.bitCount(Unsafe.getUnsafe().getLong(highStart + (long) w * 8));
-        }
-        return numHighWords;
-    }
 
     /**
      * Computes 8-byte-aligned size for the EF low bits region.
@@ -1253,19 +1209,6 @@ public final class PostingIndexUtils {
         return (int) ((((long) n * L + 63) >>> 6) << 3);
     }
 
-    /**
-     * Finds position of k-th set bit in high bit array via rank directory.
-     */
-    static long efSelect(long highStart, long rankDirAddr, int numWords, int k) {
-        int lo = 0, hi = numWords - 1;
-        while (lo < hi) {
-            int mid = (lo + hi + 1) >>> 1;
-            if (Unsafe.getUnsafe().getInt(rankDirAddr + (long) mid * Integer.BYTES) <= k) lo = mid;
-            else hi = mid - 1;
-        }
-        int rankBefore = Unsafe.getUnsafe().getInt(rankDirAddr + (long) lo * Integer.BYTES);
-        return (long) lo * 64 + selectInWord(Unsafe.getUnsafe().getLong(highStart + (long) lo * 8), k - rankBefore);
-    }
 
     // ==================================================================================
     // Bit manipulation helpers for Elias-Fano
@@ -1284,45 +1227,6 @@ public final class PostingIndexUtils {
             value |= Unsafe.getUnsafe().getLong(wordAddr + 8) << (64 - bitOffset);
         }
         return (numBits < 64) ? value & ((1L << numBits) - 1) : value;
-    }
-
-    /**
-     * Finds position of k-th set bit (0-indexed) within a 64-bit word.
-     */
-    static int selectInWord(long word, int k) {
-        int pos = 0;
-        long lo32 = word & 0xFFFFFFFFL;
-        int c = Long.bitCount(lo32);
-        if (k >= c) {
-            word >>>= 32;
-            pos += 32;
-            k -= c;
-        } else {
-            word = lo32;
-        }
-        long lo16 = word & 0xFFFFL;
-        c = Long.bitCount(lo16);
-        if (k >= c) {
-            word >>>= 16;
-            pos += 16;
-            k -= c;
-        } else {
-            word = lo16;
-        }
-        long lo8 = word & 0xFFL;
-        c = Long.bitCount(lo8);
-        if (k >= c) {
-            word >>>= 8;
-            pos += 8;
-            k -= c;
-        } else {
-            word = lo8;
-        }
-        while (k > 0) {
-            word &= word - 1;
-            k--;
-        }
-        return pos + Long.numberOfTrailingZeros(word);
     }
 
     private static void setBitWord(long baseAddr, long bitPos) {
