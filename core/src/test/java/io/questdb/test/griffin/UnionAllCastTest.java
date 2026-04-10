@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -899,9 +899,9 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         0.7905675319675964
                         4.689592037643856E15
                         4.729996258992366E15
-                        7.7465360618163292E18
-                        -6.9459215023845018E18
-                        8.2601885552325868E18
+                        7.746536061816329E18
+                        -6.945921502384502E18
+                        8.260188555232587E18
                         """,
                 "create table x as (select rnd_double() a from long_sequence(5))",
                 "create table y as (select rnd_long() b from long_sequence(5))"
@@ -1909,6 +1909,28 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         """,
                 "create table x as (select x::decimal(19, 3) a from long_sequence(5))",
                 "create table y as (select 0::int a union select 3::int union select 5::int union select 9::int union select 8::int)",
+                false
+        );
+    }
+
+    @Test
+    public void testIntDecimalMultiColumn() throws Exception {
+        // Regression test: when casting INT -> DECIMAL in a UNION ALL, a missing
+        // break in generateCastFunctions caused fall-through from the DECIMAL case
+        // to BINARY, inserting a spurious BinColumn into the cast function list.
+        // With multiple columns, this shifts all subsequent cast function indices,
+        // causing column b to read from the wrong cast function.
+        testUnionAll(
+                """
+                        a\tb
+                        1.0\t10
+                        2.0\t20
+                        3.0\t30
+                        100.0\t77
+                        200.0\t88
+                        """,
+                "CREATE TABLE x AS (SELECT x::decimal(4, 1) a, (x * 10)::int b FROM long_sequence(3))",
+                "CREATE TABLE y AS (SELECT 100::int a, 77::int b UNION SELECT 200::int, 88::int)",
                 false
         );
     }

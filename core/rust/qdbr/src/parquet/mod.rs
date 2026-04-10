@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,6 +24,8 @@
 pub(crate) mod error;
 pub(crate) mod io;
 pub(crate) mod qdb_metadata;
+
+pub use qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 pub(crate) mod util;
 
 // Don't expose this in the general API, as it heightens the risk

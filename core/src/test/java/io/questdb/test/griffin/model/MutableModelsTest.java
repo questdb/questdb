@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -31,6 +31,7 @@ import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.HorizonJoinContext;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.JoinContext;
@@ -146,6 +147,23 @@ public class MutableModelsTest {
 
         node.clear();
         assertFieldsEqual(ExpressionNode.FACTORY.newInstance(), node);
+    }
+
+    @Test
+    public void testHorizonJoinContextClear() {
+        HorizonJoinContext context = new HorizonJoinContext();
+        HorizonJoinContext freshContext = new HorizonJoinContext();
+        context.setMode(HorizonJoinContext.MODE_RANGE);
+        context.setRangeFrom(newExpressionNode(), 10);
+        context.setRangeTo(newExpressionNode());
+        context.setRangeStep(newExpressionNode(), 30);
+        context.setAlias(newExpressionNode(), 40);
+        context.setParentModel(QueryModel.FACTORY.newInstance());
+        context.addListOffset(newExpressionNode());
+        assertDifferentFromFresh(context, freshContext);
+
+        context.clear();
+        assertFieldsEqual(new HorizonJoinContext(), context);
     }
 
     @Test
@@ -277,6 +295,13 @@ public class MutableModelsTest {
         model.setFillStride(newExpressionNode());
         model.setAllowPropagationOfOrderByAdvice(false);
         model.getAliasSequenceMap().put("foobar", 1);
+        // Setup HorizonJoinContext
+        HorizonJoinContext hjc = model.getHorizonJoinContext();
+        hjc.setMode(HorizonJoinContext.MODE_RANGE);
+        hjc.setRangeFrom(newExpressionNode(), 10);
+        hjc.setRangeTo(newExpressionNode());
+        hjc.setRangeStep(newExpressionNode(), 30);
+        hjc.setAlias(newExpressionNode(), 40);
         assertDifferentFromFresh(model, QueryModel.FACTORY.newInstance());
 
         model.clear();
@@ -332,7 +357,9 @@ public class MutableModelsTest {
         context.setHiExprTimeUnit(WindowExpression.TIME_UNIT_MINUTE);
         context.setHi(200);
         context.setHiKind(WindowJoinContext.FOLLOWING, 40);
-        context.setIncludePrevailing(false, 50);
+        context.setDynamicLo(true);
+        context.setDynamicHi(true);
+        context.setIncludePrevailing(false);
         context.setParentModel(QueryModel.FACTORY.newInstance());
         assertDifferentFromFresh(context, freshContext);
 
@@ -410,7 +437,7 @@ public class MutableModelsTest {
 
             // For embedded Mutable objects, compare fields recursively
             String className = expectedValue.getClass().getSimpleName();
-            if (className.equals("RuntimeIntervalModelBuilder") || className.equals("WindowJoinContext")) {
+            if (className.equals("RuntimeIntervalModelBuilder") || className.equals("WindowJoinContext") || className.equals("HorizonJoinContext")) {
                 assertFieldsEqual(expectedValue, actualValue);
                 return;
             }

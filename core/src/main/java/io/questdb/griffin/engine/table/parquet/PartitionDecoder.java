@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -40,6 +41,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
+
 
 public class PartitionDecoder implements QuietCloseable {
     private static final long COLUMNS_PTR_OFFSET;
@@ -54,6 +56,7 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long ROW_GROUP_COUNT_OFFSET;
     private static final long ROW_GROUP_SIZES_PTR_OFFSET;
     private static final long TIMESTAMP_INDEX_OFFSET;
+    private static final long UNUSED_BYTES_OFFSET;
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
@@ -75,6 +78,33 @@ public class PartitionDecoder implements QuietCloseable {
     }
 
     public static native void destroyDecodeContext(long decodeContextPtr);
+
+    /**
+     * Check if a row group can be skipped based on min/max statistics and bloom filter conditions.
+     * <p>
+     * Filter list format: 3 longs per filter
+     * - Long 0: encoded(column_index, count, op) - lower 32 bits: column_index, next 24 bits: count, upper 8 bits: op
+     * - Long 1: values_ptr
+     * - Long 2: column_type
+     *
+     * @param rowGroupIndex the row group index to check
+     * @param filters       filter descriptors: [encoded(col_idx, count, op), ptr, column_type] per filter
+     * @param filterBufEnd  exclusive end address of the filter values buffer, used for native bounds checking
+     * @return true if the row group can be safely skipped
+     */
+    public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
+        assert ptr != 0;
+        assert filters.size() % ParquetRowGroupFilter.LONGS_PER_FILTER == 0;
+        return canSkipRowGroup(
+                ptr,
+                rowGroupIndex,
+                fileAddr,
+                fileSize,
+                filters.getAddress(),
+                (int) (filters.size() / ParquetRowGroupFilter.LONGS_PER_FILTER),
+                filterBufEnd
+        );
+    }
 
     @Override
     public void close() {
@@ -189,6 +219,8 @@ public class PartitionDecoder implements QuietCloseable {
         assert ptr != 0;
         return findRowGroupByTimestamp( // throws CairoException on error
                 ptr,
+                fileAddr,
+                fileSize,
                 timestamp,
                 rowLo,
                 rowHi,
@@ -269,6 +301,26 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
+    public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
+        assert ptr != 0;
+        return rowGroupMaxTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
+    }
+
+    public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
+        assert ptr != 0;
+        return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
+    }
+
+    private static native boolean canSkipRowGroup(
+            long decoderPtr,
+            int rowGroupIndex,
+            long filePtr,
+            long fileSize,
+            long filtersPtr,
+            int filterCount,
+            long filterBufEnd
+    ) throws CairoException;
+
     private static native long columnCountOffset();
 
     private static native long columnIdsOffset();
@@ -328,11 +380,13 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long findRowGroupByTimestamp(
             long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            long timestamp,
             long rowLo,
             long rowHi,
-            long timestamp,
             int timestampIndex
-    );
+    ) throws CairoException;
 
     private static native long readRowGroupStats(
             long decoderPtr,
@@ -346,9 +400,27 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long rowGroupCountOffset();
 
+    private static native long rowGroupMaxTimestamp(
+            long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            int rowGroupIndex,
+            int timestampColumnIndex
+    ) throws CairoException;
+
+    private static native long rowGroupMinTimestamp(
+            long decoderPtr,
+            long fileAddr,
+            long fileSize,
+            int rowGroupIndex,
+            int timestampColumnIndex
+    ) throws CairoException;
+
     private static native long rowGroupSizesPtrOffset();
 
     private static native long timestampIndexOffset();
+
+    private static native long unusedBytesOffset();
 
     private void destroy() {
         if (owned && ptr != 0) {
@@ -457,6 +529,10 @@ public class PartitionDecoder implements QuietCloseable {
             return ~Unsafe.getUnsafe().getInt(ptr + TIMESTAMP_INDEX_OFFSET);
         }
 
+        public long getUnusedBytes() {
+            return Unsafe.getUnsafe().getLong(ptr + UNUSED_BYTES_OFFSET);
+        }
+
         private void init() {
             columnNames.clear();
             directStringPool.clear();
@@ -492,6 +568,7 @@ public class PartitionDecoder implements QuietCloseable {
         ROW_GROUP_SIZES_PTR_OFFSET = rowGroupSizesPtrOffset();
         ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
         TIMESTAMP_INDEX_OFFSET = timestampIndexOffset();
+        UNUSED_BYTES_OFFSET = unusedBytesOffset();
         COLUMN_IDS_OFFSET = columnIdsOffset();
     }
 }

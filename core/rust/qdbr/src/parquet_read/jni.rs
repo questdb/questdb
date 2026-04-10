@@ -1,13 +1,15 @@
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use std::io::Cursor;
 use std::slice;
 
 use crate::allocator::QdbAllocator;
-use crate::parquet::error::{ParquetErrorExt, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;
-use crate::parquet_read::decode::ParquetColumnIndex;
+use crate::parquet_read::row_groups::ParquetColumnIndex;
 use crate::parquet_read::{
-    ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, DecodeContext, ParquetDecoder,
-    RowGroupBuffers, RowGroupStatBuffers,
+    ColumnChunkBuffers, ColumnChunkStats, ColumnFilterPacked, ColumnMeta, DecodeContext,
+    ParquetDecoder, RowGroupBuffers, RowGroupStatBuffers,
 };
 use jni::objects::JClass;
 use jni::JNIEnv;
@@ -15,6 +17,7 @@ use qdb_core::col_type::ColumnType;
 use std::mem::{offset_of, size_of};
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
     mut env: JNIEnv,
     _class: JClass,
@@ -38,13 +41,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroy(
     _env: JNIEnv,
     _class: JClass,
     decoder: *mut ParquetDecoder,
 ) {
     if decoder.is_null() {
-        panic!("decoder pointer is null");
+        return;
     }
 
     drop(unsafe { Box::from_raw(decoder) });
@@ -61,6 +65,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroyDecodeContext(
     _env: JNIEnv,
     _class: JClass,
@@ -103,64 +108,78 @@ fn decode_row_group_impl<const MODE: u8>(
     filtered_rows_ptr: *const i64,
     filtered_rows_count: usize,
 ) -> u32 {
-    assert!(!decoder.is_null(), "decoder pointer is null");
-    assert!(!ctx.is_null(), "decode context pointer is null");
-    assert!(
-        !row_group_bufs.is_null(),
-        "row group buffers pointer is null"
-    );
-    assert!(!columns.is_null(), "columns pointer is null");
-
-    match MODE {
-        x if x == DecodeMode::NoFilter as u8 => {}
-        _ => {
-            assert!(
-                !filtered_rows_ptr.is_null(),
-                "filtered rows pointer is null"
-            );
+    let res = (|| -> ParquetResult<usize> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
         }
-    }
+        if ctx.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decode context pointer is null"));
+        }
+        if row_group_bufs.is_null() {
+            return Err(fmt_err!(InvalidLayout, "row group buffers pointer is null"));
+        }
+        if columns.is_null() {
+            return Err(fmt_err!(InvalidLayout, "columns pointer is null"));
+        }
+        match MODE {
+            x if x == DecodeMode::NoFilter as u8 => {}
+            _ => {
+                if filtered_rows_ptr.is_null() && filtered_rows_count > 0 {
+                    return Err(fmt_err!(InvalidLayout, "filtered rows pointer is null"));
+                }
+                let row_group_span = row_group_hi.saturating_sub(row_group_lo) as usize;
+                if filtered_rows_count > row_group_span {
+                    return Err(fmt_err!(
+                        InvalidLayout,
+                        "filtered rows count {} exceeds row group span {}",
+                        filtered_rows_count,
+                        row_group_span
+                    ));
+                }
+            }
+        }
 
-    let decoder = unsafe { &*decoder };
-    let ctx = unsafe { &mut *ctx };
-    let row_group_bufs = unsafe { &mut *row_group_bufs };
-    let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
-    let filtered_rows = if filtered_rows_ptr.is_null() {
-        &[]
-    } else {
-        unsafe { slice::from_raw_parts(filtered_rows_ptr, filtered_rows_count) }
-    };
+        let decoder = unsafe { &*decoder };
+        let ctx = unsafe { &mut *ctx };
+        let row_group_bufs = unsafe { &mut *row_group_bufs };
+        let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
+        let filtered_rows = if filtered_rows_ptr.is_null() {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(filtered_rows_ptr, filtered_rows_count) }
+        };
 
-    let res = validate_jni_column_types(columns).and_then(|()| match MODE {
-        x if x == DecodeMode::NoFilter as u8 => decoder.decode_row_group(
-            ctx,
-            row_group_bufs,
-            columns,
-            row_group_index,
-            row_group_lo,
-            row_group_hi,
-        ),
-        x if x == DecodeMode::FilterSkip as u8 => decoder.decode_row_group_filtered::<false>(
-            ctx,
-            row_group_bufs,
-            column_offset,
-            columns,
-            row_group_index,
-            row_group_lo,
-            row_group_hi,
-            filtered_rows,
-        ),
-        _ => decoder.decode_row_group_filtered::<true>(
-            ctx,
-            row_group_bufs,
-            column_offset,
-            columns,
-            row_group_index,
-            row_group_lo,
-            row_group_hi,
-            filtered_rows,
-        ),
-    });
+        validate_jni_column_types(columns).and_then(|()| match MODE {
+            x if x == DecodeMode::NoFilter as u8 => decoder.decode_row_group(
+                ctx,
+                row_group_bufs,
+                columns,
+                row_group_index,
+                row_group_lo,
+                row_group_hi,
+            ),
+            x if x == DecodeMode::FilterSkip as u8 => decoder.decode_row_group_filtered::<false>(
+                ctx,
+                row_group_bufs,
+                column_offset,
+                columns,
+                row_group_index,
+                row_group_lo,
+                row_group_hi,
+                filtered_rows,
+            ),
+            _ => decoder.decode_row_group_filtered::<true>(
+                ctx,
+                row_group_bufs,
+                column_offset,
+                columns,
+                row_group_index,
+                row_group_lo,
+                row_group_hi,
+                filtered_rows,
+            ),
+        })
+    })();
 
     match res {
         Ok(row_count) => row_count as u32,
@@ -184,6 +203,52 @@ fn decode_row_group_impl<const MODE: u8>(
             err.add_context(context_msg);
             err.add_context(method_name);
             err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_canSkipRowGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    file_ptr: *const u8,
+    file_size: u64,
+    filters: *const ColumnFilterPacked,
+    filter_count: u32,
+    filter_buf_end: u64,
+) -> bool {
+    let res = (|| -> ParquetResult<bool> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        if filters.is_null() && filter_count > 0 {
+            return Err(fmt_err!(InvalidLayout, "filters pointer is null"));
+        }
+        if file_ptr.is_null() {
+            return Err(fmt_err!(InvalidLayout, "file pointer is null"));
+        }
+
+        let decoder = unsafe { &*decoder };
+        let filters = if filter_count == 0 {
+            &[]
+        } else {
+            unsafe { slice::from_raw_parts(filters, filter_count as usize) }
+        };
+        let file_data = unsafe { slice::from_raw_parts(file_ptr, file_size as usize) };
+
+        decoder.can_skip_row_group(row_group_index, file_data, filters, filter_buf_end)
+    })();
+
+    match res {
+        Ok(can_skip) => can_skip,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not check bloom filter for row group {row_group_index}"
+            ));
+            err.add_context("error in PartitionDecoder.canSkipRowGroup");
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }
@@ -233,6 +298,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     filtered_rows_ptr: *const i64,
     filtered_rows_size: i64,
 ) {
+    let filtered_rows_count = if filtered_rows_size < 0 {
+        0usize
+    } else {
+        filtered_rows_size as usize
+    };
     decode_row_group_impl::<{ DecodeMode::FilterSkip as u8 }>(
         &mut env,
         decoder,
@@ -245,7 +315,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         row_group_lo,
         row_group_hi,
         filtered_rows_ptr,
-        filtered_rows_size as usize,
+        filtered_rows_count,
     );
 }
 
@@ -265,6 +335,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     filtered_rows_ptr: *const i64,
     filtered_rows_size: i64,
 ) {
+    let filtered_rows_count = if filtered_rows_size < 0 {
+        0usize
+    } else {
+        filtered_rows_size as usize
+    };
     decode_row_group_impl::<{ DecodeMode::FilterFillNulls as u8 }>(
         &mut env,
         decoder,
@@ -277,11 +352,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         row_group_lo,
         row_group_hi,
         filtered_rows_ptr,
-        filtered_rows_size as usize,
+        filtered_rows_count,
     );
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readRowGroupStats(
     mut env: JNIEnv,
     _class: JClass,
@@ -291,20 +367,28 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     column_count: u32,
     row_group_index: u32,
 ) {
-    assert!(!decoder.is_null(), "decoder pointer is null");
-    assert!(
-        !row_group_stat_bufs.is_null(),
-        "row group stat buffers pointer is null"
-    );
-    assert!(!columns.is_null(), "columns pointer is null");
+    let res = (|| -> ParquetResult<()> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        if row_group_stat_bufs.is_null() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group stat buffers pointer is null"
+            ));
+        }
+        if columns.is_null() {
+            return Err(fmt_err!(InvalidLayout, "columns pointer is null"));
+        }
 
-    let decoder = unsafe { &*decoder };
-    let row_group_stat_bufs = unsafe { &mut *row_group_stat_bufs };
-    let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
+        let decoder = unsafe { &*decoder };
+        let row_group_stat_bufs = unsafe { &mut *row_group_stat_bufs };
+        let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
 
-    let res = validate_jni_column_types(columns).and_then(|()| {
-        decoder.read_column_chunk_stats(row_group_stat_bufs, columns, row_group_index)
-    });
+        validate_jni_column_types(columns).and_then(|()| {
+            decoder.read_column_chunk_stats(row_group_stat_bufs, columns, row_group_index)
+        })
+    })();
 
     match res {
         Ok(_) => {}
@@ -318,22 +402,120 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     }
 }
 
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupMinTimestamp(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    file_ptr: *const u8,
+    file_size: u64,
+    row_group_index: u32,
+    timestamp_column_index: u32,
+) -> i64 {
+    let res = (|| -> ParquetResult<i64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        if file_ptr.is_null() {
+            return Err(fmt_err!(InvalidLayout, "file pointer is null"));
+        }
+
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_min_timestamp(
+            file_ptr,
+            file_size,
+            row_group_index,
+            timestamp_column_index,
+        )
+    })();
+
+    match res {
+        Ok(ts) => ts,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get min timestamp for row group {row_group_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMinTimestamp");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupMaxTimestamp(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    file_ptr: *const u8,
+    file_size: u64,
+    row_group_index: u32,
+    timestamp_column_index: u32,
+) -> i64 {
+    let res = (|| -> ParquetResult<i64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        if file_ptr.is_null() {
+            return Err(fmt_err!(InvalidLayout, "file pointer is null"));
+        }
+
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_max_timestamp(
+            file_ptr,
+            file_size,
+            row_group_index,
+            timestamp_column_index,
+        )
+    })();
+
+    match res {
+        Ok(ts) => ts,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get max timestamp for row group {row_group_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMaxTimestamp");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
 // See PartitionDecoder for more info on the returned value format.
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_findRowGroupByTimestamp(
     mut env: JNIEnv,
     _class: JClass,
     decoder: *const ParquetDecoder,
+    file_ptr: *const u8,
+    file_size: u64,
     timestamp: i64,
     row_lo: usize,
     row_hi: usize,
     timestamp_index: u32,
 ) -> u64 {
-    assert!(!decoder.is_null(), "decoder pointer is null");
+    let res = (|| -> ParquetResult<u64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        if file_ptr.is_null() {
+            return Err(fmt_err!(InvalidLayout, "file pointer is null"));
+        }
 
-    let decoder = unsafe { &*decoder };
+        let decoder = unsafe { &*decoder };
+        decoder.find_row_group_by_timestamp(
+            file_ptr,
+            file_size,
+            timestamp,
+            row_lo,
+            row_hi,
+            timestamp_index,
+        )
+    })();
 
-    match decoder.find_row_group_by_timestamp(timestamp, row_lo, row_hi, timestamp_index) {
+    match res {
         Ok(row_group_index) => row_group_index,
         Err(mut err) => {
             err.add_context(format!("could not find row group by timestamp {timestamp}"));
@@ -432,6 +614,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_unusedBytesOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder, unused_bytes)
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_create(
     _env: JNIEnv,
     _class: JClass,
@@ -442,13 +633,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_destroy(
     _env: JNIEnv,
     _class: JClass,
     buffers: *mut RowGroupBuffers,
 ) {
     if buffers.is_null() {
-        panic!("row group buffers pointer is null");
+        return;
     }
 
     unsafe {
@@ -506,6 +698,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 
 // RowGroupStatsBuffers
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_create(
     _env: JNIEnv,
     _class: JClass,
@@ -516,13 +709,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
 }
 
 #[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_destroy(
     _env: JNIEnv,
     _class: JClass,
     stat_buffers: *mut RowGroupStatBuffers,
 ) {
     if stat_buffers.is_null() {
-        panic!("row group stat buffers pointer is null");
+        return;
     }
 
     unsafe {

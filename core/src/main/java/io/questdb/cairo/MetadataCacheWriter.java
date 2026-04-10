@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -54,4 +54,6 @@ public interface MetadataCacheWriter extends QuietCloseable {
     void hydrateTable(@NotNull TableMetadata tableMetadata);
 
     void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken);
+
+    void setHasParquetPartitions(@NotNull TableToken tableToken, boolean hasParquetPartitions);
 }

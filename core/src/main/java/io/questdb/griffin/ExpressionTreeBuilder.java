@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,7 +30,7 @@ import io.questdb.griffin.model.QueryModel;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-final class ExpressionTreeBuilder implements ExpressionParserListener {
+public final class ExpressionTreeBuilder implements ExpressionParserListener {
 
     private final Deque<ExpressionNode> argStack = new ArrayDeque<>();
     private final Deque<QueryModel> modelStack = new ArrayDeque<>();
@@ -70,7 +70,7 @@ final class ExpressionTreeBuilder implements ExpressionParserListener {
         argStack.push(node);
     }
 
-    ExpressionNode poll() {
+    public ExpressionNode poll() {
         return argStack.poll();
     }
 

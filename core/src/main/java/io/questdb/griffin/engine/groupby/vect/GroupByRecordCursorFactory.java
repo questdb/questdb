@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -401,7 +401,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
-            frameAddressCache.of(metadata, frameCursor.getColumnIndexes(), frameCursor.isExternal());
+            frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             for (int i = 0; i < workerCount; i++) {
                 frameMemoryPools.getQuick(i).of(frameAddressCache);
             }

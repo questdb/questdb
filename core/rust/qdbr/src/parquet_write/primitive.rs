@@ -1,46 +1,126 @@
+use std::collections::HashSet;
 use std::fmt::Debug;
+use std::hash::Hash;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_def_levels, ExactSizedIter, MaxMin,
+    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
-use parquet2::encoding::delta_bitpacked::encode;
+use parquet2::bloom_filter::hash_native;
+use parquet2::encoding::delta_bitpacked::{encode, encode_i32};
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::schema::Repetition;
-use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
+use parquet2::statistics::{
+    serialize_statistics, FixedLenStatistics, ParquetStatistics, PrimitiveStatistics,
+};
 use parquet2::types::NativeType;
+use parquet2::write::DynIter;
+use qdb_core::col_type::nulls;
+use rapidhash::RapidHashMap;
 
-pub fn int_slice_to_page_nullable<T, P>(
+pub fn decimal_slice_to_page_plain<T>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page>
+where
+    T: Nullable + NativeType + Debug,
+{
+    assert!(primitive_type.field_info.repetition == Repetition::Optional);
+    let num_rows = column_top + slice.len();
+    let mut null_count = 0;
+    let write_stats = options.write_statistics;
+    let mut statistics = MaxMin::new();
+
+    let deflevels_iter = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            let value = slice[i - column_top];
+            if value.is_null() {
+                null_count += 1;
+                false
+            } else {
+                if write_stats {
+                    statistics.update(value);
+                }
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_native(value));
+                }
+                true
+            }
+        }
+    });
+    let mut buffer = vec![];
+    encode_primitive_def_levels(&mut buffer, deflevels_iter, num_rows, options.version)?;
+
+    let definition_levels_byte_length = buffer.len();
+    let buffer = encode_plain_nullable_direct(slice, null_count, buffer);
+
+    let statistics = if options.write_statistics {
+        let s = &FixedLenStatistics {
+            primitive_type: primitive_type.clone(),
+            null_count: Some((column_top + null_count) as i64),
+            distinct_count: None,
+            max_value: statistics.max.map(|x| x.to_bytes().as_ref().to_vec()),
+            min_value: statistics.min.map(|x| x.to_bytes().as_ref().to_vec()),
+        } as &dyn parquet2::statistics::Statistics;
+        Some(serialize_statistics(s))
+    } else {
+        None
+    };
+
+    build_plain_page(
+        buffer,
+        num_rows,
+        column_top + null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        false,
+    )
+    .map(Page::Data)
+}
+
+pub fn int_slice_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
     slice: &[T],
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Nullable + num_traits::AsPrimitive<P> + Debug,
+    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
     match encoding {
-        Encoding::Plain => slice_to_page_nullable(
+        Encoding::Plain => slice_to_page_nullable_impl::<_, P, UNSIGNED_STATS, _>(
             slice,
             column_top,
             options,
             primitive_type,
             encoding,
             encode_plain_nullable,
+            bloom_hashes,
         ),
-        Encoding::DeltaBinaryPacked => slice_to_page_nullable(
+        Encoding::DeltaBinaryPacked => slice_to_page_nullable_impl::<_, P, UNSIGNED_STATS, _>(
             slice,
             column_top,
             options,
             primitive_type,
             encoding,
             encode_delta_nullable,
+            bloom_hashes,
         ),
         other => {
             return Err(fmt_err!(
@@ -52,101 +132,51 @@ where
     .map(Page::Data)
 }
 
-pub fn int_slice_to_page_notnull<T, P>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-) -> ParquetResult<Page>
-where
-    P: NativeType + num_traits::AsPrimitive<i64>,
-    T: Default + num_traits::AsPrimitive<P> + Debug,
-{
-    match encoding {
-        Encoding::Plain => slice_to_page_notnull(
-            slice,
-            column_top,
-            options,
-            primitive_type,
-            encoding,
-            encode_plain_notnull,
-        ),
-        Encoding::DeltaBinaryPacked => slice_to_page_notnull(
-            slice,
-            column_top,
-            options,
-            primitive_type,
-            encoding,
-            encode_delta_notnull,
-        ),
-        other => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported encoding {other:?} while writing an int column"
-            ))
-        }
+pub trait StatsUpdater<T, const UNSIGNED: bool> {
+    fn update_stats(&mut self, v: T);
+}
+
+impl StatsUpdater<i32, false> for MaxMin<i32> {
+    #[inline]
+    fn update_stats(&mut self, v: i32) {
+        self.update(v);
     }
-    .map(Page::Data)
 }
 
-fn slice_to_page_notnull<T, P, F: Fn(&[T], usize) -> Vec<u8>>(
+impl StatsUpdater<i32, true> for MaxMin<i32> {
+    #[inline]
+    fn update_stats(&mut self, v: i32) {
+        self.update_unsigned(v);
+    }
+}
+
+impl<const UNSIGNED: bool> StatsUpdater<i64, UNSIGNED> for MaxMin<i64> {
+    #[inline]
+    fn update_stats(&mut self, v: i64) {
+        self.update(v);
+    }
+}
+
+fn slice_to_page_nullable_impl<T, P, const UNSIGNED_STATS: bool, F>(
     slice: &[T],
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
     encode_fn: F,
-) -> ParquetResult<DataPage>
-where
-    P: NativeType,
-    T: Default + num_traits::AsPrimitive<P> + Debug,
-{
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
-    let statistics = if options.write_statistics {
-        let mut statistics = MaxMin::new();
-        for value in slice {
-            statistics.update(value.as_());
-        }
-        Some(build_statistics(
-            Some(column_top as i64),
-            statistics,
-            primitive_type.clone(),
-        ))
-    } else {
-        None
-    };
-
-    build_plain_page(
-        encode_fn(slice, column_top),
-        column_top + slice.len(),
-        column_top,
-        0,
-        statistics,
-        primitive_type,
-        options,
-        encoding,
-        true,
-    )
-}
-
-fn slice_to_page_nullable<T, P, F>(
-    slice: &[T],
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-    encode_fn: F,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<DataPage>
 where
     P: NativeType,
     T: Nullable + num_traits::AsPrimitive<P> + Debug,
     F: Fn(&[T], usize, Vec<u8>) -> Vec<u8>,
+    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
     assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
     let num_rows = column_top + slice.len();
     let mut null_count = 0;
-    let mut statistics = MaxMin::new();
+    let write_stats = options.write_statistics;
+    let mut statistics: MaxMin<P> = MaxMin::new();
 
     let def_levels_iter = (0..num_rows).map(|i| {
         if i < column_top {
@@ -158,7 +188,12 @@ where
                 false
             } else {
                 let v: P = value.as_();
-                statistics.update(v);
+                if write_stats {
+                    statistics.update_stats(v);
+                }
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_native(v));
+                }
                 true
             }
         }
@@ -192,6 +227,109 @@ where
     )
 }
 
+pub fn int_slice_to_page_notnull<T, P>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page>
+where
+    P: NativeType + num_traits::AsPrimitive<i64>,
+    T: Default + num_traits::AsPrimitive<P> + Debug,
+{
+    match encoding {
+        Encoding::Plain => slice_to_page_notnull(
+            slice,
+            column_top,
+            options,
+            primitive_type,
+            encoding,
+            encode_plain_notnull,
+            bloom_hashes,
+        ),
+        Encoding::DeltaBinaryPacked => slice_to_page_notnull(
+            slice,
+            column_top,
+            options,
+            primitive_type,
+            encoding,
+            encode_delta_notnull,
+            bloom_hashes,
+        ),
+        other => {
+            return Err(fmt_err!(
+                Unsupported,
+                "unsupported encoding {other:?} while writing an int column"
+            ))
+        }
+    }
+    .map(Page::Data)
+}
+
+fn slice_to_page_notnull<T, P, F: Fn(&[T], usize) -> Vec<u8>>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    encode_fn: F,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<DataPage>
+where
+    P: NativeType,
+    T: Default + num_traits::AsPrimitive<P> + Debug,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+
+    let statistics = match (options.write_statistics, bloom_hashes) {
+        (true, Some(h)) => {
+            let mut statistics = MaxMin::new();
+            for value in slice {
+                let v: P = value.as_();
+                statistics.update(v);
+                h.insert(hash_native(v));
+            }
+            Some(build_statistics(
+                Some(column_top as i64),
+                statistics,
+                primitive_type.clone(),
+            ))
+        }
+        (true, None) => {
+            let mut statistics = MaxMin::new();
+            for value in slice {
+                statistics.update(value.as_());
+            }
+            Some(build_statistics(
+                Some(column_top as i64),
+                statistics,
+                primitive_type.clone(),
+            ))
+        }
+        (false, Some(h)) => {
+            for value in slice {
+                h.insert(hash_native(value.as_()));
+            }
+            None
+        }
+        (false, None) => None,
+    };
+
+    build_plain_page(
+        encode_fn(slice, column_top),
+        column_top + slice.len(),
+        column_top,
+        0,
+        statistics,
+        primitive_type,
+        options,
+        encoding,
+        true,
+    )
+}
+
 fn encode_plain_notnull<T, P>(slice: &[T], column_top: usize) -> Vec<u8>
 where
     P: NativeType,
@@ -205,7 +343,7 @@ where
             slice[i - column_top]
         };
         let parquet_native: P = x.as_();
-        buffer.extend_from_slice(parquet_native.to_le_bytes().as_ref())
+        buffer.extend_from_slice(parquet_native.to_bytes().as_ref())
     }
     buffer
 }
@@ -226,7 +364,11 @@ where
         integer
     });
     let mut buffer = vec![];
-    encode(iterator, &mut buffer);
+    if size_of::<P>() <= 4 {
+        encode_i32(iterator, &mut buffer);
+    } else {
+        encode(iterator, &mut buffer);
+    }
     buffer
 }
 
@@ -238,7 +380,18 @@ where
     buffer.reserve(size_of::<P>() * (slice.len() - null_count));
     for x in slice.iter().filter(|x| !x.is_null()) {
         let parquet_native: P = x.as_();
-        buffer.extend_from_slice(parquet_native.to_le_bytes().as_ref())
+        buffer.extend_from_slice(parquet_native.to_bytes().as_ref())
+    }
+    buffer
+}
+
+fn encode_plain_nullable_direct<T>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
+where
+    T: Nullable + NativeType,
+{
+    buffer.reserve(std::mem::size_of::<T>() * (slice.len() - null_count));
+    for x in slice.iter().filter(|x| !x.is_null()) {
+        buffer.extend_from_slice(x.to_bytes().as_ref())
     }
     buffer
 }
@@ -254,7 +407,11 @@ where
         integer
     });
     let iterator = ExactSizedIter::new(iterator, slice.len() - null_count);
-    encode(iterator, &mut buffer);
+    if size_of::<P>() <= 4 {
+        encode_i32(iterator, &mut buffer);
+    } else {
+        encode(iterator, &mut buffer);
+    }
     buffer
 }
 
@@ -290,6 +447,7 @@ pub trait SimdEncodable: NativeType {
         slice: &[Self],
         column_top: usize,
         compute_stats: bool,
+        bloom_hashes: Option<&mut HashSet<u64>>,
     ) -> std::io::Result<DefLevelResult<Self>>;
 
     /// Check if a value represents null.
@@ -317,6 +475,8 @@ pub trait SimdEncodable: NativeType {
                 buffer.reserve(size_of::<Self>() * non_null_count);
                 if null_count == 0 {
                     // Fast path: no nulls, memcpy entire slice
+                    // SAFETY: Reinterprets a contiguous `&[T]` as raw bytes. Valid because slices are
+                    // contiguous and `u8` has no alignment requirement.
                     let bytes = unsafe {
                         std::slice::from_raw_parts(slice.as_ptr() as *const u8, size_of_val(slice))
                     };
@@ -324,7 +484,7 @@ pub trait SimdEncodable: NativeType {
                 } else {
                     // Slow path: filter out nulls
                     for x in slice.iter().filter(|x| !x.is_null()) {
-                        buffer.extend_from_slice(x.to_le_bytes().as_ref());
+                        buffer.extend_from_slice(x.to_bytes().as_ref());
                     }
                 }
                 Ok(buffer)
@@ -350,17 +510,18 @@ impl SimdEncodable for i64 {
         slice: &[Self],
         column_top: usize,
         compute_stats: bool,
+        bloom_hashes: Option<&mut HashSet<u64>>,
     ) -> std::io::Result<DefLevelResult<Self>> {
-        encode_i64_def_levels(buffer, slice, column_top, compute_stats)
+        encode_i64_def_levels(buffer, slice, column_top, compute_stats, bloom_hashes)
     }
 
     #[inline(always)]
     fn is_null(&self) -> bool {
-        *self == i64::MIN
+        *self == nulls::LONG
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
-        let iterator = slice.iter().filter(|&&x| x != i64::MIN).copied();
+        let iterator = slice.iter().filter(|&&x| x != nulls::LONG).copied();
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode(iterator, buffer);
         true
@@ -373,19 +534,23 @@ impl SimdEncodable for i32 {
         slice: &[Self],
         column_top: usize,
         compute_stats: bool,
+        bloom_hashes: Option<&mut HashSet<u64>>,
     ) -> std::io::Result<DefLevelResult<Self>> {
-        encode_i32_def_levels(buffer, slice, column_top, compute_stats)
+        encode_i32_def_levels(buffer, slice, column_top, compute_stats, bloom_hashes)
     }
 
     #[inline(always)]
     fn is_null(&self) -> bool {
-        *self == i32::MIN
+        *self == nulls::INT
     }
 
     fn encode_delta(slice: &[Self], non_null_count: usize, buffer: &mut Vec<u8>) -> bool {
-        let iterator = slice.iter().filter(|&&x| x != i32::MIN).map(|&x| x as i64);
+        let iterator = slice
+            .iter()
+            .filter(|&&x| x != nulls::INT)
+            .map(|&x| x as i64);
         let iterator = ExactSizedIter::new(iterator, non_null_count);
-        encode(iterator, buffer);
+        encode_i32(iterator, buffer);
         true
     }
 }
@@ -396,8 +561,9 @@ impl SimdEncodable for f64 {
         slice: &[Self],
         column_top: usize,
         compute_stats: bool,
+        bloom_hashes: Option<&mut HashSet<u64>>,
     ) -> std::io::Result<DefLevelResult<Self>> {
-        encode_f64_def_levels(buffer, slice, column_top, compute_stats)
+        encode_f64_def_levels(buffer, slice, column_top, compute_stats, bloom_hashes)
     }
 
     #[inline(always)]
@@ -412,8 +578,9 @@ impl SimdEncodable for f32 {
         slice: &[Self],
         column_top: usize,
         compute_stats: bool,
+        bloom_hashes: Option<&mut HashSet<u64>>,
     ) -> std::io::Result<DefLevelResult<Self>> {
-        encode_f32_def_levels(buffer, slice, column_top, compute_stats)
+        encode_f32_def_levels(buffer, slice, column_top, compute_stats, bloom_hashes)
     }
 
     #[inline(always)]
@@ -429,6 +596,7 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
     let num_rows = column_top + slice.len();
@@ -443,13 +611,19 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
         0
     };
 
-    let result = T::encode_def_levels(&mut buffer, slice, column_top, options.write_statistics)
-        .map_err(|e| {
-            fmt_err!(
-                Io(std::sync::Arc::new(e)),
-                "failed to encode definition levels"
-            )
-        })?;
+    let result = T::encode_def_levels(
+        &mut buffer,
+        slice,
+        column_top,
+        options.write_statistics,
+        bloom_hashes,
+    )
+    .map_err(|e| {
+        fmt_err!(
+            Io(std::sync::Arc::new(e)),
+            "failed to encode definition levels"
+        )
+    })?;
 
     // For V1, write the definition levels length
     if matches!(options.version, parquet2::write::Version::V1) {
@@ -483,4 +657,355 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
         false,
     )
     .map(Page::Data)
+}
+
+// =============================================================================
+// Dictionary encoding functions
+// =============================================================================
+
+/// Dictionary encoding for SIMD-encodable nullable types (i32, i64, f32, f64).
+/// Uses the byte representation as HashMap key to avoid float Eq/Hash issues.
+pub fn slice_to_dict_pages_simd<T: SimdEncodable>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    T::Bytes: Eq + Hash,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+    let value_size = size_of::<T>();
+
+    // Build dictionary: use byte representation as key
+    let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<T> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
+    let mut null_count = 0usize;
+    let mut statistics = MaxMin::new();
+
+    for &value in slice {
+        if value.is_null() {
+            null_count += 1;
+        } else {
+            statistics.update(value);
+            let bytes = value.to_bytes();
+            let next_id = u32::try_from(dict_entries.len())
+                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+            let key = *dict_map.entry(bytes).or_insert_with(|| {
+                dict_entries.push(value);
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    // Build dict buffer: raw native bytes per unique value
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(entry));
+        }
+    }
+
+    // Encode data page: def levels + bit_width + RLE-encoded keys
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            !slice[i - column_top].is_null()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let non_null_len = slice.len() - null_count;
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(total_null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
+        data_buffer,
+        definition_levels_byte_length,
+        num_rows,
+        total_null_count,
+        stats,
+        primitive_type,
+        options,
+        false,
+    )
+}
+
+/// Dictionary encoding for nullable int types that need type conversion (Geo*, IPv4).
+pub fn int_slice_to_dict_pages_nullable<T, P>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    P: NativeType,
+    P::Bytes: Eq + Hash,
+    T: Nullable + num_traits::AsPrimitive<P> + Copy + Debug,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+    let value_size = size_of::<P>();
+
+    let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<P> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
+    let mut null_count = 0usize;
+    let mut statistics = MaxMin::new();
+
+    for &value in slice {
+        if value.is_null() {
+            null_count += 1;
+        } else {
+            let p: P = value.as_();
+            statistics.update(p);
+            let bytes = p.to_bytes();
+            let next_id = u32::try_from(dict_entries.len())
+                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+            let key = *dict_map.entry(bytes).or_insert_with(|| {
+                dict_entries.push(p);
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(entry));
+        }
+    }
+
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            !slice[i - column_top].is_null()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let non_null_len = slice.len() - null_count;
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(total_null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
+        data_buffer,
+        definition_levels_byte_length,
+        num_rows,
+        total_null_count,
+        stats,
+        primitive_type,
+        options,
+        false,
+    )
+}
+
+/// Dictionary encoding for not-null int types (Byte, Short, Char) — Required repetition,
+/// no def levels. Column top rows use T::default() as the dict value.
+pub fn int_slice_to_dict_pages_notnull<T, P>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    P: NativeType,
+    P::Bytes: Eq + Hash,
+    T: Default + num_traits::AsPrimitive<P> + Copy + Debug,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    let num_rows = column_top + slice.len();
+    let value_size = size_of::<P>();
+
+    let mut dict_map: RapidHashMap<P::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<P> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(num_rows);
+    let mut statistics = MaxMin::new();
+
+    // Column top rows use the default value
+    if column_top > 0 {
+        let default_p: P = T::default().as_();
+        let bytes = default_p.to_bytes();
+        let next_id = u32::try_from(dict_entries.len())
+            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+        let key = *dict_map.entry(bytes).or_insert_with(|| {
+            dict_entries.push(default_p);
+            next_id
+        });
+        for _ in 0..column_top {
+            keys.push(key);
+        }
+    }
+
+    for &value in slice {
+        let p: P = value.as_();
+        statistics.update(p);
+        let bytes = p.to_bytes();
+        let next_id = u32::try_from(dict_entries.len())
+            .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+        let key = *dict_map.entry(bytes).or_insert_with(|| {
+            dict_entries.push(p);
+            next_id
+        });
+        keys.push(key);
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * value_size);
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(entry));
+        }
+    }
+
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(column_top as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        num_rows,
+        Vec::new(),
+        0,
+        num_rows,
+        column_top,
+        stats,
+        primitive_type,
+        options,
+        true,
+    )
+}
+
+/// Dictionary encoding for Decimal types (FixedLenByteArray).
+pub fn decimal_slice_to_dict_pages<T>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>>
+where
+    T: Nullable + NativeType + Debug,
+    T::Bytes: Eq + Hash,
+{
+    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    let num_rows = column_top + slice.len();
+
+    let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
+    let mut dict_entries: Vec<T> = Vec::new();
+    let mut keys: Vec<u32> = Vec::with_capacity(slice.len());
+    let mut null_count = 0usize;
+    let mut statistics = MaxMin::new();
+
+    for &value in slice {
+        if value.is_null() {
+            null_count += 1;
+        } else {
+            statistics.update(value);
+            let bytes = value.to_bytes();
+            let next_id = u32::try_from(dict_entries.len())
+                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
+            let key = *dict_map.entry(bytes).or_insert_with(|| {
+                dict_entries.push(value);
+                next_id
+            });
+            keys.push(key);
+        }
+    }
+
+    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * size_of::<T>());
+    for &entry in &dict_entries {
+        dict_buffer.extend_from_slice(entry.to_bytes().as_ref());
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(entry));
+        }
+    }
+
+    let total_null_count = column_top + null_count;
+    let mut data_buffer = Vec::new();
+
+    let def_levels = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        } else {
+            !slice[i - column_top].is_null()
+        }
+    });
+    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
+    let definition_levels_byte_length = data_buffer.len();
+
+    let non_null_len = slice.len() - null_count;
+    let stats = if options.write_statistics {
+        Some(build_statistics(
+            Some(total_null_count as i64),
+            statistics,
+            primitive_type.clone(),
+        ))
+    } else {
+        None
+    };
+
+    encode_dict_rle_pages(
+        dict_buffer,
+        dict_entries.len(),
+        keys,
+        non_null_len,
+        data_buffer,
+        definition_levels_byte_length,
+        num_rows,
+        total_null_count,
+        stats,
+        primitive_type,
+        options,
+        false,
+    )
 }

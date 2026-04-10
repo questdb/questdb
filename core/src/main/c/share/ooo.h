@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -34,6 +34,16 @@ constexpr int8_t error_sort_timestamp_txn_range_overflow = -1;
 constexpr int8_t error_sort_segment_index_offset_range_overflow = -2;
 constexpr int8_t error_sort_row_count_overflow = -3;
 
+inline int clzll(uint64_t x) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_clzll(x);
+#else
+    unsigned long bit_index = 0;
+    _BitScanReverse64(&bit_index, x);
+    return 63 - (int)bit_index;
+#endif
+}
+
 template<auto Start, auto End, auto Inc, class F>
 constexpr void constexpr_for(F &&f) {
     if constexpr (Start < End) {
@@ -44,7 +54,7 @@ constexpr void constexpr_for(F &&f) {
 
 inline uint8_t range_bits(uint64_t range) {
     if (range <= 1) return 0;
-    return 64 - __builtin_clzll(range - 1);
+    return 64 - clzll(range - 1);
 }
 
 

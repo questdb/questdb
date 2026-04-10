@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -239,21 +239,25 @@ public class WalTxnDetails implements QuietCloseable {
 
     /**
      * Calculates the count of transactions to apply in one go in {@link io.questdb.cairo.TableWriter}.
-     * Applying many transactions is also referenced as wrting a block of transactions.
+     * Applying many transactions is also referenced as writing a block of transactions.
      *
-     * @param seqTxn              - seqTxn to start the block from
-     * @param pressureControl     - pressure control to calculate the block size, pressure control can limit the block size
-     * @param maxBlockRecordCount - maximum number of transactions in the block
-     * @return - the number of transactions to apply in one go, e.g. the block size
+     * @param seqTxn              starting WAL sequence transaction number
+     * @param pressureControl     pressure control to calculate the block size, pressure control can limit the block size
+     * @param maxBlockRecordCount maximum number of records in the block
+     * @param inOrderMinTimestamp in-order optimization applies only to commits whose timestamps >= this value.
+     *                            Pass the last partition's max timestamp for native partitions (optimization applies
+     *                            only to appending data). Pass Long.MAX_VALUE when the last partition is parquet
+     *                            to disable in-order optimization entirely and batch more aggressively.
+     * @return the number of transactions to apply in one go, e.g. the block size
      */
-    public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount) {
+    public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount, long inOrderMinTimestamp) {
         int blockSize = 1;
         long lastSeqTxn = getLastSeqTxn();
         long totalRowCount = getSegmentRowHi(seqTxn) - getSegmentRowLo(seqTxn);
         maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBlockRowCount() - 1);
 
         long lastWalSegment = getWalSegment(seqTxn);
-        boolean allInOrder = getTxnInOrder(seqTxn);
+        boolean allInOrder = getMinTimestamp(seqTxn) >= inOrderMinTimestamp && getTxnInOrder(seqTxn);
         long minTs = Long.MAX_VALUE;
         long maxTs = Long.MIN_VALUE;
 
@@ -268,7 +272,8 @@ public class WalTxnDetails implements QuietCloseable {
                         }
                         allInOrder = false;
                     } else {
-                        allInOrder = getTxnInOrder(nextTxn) && maxTs <= getMinTimestamp(nextTxn);
+                        allInOrder = getMinTimestamp(nextTxn) >= inOrderMinTimestamp
+                                && getTxnInOrder(nextTxn) && maxTs <= getMinTimestamp(nextTxn);
                         minTs = Math.min(minTs, getMinTimestamp(nextTxn));
                         maxTs = Math.max(maxTs, getMaxTimestamp(nextTxn));
                     }
@@ -276,7 +281,12 @@ public class WalTxnDetails implements QuietCloseable {
                 totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
                 lastWalSegment = currentWalSegment;
 
-                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
+                if (totalRowCount > maxBlockRecordCount) {
+                    // Block is too big, commit what we have so far
+                    break;
+                }
+                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT) {
+                    blockSize++;
                     break;
                 }
                 if (getDedupMode(nextTxn) == WAL_DEDUP_MODE_REPLACE_RANGE) {
@@ -292,7 +302,7 @@ public class WalTxnDetails implements QuietCloseable {
         // And the commit to timestamp includes the last transaction in the block
         // This is very basic heuristic and needs some read time testing to come with a more robust solution
         long lastTxn = seqTxn + blockSize - 1;
-        if (blockSize > 1 && getCommitToTimestamp(lastTxn) != FORCE_FULL_COMMIT) {
+        if (allInOrder && blockSize > 1 && getCommitToTimestamp(lastTxn) != FORCE_FULL_COMMIT) {
             while (blockSize > 1 && getCommitToTimestamp(lastTxn) < getMaxTimestamp(lastTxn) && totalRowCount > maxBlockRecordCount / 2) {
                 blockSize--;
                 lastTxn--;

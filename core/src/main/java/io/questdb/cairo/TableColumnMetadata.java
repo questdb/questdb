@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -40,6 +40,7 @@ public class TableColumnMetadata implements Plannable {
     private int columnType;
     private boolean dedupKeyFlag;
     private int indexValueBlockCapacity;
+    private int parquetEncodingConfig;
     private boolean symbolCacheFlag;
     private boolean symbolIndexFlag;
 
@@ -157,6 +158,10 @@ public class TableColumnMetadata implements Plannable {
         return metadata;
     }
 
+    public int getParquetEncodingConfig() {
+        return parquetEncodingConfig;
+    }
+
     public int getReplacingIndex() {
         return replacingIndex;
     }
@@ -203,6 +208,10 @@ public class TableColumnMetadata implements Plannable {
 
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {
         this.indexValueBlockCapacity = indexValueBlockCapacity;
+    }
+
+    public void setParquetEncodingConfig(int parquetEncodingConfig) {
+        this.parquetEncodingConfig = parquetEncodingConfig;
     }
 
     public void setSymbolCacheFlag(boolean cache) {

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -242,6 +242,10 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     /**
      * Appends a JSON representation of the provided array to the provided character sink.
+     *
+     * @param arrayView  the array to render, or null to emit "null"
+     * @param sink       the character sink to append to
+     * @param arrayState state management object for restartable writes
      */
     public static void arrayToJson(
             @Nullable ArrayView arrayView,
@@ -257,6 +261,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     /**
      * Appends a PG Wire representation of the provided array to the provided character sink.
+     *
+     * @param arrayView the array to render
+     * @param sink      the character sink to append to
      */
     public static void arrayToPgWire(
             @NotNull ArrayView arrayView,
@@ -281,6 +288,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * @param sink        sink that accumulates the JSON string
      * @param openChar    opening character for each array plane
      * @param closeChar   closing character for each array plane
+     * @param appender    callback that appends a single array element value to the sink
      * @param nullLiteral text that represents a null value
      * @param arrayState  state management object to allow this builder to restart if the output sink runs out of space.
      */
@@ -308,6 +316,10 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     /**
      * Determine the number of bytes to skip in order to get to the next aligned address/offset.
+     *
+     * @param unaligned     the current unaligned address or offset
+     * @param byteAlignment the required byte alignment
+     * @return number of bytes to skip to reach the next aligned position
      */
     public static int bytesToSkipForAlignment(long unaligned, int byteAlignment) {
         final int pastBy = (int) (unaligned % byteAlignment);

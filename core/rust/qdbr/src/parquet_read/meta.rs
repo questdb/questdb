@@ -1,5 +1,5 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::error::ParquetResult;
+use crate::parquet::error::{ParquetError, ParquetErrorReason, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use nonmax::NonMaxU32;
@@ -42,6 +42,17 @@ impl ParquetDecoder {
         let metadata = read_metadata_with_size(reader, file_size)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
+
+        // Discard QDB metadata when the schema length doesn't match the Parquet
+        // column count. This happens when an external tool rewrites the file
+        // (e.g. drops partition columns) but preserves the original key-value
+        // metadata. Positional lookups into a stale schema return wrong types.
+        //
+        // Note: col_len is the number of leaf (primitive) columns from
+        // schema_descr.columns(). For all column types QuestDB currently writes
+        // (including arrays encoded as LIST groups), each top-level field
+        // produces exactly one leaf column, so this matches qdb_meta.schema.len().
+        let qdb_meta = qdb_meta.filter(|m| m.schema.len() == col_len);
         let mut row_group_sizes: AcVec<u32> =
             AcVec::with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
         let mut row_group_sizes_acc: AcVec<usize> =
@@ -56,7 +67,11 @@ impl ParquetDecoder {
             accumulated_size += row_group_size;
         }
 
-        assert_eq!(accumulated_size, metadata.num_rows);
+        if accumulated_size != metadata.num_rows {
+            let mut err = ParquetError::new(ParquetErrorReason::Layout);
+            err.add_context("row group sizes do not sum to total row count");
+            return Err(err);
+        }
 
         let mut timestamp_index: Option<NonMaxU32> = None;
 
@@ -139,6 +154,8 @@ impl ParquetDecoder {
             }
         }
 
+        let unused_bytes = qdb_meta.as_ref().map(|m| m.unused_bytes).unwrap_or(0);
+
         // TODO(eugenels): add some validation
         Ok(Self {
             allocator,
@@ -153,6 +170,7 @@ impl ParquetDecoder {
             columns_ptr: columns.as_ptr(),
             columns,
             row_group_sizes_acc,
+            unused_bytes,
         })
     }
 
@@ -202,13 +220,17 @@ impl ParquetDecoder {
                 }),
                 _,
             ) => Some(ColumnType::new(ColumnTypeTag::Date, 0)),
+            (PhysicalType::Int64, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+            | (PhysicalType::Int64, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+                ColumnType::new_decimal(precision as u8, scale as u8)
+            }
             (PhysicalType::Int64, _, _) => Some(ColumnType::new(ColumnTypeTag::Long, 0)),
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
                 Some(ColumnType::new(ColumnTypeTag::Int, 0))
             }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(_, _)), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
-                Some(ColumnType::new(ColumnTypeTag::Double, 0))
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(precision, scale))) => {
+                ColumnType::new_decimal(precision as u8, scale as u8)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
@@ -229,6 +251,22 @@ impl ParquetDecoder {
                 None => Some(ColumnType::new(ColumnTypeTag::Double, 0)),
             },
             (PhysicalType::Float, _, _) => Some(ColumnType::new(ColumnTypeTag::Float, 0)),
+            (
+                PhysicalType::FixedLenByteArray(_),
+                Some(PrimitiveLogicalType::Decimal(precision, scale)),
+                _,
+            )
+            | (
+                PhysicalType::FixedLenByteArray(_),
+                _,
+                Some(PrimitiveConvertedType::Decimal(precision, scale)),
+            ) => ColumnType::new_decimal(precision as u8, scale as u8),
+            (PhysicalType::ByteArray, Some(PrimitiveLogicalType::Decimal(precision, scale)), _)
+            | (
+                PhysicalType::ByteArray,
+                _,
+                Some(PrimitiveConvertedType::Decimal(precision, scale)),
+            ) => ColumnType::new_decimal(precision as u8, scale as u8),
             (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => {
                 Some(ColumnType::new(ColumnTypeTag::Uuid, 0))
             }
@@ -320,6 +358,11 @@ mod tests {
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use parquet::file::reader::Length;
+    use parquet2::metadata::{ColumnDescriptor, Descriptor};
+    use parquet2::schema::types::{
+        FieldInfo, ParquetType, PhysicalType, PrimitiveLogicalType, PrimitiveType,
+    };
+    use parquet2::schema::Repetition;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use tempfile::NamedTempFile;
 
@@ -402,6 +445,47 @@ mod tests {
         assert_eq!(buffers_columns.len(), column_count);
     }
 
+    #[test]
+    fn test_descriptor_to_column_type_byte_array_decimal() {
+        for (logical_type, converted_type) in [
+            (Some(PrimitiveLogicalType::Decimal(20, 4)), None),
+            (
+                None,
+                Some(parquet2::schema::types::PrimitiveConvertedType::Decimal(
+                    20, 4,
+                )),
+            ),
+        ] {
+            let primitive_type = PrimitiveType {
+                field_info: FieldInfo {
+                    name: "dec_ba".to_string(),
+                    repetition: Repetition::Required,
+                    id: None,
+                },
+                logical_type,
+                converted_type,
+                physical_type: PhysicalType::ByteArray,
+            };
+            let descriptor = ColumnDescriptor::new(
+                Descriptor {
+                    primitive_type: primitive_type.clone(),
+                    max_def_level: 0,
+                    max_rep_level: 0,
+                },
+                vec!["dec_ba".to_string()],
+                ParquetType::PrimitiveType(primitive_type),
+            );
+
+            let column_type = ParquetDecoder::descriptor_to_column_type(&descriptor, 0, None)
+                .expect("decimal type should be inferred from BYTE_ARRAY");
+
+            assert_eq!(
+                column_type,
+                ColumnType::new_decimal(20, 4).expect("valid QuestDB decimal type")
+            );
+        }
+    }
+
     fn create_fix_column(
         id: i32,
         row_count: usize,
@@ -439,6 +523,7 @@ mod tests {
                 0,
                 false,
                 false,
+                0,
             )
             .unwrap(),
         )

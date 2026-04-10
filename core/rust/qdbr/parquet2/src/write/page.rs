@@ -52,7 +52,7 @@ pub struct PageWriteSpec {
     pub statistics: Option<Arc<dyn Statistics>>,
 }
 
-pub fn write_page<W: Write, E: std::error::Error>(
+pub fn write_page<W, E>(
     writer: &mut W,
     offset: u64,
     compressed_page: &CompressedPage,

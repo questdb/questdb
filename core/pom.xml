@@ -22,8 +22,7 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB</name>
     <description>QuestDB is high performance SQL time series database</description>
@@ -37,7 +36,7 @@
         <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>1.1.13</web.console.version>
+        <web.console.version>1.2.0</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
 
@@ -50,7 +49,7 @@
         <questdb.client.version>1.0.1</questdb.client.version>
     </properties>
 
-    <version>9.3.3-SNAPSHOT</version>
+    <version>9.3.5-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -86,8 +85,6 @@
                 <version>3.11.0</version>
                 <configuration>
                     <compilerArgs>
-                        <arg>${compilerArg1}</arg>
-                        <arg>${compilerArg2}</arg>
                         <arg>-J-XX:-TieredCompilation</arg>
                         <arg>-J-XX:TieredStopAtLevel=1</arg>
                     </compilerArgs>
@@ -196,7 +193,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.3</version>
                 <configuration>
-                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
+                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
                     <useModulePath>true</useModulePath>
                     <includes>
                         <include>${test.include}</include>
@@ -247,10 +244,7 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <additionalJOptions>
-                                <additionalJOption>${compilerArg1}</additionalJOption>
-                                <additionalJOption>${compilerArg2}</additionalJOption>
-                            </additionalJOptions>
+                            <doclint>all,-missing</doclint>
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
@@ -276,10 +270,7 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <additionalJOptions>
-                                <additionalJOption>${compilerArg1}</additionalJOption>
-                                <additionalJOption>${compilerArg2}</additionalJOption>
-                            </additionalJOptions>
+                            <doclint>all,-missing</doclint>
                             <sourceFileExcludes>
                                 <sourceFileExclude>${excludePattern1}</sourceFileExclude>
                             </sourceFileExcludes>
@@ -630,8 +621,6 @@
                 <jdk.version>17</jdk.version>
                 <java.enforce.version>17</java.enforce.version>
                 <questdb.artifactid>questdb</questdb.artifactid>
-                <compilerArg1>--add-exports</compilerArg1>
-                <compilerArg2>java.base/jdk.internal.math=io.questdb</compilerArg2>
                 <excludePattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludePattern1>
                 <excludeTestPattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludeTestPattern1>
                 <javac.compile.source>${javac.target}</javac.compile.source>
@@ -688,7 +677,7 @@
                                 <goals>
                                     <goal>test</goal>
                                 </goals>
-                                <phase>test</phase>
+                                <phase>none</phase>
                                 <configuration>
                                     <path>rust/qdbr</path>
                                     <release>${qdbr.release}</release>

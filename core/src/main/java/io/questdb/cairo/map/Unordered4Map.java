@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -48,6 +48,8 @@ import io.questdb.std.bytes.Bytes;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
+
 /**
  * Unordered4Map is a general purpose off-heap hash table with 4 byte keys (INT, IPv4, SYMBOL) used
  * to store intermediate data of group by, sample by queries. It provides {@link MapKey} and
@@ -82,7 +84,6 @@ import org.jetbrains.annotations.Nullable;
  */
 public class Unordered4Map implements Map, Reopenable {
     static final long KEY_SIZE = Integer.BYTES;
-    private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
 
     private final Unordered4MapCursor cursor;
@@ -281,7 +282,12 @@ public class Unordered4Map implements Map, Reopenable {
             Vect.memcpy(destAddr, srcAddr, entrySize);
             size++;
             if (--free == 0) {
-                rehash();
+                try {
+                    rehash();
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -305,15 +311,17 @@ public class Unordered4Map implements Map, Reopenable {
     @Override
     public void restoreInitialCapacity() {
         if (memStart == 0 || keyCapacity != initialKeyCapacity) {
+            final long sizeBytes = entrySize * initialKeyCapacity;
+            long newMemStart;
+            if (memStart == 0) {
+                newMemStart = Unsafe.malloc(sizeBytes, memoryTag);
+            } else {
+                newMemStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+            }
+            memStart = newMemStart;
+            memLimit = memStart + sizeBytes;
             keyCapacity = initialKeyCapacity;
             mask = keyCapacity - 1;
-            final long sizeBytes = entrySize * keyCapacity;
-            if (memStart == 0) {
-                memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            } else {
-                memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
-            }
-            memLimit = memStart + sizeBytes;
         }
 
         if (zeroMemStart == 0) {
@@ -350,7 +358,12 @@ public class Unordered4Map implements Map, Reopenable {
     private Unordered4MapValue asNew(long startAddress, int key, long hashCode, Unordered4MapValue value) {
         Unsafe.getUnsafe().putInt(startAddress, key);
         if (--free == 0) {
-            rehash();
+            try {
+                rehash();
+            } catch (CairoException e) {
+                free = 1;
+                throw e;
+            }
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hashCode & mask);
             for (; ; ) {

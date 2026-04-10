@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -252,11 +252,11 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort light
+                        Encode sort light
                           keys: [side]
                             GroupBy vectorized: false
                               keys: [side]
-                              values: [first_not_null(case([first(price),NaN,symbol])),first_not_null(case([first(price)_2,NaN,symbol]))]
+                              values: [first_not_null(case([first(price),NaN,symbol,switch(symbol,'BTC-USD',first(price),NaN)])),first_not_null(case([first(price)_2,NaN,symbol,switch(symbol,'BTC-USD',first(price)_2,NaN)]))]
                                 VirtualRecord
                                   functions: [side,first(price),symbol,first(price)]
                                     Async JIT Group By workers: 1
@@ -292,11 +292,11 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort light
+                        Encode sort light
                           keys: [side]
                             GroupBy vectorized: false
                               keys: [side]
-                              values: [first_not_null(case([first(price),NaN,symbol])),first_not_null(case([first(amount),NaN,symbol]))]
+                              values: [first_not_null(case([first(price),NaN,symbol,switch(symbol,'BTC-USD',first(price),NaN)])),first_not_null(case([first(amount),NaN,symbol,switch(symbol,'BTC-USD',first(amount),NaN)]))]
                                 Async JIT Group By workers: 1
                                   keys: [side,symbol]
                                   values: [first(price),first(amount)]
@@ -451,7 +451,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort
+                        Encode sort
                           keys: [2000]
                             GroupBy vectorized: false
                               values: [first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year])),first_not_null(case([SUM(population),nullL,year]))]
@@ -592,11 +592,11 @@ public class PivotTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(pivotQuery, """
-                    Sort light
+                    Encode sort light
                       keys: [side]
                         GroupBy vectorized: false
                           keys: [side]
-                          values: [first_not_null(case([open,NaN,symbol])),first_not_null(case([high,NaN,symbol])),first_not_null(case([low,NaN,symbol])),first_not_null(case([close,NaN,symbol]))]
+                          values: [first_not_null(case([open,NaN,symbol,switch(symbol,'BTC-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'BTC-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'BTC-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'BTC-USD',close,NaN)]))]
                             Async JIT Group By workers: 1
                               keys: [side,symbol]
                               values: [first(price),max(price),min(price),last(price)]
@@ -1698,11 +1698,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                 SelectedRecord
                                     AsOf Join Light
                                       condition: B.vehicle_id=A.vehicle_id
-                                        Sort light
+                                        Encode sort light
                                           keys: [timestamp, vehicle_id]
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
-                                              values: [first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name])),first_not_null(case([avg(int_value),NaN,sensor_name]))]
+                                              values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i000',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i002',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i004',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i008',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i003',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i007',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i005',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i006',avg(int_value),NaN)])),first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i001',avg(int_value),NaN)]))]
                                                 Async Group By workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [avg(int_value)]
@@ -1710,11 +1710,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: sensors
-                                        Sort light
+                                        Encode sort light
                                           keys: [timestamp, vehicle_id]
                                             GroupBy vectorized: false
                                               keys: [timestamp,vehicle_id]
-                                              values: [first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name])),first_not_null(case([last(str_value),null,sensor_name]))]
+                                              values: [first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s001',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s005',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s006',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s009',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s003',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s008',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s002',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s004',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s007',last(str_value),null)])),first_not_null(case([last(str_value),null,sensor_name,switch(sensor_name,'s000',last(str_value),null)]))]
                                                 Async Group By workers: 1
                                                   keys: [timestamp,vehicle_id,sensor_name]
                                                   values: [last(str_value)]
@@ -1837,6 +1837,69 @@ public class PivotTest extends AbstractSqlParserTest {
                                         Row forward scan
                                         Frame forward scan on: cities
                         """);
+    }
+
+    @Test
+    public void testPivotWithCoalesceVarArgsWrappedAggregate() throws Exception {
+        // Regression test: coalesce with 3+ arguments has paramCount > 2, so all
+        // children go into the args list. hasGroupByFunc did not traverse args
+        // for FUNCTION nodes, failing to detect sum() inside
+        // coalesce(NULL, NULL, sum(x)).
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010\t2020
+                            NL\t1005\t1065\t1158
+                            US\t8579\t8783\t9510
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                coalesce(NULL, NULL, SUM(population))
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
+    }
+
+    @Test
+    public void testPivotWithCoalesceWrappedAggregate() throws Exception {
+        // Regression test: coalesce(0, sum(x)) has paramCount=2, so lhs=0 and
+        // rhs=sum(x). hasGroupByFunc followed node.lhs after the FUNCTION case
+        // but never pushed node.rhs onto the stack, missing sum() in the rhs
+        // position. coalesce picks the first non-null arg (0), so all results
+        // are 0.
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010\t2020
+                            NL\t0\t0\t0
+                            US\t0\t0\t0
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                coalesce(0, SUM(population))
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
     }
 
     @Test
@@ -2239,7 +2302,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [2000_sum]
                             GroupBy vectorized: false
                               keys: [country,name]
@@ -2353,11 +2416,11 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort light
+                        Encode sort light
                           keys: [side]
                             GroupBy vectorized: false
                               keys: [side]
-                              values: [first_not_null(case([last(price),NaN,symbol])),first_not_null(case([last(price),NaN,symbol])),first_not_null(case([last(price),NaN,symbol]))]
+                              values: [first_not_null(case([last(price),NaN,symbol,switch(symbol,'ETH-USDT',last(price),NaN)])),first_not_null(case([last(price),NaN,symbol,switch(symbol,'BTC-USDT',last(price),NaN)])),first_not_null(case([last(price),NaN,symbol,switch(symbol,'DOGE-USDT',last(price),NaN)]))]
                                 GroupBy vectorized: false
                                   keys: [side,symbol]
                                   values: [last(price)]
@@ -2851,7 +2914,7 @@ public class PivotTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [timestamp]
                                 GroupBy vectorized: false
                                   keys: [timestamp]
@@ -2859,10 +2922,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                     GroupBy vectorized: false
                                       keys: [timestamp,symbol,side]
                                       values: [sum(price)]
-                                        Radix sort light
+                                        Encode sort light
                                           keys: [timestamp]
                                             Async JIT Group By workers: 1
                                               keys: [timestamp,symbol,side]
+                                              keyFunctions: [timestamp_floor_utc('100T',timestamp)]
                                               values: [avg(price)]
                                               filter: (symbol in [ADA-USD,ADA-USDT,BTC-USD] and side in [buy,sell])
                                                 PageFrame
@@ -2871,6 +2935,8 @@ public class PivotTest extends AbstractSqlParserTest {
                             """);
         });
     }
+
+    // Tests for printRecordColumnOrNull - various data types in PIVOT IN subqueries
 
     @Test
     public void testPivotWithNullValues() throws Exception {
@@ -2938,7 +3004,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [2000]
                             GroupBy vectorized: false
                               keys: [country]
@@ -2952,8 +3018,6 @@ public class PivotTest extends AbstractSqlParserTest {
                                         Frame forward scan on: cities
                         """);
     }
-
-    // Tests for printRecordColumnOrNull - various data types in PIVOT IN subqueries
 
     @Test
     public void testPivotWithOrderByNotPresentInForOrGroupBy() throws Exception {
@@ -3022,18 +3086,19 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Sort light
+                        Encode sort light
                           keys: [symbol]
                             GroupBy vectorized: false
                               keys: [symbol]
-                              values: [first_not_null(case([price,NaN,side])),first_not_null(case([price,NaN,side]))]
+                              values: [first_not_null(case([price,NaN,side,switch(side,'buy',price,NaN)])),first_not_null(case([price,NaN,side,switch(side,'sell',price,NaN)]))]
                                 GroupBy vectorized: false
                                   keys: [symbol,side]
                                   values: [sum(last)]
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [timestamp]
                                         Async JIT Group By workers: 1
                                           keys: [symbol,side,timestamp]
+                                          keyFunctions: [timestamp_floor_utc('1d',timestamp)]
                                           values: [last(price)]
                                           filter: side in [buy,sell]
                                             PageFrame
@@ -3203,7 +3268,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [timestamp]
                             GroupBy vectorized: false
                               keys: [timestamp]
@@ -3286,7 +3351,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [timestamp]
                             GroupBy vectorized: false
                               keys: [timestamp]
@@ -3330,7 +3395,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 """
-                        Radix sort light
+                        Encode sort light
                           keys: [timestamp desc]
                             GroupBy vectorized: false
                               keys: [timestamp]
@@ -3479,10 +3544,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                 GroupBy vectorized: false
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [timestamp]
                                         Async Group By workers: 1
                                           keys: [timestamp,symbol,side]
+                                          keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                           values: [avg(price)]
                                           filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
                                             PageFrame
@@ -3528,10 +3594,11 @@ public class PivotTest extends AbstractSqlParserTest {
                             GroupBy vectorized: false
                               keys: [timestamp,symbol,side]
                               values: [sum(price)]
-                                Radix sort light
+                                Encode sort light
                                   keys: [timestamp]
                                     Async Group By workers: 1
                                       keys: [timestamp,symbol,side]
+                                      keyFunctions: [timestamp_floor_utc('1m',timestamp)]
                                       values: [avg(price)]
                                       filter: (symbol in [BTC-USD] and symbol in [BTC-USD] and side in [buy,sell])
                                         PageFrame
@@ -3567,7 +3634,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 """
                         GroupBy vectorized: false
                           keys: [side]
-                          values: [first_not_null(case([open,NaN,symbol])),first_not_null(case([high,NaN,symbol])),first_not_null(case([low,NaN,symbol])),first_not_null(case([close,NaN,symbol])),first_not_null(case([open,NaN,symbol])),first_not_null(case([high,NaN,symbol])),first_not_null(case([low,NaN,symbol])),first_not_null(case([close,NaN,symbol]))]
+                          values: [first_not_null(case([open,NaN,symbol,switch(symbol,'ETH-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'ETH-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'ETH-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'ETH-USD',close,NaN)])),first_not_null(case([open,NaN,symbol,switch(symbol,'BTC-USD',open,NaN)])),first_not_null(case([high,NaN,symbol,switch(symbol,'BTC-USD',high,NaN)])),first_not_null(case([low,NaN,symbol,switch(symbol,'BTC-USD',low,NaN)])),first_not_null(case([close,NaN,symbol,switch(symbol,'BTC-USD',close,NaN)]))]
                             Async JIT Group By workers: 1
                               keys: [side,symbol]
                               values: [first_not_null(price),max(price),min(price),last_not_null(price)]
@@ -3643,7 +3710,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                   keys: [timestamp asc]
                                     GroupBy vectorized: false
                                       keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name]))]
+                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
                                         Async JIT Group By workers: 1
                                           keys: [timestamp,vehicle_id,sensor_name]
                                           values: [avg(int_value)]
@@ -3655,7 +3722,7 @@ public class PivotTest extends AbstractSqlParserTest {
                                   keys: [timestamp]
                                     GroupBy vectorized: false
                                       keys: [timestamp,vehicle_id]
-                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name]))]
+                                      values: [first_not_null(case([avg(int_value),NaN,sensor_name,switch(sensor_name,'i009',avg(int_value),NaN)]))]
                                         Async JIT Group By workers: 1
                                           keys: [timestamp,vehicle_id,sensor_name]
                                           values: [avg(int_value)]
@@ -3706,5 +3773,37 @@ public class PivotTest extends AbstractSqlParserTest {
                                         Row forward scan
                                         Frame forward scan on: cities
                         """);
+    }
+
+    @Test
+    public void testPivotWithWrappedAggregate() throws Exception {
+        // Regression test: hasGroupByFunc() in SqlOptimiser did not traverse rhs
+        // and args of non-aggregate FUNCTION nodes. abs(sum(x)) is a valid
+        // aggregate expression for PIVOT, but abs has paramCount=1 and its
+        // argument is stored in rhs, which the FUNCTION case did not traverse.
+        // PIVOT rejected it with "expected aggregate function".
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            assertQueryNoLeakCheck(
+                    """
+                            country\t2000\t2010\t2020
+                            NL\t1005\t1065\t1158
+                            US\t8579\t8783\t9510
+                            """,
+                    """
+                            SELECT * FROM cities
+                            PIVOT (
+                                abs(SUM(population))
+                                FOR year IN (2000, 2010, 2020)
+                                GROUP BY country
+                            ) ORDER BY country
+                            """,
+                    null,
+                    true,
+                    true,
+                    false);
+        });
     }
 }

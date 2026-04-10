@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -2008,6 +2008,29 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossJoinWithMultiColumnQualifiedJoinKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (event INT, origin INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 1, '2024-01-01T00:00:00.000000Z'), (2, 2, '2024-01-02T00:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    """
+                            origin\tcount
+                            1\t4
+                            2\t4
+                            """,
+                    "SELECT T1.origin, count(*) " +
+                            "FROM t T1 " +
+                            "CROSS JOIN t T2 " +
+                            "CROSS JOIN t T3 " +
+                            "JOIN t T4 ON T3.event = T4.event AND T3.origin = T4.origin " +
+                            "GROUP BY T1.origin " +
+                            "ORDER BY T1.origin",
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testCrossTripleOverflow() throws Exception {
         assertMemoryLeak(() -> {
             try (RecordCursorFactory factory = select("select * from long_sequence(1000000000) a cross join long_sequence(1000000000) b cross join long_sequence(1000000000) c")) {
@@ -2781,6 +2804,95 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerPostJoinAndConstFilter() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/6762
+        // When WHERE has both a column-referencing condition (postJoinWhereClause)
+        // and a non-column, non-constant condition (constWhereClause like NOW() = NOW()),
+        // the optimizer merges them into a single postJoinWhereClause so the code
+        // generator applies one filter instead of nesting FilteredRecordCursorFactory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z'),
+                    (3, '2024-01-03T00:00:00.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            val\tval1
+                            1\t2
+                            1\t3
+                            2\t3
+                            """,
+                    "SELECT T1.val, T2.val FROM t T1 " +
+                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                            "WHERE T1.val > 0 AND NOW() = NOW()",
+                    null, false, false
+            );
+        });
+    }
+
+    @Test
+    public void testJoinInnerPostJoinAndMixedConstFilter() throws Exception {
+        // When constWhereClause mixes compile-time and non-compile-time terms
+        // (e.g. false AND NOW() = NOW()), the optimizer splits them: false stays
+        // as constWhereClause and the code generator folds it to EmptyTableRecordCursorFactory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            assertQueryNoLeakCheck(
+                    "val\tval1\n",
+                    "SELECT T1.val, T2.val FROM t T1 " +
+                            "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                            "WHERE T1.val > 0 AND 1 > 10 AND NOW() = NOW()",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testJoinInnerPostJoinAndMixedConstTrueFilter() throws Exception {
+        // When constWhereClause has true AND NOW() = NOW(), the optimizer merges
+        // NOW() = NOW() into postJoinWhereClause and the code generator folds
+        // the remaining constant true away.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            String query = "SELECT T1.val, T2.val FROM t T1 " +
+                    "INNER JOIN t T2 ON T1.ts < T2.ts " +
+                    "WHERE T1.val > 0 AND 1 < 10 AND NOW() = NOW()";
+            assertQueryNoLeakCheck(
+                    """
+                            val\tval1
+                            1\t2
+                            """,
+                    query,
+                    null, false, false
+            );
+            // Verify: no Empty table (1 < 10 folded as constant true), and
+            // now()=now() merged from constWhereClause into a post-join filter.
+            assertPlanNoLeakCheck(query, """
+                    SelectedRecord
+                        Filter filter: (T1.ts<T2.ts and now()=now())
+                            Cross Join
+                                Async JIT Filter workers: 1
+                                  filter: 0<val
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+        });
+    }
+
+    @Test
     public void testJoinInnerPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2841,6 +2953,46 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerPostJoinMultipleJoinsFilter() throws Exception {
+        // Tests multi-way join with post-join WHERE conditions referencing
+        // columns from different join pairs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (10, '2024-01-02T00:00:00.000000Z'),
+                    (20, '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO t3 VALUES
+                    (100, '2024-01-03T00:00:00.000000Z'),
+                    (200, '2024-01-04T00:00:00.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            val\tval1\tval2
+                            1\t10\t100
+                            1\t10\t200
+                            1\t20\t200
+                            2\t20\t200
+                            """,
+                    "SELECT a.val, b.val, c.val FROM t1 a " +
+                            "INNER JOIN t2 b ON a.ts < b.ts " +
+                            "INNER JOIN t3 c ON b.ts < c.ts " +
+                            "WHERE a.val + b.val > 5 AND b.val + c.val > 50",
+                    null, false, false
+            );
+        });
+    }
+
+    @Test
     public void testJoinInnerTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -2897,6 +3049,32 @@ public class JoinTest extends AbstractCairoTest {
                     null,
                     true,
                     false
+            );
+        });
+    }
+
+    @Test
+    public void testJoinMultiLevelViewWithDifferentColumnNames() throws Exception {
+        // reproducer for: InvalidColumnException when joining a table with a
+        // multi-level view where the ON clause uses different column names on
+        // each side (t.c1 = v.max). Requires: (1) multi-level view chain with
+        // a JOIN inside, (2) different column names in the outer join ON clause,
+        // and (3) a WHERE clause on the master table's join column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c1 INT, c2 INT)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)");
+            execute("CREATE VIEW v1 AS (SELECT c2, max(c1) FROM t GROUP BY c2)");
+            execute("CREATE VIEW v2 AS (SELECT v1.max, v1.c2 FROM t t0 LEFT JOIN v1 ON t0.c1 = v1.max)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            c2
+                            10
+                            """,
+                    "SELECT v2.c2 FROM t t0 JOIN v2 ON t0.c1 = v2.max WHERE t0.c1 = 1",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -3562,24 +3740,22 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoiningSubqueryWithDotInColumnName() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
-                            "foo.bar"	1
-                            1	1
-                            2	1
-                            3	1
-                            4	1
-                            5	1
-                            """,
-                    """
-                            SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
-                            LEFT JOIN (select 1) ON true;
-                            """,
-                    null,
-                    false
-            );
-        });
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(
+                """
+                        "foo.bar"	1
+                        1	1
+                        2	1
+                        3	1
+                        4	1
+                        5	1
+                        """,
+                """
+                        SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))
+                        LEFT JOIN (select 1) ON true;
+                        """,
+                null,
+                false
+        ));
     }
 
     @Test
@@ -7394,7 +7570,9 @@ public class JoinTest extends AbstractCairoTest {
 
                 @Override
                 public long openRO(LPSZ name) {
-                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
+                    // x.d is the first column file opened because the active columns
+                    // optimization skips ts.d when it is not in the query's column set
+                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
@@ -7410,7 +7588,7 @@ public class JoinTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
-                TestUtils.assertContains(ex.getFlyweightMessage(), "ts.d");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "x.d");
             }
         });
     }

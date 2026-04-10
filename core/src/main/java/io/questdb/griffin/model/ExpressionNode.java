@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -58,7 +58,14 @@ public class ExpressionNode implements Mutable, Sinkable {
     public boolean implemented;
     public boolean innerPredicate = false;
     public int intrinsicValue = IntrinsicModel.UNDEFINED;
+    public boolean isConstantExpression;
+    public int lateralDepth;
     public ExpressionNode lhs;
+    // The expression parser (ExpressionParser.onNode) guarantees:
+    // - paramCount == 1: rhs is non-null, lhs is null.
+    // - paramCount == 2: both lhs and rhs are non-null.
+    // - paramCount > 2: children are stored in args; each entry is non-null.
+    // No later transformation violates these invariants.
     public int paramCount;
     public int position;
     public int precedence;
@@ -82,6 +89,45 @@ public class ExpressionNode implements Mutable, Sinkable {
         return (a.type == FUNCTION || a.type == LITERAL ? Chars.equalsIgnoreCase(a.token, b.token) : Chars.equals(a.token, b.token))
                 && compareArgsExact(a, b)
                 && compareWindowExpressions(a.windowExpression, b.windowExpression);
+    }
+
+    public static boolean compareNodesGroupBy(
+            ExpressionNode groupByExpr,
+            ExpressionNode columnExpr,
+            QueryModel translatingModel
+    ) {
+        if (groupByExpr == null && columnExpr == null) {
+            return true;
+        }
+
+        if (groupByExpr == null || columnExpr == null || groupByExpr.type != columnExpr.type) {
+            return false;
+        }
+
+        if (!Chars.equals(groupByExpr.token, columnExpr.token)) {
+            int index = translatingModel.getAliasToColumnMap().keyIndex(columnExpr.token);
+            if (index > -1) {
+                return false;
+            }
+
+            final QueryColumn qc = translatingModel.getAliasToColumnMap().valueAt(index);
+            final CharSequence tok = groupByExpr.token;
+            final CharSequence qcTok = qc.getAst().token;
+            if (Chars.equals(qcTok, tok)) {
+                return true;
+            }
+
+            int dot = Chars.indexOfLastUnquoted(tok, '.');
+            if (dot > -1
+                    && translatingModel.getModelAliasIndex(tok, 0, dot) > -1
+                    && Chars.equals(qcTok, tok, dot + 1, tok.length())) {
+                return compareArgs(groupByExpr, columnExpr, translatingModel);
+            }
+
+            return false;
+        }
+
+        return compareArgs(groupByExpr, columnExpr, translatingModel);
     }
 
     public static boolean compareWindowExpressions(WindowExpression a, WindowExpression b) {
@@ -134,6 +180,49 @@ public class ExpressionNode implements Mutable, Sinkable {
             }
         }
         return true;
+    }
+
+    public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
+        return deepClone(pool, node, null, null, null);
+    }
+
+    public static ExpressionNode deepClone(
+            final ObjectPool<ExpressionNode> pool,
+            final ExpressionNode node,
+            final ObjectPool<QueryModel> queryModelPool,
+            final ObjectPool<QueryColumn> queryColumnPool,
+            final ObjectPool<WindowExpression> windowExpressionPool
+    ) {
+        if (node == null) {
+            return null;
+        }
+        ExpressionNode copy = pool.next();
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i), queryModelPool, queryColumnPool, windowExpressionPool));
+        }
+        copy.token = node.token;
+        if (node.queryModel != null && queryModelPool != null) {
+            copy.queryModel = node.queryModel.deepClone(queryModelPool, queryColumnPool, pool, windowExpressionPool);
+        } else {
+            copy.queryModel = node.queryModel;
+        }
+        copy.precedence = node.precedence;
+        copy.position = node.position;
+        copy.lhs = ExpressionNode.deepClone(pool, node.lhs, queryModelPool, queryColumnPool, windowExpressionPool);
+        copy.rhs = ExpressionNode.deepClone(pool, node.rhs, queryModelPool, queryColumnPool, windowExpressionPool);
+        copy.type = node.type;
+        copy.paramCount = node.paramCount;
+        copy.intrinsicValue = node.intrinsicValue;
+        copy.isConstantExpression = node.isConstantExpression;
+        copy.innerPredicate = node.innerPredicate;
+        copy.implemented = node.implemented;
+        if (node.windowExpression != null && windowExpressionPool != null) {
+            copy.windowExpression = node.windowExpression.deepClone(windowExpressionPool, pool);
+        } else {
+            copy.windowExpression = node.windowExpression;
+        }
+        copy.lateralDepth = node.lateralDepth;
+        return copy;
     }
 
     /**
@@ -202,68 +291,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         return hash;
     }
 
-    public static boolean compareNodesGroupBy(
-            ExpressionNode groupByExpr,
-            ExpressionNode columnExpr,
-            QueryModel translatingModel
-    ) {
-        if (groupByExpr == null && columnExpr == null) {
-            return true;
-        }
-
-        if (groupByExpr == null || columnExpr == null || groupByExpr.type != columnExpr.type) {
-            return false;
-        }
-
-        if (!Chars.equals(groupByExpr.token, columnExpr.token)) {
-            int index = translatingModel.getAliasToColumnMap().keyIndex(columnExpr.token);
-            if (index > -1) {
-                return false;
-            }
-
-            final QueryColumn qc = translatingModel.getAliasToColumnMap().valueAt(index);
-            final CharSequence tok = groupByExpr.token;
-            final CharSequence qcTok = qc.getAst().token;
-            if (Chars.equals(qcTok, tok)) {
-                return true;
-            }
-
-            int dot = Chars.indexOfLastUnquoted(tok, '.');
-            if (dot > -1
-                    && translatingModel.getModelAliasIndex(tok, 0, dot) > -1
-                    && Chars.equals(qcTok, tok, dot + 1, tok.length())) {
-                return compareArgs(groupByExpr, columnExpr, translatingModel);
-            }
-
-            return false;
-        }
-
-        return compareArgs(groupByExpr, columnExpr, translatingModel);
-    }
-
-    public static ExpressionNode deepClone(final ObjectPool<ExpressionNode> pool, final ExpressionNode node) {
-        if (node == null) {
-            return null;
-        }
-        ExpressionNode copy = pool.next();
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            copy.args.add(ExpressionNode.deepClone(pool, node.args.get(i)));
-        }
-        copy.token = node.token;
-        copy.queryModel = node.queryModel;
-        copy.precedence = node.precedence;
-        copy.position = node.position;
-        copy.lhs = ExpressionNode.deepClone(pool, node.lhs);
-        copy.rhs = ExpressionNode.deepClone(pool, node.rhs);
-        copy.type = node.type;
-        copy.paramCount = node.paramCount;
-        copy.intrinsicValue = node.intrinsicValue;
-        copy.innerPredicate = node.innerPredicate;
-        copy.implemented = node.implemented;
-        copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
-        return copy;
-    }
-
     @Override
     public void clear() {
         args.clear();
@@ -275,10 +302,12 @@ public class ExpressionNode implements Mutable, Sinkable {
         type = UNKNOWN;
         paramCount = 0;
         intrinsicValue = IntrinsicModel.UNDEFINED;
+        isConstantExpression = false;
         queryModel = null;
         innerPredicate = false;
         implemented = false;
         windowExpression = null;
+        lateralDepth = 0;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {
@@ -295,8 +324,10 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.type = other.type;
         this.paramCount = other.paramCount;
         this.intrinsicValue = other.intrinsicValue;
+        this.isConstantExpression = other.isConstantExpression;
         this.innerPredicate = other.innerPredicate;
         this.windowExpression = other.windowExpression;
+        this.lateralDepth = other.lateralDepth;
         return this;
     }
 
@@ -325,6 +356,135 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.token = token;
         this.position = position;
         return this;
+    }
+
+    /**
+     * Walks this expression tree bottom-up and regroups adjacent constant
+     * operands of associative (and, where needed, commutative) binary operators
+     * so that constant folding can collapse them into a single constant.
+     *
+     * <p>For example, {@code (col + 1) + 4} is rewritten to {@code col + (1 + 4)},
+     * which the function parser then folds to {@code col + 5}.</p>
+     *
+     * <p>The method handles four structural patterns. In each pattern, {@code A}
+     * is a non-constant subtree, {@code C1} and {@code C2} are constant subtrees,
+     * and {@code op} is the same binary operator at both levels:</p>
+     *
+     * <ul>
+     *   <li><b>Pattern A</b> — {@code (A op C1) op C2 → A op (C1 op C2)}.
+     *       Requires only associativity (natural left-associative chain).</li>
+     *   <li><b>Pattern B</b> — {@code (C1 op A) op C2 → A op (C1 op C2)}.
+     *       Also requires commutativity to move {@code A} to the outer position.</li>
+     *   <li><b>Mirror A</b> — {@code C2 op (A op C1) → A op (C2 op C1)}.
+     *       Also requires commutativity to swap the outer operands.</li>
+     *   <li><b>Mirror B</b> — {@code C2 op (C1 op A) → (C2 op C1) op A}.
+     *       Requires only associativity (pure regrouping).</li>
+     * </ul>
+     *
+     * <p>The rewrite is purely structural: it relinks existing {@link ExpressionNode}
+     * instances without allocating new nodes.</p>
+     *
+     * @return {@code true} if this subtree is entirely constant (every leaf is a
+     * constant and every interior node is a binary operation on constants),
+     * {@code false} otherwise
+     */
+    public boolean reassociateConstants(boolean cairoSqlLegacyOperatorPrecedence) {
+        if (type == CONSTANT) {
+            isConstantExpression = true;
+            return true;
+        }
+
+        if (paramCount > 2) {
+            // For n-ary operators, we reassociate inner arguments without changing the tree structure.
+            for (int i = 0; i < paramCount; i++) {
+                // Every args child is guaranteed non-null by the expression parser (ExpressionParser.onNode)
+                // and no later transformation violates this invariant.
+                args.getQuick(i).reassociateConstants(cairoSqlLegacyOperatorPrecedence);
+            }
+            return false;
+        }
+
+        // Recurse bottom-up. Each child caches its result in isConstantExpression,
+        // so grandchild constancy checks below are O(1) field reads.
+        boolean lhsConst = lhs != null && lhs.reassociateConstants(cairoSqlLegacyOperatorPrecedence);
+        boolean rhsConst = rhs != null && rhs.reassociateConstants(cairoSqlLegacyOperatorPrecedence);
+
+        if (type != OPERATION || paramCount != 2) {
+            return false;
+        }
+
+        if (lhsConst && rhsConst) {
+            isConstantExpression = true;
+            return true;
+        }
+
+        // op is never null: every OPERATION node with paramCount == 2 gets its token
+        // from the operator registry during parsing or optimization, and the same
+        // registry is selected here via cairoSqlLegacyOperatorPrecedence.
+        OperatorExpression op = OperatorExpression.chooseRegistry(cairoSqlLegacyOperatorPrecedence).getOperatorDefinition(token);
+        if (!op.isAssociative()) {
+            return false;
+        }
+
+        // In every pattern below, !lhsConst (or !rhsConst) guarantees that the
+        // inner OPERATION node has at most one constant child. So when we confirm
+        // which grandchild IS constant, the other one is implicitly NOT constant
+        // — no need to check it.
+
+        if (rhsConst && lhs.type == OPERATION
+                && lhs.paramCount == 2
+                && lhs.token.equals(token)) {
+            if (lhs.rhs.isConstantExpression) {
+                // Pattern A: (A op C1) op C2 → A op (C1 op C2)
+                ExpressionNode inner = lhs;
+                ExpressionNode a = inner.lhs;
+                ExpressionNode c1 = inner.rhs;
+                ExpressionNode c2 = rhs;
+                this.lhs = a;
+                this.rhs = inner;
+                inner.lhs = c1;
+                inner.rhs = c2;
+                inner.isConstantExpression = true;
+            } else if (op.isCommutative() && lhs.lhs.isConstantExpression) {
+                // Pattern B: (C1 op A) op C2 → A op (C1 op C2)
+                ExpressionNode inner = lhs;
+                ExpressionNode c1 = inner.lhs;
+                ExpressionNode a = inner.rhs;
+                ExpressionNode c2 = rhs;
+                this.lhs = a;
+                this.rhs = inner;
+                inner.lhs = c1;
+                inner.rhs = c2;
+                inner.isConstantExpression = true;
+            }
+
+            return false;
+        }
+
+        if (lhsConst && rhs.type == OPERATION
+                && rhs.paramCount == 2
+                && rhs.token.equals(token)) {
+            if (op.isCommutative() && rhs.rhs.isConstantExpression) {
+                // Mirror A: C2 op (A op C1) → A op (C2 op C1)
+                ExpressionNode inner = rhs;
+                ExpressionNode c2 = lhs;
+                this.lhs = inner.lhs;
+                inner.lhs = c2;
+                inner.isConstantExpression = true;
+            } else if (rhs.lhs.isConstantExpression) {
+                // Mirror B: C2 op (C1 op A) → (C2 op C1) op A
+                ExpressionNode inner = rhs;
+                ExpressionNode c2 = lhs;
+                ExpressionNode c1 = inner.lhs;
+                this.rhs = inner.rhs;
+                this.lhs = inner;
+                inner.lhs = c2;
+                inner.rhs = c1;
+                inner.isConstantExpression = true;
+            }
+        }
+
+        return false;
     }
 
     @Override

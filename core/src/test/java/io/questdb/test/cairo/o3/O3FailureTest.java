@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -32,6 +32,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -1714,7 +1715,7 @@ public class O3FailureTest extends AbstractO3Test {
 
             // Adding column is essential, columns open in writer's constructor will have
             // mapped memory, whereas newly added column does not
-            w.addColumn("v", ColumnType.DOUBLE);
+            w.addColumn("v", ColumnType.DOUBLE, AllowAllSecurityContext.INSTANCE);
 
             // stash copy of X, in case X is corrupt
             engine.execute("create atomic table y as (select * from x)", executionContext);

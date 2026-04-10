@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -583,19 +583,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         int r;
         try {
-            r = authenticator.handleIO();
-            if (r == SocketAuthenticator.OK) {
-                try {
+            try {
+                r = authenticator.handleIO();
+                if (r == SocketAuthenticator.OK) {
                     final SecurityContext securityContext = securityContextFactory.getInstance(
                             authenticator, SecurityContextFactory.PGWIRE
                     );
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
-                } catch (CairoException e) {
-                    LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
-                    r = authenticator.denyAccess(e.getFlyweightMessage());
                 }
+            } catch (CairoException e) {
+                LOG.error().$("failed to authenticate [error=").$safe(e.getFlyweightMessage()).I$();
+                r = authenticator.denyAccess(e.getFlyweightMessage());
             }
         } catch (AuthenticatorException e) {
             throw PeerDisconnectedException.INSTANCE;
@@ -696,6 +696,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             return;
         }
 
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isSuspended()) {
+            // client abandoned the suspended cursor by starting a new query
+            pipelineCurrentEntry.closeSuspendedCursor();
+        }
         if (pipelineCurrentEntry != null && (pipelineCurrentEntry.isStateExec() || pipelineCurrentEntry.isStateClosed())) {
             // this is the sequence of B/E/B/E where B starts a new pipeline entry
             pipeline.add(pipelineCurrentEntry);
@@ -963,6 +967,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // Parse message typically starts a new pipeline entry. So if there is existing one in flight
         // we have to add it to the pipeline
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isSuspended()) {
+            // client abandoned the suspended cursor by starting a new query
+            pipelineCurrentEntry.closeSuspendedCursor();
+        }
         addPipelineEntry();
 
         pipelineCurrentEntry = entryPool.next();
@@ -1435,6 +1443,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (nextEntry != null || isExec || isError || isClosed) {
                 if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
                     bindingServiceConfiguredFor = null;
+                }
+                // check suspension before cacheIfPossible(), which frees the cursor
+                if (pipelineCurrentEntry.isSuspended()
+                        && nextEntry == null
+                        && !isClosed
+                        && !isError) {
+                    // portal is suspended with more rows to send, retain the entry
+                    // so the next Execute can resume the cursor
+                    break;
+                }
+                if (pipelineCurrentEntry.isSuspended()) {
+                    // cursor is suspended but we cannot retain (closed, error,
+                    // or more entries in pipeline), free cursor before release
+                    pipelineCurrentEntry.closeSuspendedCursor();
                 }
                 if (!isError) {
                     pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);

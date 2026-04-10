@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -180,16 +180,6 @@ public class DefaultPGConfiguration extends DefaultIODispatcherConfiguration imp
     }
 
     @Override
-    public int getUpdateCacheBlockCount() {
-        return 4;
-    }
-
-    @Override
-    public int getUpdateCacheRowCount() {
-        return 4;
-    }
-
-    @Override
     public int getWorkerCount() {
         return 1;
     }
@@ -206,11 +196,6 @@ public class DefaultPGConfiguration extends DefaultIODispatcherConfiguration imp
 
     @Override
     public boolean isSelectCacheEnabled() {
-        return true;
-    }
-
-    @Override
-    public boolean isUpdateCacheEnabled() {
         return true;
     }
 

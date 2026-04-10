@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,6 +27,11 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Function;
 
 public interface ConstantFunction extends Function {
+    @Override
+    default int getComplexity() {
+        return Function.COMPLEXITY_NONE;
+    }
+
     @Override
     default boolean isConstant() {
         return true;

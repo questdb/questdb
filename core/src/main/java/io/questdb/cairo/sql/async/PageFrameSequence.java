@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -290,10 +290,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return taskType;
     }
 
-    public WorkStealingStrategy getWorkStealingStrategy() {
-        return workStealingStrategy;
-    }
-
     public boolean isActive() {
         return valid.get();
     }
@@ -384,7 +380,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
@@ -424,6 +420,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public void reset() {
+        // reset() must be called only if there are no tasks in progress for this page frame sequence
+        assert frameCount == 0 || reduceFinishedCounter.get() == dispatchStartFrameIndex;
+
         // prepare different frame sequence using the same object instance
         frameCount = 0;
         dispatchStartFrameIndex = 0;

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -454,7 +454,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
             if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameAsChars, udpConfiguration.getMaxFileNameLength())) {
-                writer.addColumn(colNameAsChars, valueType);
+                // Using AllowAllSecurityContext, currently there is no authentication on the UDP interface
+                writer.addColumn(colNameAsChars, valueType, AllowAllSecurityContext.INSTANCE);
                 // Writer index can be different from column count, it keeps deleted columns in metadata
                 int columnIndex = writer.getColumnIndex(colNameAsChars);
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));

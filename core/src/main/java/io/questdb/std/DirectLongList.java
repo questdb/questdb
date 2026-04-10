@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -24,15 +24,12 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf16Sink;
 
 import java.io.Closeable;
-
-import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 public class DirectLongList implements Mutable, Closeable, Reopenable {
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
@@ -42,7 +39,6 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     private long capacity;
     private long limit;
     private long pos;
-
 
     /**
      * Creates a DirectLongList with optional deferred memory allocation.
@@ -96,6 +92,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     // clear without "zeroing" memory
+    @Override
     public void clear() {
         pos = address;
     }
@@ -170,7 +167,8 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         Unsafe.getUnsafe().putLong(address + (p << 3), v);
     }
 
-    // desired capacity in LONGs (not count of bytes)
+    // Desired capacity in LONGs (not count of bytes).
+    // Safe to call on a closed list - it will allocate memory.
     public void setCapacity(long capacity) {
         assert capacity > 0;
         setCapacityBytes(capacity << 3);
@@ -226,9 +224,6 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     // desired capacity in bytes (not count of LONG values)
     private void setCapacityBytes(long capacity) {
         if (this.capacity != capacity) {
-            if ((capacity >>> 3) > MAX_SAFE_INT_POW_2) {
-                throw CairoException.nonCritical().put("long list capacity overflow");
-            }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
             final long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);

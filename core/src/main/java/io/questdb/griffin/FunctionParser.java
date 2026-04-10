@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.MillsTimestampDriver;
+import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
@@ -192,7 +192,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.STRING ->
                 // we cannot use a pooled StrColumn instance, because it is not thread-safe
                     new StrColumn(index);
-            case ColumnType.VARCHAR ->
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE ->
                 // we cannot use a pooled VarcharColumn instance, because it is not thread-safe
                     new VarcharColumn(index);
             case ColumnType.SYMBOL -> new SymbolColumn(index, metadata.isSymbolTableStatic(index));
@@ -312,6 +312,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
         try {
             this.metadata = metadata;
+            if (node != null) {
+                node.reassociateConstants(configuration.getCairoSqlLegacyOperatorPrecedence());
+            }
             try {
                 traverseAlgo.traverse(node, this);
             } catch (Exception e) {
@@ -374,8 +377,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             mutableArgPositions.clear();
             mutableArgPositions.setPos(argCount);
             for (int n = 0; n < argCount; n++) {
-                final Function arg = functionStack.poll();
+                Function arg = functionStack.poll();
                 final int pos = positionStack.pop();
+
+                try {
+                    if (arg != null && arg.isConstant() && arg.extendedOps() == null && !(arg instanceof TypeConstant)) {
+                        arg = functionToConstant(arg);
+                    }
+                } catch (Throwable th) {
+                    // these args were already popped from functionStack
+                    Misc.freeObjList(mutableArgs);
+                    throw th;
+                }
 
                 mutableArgs.setQuick(n, arg);
                 mutableArgPositions.setQuick(n, pos);
@@ -529,6 +542,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
+        if (isUnnestKeyword(node.token)) {
+            Misc.freeObjList(args);
+            return SqlException.position(node.position)
+                    .put("UNNEST cannot be used as an expression; use it in the FROM clause");
+        }
         SqlException ex = SqlException.position(node.position);
         ex.put("unknown function name");
         ex.put(": ");
@@ -549,7 +567,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private static long parseDate(CharSequence str, int position) throws SqlException {
         try {
-            return MillsTimestampDriver.floor(str);
+            return MillisTimestampDriver.floor(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
         }
@@ -1068,6 +1086,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                 if (isWindowContext != factory.isWindow()) {
                     match = MATCH_FUZZY_MATCH;
+                    sigArgTypeScore += 20;
                 } else if (factory.isWindow()) { // make windowFunction high priority when isWindowContext
                     sigArgTypeScore -= 20;
                 }
@@ -1108,11 +1127,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (candidate == null) {
-            // no signature match
+            // no signature match — find the best descriptor for a helpful error message
             if (overload.size() == 1) {
-                // there is only one possible signature, lets help the user out
-                // with a useful error message
                 candidateDescriptor = overload.getQuick(0);
+            } else {
+                // multiple overloads: filter by context (window vs group-by) to find the relevant one
+                FunctionFactoryDescriptor contextMatch = null;
+                int contextMatchCount = 0;
+                for (int i = 0, n = overload.size(); i < n; i++) {
+                    FunctionFactoryDescriptor d = overload.getQuick(i);
+                    if (isWindowContext == d.getFactory().isWindow()) {
+                        contextMatch = d;
+                        contextMatchCount++;
+                    }
+                }
+                if (contextMatchCount == 1) {
+                    candidateDescriptor = contextMatch;
+                }
             }
             throw invalidArgument(node, args, argPositions, candidateDescriptor);
         }
@@ -1315,7 +1346,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private Function functionToConstant(Function function) {
-        Function newFunction = functionToConstant0(function);
+        Function newFunction;
+        try {
+            newFunction = functionToConstant0(function);
+        } catch (Throwable th) {
+            function.close();
+            throw th;
+        }
+
         // Sometimes functionToConstant0 returns same instance as passed in parameter
         if (newFunction != function) {
             // and we want to close underlying function only in case it's different form returned newFunction

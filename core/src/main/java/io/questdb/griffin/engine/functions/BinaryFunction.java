@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,6 +46,11 @@ public interface BinaryFunction extends Function {
     default void cursorClosed() {
         getLeft().cursorClosed();
         getRight().cursorClosed();
+    }
+
+    @Override
+    default int getComplexity() {
+        return Function.addComplexity(getLeft().getComplexity(), getRight().getComplexity());
     }
 
     /**

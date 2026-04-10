@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -180,6 +180,7 @@ public class FastGroupByAllocator implements GroupByAllocator {
                 Unsafe.free(ptr, size, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             }
         }
+        chunks.clear();
         allocated = 0;
         ptr = lim = 0;
     }

@@ -29,13 +29,29 @@ always consider what the behavior should be when something is NULL. Be careful
 to distinguish NULL as a sentinel value for "not initialized yet" vs. an actual
 NULL value.
 
+When choosing a name for a boolean variable, field or method, always use the
+is... or has... prefix, as appropriate.
+
+Use `ObjList<T>` instead of `T[]` object arrays. `ObjList` is QuestDB's
+standard resizable list and integrates with `Misc.freeObjList()` /
+`Misc.freeObjListIfCloseable()` for resource cleanup.
+
 ### Tests
 
-- write all tests using assertMemoryLeak()
-- use assertQueryNoLeakCheck() to assert the results of queries
+- write all tests using assertMemoryLeak(). This isn't needed for narrow unit
+  tests that doesn't allocate native memory.
+- resource leaks are a pain point in QuestDB. Always think carefully about all
+  possible code paths, especially error paths, and write tests that ensure
+  correct resource cleanup on each path.
+- use assertQueryNoLeakCheck() to assert the results of queries. This method
+  asserts factory properties (supportsRandomAccess, expectSize, expectedTimestamp)
+  in addition to data correctness. Storage tests (typically in the cairo test
+  package) that only verify data persistence should use assertSql() instead,
+  because the factory properties are irrelevant for data-correctness checks and
+  can cause false failures.
 - use execute() to run non-queries (DDL)
-- use UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
-  etc.)
+- prefer UPPERCASE for SQL keywords (CREATE TABLE, INSERT, SELECT ... AS ... FROM,
+  etc.), but mixing cases is acceptable since SQL is case-insensitive
 - use a single INSERT statement to insert multiple rows
 - use multiline strings for longer statements (multiple INSERT rows, complex
   queries), as well as to assert multiline query results
@@ -87,13 +103,17 @@ offending character, not the start of the expression.
   `Enhancement`, `Flaky Test`, `ILP`, `Materialized View`, `New feature`,
   `Performance`, `Postgres Wire`, `REST API`, `SQL`, `Security`, `UI`, `WAL`,
   `Windows`, `regression`, `rust`, `storage`.
-
-## Writing Style
-
-- Prefer active voice over passive voice in commit messages, PR descriptions,
-  and comments.
-  - Good: "The owner thread waits for the latch"
-  - Avoid: "The latch is waited on by the owner thread"
+- Use active voice in commit messages, PR descriptions, and code comments. Name
+  the acting subject — a class, method, caller, or component — instead of
+  writing "is/are + past participle" constructions.
+  - Good: "`determineExportMode()` inspects the compiled factory"
+  - Avoid: "The export mode is determined by inspecting the compiled factory"
+  - Good: "`setUp()` pre-computes per-column metadata into flat arrays"
+  - Avoid: "Per-column metadata are pre-computed into flat arrays at setup time"
+  - Good: "The ring queue passes the factory to the exporter"
+  - Avoid: "The factory is passed through the ring queue to the exporter"
+  - Good: "The materializer converts computed SYMBOL columns to STRING"
+  - Avoid: "Symbol columns that are computed are converted to STRING"
 
 ## Build Commands
 

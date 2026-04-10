@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -95,10 +95,15 @@ public class FullBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
 
+                IntList columnIndexes = new IntList();
+                columnIndexes.add(0); // a
+                columnIndexes.add(1); // b
+                columnIndexes.add(2); // timestamp
+
                 try (FullPartitionFrameCursorFactory factory = new FullPartitionFrameCursorFactory(writer.getTableToken(), 0, GenericRecordMetadata.copyOfNew(writer.getMetadata()), ORDER_DESC, null, 0, false)) {
                     final TestTableReaderRecord record = new TestTableReaderRecord();
 
-                    try (final PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), new IntList(), ORDER_DESC)) {
+                    try (final PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), columnIndexes, ORDER_DESC)) {
                         printCursor(record, cursor);
 
                         TestUtils.assertEquals(expected, sink);

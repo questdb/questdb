@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>compat</artifactId>
-    <version>9.3.3-SNAPSHOT</version>
+    <version>9.3.5-SNAPSHOT</version>
 
     <name>Compatibility tests for QuestDB</name>
 
@@ -57,7 +57,7 @@
         <dependency>
             <groupId>org.eclipse.jetty</groupId>
             <artifactId>jetty-server</artifactId>
-            <version>12.0.12</version>
+            <version>12.0.32</version>
             <scope>test</scope>
         </dependency>
         <dependency>

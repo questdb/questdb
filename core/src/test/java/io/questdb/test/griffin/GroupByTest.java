@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -252,6 +252,7 @@ public class GroupByTest extends AbstractCairoTest {
                               functions: [column,count]
                                 Async Group By workers: 1
                                   keys: [column]
+                                  keyFunctions: [x+1]
                                   values: [count(*)]
                                   filter: null
                                     PageFrame
@@ -291,6 +292,7 @@ public class GroupByTest extends AbstractCairoTest {
                     """
                             Async Group By workers: 1
                               keys: [case]
+                              keyFunctions: [case([x<0,-1,x=0,0,1])]
                               values: [count(*)]
                               filter: null
                                 PageFrame
@@ -332,6 +334,7 @@ public class GroupByTest extends AbstractCairoTest {
                               functions: [case([column<0,-1,column=0,0,1]),count]
                                 Async Group By workers: 1
                                   keys: [column]
+                                  keyFunctions: [x+1]
                                   values: [count(*)]
                                   filter: null
                                     PageFrame
@@ -484,6 +487,7 @@ public class GroupByTest extends AbstractCairoTest {
                               functions: [column,x+avg,min]
                                 Async Group By workers: 1
                                   keys: [column,x]
+                                  keyFunctions: [x*10]
                                   values: [avg(y),min(y)]
                                   filter: null
                                     PageFrame
@@ -541,7 +545,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 Async Group By workers: 1
                                   keys: [date_report]
@@ -581,7 +585,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 Async Group By workers: 1
                                   keys: [date_report]
@@ -622,7 +626,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 Async Group By workers: 1
                                   keys: [date_report]
@@ -663,7 +667,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report1]
                                 VirtualRecord
                                   functions: [date_report,date_report,count]
@@ -708,12 +712,13 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 VirtualRecord
                                   functions: [date_report,dateadd,dateadd('d',1,date_report),concat(['1',date_report,'3']),count]
                                     Async Group By workers: 1
                                       keys: [date_report,dateadd]
+                                      keyFunctions: [dateadd('d',-1,date_report)]
                                       values: [count(*)]
                                       filter: null
                                         PageFrame
@@ -754,7 +759,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 VirtualRecord
                                   functions: [date_report,to_str(date_report),dateadd('d',1,date_report),dateadd('d',-1,date_report),count]
@@ -806,7 +811,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [date_report]
                                 VirtualRecord
                                   functions: [date_report,to_str(date_report),dateadd('d',1,date_report),min,count,minminusday]
@@ -1109,6 +1114,7 @@ public class GroupByTest extends AbstractCairoTest {
                               functions: [l,s,column]
                                 Async Group By workers: 1
                                   keys: [l,s,column,column1]
+                                  keyFunctions: [l+1,l+2]
                                   filter: null
                                     PageFrame
                                         Row forward scan
@@ -1377,7 +1383,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [s, max]
                                 Async Group By workers: 1
                                   keys: [s,max]
@@ -1451,7 +1457,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     """
                             SelectedRecord
-                                Sort light
+                                Encode sort light
                                   keys: [x, x1]
                                     VirtualRecord
                                       functions: [x,max,case([1<x,100*x,10*x1]),x1]
@@ -1552,7 +1558,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [x]
                                 VirtualRecord
                                   functions: [x,max,dateadd::long+x1]
@@ -1604,7 +1610,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [x, max, dateadd]
                                 VirtualRecord
                                   functions: [x,max,dateadd('s',max::int,dateadd)]
@@ -1967,7 +1973,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [s2]
                                 GroupBy vectorized: false
                                   keys: [s2]
@@ -2124,14 +2130,14 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query1,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [i]
                                 VirtualRecord
                                   functions: [ts,i,avg,sum,first_value]
                                     GroupBy vectorized: false
                                       keys: [i]
                                       values: [max(ts),avg(j),sum(j::double),first(j::double)]
-                                        Sort
+                                        Encode sort
                                           keys: [i, ts]
                                             SelectedRecord
                                                 Filter filter: data.ts>=cnt.max-80000
@@ -2201,7 +2207,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query2,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [i]
                                 GroupBy vectorized: false
                                   keys: [i]
@@ -2503,7 +2509,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [y_utc_15m]
                                 GroupBy vectorized: false
                                   keys: [y_utc_15m]
@@ -2538,7 +2544,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     """
                             SelectedRecord
-                                Sort light
+                                Encode sort light
                                   keys: [a, b, z]
                                     VirtualRecord
                                       functions: [a,sum,z,views,b]
@@ -2599,6 +2605,7 @@ public class GroupByTest extends AbstractCairoTest {
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
                                     Async JIT Group By workers: 1
                                       keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
+                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0)
                                         PageFrame
@@ -2624,6 +2631,7 @@ public class GroupByTest extends AbstractCairoTest {
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews]
                                     Async JIT Group By workers: 1
                                       keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]
+                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0)
                                         PageFrame
@@ -2648,6 +2656,7 @@ public class GroupByTest extends AbstractCairoTest {
                                   functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,PageViews,cat]
                                     Async JIT Group By workers: 1
                                       keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,cat]
+                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,'']),concat([lpad(TraficSourceID::string,10,'0'),lpad(Referer,32,'0')])]
                                       values: [count(*)]
                                       filter: (CounterID=62 and IsRefresh=0)
                                         PageFrame
@@ -2681,7 +2690,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [k1, key2]
                                 VirtualRecord
                                   functions: [k1,key2,key2,count]
@@ -2717,7 +2726,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [column, key, key1 desc]
                                 VirtualRecord
                                   functions: [key+1,key,key,count]
@@ -2749,7 +2758,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [x, max, dateadd]
                                 VirtualRecord
                                   functions: [x,max,dateadd('s',max::int,dateadd)]
@@ -2940,6 +2949,307 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonKeyedVectorizedAllBatchEligible() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-01T12:00:00.000000Z'),
+                            (30, '2024-01-02T00:00:00.000000Z'),
+                            (40, '2024-01-02T12:00:00.000000Z'),
+                            (50, '2024-01-03T00:00:00.000000Z')"""
+            );
+
+            String query = "SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v) FROM t";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [sum(v),min(v),max(v),count(*),avg(v),first(v),last(v)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tmin\tmax\tcount\tavg\tfirst\tlast
+                            150\t10\t50\t5\t30.0\t10\t50
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedAllNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t(ts) VALUES
+                            ('2024-01-01T00:00:00.000000Z'),
+                            ('2024-01-02T00:00:00.000000Z')"""
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tmin\tmax\tcount\tavg\tfirst\tlast\tfirst_not_null\tlast_not_null
+                            null\tnull\tnull\t2\tnull\tnull\tnull\tnull\tnull
+                            """,
+                    "SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v), first_not_null(v), last_not_null(v) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-02T00:00:00.000000Z')"""
+            );
+            // Add a new column — older partitions will have column tops.
+            execute("ALTER TABLE t ADD COLUMN v2 INT");
+            execute("""
+                    INSERT INTO t VALUES
+                    (30, '2024-01-03T00:00:00.000000Z', 100),
+                    (40, '2024-01-04T00:00:00.000000Z', 200)""");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tmin\tmax\tcount\tfirst\tlast\tsum1\tfirst_not_null\tlast_not_null
+                            100\t10\t40\t4\t10\t40\t300\t100\t200
+                            """,
+                    "SELECT sum(v), min(v), max(v), count(*), first(v), last(v), sum(v2), first_not_null(v2), last_not_null(v2) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tmin\tmax\tcount\tavg\tfirst\tlast
+                            null\tnull\tnull\t0\tnull\tnull\tnull
+                            """,
+                    "SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedFirstLastNotNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (null, '2024-01-01T00:00:00.000000Z'),
+                            (10, '2024-01-01T12:00:00.000000Z'),
+                            (20, '2024-01-02T00:00:00.000000Z'),
+                            (null, '2024-01-02T12:00:00.000000Z'),
+                            (30, '2024-01-03T00:00:00.000000Z'),
+                            (null, '2024-01-03T12:00:00.000000Z')"""
+            );
+
+            String query = "SELECT first(v), last(v), first_not_null(v), last_not_null(v) FROM t";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [first(v),last(v),first_not_null(v),last_not_null(v)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            first\tlast\tfirst_not_null\tlast_not_null
+                            null\tnull\t10\t30
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedHybridPath() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-01T12:00:00.000000Z'),
+                            (30, '2024-01-02T00:00:00.000000Z')"""
+            );
+
+            // first(v) is batch-eligible, last(v + 1) is not (expression arg, not decomposable).
+            String query = "SELECT first(v), last(v + 1) FROM t";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [first(v),last(v+1)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            first\tlast
+                            10\t31
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedMultipleTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE t (
+                                vi INT, vl LONG, vd DOUBLE, vf FLOAT, vs SHORT,
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY"""
+            );
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (1, 100, 1.5, 1.5, 10, '2024-01-01T00:00:00.000000Z'),
+                            (2, 200, 2.5, 2.5, 20, '2024-01-02T00:00:00.000000Z'),
+                            (3, 300, 3.5, 3.5, 30, '2024-01-03T00:00:00.000000Z')"""
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tsum1\tsum2\tsum3\tsum4\tmin\tmax\tfirst\tlast
+                            6\t600\t7.5\t7.5\t60\t1\t3\t1\t3
+                            """,
+                    "SELECT sum(vi), sum(vl), sum(vd), sum(vf), sum(vs), min(vi), max(vi), first(vi), last(vi) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedNotEligible() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-02T00:00:00.000000Z')"""
+            );
+
+            // All functions use expression args, so none are batch-eligible.
+            String query = "SELECT first(v * 2), last(v + 1) FROM t";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async Group By workers: 1
+                              vectorized: false
+                              values: [first(v*2),last(v+1)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            first\tlast
+                            20\t21
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedVectorizedWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO t VALUES
+                            (10, '2024-01-01T00:00:00.000000Z'),
+                            (20, '2024-01-01T12:00:00.000000Z'),
+                            (30, '2024-01-02T00:00:00.000000Z'),
+                            (40, '2024-01-02T12:00:00.000000Z')"""
+            );
+
+            // Filter disables the vectorized path.
+            String query = "SELECT sum(v), count(*), first(v) FROM t WHERE v > 15";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async JIT Group By workers: 1
+                              vectorized: false
+                              values: [sum(v),count(*),first(v)]
+                              filter: 15<v
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sum\tcount\tfirst
+                            90\t3\t20
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -3044,7 +3354,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [created]
@@ -3092,7 +3402,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [dateadd('h',1,created)]
@@ -3139,7 +3449,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Radix sort light
+                            Encode sort light
                               keys: [created]
                                 Async JIT Group By workers: 1
                                   keys: [created]
@@ -3184,12 +3494,13 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [hour, sym]
                                 VirtualRecord
                                   functions: [sym,hour,avgBid]
                                     Async Group By workers: 1
                                       keys: [sym,hour]
+                                      keyFunctions: [hour(ts)]
                                       values: [avg(bid)]
                                       filter: null
                                         PageFrame
@@ -3253,7 +3564,7 @@ public class GroupByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Sort light
+                            Encode sort light
                               keys: [category]
                                 VirtualRecord
                                   functions: [sum,sum1,category]

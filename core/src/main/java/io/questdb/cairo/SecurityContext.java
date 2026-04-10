@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -40,6 +40,10 @@ public interface SecurityContext extends Mutable {
     // Either tried to authenticate and failed, or did not try to authenticate at all.
     byte AUTH_TYPE_NONE = 0;
 
+    void authorizeAlterMatViewSetRefreshLimit(TableToken tableToken);
+
+    void authorizeAlterMatViewSetRefreshType(TableToken tableToken);
+
     void authorizeAlterTableAddColumn(TableToken tableToken);
 
     void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
@@ -48,7 +52,13 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableAlterColumnType(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
+    void authorizeAlterTableAlterSymbolCapacity(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
     void authorizeAlterTableAttachPartition(TableToken tableToken);
+
+    void authorizeAlterTableConvertPartitionToNative(TableToken tableToken);
+
+    void authorizeAlterTableConvertPartitionToParquet(TableToken tableToken);
 
     void authorizeAlterTableDedupDisable(TableToken tableToken);
 
@@ -64,6 +74,10 @@ public interface SecurityContext extends Mutable {
 
     // the names are pairs from-to
     void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    void authorizeAlterTableSetParam(TableToken tableToken);
+
+    void authorizeAlterTableSetParquetSettings(TableToken tableToken);
 
     void authorizeAlterTableSetType(TableToken tableToken);
 

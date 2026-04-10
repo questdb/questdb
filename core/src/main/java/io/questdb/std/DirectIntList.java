@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -160,7 +160,8 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         Unsafe.getUnsafe().putInt(address + (p << 2), v);
     }
 
-    // desired capacity in INTs (not count of bytes)
+    // Desired capacity in INTs (not count of bytes).
+    // Safe to call on a closed list - it will allocate memory.
     public void setCapacity(long capacity) {
         assert capacity > 0;
         setCapacityBytes(capacity << 2);

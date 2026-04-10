@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -45,9 +45,13 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
-            mapValue.putLong(valueIndex, Vect.maxLong(ptr, count));
+            final long batchMax = Vect.maxLong(ptr, count);
+            final long existing = mapValue.getLong(valueIndex);
+            if (batchMax > existing) {
+                mapValue.putLong(valueIndex, batchMax);
+            }
         }
     }
 

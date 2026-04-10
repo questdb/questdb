@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -207,6 +207,15 @@ public final class TableUtils {
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
     private static final int MIN_SYMBOL_CAPACITY = 2;
+    private static final int PARQUET_CONFIG_COMPRESSION_MASK = 0xFF;
+    private static final int PARQUET_CONFIG_COMPRESSION_SHIFT = 8;
+    // Bit layout for the packed per-column parquet encoding config (32-bit integer).
+    // Must stay in sync with the Rust constants in parquet_write/schema.rs.
+    private static final int PARQUET_CONFIG_BLOOM_FILTER_FLAG = 1 << 25;
+    private static final int PARQUET_CONFIG_ENCODING_MASK = 0xFF;
+    private static final int PARQUET_CONFIG_EXPLICIT_FLAG = 1 << 24;
+    private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
+    private static final int PARQUET_CONFIG_LEVEL_SHIFT = 16;
 
     private TableUtils() {
     }
@@ -847,6 +856,40 @@ public final class TableUtils {
         return 0;
     }
 
+    /**
+     * Extracts the compression codec id (bits 8-15) from a packed Parquet config.
+     */
+    public static int getParquetConfigCompression(int packed) {
+        return (packed >> PARQUET_CONFIG_COMPRESSION_SHIFT) & PARQUET_CONFIG_COMPRESSION_MASK;
+    }
+
+    /**
+     * Extracts the compression level (bits 16-23) from a packed Parquet config.
+     * The raw value uses +1 encoding: 0 = not set, 1 = level 0, 2 = level 1, etc.
+     * Callers that display the level to the user should subtract 1 from non-zero values.
+     */
+    public static int getParquetConfigCompressionLevel(int packed) {
+        return (packed >> PARQUET_CONFIG_LEVEL_SHIFT) & PARQUET_CONFIG_LEVEL_MASK;
+    }
+
+    /**
+     * Extracts the encoding id (bits 0-7) from a packed Parquet config.
+     * The id corresponds to a {@code ParquetEncoding.ENCODING_*} constant.
+     */
+    public static int getParquetConfigEncoding(int packed) {
+        return packed & PARQUET_CONFIG_ENCODING_MASK;
+    }
+
+    /**
+     * Reads the packed Parquet encoding config for a column from table metadata memory.
+     * See {@link #packParquetConfig(int, int, int)} for the bit layout.
+     */
+    public static int getParquetEncodingConfig(MemoryR metaMem, int columnIndex) {
+        // type(4) + flags(8) + indexBlockCapacity(4) + symbolCapacity(4)
+        final long META_COLUMN_PARQUET_ENCODING_CONFIG_OFFSET = 20;
+        return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + META_COLUMN_PARQUET_ENCODING_CONFIG_OFFSET);
+    }
+
     public static int getPartitionBy(TableRecordMetadata metadata, CairoEngine engine) {
         if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
             return ((TableWriterMetadata) metadata).getPartitionBy();
@@ -1012,6 +1055,22 @@ public final class TableUtils {
         );
         short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
         return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= META_FORMAT_MINOR_VERSION_LATEST;
+    }
+
+    /**
+     * Returns true when bit 25 (the bloom filter flag) is set, meaning
+     * this column should have a bloom filter written when converted to parquet.
+     */
+    public static boolean isParquetConfigBloomFilter(int packed) {
+        return (packed & PARQUET_CONFIG_BLOOM_FILTER_FLAG) != 0;
+    }
+
+    /**
+     * Returns true when bit 24 (the explicit flag) is set, meaning the user
+     * explicitly configured encoding/compression for this column via ALTER TABLE.
+     */
+    public static boolean isParquetConfigExplicit(int packed) {
+        return (packed & PARQUET_CONFIG_EXPLICIT_FLAG) != 0;
     }
 
     public static boolean isSymbolCached(MemoryR metaMem, int columnIndex) {
@@ -1493,6 +1552,35 @@ public final class TableUtils {
         memory.jumpTo(0);
         createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    /**
+     * Packs per-column Parquet encoding, compression codec, and compression level
+     * into a single 32-bit integer. Layout:
+     * <ul>
+     *   <li>bits 0-7: encoding id ({@code ParquetEncoding.ENCODING_*})</li>
+     *   <li>bits 8-15: compression codec id ({@code ParquetCompression} constants)</li>
+     *   <li>bits 16-23: compression level with +1 encoding (0 = not set, 1 = level 0, 2 = level 1, etc.)</li>
+     *   <li>bit 24: explicit flag (always set by this method)</li>
+     *   <li>bit 25: bloom filter flag</li>
+     * </ul>
+     * A packed value of 0 means "use defaults for everything".
+     * Both compression and level use +1 encoding so that 0 can serve as a "not set" sentinel
+     * while still allowing the user to specify level 0 (e.g., gzip store mode).
+     */
+    public static int packParquetConfig(int encoding, int compression, int level) {
+        return packParquetConfig(encoding, compression, level, false);
+    }
+
+    public static int packParquetConfig(int encoding, int compression, int level, boolean bloomFilter) {
+        int config = (encoding & PARQUET_CONFIG_ENCODING_MASK)
+                | ((compression & PARQUET_CONFIG_COMPRESSION_MASK) << PARQUET_CONFIG_COMPRESSION_SHIFT)
+                | ((level & PARQUET_CONFIG_LEVEL_MASK) << PARQUET_CONFIG_LEVEL_SHIFT)
+                | PARQUET_CONFIG_EXPLICIT_FLAG;
+        if (bloomFilter) {
+            config |= PARQUET_CONFIG_BLOOM_FILTER_FLAG;
+        }
+        return config;
     }
 
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
@@ -2054,8 +2142,9 @@ public final class TableUtils {
             mem.putLong(flags);
             mem.putInt(tableStruct.getIndexBlockCapacity(i));
             mem.putInt(tableStruct.getSymbolCapacity(i));
+            mem.putInt(tableStruct.getParquetEncodingConfig(i));
             // reserved
-            mem.skip(12);
+            mem.skip(8);
         }
 
         for (int i = 0; i < count; i++) {

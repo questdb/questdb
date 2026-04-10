@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -41,6 +41,6 @@ public interface MetadataCacheReader extends QuietCloseable, Sinkable {
 
     boolean isVisibleTable(@NotNull CharSequence tableName);
 
-    long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion);
+    long snapshot(CharSequenceObjMap<CairoTable> localCache, long priorVersion);
 }
 

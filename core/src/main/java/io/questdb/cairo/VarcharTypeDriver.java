@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -237,6 +237,37 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return TableUtils.NULL_LEN;
         }
         return size(header);
+    }
+
+    /**
+     * Reads a VarcharSlice value from the aux vector.
+     * VarcharSlice aux format: [length(i32), reserved(u32), pointer(u64)]
+     */
+    public static Utf8Sequence getSliceValue(long auxAddr, long rowNum, Utf8SplitString utf8SplitView) {
+        long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        int header = Unsafe.getUnsafe().getInt(auxEntry);
+        if ((header & VARCHAR_HEADER_FLAG_NULL) != 0) {
+            return null;
+        }
+        int length = header >>> 4;
+        boolean ascii = (header & 2) != 0;
+        long ptr = Unsafe.getUnsafe().getLong(auxEntry + 8);
+        return utf8SplitView.of(ptr, ptr, ptr + length, length, ascii);
+    }
+
+    /**
+     * Returns the size in bytes of a VarcharSlice value, or TableUtils.NULL_LEN for null.
+     */
+    public static int getSliceValueSize(long auxAddr, long rowNum) {
+        if (rowNum < 0) {
+            return TableUtils.NULL_LEN;
+        }
+        long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
+        int header = Unsafe.getUnsafe().getInt(auxEntry);
+        if ((header & VARCHAR_HEADER_FLAG_NULL) != 0) {
+            return TableUtils.NULL_LEN;
+        }
+        return header >>> 4;
     }
 
     public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {

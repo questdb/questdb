@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -40,11 +40,13 @@ public class LastNotNullVarcharGroupByFunction extends FirstVarcharGroupByFuncti
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Utf8Sequence val = arg.getVarcharA(record);
         if (val != null) {
-            mapValue.putLong(valueIndex, rowId);
-            long ptr = mapValue.getLong(valueIndex + 1);
-            sink.of(ptr).clearAndSet(val);
-            mapValue.putLong(valueIndex + 1, sink.colouredPtr());
-            mapValue.putBool(valueIndex + 2, false);
+            if (mapValue.getBool(valueIndex + 2) || rowId > mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                long ptr = mapValue.getLong(valueIndex + 1);
+                sink.of(ptr).clearAndSet(val);
+                mapValue.putLong(valueIndex + 1, sink.colouredPtr());
+                mapValue.putBool(valueIndex + 2, false);
+            }
         }
     }
 

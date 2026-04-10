@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -81,7 +81,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.keyFunctions = keyFunctions;
             this.recordFunctions = recordFunctions;
             // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, null, configuration);
+            this.mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter, keyFunctions, null);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
         } catch (Throwable e) {
@@ -186,7 +186,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             super(functions);
             try {
                 this.isOpen = true;
-                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true);
                 this.groupByFunctionsUpdater = groupByFunctionsUpdater;
                 this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);

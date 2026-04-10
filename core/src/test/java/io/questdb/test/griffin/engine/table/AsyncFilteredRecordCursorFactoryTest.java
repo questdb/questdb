@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -332,16 +332,17 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             }
                         }
                     } catch (Throwable e) {
-                        TestUtils.assertContains(e.getMessage(), "unexpected filter error");
+                        TestUtils.assertContains(e.getMessage(), "unexpected reduce error");
                     }
 
                     assertSql(
                             """
                                     QUERY PLAN
-                                    Radix sort light
+                                    Encode sort light
                                       keys: [timestamp]
                                         Async Group By workers: 1
                                           keys: [timestamp]
+                                          keyFunctions: [timestamp_floor_utc('1h',timestamp)]
                                           values: [count(*)]
                                           filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)
                                             PageFrame
@@ -1313,6 +1314,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isParallelHorizonJoinEnabled() {
+            return sqlExecutionContext.isParallelHorizonJoinEnabled();
+        }
+
+        @Override
         public boolean isParallelReadParquetEnabled() {
             return sqlExecutionContext.isParallelReadParquetEnabled();
         }
@@ -1325,6 +1331,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isParallelWindowJoinEnabled() {
             return sqlExecutionContext.isParallelWindowJoinEnabled();
+        }
+
+        @Override
+        public boolean isParquetRowGroupPruningEnabled() {
+            return sqlExecutionContext.isParquetRowGroupPruningEnabled();
         }
 
         @Override
@@ -1429,6 +1440,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(parallelHorizonJoinEnabled);
+        }
+
+        @Override
         public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
             sqlExecutionContext.setParallelReadParquetEnabled(parallelReadParquetEnabled);
         }
@@ -1441,6 +1457,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled) {
             sqlExecutionContext.setParallelWindowJoinEnabled(parallelWindowJoinEnabled);
+        }
+
+        @Override
+        public void setParquetRowGroupPruningEnabled(boolean parquetRowGroupPruningEnabled) {
+            sqlExecutionContext.setParquetRowGroupPruningEnabled(parquetRowGroupPruningEnabled);
         }
 
         @Override

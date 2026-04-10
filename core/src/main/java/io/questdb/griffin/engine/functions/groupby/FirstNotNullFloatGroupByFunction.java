@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -38,23 +38,34 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count) {
+    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
         if (count > 0) {
             final long hi = ptr + count * (long) Float.BYTES;
+            long offset = 0;
             for (; ptr < hi; ptr += Float.BYTES) {
                 float value = Unsafe.getUnsafe().getFloat(ptr);
                 if (!Numbers.isNull(value)) {
-                    mapValue.putFloat(valueIndex + 1, value);
+                    long rowId = startRowId + offset;
+                    long existingRowId = mapValue.getLong(valueIndex);
+                    if (rowId < existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getFloat(valueIndex + 1))) {
+                        mapValue.putLong(valueIndex, rowId);
+                        mapValue.putFloat(valueIndex + 1, value);
+                    }
                     break;
                 }
+                offset++;
             }
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (Numbers.isNull(mapValue.getFloat(valueIndex + 1))) {
-            computeFirst(mapValue, record, rowId);
+        float val = arg.getFloat(record);
+        if (!Numbers.isNull(val)) {
+            if (Numbers.isNull(mapValue.getFloat(valueIndex + 1)) || rowId < mapValue.getLong(valueIndex)) {
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putFloat(valueIndex + 1, val);
+            }
         }
     }
 
@@ -72,7 +83,7 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || Numbers.isNull(destValue.getFloat(valueIndex + 1))) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putFloat(valueIndex + 1, srcVal);
         }

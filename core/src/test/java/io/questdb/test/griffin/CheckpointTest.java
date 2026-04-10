@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,11 +25,19 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Bootstrap;
+import io.questdb.FactoryProvider;
+import io.questdb.FreeOnExit;
+import io.questdb.MemoryConfiguration;
+import io.questdb.Metrics;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.PublicPassthroughConfiguration;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.BitmapIndexUtils;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
@@ -42,6 +50,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
@@ -50,12 +59,19 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.preferences.SettingsStore;
+import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -63,6 +79,8 @@ import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
@@ -90,6 +108,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.PropertyKey.*;
 
@@ -230,6 +249,199 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("checkpoint create");
             execute("checkpoint release");
         });
+    }
+
+    @Test
+    public void testCheckpointListenerOnReleased() throws Exception {
+        File dir = temp.newFolder("listener_release_test");
+
+        // Track listener callbacks - use ObjList to verify exactly one call
+        final ObjList<CheckpointReleaseEvent> events = new ObjList<>();
+
+        CheckpointListener listener = new CheckpointListener() {
+            @Override
+            public void onCheckpointReleased(long timestampMicros, CharSequenceLongHashMap tableDirNamesToSeqTxn) {
+                // Copy the map since it's owned by caller
+                CharSequenceLongHashMap copy = new CharSequenceLongHashMap();
+                for (int i = 0, n = tableDirNamesToSeqTxn.size(); i < n; i++) {
+                    CharSequence key = tableDirNamesToSeqTxn.keys().get(i);
+                    copy.put(key.toString(), tableDirNamesToSeqTxn.get(key));
+                }
+                events.add(new CheckpointReleaseEvent(timestampMicros, copy));
+            }
+
+            @Override
+            public void onCheckpointRestoreComplete() {
+            }
+        };
+
+        try (TestServerMain server = startServerMainWithListener(dir.getAbsolutePath(), listener)) {
+            // Create WAL tables
+            server.execute("CREATE TABLE wal_table1 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            server.execute("CREATE TABLE wal_table2 (y LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Create non-WAL table (should NOT appear in callback)
+            server.execute("CREATE TABLE non_wal_table (z INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // Create a view on a WAL table (should appear in callback)
+            server.execute("CREATE VIEW test_view AS SELECT * FROM wal_table1 WHERE x > 0");
+
+            // Create a materialized view on a WAL table (should appear in callback)
+            server.execute("CREATE MATERIALIZED VIEW mat_view AS SELECT ts, count() cnt FROM wal_table1 SAMPLE BY 1d");
+
+            // Insert data to generate transactions
+            server.execute("INSERT INTO wal_table1 VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            server.execute("INSERT INTO wal_table2 VALUES (100, '2024-01-01T00:00:00.000000Z')");
+            server.execute("INSERT INTO non_wal_table VALUES (999, '2024-01-01T00:00:00.000000Z')");
+
+            // Wait for WAL transactions to be fully sequenced before checkpointing.
+            // The checkpoint reads seqTxn from the sequencer (lastTxn), so we wait for the
+            // sequencer to have the expected transaction counts.
+            // Note: TestServerMain runs its own background workers, so we use assertEventually
+            // rather than drainWalAndMatViewQueues (which creates separate job instances).
+            TableToken walTable1Token = server.getEngine().getTableTokenIfExists("wal_table1");
+            TableToken walTable2Token = server.getEngine().getTableTokenIfExists("wal_table2");
+            TableToken matViewToken = server.getEngine().getTableTokenIfExists("mat_view");
+
+            // wal_table1: seqTxn=1 (one insert)
+            // wal_table2: seqTxn=1 (one insert)
+            TestUtils.assertEventually(() -> {
+                long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(walTable1Token).getSeqTxn();
+                Assert.assertEquals("wal_table1 seqTxn should be 1", 1L, seqTxn);
+            });
+            TestUtils.assertEventually(() -> {
+                long seqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(walTable2Token).getSeqTxn();
+                Assert.assertEquals("wal_table2 seqTxn should be 1", 1L, seqTxn);
+            });
+
+            // Wait until the mat view has applied base-table txn=1.
+            TestUtils.assertEventually(() -> {
+                MatViewState viewState = server.getEngine().getMatViewStateStore().getViewState(matViewToken);
+                Assert.assertNotNull("mat_view state should exist", viewState);
+                Assert.assertEquals("mat_view lastRefreshBaseTxn should be 1", 1L, viewState.getLastRefreshBaseTxn());
+            });
+            // At this point the view is caught up to the only base-table write in this test.
+            // Read the mat_view seqTxn once, right before CHECKPOINT CREATE.
+            // Two valid startup interleavings exist:
+            // Path A (first refresh before wal_table1 INSERT is applied):
+            //   1) fromTxn=-1,toTxn=0 -> refreshSuccessNoRows() writes resetMatViewState() => seqTxn=1
+            //   2) follow-up refresh updates cached intervals via resetMatViewState() => seqTxn=2
+            //   3) data refresh writes commitMatView() => seqTxn=3
+            // Path B (first refresh after wal_table1 INSERT is applied):
+            //   1) fromTxn=-1,toTxn=1 -> single data refresh writes commitMatView() => seqTxn=1
+            // Not a TOCTOU in this test: after lastRefreshBaseTxn reaches 1 we do not perform any new base-table
+            // commits, and this immediate view has no additional incremental work (fromTxn==toTxn).
+            // So reading mat_view seqTxn once here and comparing it to checkpoint callback value is stable.
+            long matViewSeqTxn = server.getEngine().getTableSequencerAPI().getTxnTracker(matViewToken).getSeqTxn();
+            Assert.assertTrue("mat_view seqTxn should be either 1 or 3, was " + matViewSeqTxn, matViewSeqTxn == 1L || matViewSeqTxn == 3L);
+
+            // Verify listener not called yet
+            Assert.assertEquals("Listener should not be called before checkpoint", 0, events.size());
+
+            // Create checkpoint
+            server.execute("CHECKPOINT CREATE");
+
+            // Capture the checkpoint's timestamp from the status
+            long checkpointTimestamp = server.getEngine().getCheckpointStatus().startedAtTimestamp();
+            Assert.assertTrue("Checkpoint should be active after CREATE", checkpointTimestamp > 0);
+
+            // Listener still not called (only at release)
+            Assert.assertEquals("Listener should not be called at checkpoint create", 0, events.size());
+
+            server.execute("CHECKPOINT RELEASE");
+
+            // Verify listener was called exactly once
+            Assert.assertEquals("Listener should be called exactly once", 1, events.size());
+
+            CheckpointReleaseEvent event = events.get(0);
+            // Verify callback receives the checkpoint's creation timestamp, not the release time
+            Assert.assertEquals("Callback timestamp should be the checkpoint's creation timestamp",
+                    checkpointTimestamp, event.timestampMicros);
+
+            CharSequenceLongHashMap actual = event.tableDirNamesToSeqTxn;
+
+            // Verify exact seqTxn values
+            Assert.assertEquals("wal_table1 seqTxn mismatch", 1L, getSeqTxnForTable(actual, "wal_table1"));
+            Assert.assertEquals("wal_table2 seqTxn mismatch", 1L, getSeqTxnForTable(actual, "wal_table2"));
+            Assert.assertEquals("test_view seqTxn mismatch", 0L, getSeqTxnForTable(actual, "test_view"));
+            Assert.assertEquals("mat_view seqTxn mismatch", matViewSeqTxn, getSeqTxnForTable(actual, "mat_view"));
+
+            // Verify non-WAL table is NOT present
+            for (int i = 0, n = actual.size(); i < n; i++) {
+                CharSequence tableDirName = actual.keys().get(i);
+                Assert.assertFalse("Should NOT contain non_wal_table",
+                        tableDirName.toString().startsWith("non_wal_table"));
+            }
+
+            // Define allowed table name prefixes (user tables only)
+            ObjHashSet<String> allowedPrefixes = new ObjHashSet<>();
+            allowedPrefixes.add("wal_table1");
+            allowedPrefixes.add("wal_table2");
+            allowedPrefixes.add("test_view");
+            allowedPrefixes.add("mat_view");
+            // Note: If system tables appear in callback, add their prefixes here
+
+            // Verify no unexpected tables appear
+            for (int i = 0, n = actual.size(); i < n; i++) {
+                String dirName = actual.keys().get(i).toString();
+                boolean isAllowed = false;
+                for (int j = 0, m = allowedPrefixes.size(); j < m; j++) {
+                    if (dirName.startsWith(allowedPrefixes.get(j))) {
+                        isAllowed = true;
+                        break;
+                    }
+                }
+                Assert.assertTrue("Unexpected table in callback: " + dirName, isAllowed);
+            }
+
+            // Verify exactly 4 tables (2 WAL tables + 1 view + 1 mat view)
+            Assert.assertEquals("Should have exactly 4 entries", 4, actual.size());
+        }
+    }
+
+    @Test
+    public void testCheckpointListenerOnRestoreComplete() throws Exception {
+        File dir1 = temp.newFolder("listener_restore_source");
+        File dir2 = temp.newFolder("listener_restore_target");
+
+        // Track listener callbacks - use counter to verify called exactly once
+        final int[] restoreCompleteCallCount = new int[1];
+
+        CheckpointListener listener = new CheckpointListener() {
+            @Override
+            public void onCheckpointReleased(long timestampMicros, CharSequenceLongHashMap tableDirNamesToSeqTxn) {
+            }
+
+            @Override
+            public void onCheckpointRestoreComplete() {
+                restoreCompleteCallCount[0]++;
+            }
+        };
+
+        // Server 1: Create checkpoint (without custom listener - not needed here)
+        try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
+            server1.execute("CREATE TABLE test_table (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            server1.execute("INSERT INTO test_table VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            TestUtils.drainWalQueue(server1.getEngine());
+
+            server1.execute("CHECKPOINT CREATE");
+            copyDirectory(dir1, dir2);
+            server1.execute("CHECKPOINT RELEASE");
+        }
+
+        // Create trigger file to force checkpoint recovery in dir2
+        try (Path triggerPath = new Path().of(dir2.getAbsolutePath()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
+            Files.touch(triggerPath.$());
+        }
+
+        // Verify listener not called yet
+        Assert.assertEquals("Listener should not be called before restore", 0, restoreCompleteCallCount[0]);
+
+        // Server 2: Start with trigger file and custom listener - should trigger restore
+        try (@SuppressWarnings("unused") TestServerMain _server2 = startServerMainWithListener(dir2.getAbsolutePath(), listener)) {
+            // Restore happens during startup, so listener should have been called exactly once
+            Assert.assertEquals("Listener onCheckpointRestoreComplete should be called exactly once", 1, restoreCompleteCallCount[0]);
+        }
     }
 
     @Test
@@ -437,8 +649,6 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareOnEmptyDatabaseWithLock() throws Exception {
         assertMemoryLeak(() -> {
-            SimpleWaitingLock lock = new SimpleWaitingLock();
-
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 @Override
                 public long getQueryTimeout() {
@@ -446,29 +656,24 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
             };
 
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
+            execute("checkpoint create");
+            Assert.assertTrue(engine.isWalPurgeJobLocked());
             try {
-                engine.setWalPurgeJobRunLock(lock);
-                Assert.assertFalse(lock.isLocked());
-                execute("checkpoint create");
-                Assert.assertTrue(lock.isLocked());
-                try {
-                    assertExceptionNoLeakCheck("checkpoint create");
-                } catch (SqlException ex) {
-                    Assert.assertTrue(lock.isLocked());
-                    Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
-                }
-                execute("checkpoint release");
-                Assert.assertFalse(lock.isLocked());
-
-                //DB is empty
-                execute("checkpoint release");
-                Assert.assertFalse(lock.isLocked());
-
-                execute("checkpoint release");
-                Assert.assertFalse(lock.isLocked());
-            } finally {
-                engine.setWalPurgeJobRunLock(null);
+                assertExceptionNoLeakCheck("checkpoint create");
+            } catch (SqlException ex) {
+                Assert.assertTrue(engine.isWalPurgeJobLocked());
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
             }
+            execute("checkpoint release");
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
+
+            //DB is empty
+            execute("checkpoint release");
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
+
+            execute("checkpoint release");
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
         });
     }
 
@@ -477,8 +682,6 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int)");
 
-            SimpleWaitingLock lock = new SimpleWaitingLock();
-
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 @Override
                 public long getQueryTimeout() {
@@ -486,22 +689,19 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
             };
 
-            engine.setWalPurgeJobRunLock(lock);
             try {
-                Assert.assertFalse(lock.isLocked());
+                Assert.assertFalse(engine.isWalPurgeJobLocked());
                 execute("checkpoint create");
-                Assert.assertTrue(lock.isLocked());
+                Assert.assertTrue(engine.isWalPurgeJobLocked());
                 execute("checkpoint create");
-                Assert.assertTrue(lock.isLocked());
+                Assert.assertTrue(engine.isWalPurgeJobLocked());
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
             } finally {
-                Assert.assertTrue(lock.isLocked());
+                Assert.assertTrue(engine.isWalPurgeJobLocked());
                 execute("checkpoint release");
-                Assert.assertFalse(lock.isLocked());
-
-                engine.setWalPurgeJobRunLock(null);
+                Assert.assertFalse(engine.isWalPurgeJobLocked());
             }
         });
     }
@@ -1586,31 +1786,25 @@ public class CheckpointTest extends AbstractCairoTest {
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            SimpleWaitingLock lock = new SimpleWaitingLock();
+            execute("checkpoint create");
+
+            Assert.assertTrue(engine.isWalPurgeJobLocked());
+
+            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+            FilesFacade ff = configuration.getFilesFacade();
+            ff.removeQuiet(path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$());
+
+            engine.clear();
+            createTriggerFile();
             try {
-                engine.setWalPurgeJobRunLock(lock);
-                execute("checkpoint create");
-
-                Assert.assertTrue(lock.isLocked());
-
-                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
-                FilesFacade ff = configuration.getFilesFacade();
-                ff.removeQuiet(path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$());
-
-                engine.clear();
-                createTriggerFile();
-                try {
-                    engine.checkpointRecover();
-                    Assert.fail("Exception expected");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
-                }
-                engine.checkpointRelease();
-
-                Assert.assertFalse(lock.isLocked());
-            } finally {
-                engine.setWalPurgeJobRunLock(null);
+                engine.checkpointRecover();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
             }
+            engine.checkpointRelease();
+
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
         });
     }
 
@@ -1639,44 +1833,37 @@ public class CheckpointTest extends AbstractCairoTest {
             // Get the base table's seqTxn after additional inserts
             long seqTxnAfterMoreInserts = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getSeqTxn();
 
-            SimpleWaitingLock lock = new SimpleWaitingLock();
-            try {
-                engine.setWalPurgeJobRunLock(lock);
+            // Create incremental checkpoint
+            engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), true);
 
-                // Create incremental checkpoint
-                engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), true);
+            // Check that WAL purge job lock is released after checkpoint is done, no need to keep it until checkpoint release
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
 
-                // Check that WAL purge job lock is released after checkpoint is done, no need to keep it until checkpiont release
-                Assert.assertFalse(lock.isLocked());
+            // Read the mat view state from the checkpoint
+            try (
+                    Path checkpointPath = new Path();
+                    io.questdb.cairo.file.BlockFileReader reader = new io.questdb.cairo.file.BlockFileReader(configuration)
+            ) {
+                checkpointPath.of(configuration.getCheckpointRoot())
+                        .concat(configuration.getDbDirectory())
+                        .concat(matViewToken)
+                        .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
 
-                // Read the mat view state from the checkpoint
-                try (
-                        Path checkpointPath = new Path();
-                        io.questdb.cairo.file.BlockFileReader reader = new io.questdb.cairo.file.BlockFileReader(configuration)
-                ) {
-                    checkpointPath.of(configuration.getCheckpointRoot())
-                            .concat(configuration.getDbDirectory())
-                            .concat(matViewToken)
-                            .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                reader.of(checkpointPath.$());
+                io.questdb.cairo.mv.MatViewStateReader stateReader = new io.questdb.cairo.mv.MatViewStateReader();
+                stateReader.of(reader, matViewToken);
 
-                    reader.of(checkpointPath.$());
-                    io.questdb.cairo.mv.MatViewStateReader stateReader = new io.questdb.cairo.mv.MatViewStateReader();
-                    stateReader.of(reader, matViewToken);
+                // Verify that the checkpoint mat view state has updated refreshIntervalsBaseTxn
+                // It should match the base table's seqTxn at checkpoint time
+                Assert.assertEquals("Checkpoint mat view state should have refreshIntervalsBaseTxn updated to checkpoint base table txn",
+                        seqTxnAfterMoreInserts, stateReader.getRefreshIntervalsBaseTxn());
 
-                    // Verify that the checkpoint mat view state has updated refreshIntervalsBaseTxn
-                    // It should match the base table's seqTxn at checkpoint time
-                    Assert.assertEquals("Checkpoint mat view state should have refreshIntervalsBaseTxn updated to checkpoint base table txn",
-                            seqTxnAfterMoreInserts, stateReader.getRefreshIntervalsBaseTxn());
-
-                    // Verify that refresh intervals were loaded (should not be empty since we have unrefreshed data)
-                    Assert.assertTrue("Checkpoint mat view state should have refresh intervals",
-                            stateReader.getRefreshIntervals().size() > 0);
-                }
-
-                execute("checkpoint release");
-            } finally {
-                engine.setWalPurgeJobRunLock(null);
+                // Verify that refresh intervals were loaded (should not be empty since we have unrefreshed data)
+                Assert.assertTrue("Checkpoint mat view state should have refresh intervals",
+                        stateReader.getRefreshIntervals().size() > 0);
             }
+
+            execute("checkpoint release");
         });
     }
 
@@ -1892,19 +2079,16 @@ public class CheckpointTest extends AbstractCairoTest {
         configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int)");
-            SimpleWaitingLock lock = new SimpleWaitingLock();
             SOCountDownLatch latch1 = new SOCountDownLatch(1);
             SOCountDownLatch latch2 = new SOCountDownLatch(1);
 
-            engine.setWalPurgeJobRunLock(lock);
-
             Thread t = new Thread(() -> {
-                lock.lock(); //emulate WalPurgeJob running with lock
+                engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS); // emulate WalPurgeJob running with lock
                 latch2.countDown();
                 try {
                     latch1.await();
                 } finally {
-                    lock.unlock();
+                    engine.unlockWalPurgeJob();
                 }
             });
 
@@ -1915,12 +2099,11 @@ public class CheckpointTest extends AbstractCairoTest {
             } catch (CairoException ex) {
                 latch1.countDown();
                 t.join();
-                Assert.assertFalse(lock.isLocked());
+                Assert.assertFalse(engine.isWalPurgeJobLocked());
                 TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted [fd=-1");
             } finally {
                 execute("checkpoint release");
-                Assert.assertFalse(lock.isLocked());
-                engine.setWalPurgeJobRunLock(null);
+                Assert.assertFalse(engine.isWalPurgeJobLocked());
             }
         });
     }
@@ -2030,7 +2213,6 @@ public class CheckpointTest extends AbstractCairoTest {
 
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
             final WalPurgeJob job = new WalPurgeJob(engine);
-            engine.setWalPurgeJobRunLock(job.getRunLock());
 
             execute("checkpoint create");
             Thread controlThread1 = new Thread(() -> {
@@ -2058,7 +2240,6 @@ public class CheckpointTest extends AbstractCairoTest {
             controlThread2.join();
 
             job.close();
-            engine.setWalPurgeJobRunLock(null);
 
             assertSegmentExistence(false, tableName, 1, 0);
             assertWalExistence(false, tableName, 1);
@@ -2179,7 +2360,7 @@ public class CheckpointTest extends AbstractCairoTest {
             // WalWriter.applyMetadataChangeLog should be triggered
             try (WalWriter walWriter1 = getWalWriter(tableName)) {
                 try (WalWriter walWriter2 = getWalWriter(tableName)) {
-                    walWriter1.addColumn("C", ColumnType.INT);
+                    walWriter1.addColumn("C", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                     walWriter1.commit();
 
                     TableWriter.Row row = walWriter1.newRow(MicrosFormatUtils.parseTimestamp("2022-02-24T06:00:00.000000Z"));
@@ -2294,6 +2475,17 @@ public class CheckpointTest extends AbstractCairoTest {
         Files.touch(triggerFilePath.$());
     }
 
+    private static long getSeqTxnForTable(CharSequenceLongHashMap map, String tableNamePrefix) {
+        for (int i = 0, n = map.size(); i < n; i++) {
+            CharSequence dirName = map.keys().get(i);
+            if (dirName.toString().startsWith(tableNamePrefix)) {
+                return map.get(dirName);
+            }
+        }
+        Assert.fail("Table not found in callback map: " + tableNamePrefix);
+        return -1; // unreachable
+    }
+
     private static LongList longList(long... values) {
         LongList list = new LongList(values.length);
         for (long v : values) {
@@ -2319,6 +2511,49 @@ public class CheckpointTest extends AbstractCairoTest {
                     @Override
                     public Map<String, String> getEnv() {
                         return env;
+                    }
+                },
+                Bootstrap.getServerMainArgs(root)
+        ));
+        try {
+            serverMain.start();
+            return serverMain;
+        } catch (Throwable th) {
+            serverMain.close();
+            throw th;
+        }
+    }
+
+    private static TestServerMain startServerMainWithListener(String root, CheckpointListener listener, String... envKeyValues) {
+        Map<String, String> env = new HashMap<>(System.getenv());
+        for (int i = 0; i < envKeyValues.length; i += 2) {
+            env.put(envKeyValues[i], envKeyValues[i + 1]);
+        }
+        env.put(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED.getEnvVarName(), "false");
+        // Disable HTTP and PG servers to avoid port conflicts
+        env.put(PropertyKey.HTTP_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.PG_ENABLED.getEnvVarName(), "false");
+        env.put(PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false");
+
+        TestServerMain serverMain = new TestServerMain(new Bootstrap(
+                new PropBootstrapConfiguration() {
+                    @Override
+                    public Map<String, String> getEnv() {
+                        return env;
+                    }
+
+                    @Override
+                    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
+                        ServerConfiguration baseConfig = super.getServerConfiguration(bootstrap);
+                        // Wrap the CairoConfiguration to inject our listener
+                        CairoConfiguration wrappedCairoConfig = new CairoConfigurationWrapper(baseConfig.getCairoConfiguration()) {
+                            @Override
+                            public @NotNull CheckpointListener getCheckpointListener() {
+                                return listener;
+                            }
+                        };
+                        return new ServerConfigurationWrapper(baseConfig, wrappedCairoConfig);
                     }
                 },
                 Bootstrap.getServerMainArgs(root)
@@ -2825,6 +3060,9 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
+    private record CheckpointReleaseEvent(long timestampMicros, CharSequenceLongHashMap tableDirNamesToSeqTxn) {
+    }
+
     /**
      * Snapshot of a bitmap index file contents for testing purposes.
      * Reads the .k and .v files and extracts all key entries with their row IDs.
@@ -2942,6 +3180,114 @@ public class CheckpointTest extends AbstractCairoTest {
 
         LongList getRowIds() {
             return entries.get(1);
+        }
+    }
+
+    /**
+     * Wrapper for ServerConfiguration that allows overriding the CairoConfiguration.
+     */
+    private static class ServerConfigurationWrapper implements ServerConfiguration {
+        private final CairoConfiguration cairoConfig;
+        private final ServerConfiguration delegate;
+
+        ServerConfigurationWrapper(ServerConfiguration delegate, CairoConfiguration cairoConfig) {
+            this.delegate = delegate;
+            this.cairoConfig = cairoConfig;
+        }
+
+        @Override
+        public CairoConfiguration getCairoConfiguration() {
+            return cairoConfig;
+        }
+
+        @Override
+        public WorkerPoolConfiguration getExportPoolConfiguration() {
+            return delegate.getExportPoolConfiguration();
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return delegate.getFactoryProvider();
+        }
+
+        @Override
+        public HttpServerConfiguration getHttpMinServerConfiguration() {
+            return delegate.getHttpMinServerConfiguration();
+        }
+
+        @Override
+        public HttpFullFatServerConfiguration getHttpServerConfiguration() {
+            return delegate.getHttpServerConfiguration();
+        }
+
+        @Override
+        public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+            return delegate.getLineTcpReceiverConfiguration();
+        }
+
+        @Override
+        public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
+            return delegate.getLineUdpReceiverConfiguration();
+        }
+
+        @Override
+        public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+            return delegate.getMatViewRefreshPoolConfiguration();
+        }
+
+        @Override
+        public MemoryConfiguration getMemoryConfiguration() {
+            return delegate.getMemoryConfiguration();
+        }
+
+        @Override
+        public Metrics getMetrics() {
+            return delegate.getMetrics();
+        }
+
+        @Override
+        public MetricsConfiguration getMetricsConfiguration() {
+            return delegate.getMetricsConfiguration();
+        }
+
+        @Override
+        public PGConfiguration getPGWireConfiguration() {
+            return delegate.getPGWireConfiguration();
+        }
+
+        @Override
+        public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
+            return delegate.getPublicPassthroughConfiguration();
+        }
+
+        @Override
+        public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
+            return delegate.getSharedWorkerPoolNetworkConfiguration();
+        }
+
+        @Override
+        public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
+            return delegate.getSharedWorkerPoolQueryConfiguration();
+        }
+
+        @Override
+        public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
+            return delegate.getSharedWorkerPoolWriteConfiguration();
+        }
+
+        @Override
+        public WorkerPoolConfiguration getViewCompilerPoolConfiguration() {
+            return delegate.getViewCompilerPoolConfiguration();
+        }
+
+        @Override
+        public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
+            return delegate.getWalApplyPoolConfiguration();
+        }
+
+        @Override
+        public void init(io.questdb.cairo.CairoEngine engine, FreeOnExit freeOnExit) {
+            delegate.init(engine, freeOnExit);
         }
     }
 

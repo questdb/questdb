@@ -19,7 +19,7 @@ features = ["full"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-parquet-format-safe = "0.2"
+parquet-format-safe = { path = "../parquet-format-safe" }
 seq-macro = { version = "0.3", default-features = false }
 streaming-decompression = "0.1"
 

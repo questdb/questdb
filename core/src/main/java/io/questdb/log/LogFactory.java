@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -46,6 +46,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -691,7 +692,7 @@ public class LogFactory implements Closeable {
     }
 
     private ScopeConfiguration find(CharSequence key) {
-        ObjList<CharSequence> keys = scopeConfigMap.keys();
+        ReadOnlyObjList<CharSequence> keys = scopeConfigMap.keys();
         CharSequence k = null;
 
         for (int i = 0, n = keys.size(); i < n; i++) {
