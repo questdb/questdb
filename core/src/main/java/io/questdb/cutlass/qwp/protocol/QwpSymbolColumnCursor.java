@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -58,51 +59,37 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
     private final StringSink utf16Sink = new StringSink();
     // External dictionary reference (for delta mode)
     private ObjList<String> connectionDict;
-    private long currentIndexAddress;
     private boolean currentIsNull;
     // Iteration state
     private int currentRow;
     private int currentSymbolIndex;
+    private int currentValueIndex;
+    // Pre-decoded varint indices (reused across calls, grows to max batch size)
+    private final IntList decodedIndices = new IntList();
     private boolean deltaMode;  // When true, use connectionDict instead of per-column dictionary
     private int dictionarySize;
-    private long indicesAddress;
-    private long indicesEnd;
     // Wire pointers
     private long nullBitmapAddress;
+    private int valueCount;
 
     @Override
-    public boolean advanceRow() throws QwpParseException {
+    public boolean advanceRow() {
         currentRow++;
+        currentValueIndex++;
 
         if (nullBitmapAddress != 0) {
             currentIsNull = QwpNullBitmap.isNull(nullBitmapAddress, currentRow);
             if (currentIsNull) {
                 currentSymbolIndex = -1;
+                currentValueIndex--;
                 return true;
             }
         } else {
             currentIsNull = false;
         }
 
-        // Read varint index
-        QwpVarint.decode(currentIndexAddress, indicesEnd, decodeResult);
-        if (decodeResult.value < 0 || decodeResult.value > Integer.MAX_VALUE) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX,
-                    "symbol index out of int range: " + decodeResult.value
-            );
-        }
-        currentSymbolIndex = (int) decodeResult.value;
-        currentIndexAddress += decodeResult.bytesRead;
-
-        // Validate dictionary index against wire data
-        int limit = deltaMode ? (connectionDict != null ? connectionDict.size() : 0) : dictionarySize;
-        if (currentSymbolIndex < 0 || currentSymbolIndex >= limit) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX,
-                    "symbol index out of range: " + currentSymbolIndex
-            );
-        }
+        // Read from pre-decoded index list (decoded and validated in of())
+        currentSymbolIndex = decodedIndices.getQuick(currentValueIndex);
         return false;
     }
 
@@ -112,8 +99,7 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
         deltaMode = false;
         connectionDict = null;
         nullBitmapAddress = 0;
-        indicesAddress = 0;
-        indicesEnd = 0;
+        valueCount = 0;
         // Clear dictionary flyweights
         for (int i = 0; i < dictionaryUtf8.size(); i++) {
             dictionaryUtf8.getQuick(i).clear();
@@ -314,20 +300,34 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
                     "symbol column data truncated after dictionary parsing"
             );
         }
-        this.indicesAddress = dataAddress + offset;
-        this.indicesEnd = limit;
 
-        resetRowPosition();
-
-        // Calculate bytes consumed by scanning indices
-        // This is needed because indices are varint-encoded
-        int valueCount = rowCount - nullCount;
-        long tempAddress = indicesAddress;
+        // Decode all varint indices in one pass. This avoids re-decoding
+        // during advanceRow() and lets us return the total bytes consumed.
+        this.valueCount = rowCount - nullCount;
+        decodedIndices.clear();
+        decodedIndices.setPos(valueCount);
+        int dictLimit = deltaMode ? (connectionDict != null ? connectionDict.size() : 0) : dictionarySize;
+        long tempAddress = dataAddress + offset;
         for (int i = 0; i < valueCount; i++) {
-            QwpVarint.decode(tempAddress, indicesEnd, decodeResult);
+            QwpVarint.decode(tempAddress, limit, decodeResult);
+            if (decodeResult.value < 0 || decodeResult.value > Integer.MAX_VALUE) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX,
+                        "symbol index out of int range: " + decodeResult.value
+                );
+            }
+            int idx = (int) decodeResult.value;
+            if (idx >= dictLimit) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX,
+                        "symbol index out of range: " + idx
+                );
+            }
+            decodedIndices.setQuick(i, idx);
             tempAddress += decodeResult.bytesRead;
         }
 
+        resetRowPosition();
         return (int) (tempAddress - dataAddress);
     }
 
@@ -336,7 +336,7 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
         currentRow = -1;
         currentSymbolIndex = -1;
         currentIsNull = false;
-        currentIndexAddress = indicesAddress;
+        currentValueIndex = -1;
     }
 
     private void ensureDictionaryCapacity(int capacity) {
