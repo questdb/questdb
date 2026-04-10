@@ -1451,43 +1451,53 @@ public final class IntervalUtils {
 
     private static void addMonthInterval(TimestampDriver timestampDriver, int period, int count, LongList out) {
         int k = out.size();
-        long lo = out.getQuick(k - 2);
-        long hi = out.getQuick(k - 1);
+        long baseLo = out.getQuick(k - 2);
+        long baseHi = out.getQuick(k - 1);
         int writePoint = k / 2;
         int n = count - 1;
+        int startOffset;
+        int step;
         if (period < 0) {
-            lo = timestampDriver.addMonths(lo, period * n);
-            hi = timestampDriver.addMonths(hi, period * n);
-            out.setQuick(k - 2, lo);
-            out.setQuick(k - 1, hi);
-            period = -period;
+            startOffset = period * n;
+            step = -period;
+            out.setQuick(k - 2, timestampDriver.addMonths(baseLo, startOffset));
+            out.setQuick(k - 1, timestampDriver.addMonths(baseHi, startOffset));
+        } else {
+            startOffset = 0;
+            step = period;
         }
 
-        for (int i = 0; i < n; i++) {
-            lo = timestampDriver.addMonths(lo, period);
-            hi = timestampDriver.addMonths(hi, period);
-            writePoint = append(out, writePoint, lo, hi);
+        for (int i = 1; i <= n; i++) {
+            int months = startOffset + step * i;
+            writePoint = append(out, writePoint,
+                    timestampDriver.addMonths(baseLo, months),
+                    timestampDriver.addMonths(baseHi, months));
         }
     }
 
     private static void addYearIntervals(TimestampDriver timestampDriver, int period, int count, LongList out) {
         int k = out.size();
-        long lo = out.getQuick(k - 2);
-        long hi = out.getQuick(k - 1);
+        long baseLo = out.getQuick(k - 2);
+        long baseHi = out.getQuick(k - 1);
         int writePoint = k / 2;
         int n = count - 1;
+        int startOffset;
+        int step;
         if (period < 0) {
-            lo = timestampDriver.addYears(lo, period * n);
-            hi = timestampDriver.addYears(hi, period * n);
-            out.setQuick(k - 2, lo);
-            out.setQuick(k - 1, hi);
-            period = -period;
+            startOffset = period * n;
+            step = -period;
+            out.setQuick(k - 2, timestampDriver.addYears(baseLo, startOffset));
+            out.setQuick(k - 1, timestampDriver.addYears(baseHi, startOffset));
+        } else {
+            startOffset = 0;
+            step = period;
         }
 
-        for (int i = 0; i < n; i++) {
-            lo = timestampDriver.addYears(lo, period);
-            hi = timestampDriver.addYears(hi, period);
-            writePoint = append(out, writePoint, lo, hi);
+        for (int i = 1; i <= n; i++) {
+            int years = startOffset + step * i;
+            writePoint = append(out, writePoint,
+                    timestampDriver.addYears(baseLo, years),
+                    timestampDriver.addYears(baseHi, years));
         }
     }
 
@@ -4313,6 +4323,9 @@ public final class IntervalUtils {
                     count = Numbers.parseInt(seq, pos2 + 1, lim);
                 } catch (NumericException e) {
                     throw SqlException.$(position, "Count not a number");
+                }
+                if (count < 1) {
+                    throw SqlException.$(position, "Count must be positive");
                 }
 
                 parseRange(timestampDriver, seq, lo, pos0, pos1, position, operation, out);

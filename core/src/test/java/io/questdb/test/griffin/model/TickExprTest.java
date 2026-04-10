@@ -203,6 +203,16 @@ public class TickExprTest {
     }
 
     @Test
+    public void testBracketExpansionErrorCountNegative() {
+        assertBracketIntervalError("2026-01-27T15:00;-1s;-1h;-2", "Count must be positive");
+    }
+
+    @Test
+    public void testBracketExpansionErrorCountZero() {
+        assertBracketIntervalError("2026-01-27T15:00;1s;1h;0", "Count must be positive");
+    }
+
+    @Test
     public void testBracketExpansionErrorDescendingRange() {
         assertBracketIntervalError("2018-01-[15..10]", "Range must be ascending");
     }
@@ -826,8 +836,28 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprNegativeDurationMixedSigns() throws SqlException {
+        assertCompiledTickExpr("$today;-3d2h");
+    }
+
+    @Test
+    public void testCompiledTickExprNegativeDurationMultiNegative() throws SqlException {
+        assertCompiledTickExpr("$today;-3d-2h");
+    }
+
+    @Test
     public void testCompiledTickExprNegativeDurationWithTimeOverride() throws SqlException {
         assertCompiledTickExpr("[$today, $tomorrow]T[09:30,14:00];-5m");
+    }
+
+    @Test
+    public void testCompiledTickExprPositiveDurationExplicitSign() throws SqlException {
+        assertCompiledTickExpr("$today;+3d");
+    }
+
+    @Test
+    public void testCompiledTickExprZeroDuration() throws SqlException {
+        assertCompiledTickExpr("$today;0d");
     }
 
     @Test
@@ -863,6 +893,11 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprDynamicNowDuration() throws SqlException {
         assertCompiledTickExpr("$now;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprDynamicNowNegativeDuration() throws SqlException {
+        assertCompiledTickExpr("$now;-1h");
     }
 
     @Test
@@ -2355,9 +2390,9 @@ public class TickExprTest {
 
     @Test
     public void testDateVariableArithmeticYearsLeapYear() throws SqlException {
-        // $today + 1y from Feb 29 leap year wraps to March 1 (29th day doesn't exist in non-leap Feb)
+        // $today + 1y from Feb 29 leap year clamps to Feb 28 (non-leap year)
         assertBracketIntervalWithNow(
-                "[{lo=2025-03-01T00:00:00.000000Z, hi=2025-03-01T23:59:59.999999Z}]",
+                "[{lo=2025-02-28T00:00:00.000000Z, hi=2025-02-28T23:59:59.999999Z}]",
                 "[$today + 1y]",
                 "2024-02-29T10:30:00.000000Z"
         );
@@ -4839,6 +4874,101 @@ public class TickExprTest {
         assertShortInterval(
                 "[{lo=2013-03-12T11:00:00.000000Z, hi=2013-03-12T11:04:59.999999Z},{lo=2014-03-12T11:00:00.000000Z, hi=2014-03-12T11:04:59.999999Z},{lo=2015-03-12T11:00:00.000000Z, hi=2015-03-12T11:04:59.999999Z}]",
                 "2015-03-12T11:00:00;5m;-1y;3"
+        );
+    }
+
+    @Test
+    public void testParseNegativeDurationCalendarMonth() throws Exception {
+        // -1M from Jan 27 15:00 → [Dec 27 15:00, Jan 27 14:59:59.999999]
+        assertShortInterval(
+                "[{lo=2025-12-27T15:00:00.000000Z, hi=2026-01-27T14:59:59.999999Z}]",
+                "2026-01-27T15:00;-1M"
+        );
+    }
+
+    @Test
+    public void testParseNegativeDurationCalendarMonthDayClamping() throws Exception {
+        // -1M from Mar 31 → Feb 28 (2026 is not leap), interval [Feb 28, Mar 30]
+        // Mar 31 itself is excluded (hi = anchor - 1)
+        assertShortInterval(
+                "[{lo=2026-02-28T00:00:00.000000Z, hi=2026-03-30T23:59:59.999999Z}]",
+                "2026-03-31;-1M"
+        );
+    }
+
+    @Test
+    public void testParseNegativeDurationCalendarYear() throws Exception {
+        // -1y from Feb 29 (leap 2024) → Feb 28 2023 (clamped), interval [Feb 28 2023, Feb 28 2024]
+        assertShortInterval(
+                "[{lo=2023-02-28T00:00:00.000000Z, hi=2024-02-28T23:59:59.999999Z}]",
+                "2024-02-29;-1y"
+        );
+    }
+
+    @Test
+    public void testParseNegativeDurationRepeatingCalendarMonth() throws Exception {
+        // -1s window from 12:00, repeated 3x with -1M period
+        // Each interval computed from base (Mar 31): -2M → Jan 31, -1M → Feb 28, 0 → Mar 31
+        assertShortInterval(
+                "[{lo=2026-01-31T11:59:59.000000Z, hi=2026-01-31T11:59:59.999999Z}," +
+                        "{lo=2026-02-28T11:59:59.000000Z, hi=2026-02-28T11:59:59.999999Z}," +
+                        "{lo=2026-03-31T11:59:59.000000Z, hi=2026-03-31T11:59:59.999999Z}]",
+                "2026-03-31T12:00;-1s;-1M;3"
+        );
+    }
+
+    @Test
+    public void testParseNegativeDurationRepeating() throws Exception {
+        // Negative duration with negative period: -1s window repeated 2x going back 1h
+        assertShortInterval(
+                "[{lo=2026-01-27T13:59:59.000000Z, hi=2026-01-27T13:59:59.999999Z}," +
+                        "{lo=2026-01-27T14:59:59.000000Z, hi=2026-01-27T14:59:59.999999Z}]",
+                "2026-01-27T15:00;-1s;-1h;2"
+        );
+    }
+
+    @Test
+    public void testParseNegativeDuration() throws Exception {
+        // Plain timestamp with negative duration — exercises parseRange static path directly
+        assertShortInterval(
+                "[{lo=2025-01-15T08:00:00.000000Z, hi=2025-01-15T09:59:59.999999Z}]",
+                "2025-01-15T10:00:00;-2h"
+        );
+    }
+
+    @Test
+    public void testParseNegativeDurationMixedSigns() throws Exception {
+        // -3d2h: go back 3 days then forward 2 hours
+        assertShortInterval(
+                "[{lo=2025-01-12T02:00:00.000000Z, hi=2025-01-14T23:59:59.999999Z}]",
+                "2025-01-15;-3d2h"
+        );
+    }
+
+    @Test
+    public void testParseNegativeDurationMultiNegative() throws Exception {
+        // -3d-2h: go back 3 days and 2 hours
+        assertShortInterval(
+                "[{lo=2025-01-11T22:00:00.000000Z, hi=2025-01-14T23:59:59.999999Z}]",
+                "2025-01-15;-3d-2h"
+        );
+    }
+
+    @Test
+    public void testParsePositiveDurationExplicitSign() throws Exception {
+        // +3d should behave identically to 3d
+        assertShortInterval(
+                "[{lo=2025-01-15T00:00:00.000000Z, hi=2025-01-17T23:59:59.999999Z}]",
+                "2025-01-15;+3d"
+        );
+    }
+
+    @Test
+    public void testParseZeroDuration() throws Exception {
+        // 0d produces an inverted interval (hi < lo) — effectively empty
+        assertShortInterval(
+                "[{lo=2025-01-15T10:00:00.000000Z, hi=2025-01-15T09:59:59.999999Z}]",
+                "2025-01-15T10:00:00;0d"
         );
     }
 

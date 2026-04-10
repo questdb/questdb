@@ -389,7 +389,9 @@ public class CompiledTickExpression extends UntypedFunction {
         if (isDayLevel) {
             emitDayInterval(timestamp, out);
         } else if (durationPartCount > 0 && !hasDurationWithExchange) {
-            out.add(timestamp, applyDuration(timestamp) - 1);
+            long endExclusive = applyDuration(timestamp);
+            out.add(IntervalUtils.resolveDurationLo(timestamp, endExclusive),
+                    IntervalUtils.resolveDurationHi(timestamp, endExclusive));
         } else {
             out.add(timestamp, timestamp);
         }
