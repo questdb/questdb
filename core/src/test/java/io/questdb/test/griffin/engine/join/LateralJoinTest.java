@@ -659,6 +659,73 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftLateralCountMixedPrefixColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fx_trades (timestamp TIMESTAMP, symbol SYMBOL, price DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fx_trades VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'EUR/USD', 1.10),
+                    ('2024-01-01T01:00:00.000000Z', 'EUR/USD', 1.20),
+                    ('2024-01-01T02:00:00.000000Z', 'GBP/USD', 1.30)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\tsymbol\tprice\tc
+                            2024-01-01T00:00:00.000000Z\tEUR/USD\t1.1\t1
+                            2024-01-01T01:00:00.000000Z\tEUR/USD\t1.2\t0
+                            2024-01-01T02:00:00.000000Z\tGBP/USD\t1.3\t0
+                            """,
+                    """
+                            SELECT timestamp, t.symbol, price, c FROM fx_trades t
+                            LEFT JOIN LATERAL (
+                                SELECT count() c FROM fx_trades
+                                WHERE symbol = t.symbol AND price > (t.price * 1.01)
+                            ) u
+                            ORDER BY timestamp
+                            """,
+                    "timestamp", false, false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp\tsymbol\tprice\tc
+                            2024-01-01T00:00:00.000000Z\tEUR/USD\t1.1\t1
+                            2024-01-01T01:00:00.000000Z\tEUR/USD\t1.2\t0
+                            2024-01-01T02:00:00.000000Z\tGBP/USD\t1.3\t0
+                            """,
+                    """
+                            SELECT timestamp, t.symbol, price, c FROM fx_trades t
+                            LEFT JOIN LATERAL (
+                                SELECT count() c FROM fx_trades
+                                WHERE symbol = t.symbol AND price > (t.price * 1.01)
+                            )
+                            ORDER BY timestamp
+                            """,
+                    "timestamp", false, false
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            timestamp	symbol	price	symbol1	c
+                            2024-01-01T00:00:00.000000Z	EUR/USD	1.1	EUR/USD	1
+                            2024-01-01T01:00:00.000000Z	EUR/USD	1.2		0
+                            2024-01-01T02:00:00.000000Z	GBP/USD	1.3		0
+                            """,
+                    """
+                            SELECT timestamp, t.symbol, price, u.symbol, c FROM fx_trades t
+                            LEFT JOIN LATERAL (
+                                SELECT symbol, count() c FROM fx_trades
+                                WHERE symbol = t.symbol AND price > (t.price * 1.01)
+                            ) u
+                            ORDER BY timestamp
+                            """,
+                    "timestamp", false, false
+            );
+        });
+    }
+
+    @Test
     public void testPerSidePushInnerBranch() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2747,7 +2814,6 @@ public class LateralJoinTest extends AbstractCairoTest {
             );
         });
     }
-
 
     // T11: Inner JOIN inside LATERAL, INNER, equality correlation — inner JOIN ON rewrite
     @Test
