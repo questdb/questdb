@@ -29,8 +29,8 @@
 
 ### Cross-Column Prev (New Feature)
 
-- [ ] **XPREV-01**: FILL(PREV) can reference a specific column from the previous bucket (not just self)
-- [ ] **XPREV-02**: Syntax and semantics defined (TBD -- needs design)
+- [x] **XPREV-01**: FILL(PREV) can reference a specific column from the previous bucket (not just self)
+- [x] **XPREV-02**: Syntax and semantics defined (TBD -- needs design)
 
 ### Keyed Fill with FROM/TO Range
 
@@ -95,8 +95,8 @@
 | KEY-03 | Phase 3: Keyed Fill Cursor | Pending |
 | KEY-04 | Phase 3: Keyed Fill Cursor | Pending |
 | KEY-05 | Phase 3: Keyed Fill Cursor | Pending |
-| XPREV-01 | Phase 4: Cross-Column Prev | Pending |
-| XPREV-02 | Phase 4: Cross-Column Prev | Pending |
+| XPREV-01 | Phase 4: Cross-Column Prev | Complete |
+| XPREV-02 | Phase 4: Cross-Column Prev | Complete |
 | KFTR-01 | Phase 6: Keyed Fill with FROM/TO Range | Complete |
 | KFTR-02 | Phase 6: Keyed Fill with FROM/TO Range | Complete |
 | KFTR-03 | Phase 6: Keyed Fill with FROM/TO Range | Complete |

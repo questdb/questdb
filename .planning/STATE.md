@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-04-10T11:41:53.184Z"
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-04-10T12:29:31.690Z"
 last_activity: 2026-04-10
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
+  completed_phases: 4
+  total_plans: 4
+  completed_plans: 4
   percent: 100
 ---
 
@@ -54,6 +54,7 @@ Progress: [######....] 60%
 
 *Updated after each plan completion*
 | Phase 06-keyed-fill-with-from-to-range P01 | 4 | 2 tasks | 2 files |
+| Phase 04 P01 | 27m | 1 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,8 @@ Recent decisions affecting current work:
 - [Phase 3]: symbolTableColIndices covers all map columns (value + key) for SYMBOL resolution
 - [Phase 3]: Non-keyed PREV preserved via simplePrev fallback when keysMap is null
 - [Phase 06]: Zero-key guard in initialize() returns early with maxTimestamp=Long.MIN_VALUE to produce empty result
+- [Phase 04]: FILL(PREV(col_name)) resolved via ExpressionNode.FUNCTION type with paramCount=1, alias resolved against output metadata
+- [Phase 04]: Optimizer gate relaxed from size-1-only to hasLinearFill() predicate, allowing multi-fill specs on fast path
 
 ### Roadmap Evolution
 
@@ -91,6 +94,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-10T11:41:53.182Z
-Stopped at: Completed 06-01-PLAN.md
+Last session: 2026-04-10T12:29:31.688Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None

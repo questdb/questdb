@@ -70,7 +70,7 @@ Plans:
   3. Cross-column prev works correctly with both keyed and non-keyed queries
 **Plans:** 1 plan
 Plans:
-- [ ] 04-01-PLAN.md -- Optimizer gate relaxation, PREV(col_name) detection in generateFill, keyed prevValue fix, cross-column tests
+- [x] 04-01-PLAN.md -- Optimizer gate relaxation, PREV(col_name) detection in generateFill, keyed prevValue fix, cross-column tests
 
 ### Phase 5: Verification and Hardening
 **Goal**: The fast-path fill implementation passes all existing tests and produces output identical to the cursor path
