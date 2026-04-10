@@ -1077,14 +1077,15 @@ public class CheckpointTest extends AbstractCairoTest {
                             rnd_symbol('AB', 'BC', 'CD') c2,
                             timestamp_sequence('2022-02-24', 1_000_000) ts,
                             rnd_symbol('DE', null, 'EF', 'FG') sym2,
-                            CAST(x AS INT) c3,
+                            x::INT c3,
                             rnd_bin() c4,
                             to_long128(3 * x, 6 * x) c5,
                             rnd_str('a', 'bdece', null, ' asdflakji idid', 'dk') c6,
                             rnd_boolean() bool1
                         FROM long_sequence(1000)
-                    ), INDEX(sym2) TIMESTAMP(ts) PARTITION BY DAY
+                    ), INDEX(sym2) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
+            drainWalQueue();
 
             // Capture expected count before rebuild to verify bitmap index
             sink.clear();
@@ -1092,6 +1093,7 @@ public class CheckpointTest extends AbstractCairoTest {
             final String sym2DECountBefore = sink.toString();
 
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
+            drainWalQueue();
 
             TableToken tableToken = engine.verifyTableName("t");
             try (
