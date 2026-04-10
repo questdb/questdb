@@ -5325,8 +5325,6 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
-    // ==================== Symbol Table Behavior on Row Cancel ====================
-    //
     // NOTE: These tests validate CURRENT behavior, not prescribe it. They document how
     // symbol tables behave when rows are cancelled. This behavior is consistent with
     // other QuestDB scenarios like dropping partitions - symbols remain in the symbol

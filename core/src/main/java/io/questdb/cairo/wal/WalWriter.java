@@ -587,6 +587,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         rowValueIsNotNull.setQuick(columnIndex, lastWrittenRow);
     }
 
+    /**
+     * Validates that a designated timestamp value is within allowed bounds.
+     * Used by columnar appender to match the validation in {@link #newRow(long)}.
+     */
+    void validateDesignatedTimestampBounds(long timestamp) {
+        timestampDriver.validateBounds(timestamp);
+    }
+
     @Override
     public boolean supportsMultipleWriters() {
         return true;
@@ -1489,9 +1497,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
             if (reader == EmptySymbolMapReader.INSTANCE) {
                 if (symbolValueCount > 0) {
-                    // Upgrade empty reader to real reader (re-hardlinks files)
-                    // Close existing native hash map before configureSymbolMapWriter creates new one
+                    // Upgrade empty reader to real reader (re-hardlinks files).
+                    // Null out list entries after freeing so that doClose() does not
+                    // double-close if configureSymbolMapWriter() throws below.
                     Misc.free(symbolMaps.getQuick(i));
+                    symbolMaps.setQuick(i, null);
                     configureSymbolMapWriter(i, metadata.getColumnName(i), symbolValueCount, symbolTableNameTxn);
                 } else {
                     // Still empty - ensure watermarks are reset (not stale from previous segments)

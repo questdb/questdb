@@ -102,9 +102,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         // Handle pending segment roll, similar to what newRow() does.
         // This is needed when columns are added while rollSegmentOnNextRow is true,
         // since addColumn defers opening column files until the segment is rolled.
-        if (walWriter.rollSegmentOnNextRow) {
-            walWriter.rollSegment();
-            walWriter.rollSegmentOnNextRow = false;
+        try {
+            if (walWriter.rollSegmentOnNextRow) {
+                walWriter.rollSegment();
+                walWriter.rollSegmentOnNextRow = false;
+            }
+        } catch (Throwable e) {
+            walWriter.distressed = true;
+            throw e;
         }
         this.pendingRowCount = rowCount;
         this.startRowId = walWriter.getSegmentRowCount();
@@ -1731,6 +1736,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     timestamp = Unsafe.getUnsafe().getLong(valuesAddress + (long) valueIdx * 8);
                     valueIdx++;
                 }
+                walWriter.validateDesignatedTimestampBounds(timestamp);
                 dataMem.putLong128(timestamp, startRowId + row);
             }
         } else {
@@ -1800,6 +1806,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
             if (isDesignated) {
                 // Designated timestamp: write 128-bit (timestamp, rowId) pairs
+                walWriter.validateDesignatedTimestampBounds(timestamp);
                 dataMem.putLong128(timestamp, startRowId + row);
             } else {
                 // Non-designated timestamp: write as regular LONG

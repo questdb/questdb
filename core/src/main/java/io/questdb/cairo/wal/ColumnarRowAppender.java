@@ -270,7 +270,7 @@ public interface ColumnarRowAppender {
      * @param columnIndex the column index in the table
      * @param cursor      the fixed-width column cursor
      * @param rowCount    total number of rows
-     * @param ilpType     the ILP wire type code
+     * @param ilpType     the QWP wire type code
      */
     void putFixedOtherToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType);
 
@@ -281,7 +281,7 @@ public interface ColumnarRowAppender {
      * @param columnIndex the column index in the table
      * @param cursor      the fixed-width column cursor
      * @param rowCount    total number of rows
-     * @param ilpType     the ILP wire type code
+     * @param ilpType     the QWP wire type code
      */
     void putFixedOtherToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType);
 
@@ -684,7 +684,7 @@ public interface ColumnarRowAppender {
      * @param columnIndex     the column index in the table
      * @param cursor          the timestamp column cursor
      * @param rowCount        total number of rows
-     * @param ilpType         the ILP wire type (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
+     * @param ilpType         the QWP wire type (TYPE_TIMESTAMP or TYPE_TIMESTAMP_NANOS)
      * @param columnType      the target QuestDB column type
      * @param isDesignated    whether this is the designated timestamp column
      * @param serverTimestamp server timestamp to use for null designated rows, or Numbers.LONG_NULL
@@ -706,7 +706,7 @@ public interface ColumnarRowAppender {
      * @param columnIndex the column index in the table
      * @param cursor      the timestamp column cursor
      * @param rowCount    total number of rows
-     * @param ilpType     the ILP wire type (for precision: micros vs nanos)
+     * @param ilpType     the QWP wire type (for precision: micros vs nanos)
      */
     void putTimestampToStringColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType);
 
@@ -716,7 +716,7 @@ public interface ColumnarRowAppender {
      * @param columnIndex the column index in the table
      * @param cursor      the timestamp column cursor
      * @param rowCount    total number of rows
-     * @param ilpType     the ILP wire type (for precision: micros vs nanos)
+     * @param ilpType     the QWP wire type (for precision: micros vs nanos)
      */
     void putTimestampToVarcharColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType);
 
