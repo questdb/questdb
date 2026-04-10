@@ -776,15 +776,13 @@ pub fn update_parquet_metadata(
     let existing_rg_count = existing_reader.row_group_count() as usize;
 
     // Collect fingerprints: first column's byte_range_start for each existing row group.
-    let mut existing_fingerprints: Vec<u64> = Vec::with_capacity(existing_rg_count);
+    let mut existing_fingerprints: Vec<Option<u64>> = Vec::with_capacity(existing_rg_count);
     for i in 0..existing_rg_count {
         let rg = existing_reader.row_group(i)?;
         let fp = if existing_reader.column_count() > 0 {
-            rg.column_chunk(0)
-                .map(|c| c.byte_range_start)
-                .unwrap_or(u64::MAX)
+            rg.column_chunk(0).map(|c| c.byte_range_start).ok()
         } else {
-            u64::MAX
+            None
         };
         existing_fingerprints.push(fp);
     }
@@ -820,12 +818,11 @@ pub fn update_parquet_metadata(
 
     for (i, thrift_rg) in thrift_row_groups.iter().enumerate() {
         // Fingerprint the new row group: first column's byte_range_start.
-        let new_fp = thrift_rg
+        let new_fp: Option<u64> = thrift_rg
             .columns
             .first()
             .and_then(|c| c.meta_data.as_ref())
-            .map(|m| m.dictionary_page_offset.unwrap_or(m.data_page_offset) as u64)
-            .unwrap_or(u64::MAX);
+            .map(|m| m.dictionary_page_offset.unwrap_or(m.data_page_offset) as u64);
 
         if i < existing_rg_count && existing_fingerprints[i] == new_fp {
             // Unchanged row group — keep existing block.
