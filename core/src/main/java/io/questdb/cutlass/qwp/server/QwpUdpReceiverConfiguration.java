@@ -30,7 +30,13 @@ public interface QwpUdpReceiverConfiguration {
 
     int getBindIPv4Address();
 
-    int getCommitRate();
+    default long getCommitInterval() {
+        return 2000;
+    }
+
+    default int getMaxUncommittedDatagrams() {
+        return 1_048_576;
+    }
 
     int getDefaultPartitionBy();
 

@@ -277,18 +277,6 @@ public final class QwpSchema {
         return columns;
     }
 
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("QwpSchema{columns=[");
-        for (int i = 0; i < columns.length; i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(columns[i]);
-        }
-        sb.append("]}");
-        return sb.toString();
-    }
-
     private static void parseFullSchema(long address, int length, int columnCount, int offset, ParseResult result) throws QwpParseException {
         QwpColumnDef[] columns = new QwpColumnDef[columnCount];
         QwpVarint.DecodeResult decodeResult = result.decodeResult;

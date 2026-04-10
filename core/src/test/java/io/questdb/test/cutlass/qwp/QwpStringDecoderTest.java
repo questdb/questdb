@@ -155,9 +155,8 @@ public class QwpStringDecoderTest {
 
     @Test
     public void testNonMonotonicOffsets() throws QwpParseException {
-        // no null bitmap + offsets go backwards: 0, 10, 5 (non-monotonic).
-        // offset[1]=10 exceeds lastOffset=5, so row 0 must throw.
-        int rowCount = 2;
+        // no null bitmap + offsets go backwards in the middle: 0, 10, 5, 10.
+        int rowCount = 3;
         int offsetArraySize = (rowCount + 1) * 4;
         int size = 1 + offsetArraySize + 10; // flag byte + offset array + string data
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
@@ -166,17 +165,22 @@ public class QwpStringDecoderTest {
             Unsafe.getUnsafe().putInt(address + 1, 0);
             Unsafe.getUnsafe().putInt(address + 1 + 4, 10);
             Unsafe.getUnsafe().putInt(address + 1 + 8, 5); // Goes backward
+            Unsafe.getUnsafe().putInt(address + 1 + 12, 10);
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
             cursor.of(address, size, rowCount, TYPE_STRING);
 
-            // Row 0: offset[1]=10 exceeds totalStringDataLength=5, must throw
+            // Row 0: offset 0..10 is valid (stringDataLength=10)
+            cursor.advanceRow();
+            Assert.assertEquals(10, cursor.getUtf8Value().size());
+
+            // Row 1: offset 10..5 goes backward, must throw
             try {
                 cursor.advanceRow();
-                Assert.fail("expected QwpParseException for offset exceeding string data bounds");
+                Assert.fail("expected QwpParseException for non-monotonic offset array");
             } catch (QwpParseException e) {
                 Assert.assertEquals(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY, e.getErrorCode());
-                Assert.assertTrue(e.getMessage().contains("invalid QWP string offset array"));
+                Assert.assertTrue(e.getMessage().contains("exceeds string data size"));
             }
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
@@ -184,35 +188,33 @@ public class QwpStringDecoderTest {
     }
 
     @Test
-    public void testIntermediateOffsetExceedsTotalStringData() throws QwpParseException {
-        // 3 rows, offsets: [0, 1000, 5, 5]. lastOffset=5 passes of() validation,
-        // but offset[1]=1000 exceeds totalStringDataLength=5. Row 0 must throw
-        // before any out-of-bounds read occurs.
-        int rowCount = 3;
+    public void testOffsetArrayRowExceedsDeclaredStringData() throws QwpParseException {
+        // Corrupted middle offset claims 200 bytes for row 0, but the declared
+        // string data section is only 5 bytes long. The backing allocation is
+        // larger to keep the test safe even before the fix.
+        int rowCount = 2;
         int offsetArraySize = (rowCount + 1) * 4;
-        int stringDataSize = 5;
-        int size = 1 + offsetArraySize + stringDataSize; // flag byte + offset array + string data
-        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        int logicalSize = 1 + offsetArraySize + 5;
+        int allocSize = 256;
+        long address = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try {
-            Unsafe.getUnsafe().putByte(address, (byte) 0); // no null bitmap
-            Unsafe.getUnsafe().putInt(address + 1, 0);            // offset[0] = 0
-            Unsafe.getUnsafe().putInt(address + 1 + 4, 1000);     // offset[1] = 1000 (spike)
-            Unsafe.getUnsafe().putInt(address + 1 + 8, 5);        // offset[2] = 5
-            Unsafe.getUnsafe().putInt(address + 1 + 12, 5);       // offset[3] = 5 (lastOffset)
+            Unsafe.getUnsafe().setMemory(address, allocSize, (byte) 0);
+            Unsafe.getUnsafe().putByte(address, (byte) 0);
+            Unsafe.getUnsafe().putInt(address + 1, 0);
+            Unsafe.getUnsafe().putInt(address + 1 + 4, 200);
+            Unsafe.getUnsafe().putInt(address + 1 + 8, 5);
 
             QwpStringColumnCursor cursor = new QwpStringColumnCursor();
-            cursor.of(address, size, rowCount, TYPE_STRING);
-
-            // Row 0: endOffset=1000 > totalStringDataLength=5, must throw
+            cursor.of(address, logicalSize, rowCount, TYPE_STRING);
             try {
                 cursor.advanceRow();
-                Assert.fail("expected QwpParseException for intermediate offset exceeding string data bounds");
+                Assert.fail("expected QwpParseException for out-of-bounds intermediate string offset");
             } catch (QwpParseException e) {
                 Assert.assertEquals(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY, e.getErrorCode());
-                Assert.assertTrue(e.getMessage().contains("totalStringDataLength"));
+                Assert.assertTrue(e.getMessage().contains("exceeds string data size"));
             }
         } finally {
-            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(address, allocSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -259,6 +261,30 @@ public class QwpStringDecoderTest {
             Assert.fail("expected QwpParseException for out-of-bounds string data");
         } catch (QwpParseException e) {
             Assert.assertTrue(e.getMessage().contains("truncated"));
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testOffsetArrayTailOverflowIsRejectedDuringInitialization() {
+        int rowCount = 1;
+        int offsetArraySize = (rowCount + 1) * 4;
+        int size = 1 + offsetArraySize + 5;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(address, (byte) 0);
+            Unsafe.getUnsafe().putInt(address + 1, 0);
+            Unsafe.getUnsafe().putInt(address + 1 + 4, Integer.MAX_VALUE);
+
+            QwpStringColumnCursor cursor = new QwpStringColumnCursor();
+            try {
+                cursor.of(address, size, rowCount, TYPE_STRING);
+                Assert.fail("expected QwpParseException for overflowed string data tail");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INSUFFICIENT_DATA, e.getErrorCode());
+                Assert.assertTrue(e.getMessage().contains("truncated"));
+            }
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }

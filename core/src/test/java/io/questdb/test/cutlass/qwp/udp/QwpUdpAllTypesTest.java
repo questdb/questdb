@@ -66,7 +66,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     private static final int PORT = 19_002;
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
-        public int getCommitRate() {
+        public int getMaxUncommittedDatagrams() {
             return 1;
         }
 
@@ -82,7 +82,7 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     };
     private static final QwpUdpReceiverConfiguration STRESS_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
-        public int getCommitRate() {
+        public int getMaxUncommittedDatagrams() {
             return 100_000;
         }
 

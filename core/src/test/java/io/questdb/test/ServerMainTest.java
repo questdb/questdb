@@ -973,9 +973,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "qwp.max.schemas.per.connection\tQDB_QWP_MAX_SCHEMAS_PER_CONNECTION\t65535\tdefault\tfalse\tfalse\n" +
                                     "qwp.max.tables.per.connection\tQDB_QWP_MAX_TABLES_PER_CONNECTION\t10000\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.bind.to\tQDB_QWP_UDP_BIND_TO\t0.0.0.0:9007\tdefault\tfalse\tfalse\n" +
-                                    "qwp.udp.commit.rate\tQDB_QWP_UDP_COMMIT_RATE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.commit.interval\tQDB_QWP_UDP_COMMIT_INTERVAL\t2000\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.enabled\tQDB_QWP_UDP_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.join\tQDB_QWP_UDP_JOIN\t224.1.1.1\tdefault\tfalse\tfalse\n" +
+                                    "qwp.udp.max.uncommitted.datagrams\tQDB_QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS\t1048576\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.msg.buffer.size\tQDB_QWP_UDP_MSG_BUFFER_SIZE\t65536\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.msg.count\tQDB_QWP_UDP_MSG_COUNT\t10000\tdefault\tfalse\tfalse\n" +
                                     "qwp.udp.own.thread\tQDB_QWP_UDP_OWN_THREAD\ttrue\tdefault\tfalse\tfalse\n" +

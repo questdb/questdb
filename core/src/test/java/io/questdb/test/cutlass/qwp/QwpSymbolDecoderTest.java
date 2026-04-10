@@ -215,6 +215,49 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testDictionarySizeRejectsNegativeVarintValue() {
+        int size = 32;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long pos = address;
+            Unsafe.getUnsafe().putByte(pos++, (byte) 0);
+            pos = QwpVarint.encode(pos, Long.MIN_VALUE);
+
+            QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
+            try {
+                cursor.of(address, (int) (pos - address), 0);
+                Assert.fail("Expected QwpParseException for negative dictionary size varint");
+            } catch (QwpParseException e) {
+                Assert.assertTrue(e.getMessage().contains("dictionary size out of int range"));
+            }
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testDictionaryStringLengthRejectsNegativeVarintValue() {
+        int size = 64;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long pos = address;
+            Unsafe.getUnsafe().putByte(pos++, (byte) 0);
+            pos = QwpVarint.encode(pos, 1);
+            pos = QwpVarint.encode(pos, -1L);
+
+            QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
+            try {
+                cursor.of(address, (int) (pos - address), 0);
+                Assert.fail("Expected QwpParseException for negative dictionary string length varint");
+            } catch (QwpParseException e) {
+                Assert.assertTrue(e.getMessage().contains("dictionary string length out of int range"));
+            }
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testInsufficientDataForDictionary() {
         int size = 6;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
@@ -301,6 +344,34 @@ public class QwpSymbolDecoderTest {
         } catch (QwpParseException e) {
             Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
             Assert.assertTrue(e.getMessage().contains("symbol index out of range"));
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testSymbolIndexRejectsNegativeVarintValue() throws Exception {
+        int size = 64;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long pos = address;
+
+            Unsafe.getUnsafe().putByte(pos++, (byte) 0);
+            pos = QwpVarint.encode(pos, 1);
+            pos = QwpVarint.encode(pos, 1);
+            Unsafe.getUnsafe().putByte(pos++, (byte) 'a');
+            pos = QwpVarint.encode(pos, Long.MIN_VALUE);
+
+            QwpSymbolColumnCursor cursor = new QwpSymbolColumnCursor();
+            cursor.of(address, (int) (pos - address), 1);
+
+            try {
+                cursor.advanceRow();
+                Assert.fail("Expected QwpParseException for negative symbol index varint");
+            } catch (QwpParseException e) {
+                Assert.assertEquals(QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX, e.getErrorCode());
+                Assert.assertTrue(e.getMessage().contains("symbol index out of int range"));
+            }
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }

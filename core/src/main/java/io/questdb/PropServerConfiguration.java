@@ -405,7 +405,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
-    private final int qwpUdpCommitRate;
+    private final long qwpUdpCommitInterval;
+    private final int qwpUdpMaxUncommittedDatagrams;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
     private final int qwpUdpMsgBufferSize;
@@ -1792,12 +1793,53 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be at least 1"
                 );
             }
-            this.qwpUdpCommitRate = getInt(properties, env, PropertyKey.QWP_UDP_COMMIT_RATE, 1_048_576);
+            long qwpUdpCommitInterval = getMillis(properties, env, PropertyKey.QWP_UDP_COMMIT_INTERVAL, COMMIT_INTERVAL_DEFAULT);
+            if (qwpUdpCommitInterval < 1L) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_COMMIT_INTERVAL.getPropertyPath()
+                                + " must be at least 1ms"
+                );
+            }
+            this.qwpUdpCommitInterval = qwpUdpCommitInterval;
+            int qwpUdpMaxUncommittedDatagrams = getInt(properties, env, PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS, 1_048_576);
+            if (qwpUdpMaxUncommittedDatagrams < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_MAX_UNCOMMITTED_DATAGRAMS.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
+            this.qwpUdpMaxUncommittedDatagrams = qwpUdpMaxUncommittedDatagrams;
             this.qwpUdpMsgBufferSize = getIntSize(properties, env, PropertyKey.QWP_UDP_MSG_BUFFER_SIZE, 65_536);
+            if (qwpUdpMsgBufferSize < QwpConstants.HEADER_SIZE) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_MSG_BUFFER_SIZE.getPropertyPath()
+                                + " must be at least "
+                                + QwpConstants.HEADER_SIZE
+                                + " bytes"
+                );
+            }
             this.qwpUdpMsgCount = getInt(properties, env, PropertyKey.QWP_UDP_MSG_COUNT, 10_000);
+            if (qwpUdpMsgCount < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_MSG_COUNT.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
             this.qwpUdpReceiveBufferSize = getIntSize(properties, env, PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE, -1);
+            if (qwpUdpReceiveBufferSize == 0 || qwpUdpReceiveBufferSize < -1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_RECEIVE_BUFFER_SIZE.getPropertyPath()
+                                + " must be -1 or at least 1"
+                );
+            }
             this.qwpUdpEnabled = getBoolean(properties, env, PropertyKey.QWP_UDP_ENABLED, false);
             this.qwpUdpOwnThreadAffinity = getInt(properties, env, PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY, -1);
+            if (qwpUdpOwnThreadAffinity < -1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_UDP_OWN_THREAD_AFFINITY.getPropertyPath()
+                                + " must be -1 or non-negative"
+                );
+            }
             this.qwpUdpOwnThread = getBoolean(properties, env, PropertyKey.QWP_UDP_OWN_THREAD, true);
             this.qwpUdpUnicast = getBoolean(properties, env, PropertyKey.QWP_UDP_UNICAST, true);
 
@@ -6456,8 +6498,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getCommitRate() {
-            return qwpUdpCommitRate;
+        public long getCommitInterval() {
+            return qwpUdpCommitInterval;
+        }
+
+        @Override
+        public int getMaxUncommittedDatagrams() {
+            return qwpUdpMaxUncommittedDatagrams;
         }
 
         @Override

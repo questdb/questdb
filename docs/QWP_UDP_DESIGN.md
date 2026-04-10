@@ -331,8 +331,9 @@ Follows the pattern of the existing `LineUdpReceiver`:
 - **Decoding**: after validation, the receiver uses `QwpMessageCursor` /
   `QwpTableBlockCursor` to iterate columns, and `QwpWalAppender` to write
   to WAL.
-- **Commit batching**: commits to WAL after every N datagrams (configurable
-  `commitRate`, default 10,000) or on a timer, to amortize commit overhead.
+- **Commit batching**: commits to WAL on a configurable timer
+  (`qwp.udp.commit.interval`) or after a configurable number of uncommitted
+  datagrams (`qwp.udp.max.uncommitted.datagrams`) to amortize commit overhead.
 
 **No response channel.** The receiver silently drops malformed datagrams and
 logs errors at DEBUG level to avoid log flooding.
@@ -348,7 +349,8 @@ qwp.udp.unicast                = true/false
 qwp.udp.join                   = 232.1.2.3   (multicast group)
 qwp.udp.own.thread             = true
 qwp.udp.own.thread.affinity    = -1
-qwp.udp.commit.rate            = 10000
+qwp.udp.commit.interval        = 2s
+qwp.udp.max.uncommitted.datagrams = 1048576
 qwp.udp.msg.buffer.size        = 2048
 qwp.udp.msg.count              = 10000   (recvmmsg batch size, Linux only)
 qwp.udp.receive.buffer.size    = 8388608 (8 MB OS socket buffer)

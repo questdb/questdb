@@ -35,6 +35,7 @@ import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -53,7 +54,7 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     private static final int PORT = 19_002;
     private static final QwpUdpReceiverConfiguration LOW_COMMIT_RATE_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
-        public int getCommitRate() {
+        public int getMaxUncommittedDatagrams() {
             return 1;
         }
 
@@ -69,8 +70,29 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     };
     private static final QwpUdpReceiverConfiguration RCVR_CONF = new DefaultQwpUdpReceiverConfiguration() {
         @Override
-        public int getCommitRate() {
+        public int getMaxUncommittedDatagrams() {
             return 10;
+        }
+
+        @Override
+        public int getPort() {
+            return PORT;
+        }
+
+        @Override
+        public boolean isOwnThread() {
+            return false;
+        }
+    };
+    private static final QwpUdpReceiverConfiguration TIMER_COMMIT_CONF = new DefaultQwpUdpReceiverConfiguration() {
+        @Override
+        public long getCommitInterval() {
+            return 50;
+        }
+
+        @Override
+        public int getMaxUncommittedDatagrams() {
+            return Integer.MAX_VALUE;
         }
 
         @Override
@@ -137,6 +159,84 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                             """,
                     "SELECT host, id, temp, note FROM auto_many_types ORDER BY timestamp DESC LIMIT 1"
             );
+        });
+    }
+
+    @Test
+    public void testCommitIntervalDelaysSparseDatagramCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table timer_commit (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=1000, o3MaxLag=1s");
+
+            try (QwpUdpReceiver receiver = receiverFactory.create(TIMER_COMMIT_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("timer_commit")
+                            .longColumn("v", 1)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                Assert.assertTrue(receiver.runSerially());
+                drainWalQueue();
+                assertSql("count\n0\n", "SELECT count() FROM timer_commit");
+
+                TestUtils.assertEventually(() -> {
+                    receiver.runSerially();
+                    drainWalQueue();
+                    assertSql("count\n1\n", "SELECT count() FROM timer_commit");
+                }, 5);
+            }
+        });
+    }
+
+    @Test
+    public void testDatagramTriggeredCommitResetsUncommittedDatagramCount() throws Exception {
+        final QwpUdpReceiverConfiguration conf = new DefaultQwpUdpReceiverConfiguration() {
+            @Override
+            public long getCommitInterval() {
+                return TimeUnit.SECONDS.toMillis(5);
+            }
+
+            @Override
+            public int getMaxUncommittedDatagrams() {
+                return 2;
+            }
+
+            @Override
+            public int getPort() {
+                return PORT;
+            }
+
+            @Override
+            public boolean isOwnThread() {
+                return false;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            execute("create table datagram_trigger_reset (ts timestamp, v long) timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=2, o3MaxLag=1s");
+
+            try (InspectingQwpUdpReceiver receiver = new InspectingQwpUdpReceiver(conf, engine)) {
+                sendSingleRow("datagram_trigger_reset", 1L, 1_000_000L);
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertSql("count\n0\n", "SELECT count() FROM datagram_trigger_reset");
+                Assert.assertEquals(1, receiver.getTotalCount());
+
+                sendSingleRow("datagram_trigger_reset", 2L, 2_000_000L);
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                Assert.assertEquals(0, receiver.getTotalCount());
+
+                sendSingleRow("datagram_trigger_reset", 3L, 3_000_000L);
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertSql("count\n2\n", "SELECT count() FROM datagram_trigger_reset");
+                Assert.assertEquals(1, receiver.getTotalCount());
+            }
+
+            drainWalQueue();
+            assertSql("count\n3\n", "SELECT count() FROM datagram_trigger_reset");
         });
     }
 
@@ -985,6 +1085,25 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
 
     private static QwpUdpSender newSender(int maxDatagramSize) {
         return new QwpUdpSender(NetworkFacadeImpl.INSTANCE, 0, LOCALHOST, PORT, 0, maxDatagramSize);
+    }
+
+    private static void sendSingleRow(String table, long value, long timestampMicros) {
+        try (QwpUdpSender sender = newSender()) {
+            sender.table(table)
+                    .longColumn("v", value)
+                    .at(timestampMicros, ChronoUnit.MICROS);
+            sender.flush();
+        }
+    }
+
+    private static class InspectingQwpUdpReceiver extends QwpUdpReceiver {
+        private InspectingQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine) {
+            super(configuration, engine);
+        }
+
+        private long getTotalCount() {
+            return totalCount;
+        }
     }
 
     @FunctionalInterface

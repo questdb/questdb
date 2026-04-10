@@ -86,10 +86,10 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
 
         // Read varint index
         QwpVarint.decode(currentIndexAddress, indicesEnd, decodeResult);
-        if (decodeResult.value > Integer.MAX_VALUE) {
+        if (decodeResult.value < 0 || decodeResult.value > Integer.MAX_VALUE) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INVALID_DICTIONARY_INDEX,
-                    "symbol index exceeds int range: " + decodeResult.value
+                    "symbol index out of int range: " + decodeResult.value
             );
         }
         currentSymbolIndex = (int) decodeResult.value;
@@ -257,6 +257,12 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
             // Standard mode: parse per-column dictionary
             // Parse dictionary size
             QwpVarint.decode(dataAddress + offset, limit, decodeResult);
+            if (decodeResult.value < 0 || decodeResult.value > Integer.MAX_VALUE) {
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                        "dictionary size out of int range: " + decodeResult.value
+                );
+            }
             if (decodeResult.value > dataLength) {
                 throw QwpParseException.create(
                         QwpParseException.ErrorCode.INSUFFICIENT_DATA,
@@ -280,7 +286,14 @@ public final class QwpSymbolColumnCursor implements QwpColumnCursor {
                 QwpVarint.decode(dataAddress + offset, limit, decodeResult);
                 offset += decodeResult.bytesRead;
 
-                if (decodeResult.value > dataLength - offset) {
+                long availableBytes = (long) dataLength - offset;
+                if (decodeResult.value < 0 || decodeResult.value > Integer.MAX_VALUE) {
+                    throw QwpParseException.create(
+                            QwpParseException.ErrorCode.INSUFFICIENT_DATA,
+                            "dictionary string length out of int range: " + decodeResult.value
+                    );
+                }
+                if (availableBytes < 0 || decodeResult.value > availableBytes) {
                     throw QwpParseException.create(
                             QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                             "dictionary string length out of bounds: " + decodeResult.value

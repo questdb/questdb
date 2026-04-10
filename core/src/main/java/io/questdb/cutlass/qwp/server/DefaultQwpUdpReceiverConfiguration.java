@@ -38,7 +38,7 @@ public class DefaultQwpUdpReceiverConfiguration implements QwpUdpReceiverConfigu
     }
 
     @Override
-    public int getCommitRate() {
+    public int getMaxUncommittedDatagrams() {
         return 1_048_576;
     }
 

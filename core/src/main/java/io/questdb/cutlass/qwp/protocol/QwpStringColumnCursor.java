@@ -55,7 +55,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     private long nullBitmapAddress;
     private long offsetArrayAddress;
     private long stringDataAddress;
-    private int totalStringDataLength;
+    private int stringDataLength;
     // Configuration
     private byte typeCode;
 
@@ -77,18 +77,14 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         int startOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) currentValueIndex * 4);
         int endOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) (currentValueIndex + 1) * 4);
 
-        if (startOffset < 0 || endOffset < startOffset || endOffset > totalStringDataLength) {
+        if (startOffset < 0 || endOffset < startOffset || endOffset > stringDataLength) {
             throw QwpParseException.instance(QwpParseException.ErrorCode.INVALID_OFFSET_ARRAY)
                     .put("invalid QWP string offset array: offset[")
-                    .put(currentValueIndex)
-                    .put("]=")
-                    .put(startOffset)
-                    .put(", offset[")
                     .put(currentValueIndex + 1)
                     .put("]=")
                     .put(endOffset)
-                    .put(", totalStringDataLength=")
-                    .put(totalStringDataLength);
+                    .put(" exceeds string data size ")
+                    .put(stringDataLength);
         }
 
         // Update flyweight to point to this string's bytes - NO ALLOCATION!
@@ -107,7 +103,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         nullBitmapAddress = 0;
         offsetArrayAddress = 0;
         stringDataAddress = 0;
-        totalStringDataLength = 0;
+        stringDataLength = 0;
         resetRowPosition();
     }
 
@@ -195,14 +191,15 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
 
         // Calculate total string data size from offset array
         int lastOffset = Unsafe.getUnsafe().getInt(offsetArrayAddress + (long) valueCount * 4);
-        if (lastOffset < 0 || offset + lastOffset > dataLength) {
+        long availableStringData = (long) dataLength - offset;
+        if (lastOffset < 0 || (long) lastOffset > availableStringData) {
             throw QwpParseException.create(
                     QwpParseException.ErrorCode.INSUFFICIENT_DATA,
                     "string column data truncated: expected string data"
             );
         }
         this.stringDataAddress = dataAddress + offset;
-        this.totalStringDataLength = lastOffset;
+        this.stringDataLength = lastOffset;
         offset += lastOffset;
 
         resetRowPosition();
