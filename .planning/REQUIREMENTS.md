@@ -40,6 +40,15 @@
 - [x] **KFTR-04**: Per-key prev tracking works correctly across FROM/TO range boundaries
 - [x] **KFTR-05**: Architecture validation -- keyed FROM/TO fill produces output matching cursor-based path
 
+### PREV Type-Safe Fast Path
+
+- [x] **PTSF-01**: Fast-path PREV snapshot only persists required source columns (not global save-all)
+- [x] **PTSF-02**: Explicit source type support matrix — numeric types on fast path, unsupported types fall back to legacy
+- [x] **PTSF-03**: Mixed-fill queries (one PREV numeric + one non-PREV string/symbol) do not crash on fast path
+- [x] **PTSF-04**: prev(alias) referencing unsupported type triggers legacy path fallback (plan shows Sample By, not Async Group By)
+- [x] **PTSF-05**: No behavior regressions for existing FILL(PREV) tests
+- [x] **PTSF-06**: Nanosecond timestamp tests mirror microsecond equivalents
+
 ### Code Generator
 
 - [ ] **GEN-01**: generateFill() builds per-column fill modes (FILL_CONSTANT, FILL_PREV_SELF) from fill expressions
@@ -102,6 +111,12 @@
 | KFTR-03 | Phase 6: Keyed Fill with FROM/TO Range | Complete |
 | KFTR-04 | Phase 6: Keyed Fill with FROM/TO Range | Complete |
 | KFTR-05 | Phase 6: Keyed Fill with FROM/TO Range | Complete |
+| PTSF-01 | Phase 7: PREV Type-Safe Fast Path | Complete |
+| PTSF-02 | Phase 7: PREV Type-Safe Fast Path | Complete |
+| PTSF-03 | Phase 7: PREV Type-Safe Fast Path | Complete |
+| PTSF-04 | Phase 7: PREV Type-Safe Fast Path | Complete |
+| PTSF-05 | Phase 7: PREV Type-Safe Fast Path | Complete |
+| PTSF-06 | Phase 7: PREV Type-Safe Fast Path | Complete |
 | COR-01 | Phase 5: Verification and Hardening | Pending |
 | COR-02 | Phase 5: Verification and Hardening | Pending |
 | COR-03 | Phase 5: Verification and Hardening | Pending |

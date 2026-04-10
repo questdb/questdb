@@ -127,4 +127,4 @@ Plans:
   6. Nanosecond timestamp tests mirror microsecond equivalents
 **Plans:** 1 plan
 Plans:
-- [ ] 07-01-PLAN.md -- Per-column snapshot, type matrix, optimizer gate, legacy fallback, mixed-fill and nano tests
+- [x] 07-01-PLAN.md -- Per-column snapshot, type matrix, optimizer gate, legacy fallback, mixed-fill and nano tests
