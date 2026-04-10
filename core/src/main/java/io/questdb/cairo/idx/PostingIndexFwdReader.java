@@ -244,11 +244,33 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            ensureGenLookup();
-
             this.requestedKey = key;
             this.minValue = minValue;
             this.maxValue = maxValue;
+
+            // Reset iteration state
+            this.encodedBlockCount = 0;
+            this.currentBlock = 0;
+            this.blockBufferPos = 0;
+            this.blockBufferEnd = 0;
+            this.constantDeltaRemaining = 0;
+            this.isFlatMode = false;
+            resetCoveringState();
+
+            // Fast path: sealed single-generation index with dense gen 0.
+            // Load directly without tier lookup or advance machinery.
+            // Set currentGen = genCount so advanceToNextRelevantGen() (called
+            // when blocks are exhausted) returns false immediately.
+            if (genCount == 1 && genLookup.getGenKeyCount(0) >= 0) {
+                this.currentGen = genCount;
+                this.lookupPos = 0;
+                this.lookupEnd = 0;
+                loadDenseGenerationCached(0);
+                return;
+            }
+
+            ensureGenLookup();
+
             this.currentGen = -1; // will be advanced by first advanceToNextRelevantGen()
 
             // Set up inverted index range for this key (Tier 1)
@@ -260,14 +282,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.lookupEnd = 0;
             }
 
-            // Kick off iteration
-            this.encodedBlockCount = 0;
-            this.currentBlock = 0;
-            this.blockBufferPos = 0;
-            this.blockBufferEnd = 0;
-            this.constantDeltaRemaining = 0;
-            this.isFlatMode = false;
-            resetCoveringState();
             advanceToNextRelevantGen();
         }
 

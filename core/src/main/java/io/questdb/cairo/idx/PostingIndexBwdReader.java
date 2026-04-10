@@ -259,13 +259,27 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            ensureGenLookup();
-
             this.requestedKey = key;
             this.minValue = minValue;
             this.maxValue = maxValue;
-            this.currentGen = genCount; // will be decremented
+            this.constantDeltaRemaining = 0;
             resetCoveringState();
+
+            // Fast path: sealed single-generation index with dense gen 0.
+            // Load directly without tier lookup or advance machinery.
+            // Set currentGen = -1 so advanceToPrevRelevantGen() (called
+            // when blocks are exhausted) returns false immediately.
+            if (genCount == 1 && genLookup.getGenKeyCount(0) >= 0) {
+                this.currentGen = -1;
+                this.lookupPos = -1;
+                this.lookupEnd = 0;
+                loadDenseGenerationCached(0);
+                return;
+            }
+
+            ensureGenLookup();
+
+            this.currentGen = genCount; // will be decremented
 
             // Set up inverted index range for this key (Tier 1), reverse order
             if (genLookup.isPerKeyMode() && key < genLookup.getKeyCount()) {
@@ -275,8 +289,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 this.lookupPos = -1;
                 this.lookupEnd = 0;
             }
-
-            this.constantDeltaRemaining = 0;
 
             if (!advanceToPrevRelevantGen()) {
                 currentGen = -1;
