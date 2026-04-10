@@ -12988,6 +12988,145 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionAsArgumentToAggregateWithBaseColumnImplicitGroupBy() throws Exception {
+        // Base column mixed with window function inside aggregate, no GROUP BY clause.
+        // sum triggers implicit grouping; x needs pass-through in the inner window model.
+        assertQuery(
+                """
+                        result
+                        20.0
+                        """,
+                "SELECT sum(x + avg(x) OVER ()) AS result FROM tab",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithBasicGroupBy() throws Exception {
+        assertQuery(
+                """
+                        category\tresult
+                        A\t5.0
+                        B\t5.0
+                        """,
+                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithBaseColumnAndGroupBy() throws Exception {
+        // Base column mixed with window function inside aggregate argument with GROUP BY.
+        // max(x - avg(x) OVER (...)) computes max deviation from the moving average per category.
+        assertQuery(
+                """
+                        category\tmax_dev
+                        A\t0.5
+                        B\t0.5
+                        """,
+                "SELECT category, max(x - avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS max_dev " +
+                        "FROM tab GROUP BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithGroupByAndNulls() throws Exception {
+        // NULL values in the data should not break pass-through column propagation.
+        // avg(x) OVER () computes over non-null values: (1+2+3+4)/4 = 2.5
+        // Row 5 has x=NULL, category=B; avg(x) OVER () still returns 2.5 for that row.
+        // sum per category: A(2 rows)=5.0, B(3 rows)=7.5
+        assertQuery(
+                """
+                        category\tresult
+                        A\t5.0
+                        B\t7.5
+                        """,
+                "SELECT category, sum(avg(x) OVER ()) AS result FROM tab GROUP BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT CASE WHEN x = 5 THEN NULL ELSE x::DOUBLE END AS x, " +
+                        "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(5)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithGroupBy() throws Exception {
+        // Window function inside aggregate argument with explicit GROUP BY.
+        // max(avg(x) OVER (PARTITION BY cat ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW))
+        // computes a 3-row moving average per category, then picks the peak per category.
+        assertQuery(
+                """
+                        category\tpeak_ma
+                        A\t1.5
+                        B\t3.5
+                        """,
+                "SELECT category, max(avg(x) OVER (PARTITION BY category ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)) AS peak_ma " +
+                        "FROM tab GROUP BY category",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS category, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testWindowFunctionAsArgumentToAggregateWithMultipleGroupByKeys() throws Exception {
+        // Multiple GROUP BY keys must all get pass-through columns in the inner window model.
+        // avg(x) OVER () = (1+2+3+4)/4 = 2.5, each (cat1, cat2) group has 1 row → sum(2.5) = 2.5
+        assertQuery(
+                """
+                        cat1\tcat2\tresult
+                        A\tX\t2.5
+                        A\tY\t2.5
+                        B\tX\t2.5
+                        B\tY\t2.5
+                        """,
+                "SELECT cat1, cat2, sum(avg(x) OVER ()) AS result FROM tab GROUP BY cat1, cat2",
+                "CREATE TABLE tab AS (" +
+                        "SELECT x::DOUBLE AS x, " +
+                        "CASE WHEN x <= 2 THEN 'A' ELSE 'B' END AS cat1, " +
+                        "CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END AS cat2, " +
+                        "timestamp_sequence('2024-01-01', 1_000_000) AS ts " +
+                        "FROM long_sequence(4)" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testWindowFunctionAsArgumentToCast() throws Exception {
         // Test window function as direct argument to cast() function
         assertQuery(

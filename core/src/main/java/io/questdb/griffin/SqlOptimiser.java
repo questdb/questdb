@@ -1023,6 +1023,37 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void addLiteralPassThroughToInnerWindowModels(ExpressionNode node, ObjList<QueryModel> innerWindowModels) throws SqlException {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type == LITERAL) {
+                for (int i = 0, n = innerWindowModels.size(); i < n; i++) {
+                    QueryModel innerWm = innerWindowModels.getQuick(i);
+                    if (innerWm.getAliasToColumnMap().excludes(node.token)) {
+                        innerWm.addBottomUpColumn(nextColumn(node.token));
+                    }
+                }
+            }
+            if (node.paramCount < 3) {
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                for (int i = 0, k = node.paramCount; i < k; i++) {
+                    ExpressionNode arg = node.args.getQuick(i);
+                    if (arg != null) {
+                        sqlNodeStack.push(arg);
+                    }
+                }
+                node = null;
+            }
+            if (node == null && !sqlNodeStack.isEmpty()) {
+                node = sqlNodeStack.poll();
+            }
+        }
+    }
+
     // add table prefix to all column references to make it easier to compare expressions
     private void addMissingTablePrefixesForGroupByQueries(ExpressionNode node, QueryModel baseModel, QueryModel innerVirtualModel) throws SqlException {
         sqlNodeStack.clear();
@@ -9541,6 +9572,32 @@ public class SqlOptimiser implements Mutable {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Add pass-through columns to innerWindowModels for columns referenced by
+        // groupByModel. When an aggregate contains a nested window function, the inner
+        // window model sits between groupByModel and translatingModel. Both GROUP BY
+        // keys and base columns used in aggregate arguments need pass-through so the
+        // groupByModel can resolve them through the inner window model chain.
+        if (innerWindowModels.size() > 0 && (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
+            ObjList<QueryColumn> groupByCols = groupByModel.getBottomUpColumns();
+            for (int i = 0, n = groupByCols.size(); i < n; i++) {
+                QueryColumn col = groupByCols.getQuick(i);
+                ExpressionNode ast = col.getAst();
+                if (ast.type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
+                    // GROUP BY key — add direct pass-through
+                    for (int j = 0, m = innerWindowModels.size(); j < m; j++) {
+                        QueryModel innerWm = innerWindowModels.getQuick(j);
+                        if (innerWm.getAliasToColumnMap().excludes(col.getAlias())) {
+                            innerWm.addBottomUpColumn(nextColumn(col.getAlias()));
+                        }
+                    }
+                } else {
+                    // Aggregate — add pass-through for literal references in its arguments
+                    // (e.g., max(x - avg(x) OVER ()) needs x to pass through)
+                    addLiteralPassThroughToInnerWindowModels(ast, innerWindowModels);
                 }
             }
         }
