@@ -96,7 +96,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             ObjList<Function> constantFills,
             int timestampIndex,
             int timestampType,
-            boolean hasPrevFill,
+            IntList prevSourceCols,
             RecordSink keySink,
             ArrayColumnTypes mapKeyTypes,
             ArrayColumnTypes mapValueTypes,
@@ -112,7 +112,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.timestampIndex = timestampIndex;
         this.timestampType = timestampType;
         this.constantFills = constantFills;
-        this.hasPrevFill = hasPrevFill;
+        this.hasPrevFill = prevSourceCols != null && prevSourceCols.size() > 0;
         if (keyColIndices.size() > 0) {
             this.keysMap = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
         } else {
@@ -121,7 +121,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         this.cursor = new SampleByFillCursor(
                 configuration, metadata, timestampSampler,
                 fromFunc, toFunc, fillModes, constantFills,
-                timestampIndex, timestampType, hasPrevFill,
+                timestampIndex, timestampType, prevSourceCols,
                 keySink, keysMap, keyColIndices, symbolTableColIndices
         );
     }
@@ -205,6 +205,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final Map keysMap;
         private final int[] outputColToAggSlot;
         private final int[] outputColToKeyPos;
+        private final IntList prevSourceCols;
         private final IntList symbolTableColIndices;
         private final TimestampDriver timestampDriver;
         private final int timestampIndex;
@@ -238,7 +239,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 ObjList<Function> constantFills,
                 int timestampIndex,
                 int timestampType,
-                boolean hasPrevFill,
+                IntList prevSourceCols,
                 RecordSink keySink,
                 Map keysMap,
                 IntList keyColIndices,
@@ -253,7 +254,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.columnCount = metadata.getColumnCount();
             this.fillTimestampFunc = new FillTimestampConstant(timestampType);
-            this.hasPrevFill = hasPrevFill;
+            this.prevSourceCols = prevSourceCols;
+            this.hasPrevFill = prevSourceCols != null && prevSourceCols.size() > 0;
             this.columnTypes = new short[columnCount];
             for (int i = 0; i < columnCount; i++) {
                 columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(i));
@@ -574,9 +576,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         private void savePrevValues(Record record) {
             hasSimplePrev = true;
-            for (int i = 0; i < columnCount; i++) {
-                if (i == timestampIndex) continue;
-                simplePrev[i] = readColumnAsLongBits(record, i, columnTypes[i]);
+            for (int i = 0, n = prevSourceCols.size(); i < n; i++) {
+                int col = prevSourceCols.getQuick(i);
+                simplePrev[col] = readColumnAsLongBits(record, col, columnTypes[col]);
             }
         }
 
@@ -589,13 +591,21 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 case ColumnType.BYTE, ColumnType.GEOBYTE -> record.getByte(col);
                 case ColumnType.BOOLEAN -> record.getBool(col) ? 1 : 0;
                 case ColumnType.CHAR -> record.getChar(col);
-                default -> record.getLong(col);
+                case ColumnType.DATE, ColumnType.LONG, ColumnType.TIMESTAMP -> record.getLong(col);
+                case ColumnType.GEOLONG -> record.getGeoLong(col);
+                case ColumnType.DECIMAL8 -> record.getDecimal8(col);
+                case ColumnType.DECIMAL16 -> record.getDecimal16(col);
+                case ColumnType.DECIMAL32 -> record.getDecimal32(col);
+                case ColumnType.DECIMAL64 -> record.getDecimal64(col);
+                default ->
+                        throw new UnsupportedOperationException("unsupported column type for PREV fill: " + ColumnType.nameOf(type));
             };
         }
 
         private void updatePerKeyPrev(MapValue value, Record record) {
             value.putLong(HAS_PREV_SLOT, 1L);
-            for (int col = 0; col < columnCount; col++) {
+            for (int i = 0, n = prevSourceCols.size(); i < n; i++) {
+                int col = prevSourceCols.getQuick(i);
                 int aggSlot = outputColToAggSlot[col];
                 if (aggSlot >= 0) {
                     value.putLong(PREV_START_SLOT + aggSlot,

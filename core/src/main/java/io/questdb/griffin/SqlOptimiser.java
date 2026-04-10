@@ -448,6 +448,101 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * Returns true when any PREV fill target references an aggregate output
+     * column whose argument type cannot be encoded as a long on the fast path.
+     * The check covers simple LITERAL arguments to aggregate functions
+     * (e.g. first(str_col)). For complex expressions or PREV(alias)
+     * cross-column references, the method conservatively returns false and
+     * lets the generateFill() safety net handle the error.
+     */
+    private static boolean hasPrevWithUnsupportedType(
+            ObjList<ExpressionNode> fill,
+            QueryModel model,
+            QueryModel nested,
+            ExpressionNode timestamp
+    ) {
+        // Bare FILL(PREV) with a single element applies to all aggregate columns.
+        // Multi-element fill maps by position, skipping key columns and timestamp.
+        boolean isBare = fill.size() == 1
+                && isPrevKeyword(fill.getQuick(0).token)
+                && fill.getQuick(0).type == ExpressionNode.LITERAL;
+
+        ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        if (isBare) {
+            // Every non-key, non-timestamp column gets PREV; check all aggregates.
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn col = columns.getQuick(i);
+                ExpressionNode ast = col.getAst();
+                if (ast.type == LITERAL) {
+                    continue; // key or timestamp column
+                }
+                if (isUnsupportedPrevAggType(ast, nested)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Per-column fill: map fill entries to aggregate columns by position.
+        int fillIdx = 0;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn col = columns.getQuick(i);
+            ExpressionNode ast = col.getAst();
+            // Skip timestamp column
+            if (ast.type == LITERAL && timestamp != null
+                    && Chars.equalsIgnoreCase(ast.token, timestamp.token)) {
+                continue;
+            }
+            // Skip key columns (LITERALs that are not the timestamp)
+            if (ast.type == LITERAL) {
+                continue;
+            }
+            // This is an aggregate column — check the corresponding fill entry
+            ExpressionNode fillExpr = fillIdx < fill.size()
+                    ? fill.getQuick(fillIdx)
+                    : (fill.size() == 1 ? fill.getQuick(0) : null);
+            if (fillExpr != null && isPrevKeyword(fillExpr.token)) {
+                // Skip PREV(alias) cross-column references — handled by generateFill safety net
+                if (fillExpr.type == ExpressionNode.FUNCTION && fillExpr.paramCount == 1) {
+                    fillIdx++;
+                    continue;
+                }
+                if (isUnsupportedPrevAggType(ast, nested)) {
+                    return true;
+                }
+            }
+            fillIdx++;
+        }
+        return false;
+    }
+
+    private static boolean isUnsupportedPrevAggType(ExpressionNode aggAst, QueryModel nested) {
+        // Only check simple aggregate functions with a single LITERAL argument
+        if (aggAst.type != FUNCTION || aggAst.rhs == null || aggAst.rhs.type != LITERAL) {
+            return false; // cannot resolve type — skip conservatively
+        }
+        QueryColumn argCol = nested.getAliasToColumnMap().get(aggAst.rhs.token);
+        if (argCol == null) {
+            return false; // cannot resolve — skip conservatively
+        }
+        int colType = argCol.getColumnType();
+        if (colType < 0) {
+            return false; // type not resolved yet
+        }
+        short tag = ColumnType.tagOf(colType);
+        return isUnsupportedPrevType(tag);
+    }
+
+    private static boolean isUnsupportedPrevType(short tag) {
+        return switch (tag) {
+            case ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR,
+                 ColumnType.LONG256, ColumnType.BINARY, ColumnType.UUID,
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> true;
+            default -> ColumnType.isArray(tag);
+        };
+    }
+
     // Returns true when every leaf in the expression tree is a literal constant
     // (no function calls, bind variables, or column references). Used to decide
     // whether a constWhereClause can be evaluated at compile time by the code
@@ -7887,6 +7982,7 @@ public class SqlOptimiser implements Mutable {
                             // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
                             && sampleByOffset != null
                             && !hasLinearFill(sampleByFill)
+                            && !hasPrevWithUnsupportedType(sampleByFill, model, nested, timestamp)
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {

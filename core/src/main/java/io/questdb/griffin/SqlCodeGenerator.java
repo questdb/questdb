@@ -1182,6 +1182,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Returns true if the column type tag supports fast-path PREV fill
+     * encoding via readColumnAsLongBits (fits in a long slot).
+     */
+    private static boolean isFastPathPrevSupportedType(short tag) {
+        return switch (tag) {
+            case ColumnType.DOUBLE, ColumnType.FLOAT,
+                 ColumnType.INT, ColumnType.LONG, ColumnType.SHORT, ColumnType.BYTE,
+                 ColumnType.BOOLEAN, ColumnType.CHAR,
+                 ColumnType.TIMESTAMP, ColumnType.DATE,
+                 ColumnType.IPv4,
+                 ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG,
+                 ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 -> true;
+            default -> false;
+        };
+    }
+
+    /**
      * Checks if the model is a synthetic horizon offset model.
      * This model is created by the parser for HORIZON JOIN and represents the virtual
      * table with offset/timestamp columns. It has no table name and has a non-empty HorizonJoinContext.
@@ -3335,8 +3352,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int columnCount = groupByMetadata.getColumnCount();
             final IntList fillModes = new IntList(columnCount);
             constantFillFuncs = new ObjList<>(columnCount);
-            boolean hasPrevFill = false;
-
             // Detect any PREV in fill values
             boolean anyPrev = false;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
@@ -3367,7 +3382,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         constantFillFuncs.add(NullConstant.NULL);
                     }
                 }
-                hasPrevFill = true;
             } else {
                 // Per-column fill spec — key columns get FILL_KEY and skip fillIdx
                 int fillIdx = 0;
@@ -3403,7 +3417,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             fillModes.add(SampleByFillRecordCursorFactory.FILL_PREV_SELF);
                         }
                         constantFillFuncs.add(NullConstant.NULL);
-                        hasPrevFill = true;
                     } else if (fillExpr == null || isNullKeyword(fillExpr.token)) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                         constantFillFuncs.add(NullConstant.NULL);
@@ -3413,6 +3426,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         constantFillFuncs.add(f);
                     }
                     fillIdx++;
+                }
+            }
+
+            // Build prevSourceCols: output columns whose values need to be
+            // snapshotted for PREV fill. For self-prev (FILL_PREV_SELF), the
+            // column itself is snapshotted. For cross-column prev (mode >= 0),
+            // both the target column and the source column must be snapshotted
+            // because prevValue() reads simplePrev[sourceCol].
+            final IntList prevSourceCols = new IntList();
+            for (int col = 0; col < columnCount; col++) {
+                int mode = fillModes.getQuick(col);
+                if (mode == SampleByFillRecordCursorFactory.FILL_PREV_SELF) {
+                    prevSourceCols.add(col);
+                } else if (mode >= 0) {
+                    prevSourceCols.add(col);
+                    // Ensure the source column is also snapshotted
+                    if (!prevSourceCols.contains(mode)) {
+                        prevSourceCols.add(mode);
+                    }
+                }
+            }
+
+            // Safety-net type check: verify all PREV source columns have supported types
+            for (int i = 0, n = prevSourceCols.size(); i < n; i++) {
+                int col = prevSourceCols.getQuick(i);
+                int mode = fillModes.getQuick(col);
+                int sourceCol = mode >= 0 ? mode : col;
+                short tag = ColumnType.tagOf(groupByMetadata.getColumnType(sourceCol));
+                if (!isFastPathPrevSupportedType(tag)) {
+                    throw SqlException.$(0, "FILL(PREV) is not supported for column '")
+                            .put(groupByMetadata.getColumnName(sourceCol))
+                            .put("' of type ")
+                            .put(ColumnType.nameOf(tag));
                 }
             }
 
@@ -3518,7 +3564,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     constantFillFuncs,
                     timestampIndex,
                     timestampType,
-                    hasPrevFill,
+                    prevSourceCols,
                     keySink,
                     mapKeyTypes,
                     mapValueTypes,
