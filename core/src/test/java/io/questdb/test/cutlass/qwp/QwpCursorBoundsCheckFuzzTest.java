@@ -24,7 +24,10 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.cutlass.qwp.protocol.*;
+import io.questdb.cutlass.qwp.protocol.QwpColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
@@ -51,8 +54,6 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  */
 public class QwpCursorBoundsCheckFuzzTest {
 
-    private static final Log LOG = LogFactory.getLog(QwpCursorBoundsCheckFuzzTest.class);
-
     // Column types safe to generate without complex dictionary/connection state.
     // Grouped by cursor type for readability.
     private static final byte[] FUZZABLE_TYPES = {
@@ -75,6 +76,7 @@ public class QwpCursorBoundsCheckFuzzTest {
             // Array cursor (1D arrays)
             TYPE_DOUBLE_ARRAY,
     };
+    private static final Log LOG = LogFactory.getLog(QwpCursorBoundsCheckFuzzTest.class);
 
     @Test
     public void testByteCorruption() throws QwpParseException {
@@ -157,6 +159,12 @@ public class QwpCursorBoundsCheckFuzzTest {
         }
     }
 
+    private static void copyToNative(byte[] src, long address) {
+        for (int i = 0; i < src.length; i++) {
+            Unsafe.getUnsafe().putByte(address + i, src[i]);
+        }
+    }
+
     /**
      * Generates a valid QWP message with 1-3 tables, random columns, random row count.
      */
@@ -200,35 +208,58 @@ public class QwpCursorBoundsCheckFuzzTest {
         return message;
     }
 
-    private static void writeTablePayload(
-            ByteArrayOutputStream out,
-            Rnd rnd,
-            String tableName,
-            int rowCount,
-            int columnCount,
-            byte[] columnTypes,
-            String[] columnNames
-    ) {
-        // Table header: varint(nameLen) + name + varint(rowCount) + varint(columnCount)
-        byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
-        writeVarint(out, nameBytes.length);
-        out.write(nameBytes, 0, nameBytes.length);
-        writeVarint(out, rowCount);
-        writeVarint(out, columnCount);
+    /**
+     * Parses the message and iterates all tables and rows.
+     * This exercises the full parse path including advanceRow() on each cursor.
+     */
+    private static void parseAndIterate(long address, int length) throws QwpParseException {
+        QwpMessageCursor cursor = new QwpMessageCursor();
+        cursor.of(address, length, null, null);
 
-        // Schema: full mode (0x00) + varint(schemaId=0) + column definitions
-        out.write(SCHEMA_MODE_FULL);
-        writeVarint(out, 0); // schemaId
-        for (int i = 0; i < columnCount; i++) {
-            byte[] colNameBytes = columnNames[i].getBytes(StandardCharsets.UTF_8);
-            writeVarint(out, colNameBytes.length);
-            out.write(colNameBytes, 0, colNameBytes.length);
-            out.write(columnTypes[i]);
+        while (cursor.hasNextTable()) {
+            QwpTableBlockCursor table = cursor.nextTable();
+
+            // Iterate all rows to exercise advanceRow() on each column cursor
+            int columnCount = table.getColumnCount();
+            int rowCount = table.getRowCount();
+            for (int row = 0; row < rowCount; row++) {
+                for (int col = 0; col < columnCount; col++) {
+                    QwpColumnCursor colCursor = table.getColumn(col);
+                    colCursor.advanceRow();
+                }
+            }
         }
+    }
 
-        // Column data
-        for (int i = 0; i < columnCount; i++) {
-            writeColumnData(out, rnd, columnTypes[i], rowCount);
+    /**
+     * Verifies the generated message is valid by parsing it fully.
+     */
+    private static void verifyFullParse(byte[] message) throws QwpParseException {
+        long address = Unsafe.malloc(message.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            copyToNative(message, address);
+            parseAndIterate(address, message.length);
+        } finally {
+            Unsafe.free(address, message.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void writeArrayColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount) {
+        // For each non-null row: nDims(1 byte) + dims(nDims * 4 bytes) + values(elementCount * 8 bytes)
+        for (int v = 0; v < valueCount; v++) {
+            int nDims = 1; // keep it simple: 1D arrays
+            out.write(nDims);
+            int dimSize = rnd.nextInt(4); // 0-3 elements
+            writeInt32LE(out, dimSize);
+            // Write dimSize * 8 bytes of random data
+            writeFixedWidthColumnData(out, rnd, dimSize, 8);
+        }
+    }
+
+    private static void writeBooleanColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount) {
+        int bitmapSize = (valueCount + 7) / 8;
+        for (int i = 0; i < bitmapSize; i++) {
+            out.write(rnd.nextInt(256));
         }
     }
 
@@ -267,7 +298,8 @@ public class QwpCursorBoundsCheckFuzzTest {
             case TYPE_BYTE -> writeFixedWidthColumnData(out, rnd, valueCount, 1);
             case TYPE_SHORT, TYPE_CHAR -> writeFixedWidthColumnData(out, rnd, valueCount, 2);
             case TYPE_INT, TYPE_FLOAT -> writeFixedWidthColumnData(out, rnd, valueCount, 4);
-            case TYPE_LONG, TYPE_DOUBLE, TYPE_DATE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> writeFixedWidthColumnData(out, rnd, valueCount, 8);
+            case TYPE_LONG, TYPE_DOUBLE, TYPE_DATE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS ->
+                    writeFixedWidthColumnData(out, rnd, valueCount, 8);
             case TYPE_UUID -> writeFixedWidthColumnData(out, rnd, valueCount, 16);
             case TYPE_LONG256 -> writeFixedWidthColumnData(out, rnd, valueCount, 32);
             case TYPE_STRING, TYPE_VARCHAR -> writeStringColumnData(out, rnd, valueCount);
@@ -281,11 +313,10 @@ public class QwpCursorBoundsCheckFuzzTest {
         }
     }
 
-    private static void writeBooleanColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount) {
-        int bitmapSize = (valueCount + 7) / 8;
-        for (int i = 0; i < bitmapSize; i++) {
-            out.write(rnd.nextInt(256));
-        }
+    private static void writeDecimalColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount, int valueSize) {
+        int scale = rnd.nextInt(20); // 0-19
+        out.write(scale);
+        writeFixedWidthColumnData(out, rnd, valueCount, valueSize);
     }
 
     private static void writeFixedWidthColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount, int valueSize) {
@@ -294,6 +325,20 @@ public class QwpCursorBoundsCheckFuzzTest {
                 out.write(rnd.nextInt(256));
             }
         }
+    }
+
+    private static void writeGeoHashColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount) {
+        int precision = 1 + rnd.nextInt(60); // 1-60 bits
+        writeVarint(out, precision);
+        int valueSize = (precision + 7) / 8;
+        writeFixedWidthColumnData(out, rnd, valueCount, valueSize);
+    }
+
+    private static void writeInt32LE(ByteArrayOutputStream out, int value) {
+        out.write(value & 0xFF);
+        out.write((value >>> 8) & 0xFF);
+        out.write((value >>> 16) & 0xFF);
+        out.write((value >>> 24) & 0xFF);
     }
 
     private static void writeStringColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount) {
@@ -319,19 +364,6 @@ public class QwpCursorBoundsCheckFuzzTest {
         out.write(strBytes, 0, strBytes.length);
     }
 
-    private static void writeGeoHashColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount) {
-        int precision = 1 + rnd.nextInt(60); // 1-60 bits
-        writeVarint(out, precision);
-        int valueSize = (precision + 7) / 8;
-        writeFixedWidthColumnData(out, rnd, valueCount, valueSize);
-    }
-
-    private static void writeDecimalColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount, int valueSize) {
-        int scale = rnd.nextInt(20); // 0-19
-        out.write(scale);
-        writeFixedWidthColumnData(out, rnd, valueCount, valueSize);
-    }
-
     private static void writeSymbolColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount) {
         // Per-column dictionary mode: varint(dictSize) + dict entries + varint indices
         int dictSize = 1 + rnd.nextInt(5); // 1-5 entries
@@ -349,15 +381,35 @@ public class QwpCursorBoundsCheckFuzzTest {
         }
     }
 
-    private static void writeArrayColumnData(ByteArrayOutputStream out, Rnd rnd, int valueCount) {
-        // For each non-null row: nDims(1 byte) + dims(nDims * 4 bytes) + values(elementCount * 8 bytes)
-        for (int v = 0; v < valueCount; v++) {
-            int nDims = 1; // keep it simple: 1D arrays
-            out.write(nDims);
-            int dimSize = rnd.nextInt(4); // 0-3 elements
-            writeInt32LE(out, dimSize);
-            // Write dimSize * 8 bytes of random data
-            writeFixedWidthColumnData(out, rnd, dimSize, 8);
+    private static void writeTablePayload(
+            ByteArrayOutputStream out,
+            Rnd rnd,
+            String tableName,
+            int rowCount,
+            int columnCount,
+            byte[] columnTypes,
+            String[] columnNames
+    ) {
+        // Table header: varint(nameLen) + name + varint(rowCount) + varint(columnCount)
+        byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
+        writeVarint(out, nameBytes.length);
+        out.write(nameBytes, 0, nameBytes.length);
+        writeVarint(out, rowCount);
+        writeVarint(out, columnCount);
+
+        // Schema: full mode (0x00) + varint(schemaId=0) + column definitions
+        out.write(SCHEMA_MODE_FULL);
+        writeVarint(out, 0); // schemaId
+        for (int i = 0; i < columnCount; i++) {
+            byte[] colNameBytes = columnNames[i].getBytes(StandardCharsets.UTF_8);
+            writeVarint(out, colNameBytes.length);
+            out.write(colNameBytes, 0, colNameBytes.length);
+            out.write(columnTypes[i]);
+        }
+
+        // Column data
+        for (int i = 0; i < columnCount; i++) {
+            writeColumnData(out, rnd, columnTypes[i], rowCount);
         }
     }
 
@@ -367,54 +419,5 @@ public class QwpCursorBoundsCheckFuzzTest {
             value >>>= 7;
         }
         out.write((int) (value & 0x7F));
-    }
-
-    private static void writeInt32LE(ByteArrayOutputStream out, int value) {
-        out.write(value & 0xFF);
-        out.write((value >>> 8) & 0xFF);
-        out.write((value >>> 16) & 0xFF);
-        out.write((value >>> 24) & 0xFF);
-    }
-
-    private static void copyToNative(byte[] src, long address) {
-        for (int i = 0; i < src.length; i++) {
-            Unsafe.getUnsafe().putByte(address + i, src[i]);
-        }
-    }
-
-    /**
-     * Verifies the generated message is valid by parsing it fully.
-     */
-    private static void verifyFullParse(byte[] message) throws QwpParseException {
-        long address = Unsafe.malloc(message.length, MemoryTag.NATIVE_DEFAULT);
-        try {
-            copyToNative(message, address);
-            parseAndIterate(address, message.length);
-        } finally {
-            Unsafe.free(address, message.length, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    /**
-     * Parses the message and iterates all tables and rows.
-     * This exercises the full parse path including advanceRow() on each cursor.
-     */
-    private static void parseAndIterate(long address, int length) throws QwpParseException {
-        QwpMessageCursor cursor = new QwpMessageCursor();
-        cursor.of(address, length, null, null);
-
-        while (cursor.hasNextTable()) {
-            QwpTableBlockCursor table = cursor.nextTable();
-
-            // Iterate all rows to exercise advanceRow() on each column cursor
-            int columnCount = table.getColumnCount();
-            int rowCount = table.getRowCount();
-            for (int row = 0; row < rowCount; row++) {
-                for (int col = 0; col < columnCount; col++) {
-                    QwpColumnCursor colCursor = table.getColumn(col);
-                    colCursor.advanceRow();
-                }
-            }
-        }
     }
 }
