@@ -514,8 +514,8 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testNotExtractFrom() throws Exception {
         assertException(
                 "select something(null from '2022-03-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")",
-                22,
-                "dangling literal"
+                16,
+                "unbalanced ("
         );
     }
 

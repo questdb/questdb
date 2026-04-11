@@ -2142,6 +2142,14 @@ public class ExpressionParser {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
                         if (scopeStack.notEmpty()) {
+                            if (scopeStack.peek() == Scope.PAREN && SqlKeywords.isFromKeyword(tok)) {
+                                for (int i = 0, n = opStack.size(); i < n; i++) {
+                                    ExpressionNode ctrl = opStack.peek(i);
+                                    if (ctrl.type == ExpressionNode.CONTROL && !ctrl.token.isEmpty() && ctrl.token.charAt(0) == '(') {
+                                        throw SqlException.$(ctrl.position, "unbalanced (");
+                                    }
+                                }
+                            }
                             throw SqlException.$(lastPos, "dangling literal");
                         }
                         lexer.unparseLast();
