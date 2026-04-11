@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -2140,9 +2140,9 @@ public class JsonUnnestTest extends AbstractCairoTest {
         });
     }
 
-    
+
     // Comprehensive per-type tests: scalar arrays, object arrays, nullability
-    
+
 
     // INT: scalar array
 
