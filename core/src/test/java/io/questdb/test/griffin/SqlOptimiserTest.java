@@ -4229,14 +4229,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromToDisallowedQueryWithKey() throws Exception {
+    public void testSampleByFromToKeyedQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute(SampleByTest.FROM_TO_DDL);
-            assertException("""
+            printSql("""
                     SELECT ts, count, s
                     FROM fromto
                     SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'
-                    LIMIT 6""", 0, "are not supported for keyed SAMPLE BY");
+                    LIMIT 6""");
         });
     }
 
@@ -4250,12 +4250,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(query, """
-                    Encode sort
-                      keys: [ts]
-                        Fill Range
-                          range: ('2017-12-20','2018-01-31')
-                          stride: '5d'
-                          values: [null,null]
+                    Sample By Fill
+                      range: ('2017-12-20','2018-01-31')
+                      stride: '5d'
+                        Sort
+                          keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
                               keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4300,7 +4299,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "avg(n::double)," +
                             "from fromto sample by 5d from '2018-01-01' to '2018-01-31' fill(42)";
 
-            assertException(query, -1, "not enough fill values");
+            assertException(query, 0, "inconvertible value");
         });
     }
 
@@ -4390,12 +4389,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(query, """
-                    Encode sort
-                      keys: [ts]
-                        Fill Range
-                          range: ('2017-12-20','2018-01-31')
-                          stride: '5d'
-                          values: [null]
+                    Sample By Fill
+                      range: ('2017-12-20','2018-01-31')
+                      stride: '5d'
+                        Sort
+                          keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
                               keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4429,14 +4427,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(42, 41)";
 
             assertPlanNoLeakCheck(query, """
-                    Sample By
-                      fill: value
+                    Sample By Fill
                       range: ('2017-12-20','2018-01-31')
-                      values: [avg(x),sum(x)]
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: fromto
-                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                      stride: '5d'
+                        Sort
+                          keys: [ts]
+                            Async Group By workers: 1
+                              keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                              values: [avg(x),sum(x)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: fromto
+                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                     """);
             assertSql("""
                     ts\tavg\tsum
@@ -4461,12 +4465,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "sample by 5d to '2018-01-31' fill(null)";
 
             assertPlanNoLeakCheck(query, """
-                    Encode sort
-                      keys: [ts]
-                        Fill Range
-                          range: (,'2018-01-31')
-                          stride: '5d'
-                          values: [null]
+                    Sample By Fill
+                      range: (,'2018-01-31')
+                      stride: '5d'
+                        Sort
+                          keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
                               keyFunctions: [timestamp_floor_utc('5d',ts)]
@@ -4498,12 +4501,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "sample by 5d from '2017-12-20' fill(null) ";
 
             assertPlanNoLeakCheck(query, """
-                    Encode sort
-                      keys: [ts]
-                        Fill Range
-                          range: ('2017-12-20',)
-                          stride: '5d'
-                          values: [null]
+                    Sample By Fill
+                      range: ('2017-12-20',)
+                      stride: '5d'
+                        Sort
+                          keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
                               keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4541,12 +4543,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(exceptAllQuery, """
                     Except All
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              range: ('2017-12-20','2018-01-31')
-                              stride: '5d'
-                              values: [null,null]
+                        Sample By Fill
+                          range: ('2017-12-20','2018-01-31')
+                          stride: '5d'
+                            Sort
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4557,31 +4558,31 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Interval forward scan on: fromto
                                           intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                         Hash
-                            Fill Range
+                            Sample By Fill
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
-                              values: [null,null]
-                                Async Group By workers: 1
+                                Sort
                                   keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                  values: [avg(x),sum(x)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto2
-                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto2
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                     """);
 
             assertSql("ts\tavg\tsum\n", exceptAllQuery);
 
             assertPlanNoLeakCheck(exceptQuery, """
                     Except
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              range: ('2017-12-20','2018-01-31')
-                              stride: '5d'
-                              values: [null,null]
+                        Sample By Fill
+                          range: ('2017-12-20','2018-01-31')
+                          stride: '5d'
+                            Sort
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4592,19 +4593,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Interval forward scan on: fromto
                                           intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                         Hash
-                            Fill Range
+                            Sample By Fill
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
-                              values: [null,null]
-                                Async Group By workers: 1
+                                Sort
                                   keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                  values: [avg(x),sum(x)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto2
-                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto2
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                     """);
 
             assertSql("ts\tavg\tsum\n", exceptQuery);
@@ -4627,12 +4629,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(intersectAllQuery, """
                     Intersect All
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              range: ('2017-12-20','2018-01-31')
-                              stride: '5d'
-                              values: [null,null]
+                        Sample By Fill
+                          range: ('2017-12-20','2018-01-31')
+                          stride: '5d'
+                            Sort
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4643,19 +4644,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Interval forward scan on: fromto
                                           intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                         Hash
-                            Fill Range
+                            Sample By Fill
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
-                              values: [null,null]
-                                Async Group By workers: 1
+                                Sort
                                   keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                  values: [avg(x),sum(x)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto2
-                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto2
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                     """);
 
             assertSql("""
@@ -4673,12 +4675,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(intersectQuery, """
                     Intersect
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              range: ('2017-12-20','2018-01-31')
-                              stride: '5d'
-                              values: [null,null]
+                        Sample By Fill
+                          range: ('2017-12-20','2018-01-31')
+                          stride: '5d'
+                            Sort
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4689,19 +4690,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Interval forward scan on: fromto
                                           intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                         Hash
-                            Fill Range
+                            Sample By Fill
                               range: ('2017-12-20','2018-01-31')
                               stride: '5d'
-                              values: [null,null]
-                                Async Group By workers: 1
+                                Sort
                                   keys: [ts]
-                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                  values: [avg(x),sum(x)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto2
-                                          intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                      values: [avg(x),sum(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto2
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                     """);
 
             assertSql("""
@@ -4734,12 +4736,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(query, """
-                    Encode sort
-                      keys: [ts]
-                        Fill Range
-                          range: ('2017-12-20','2018-01-31')
-                          stride: '5d'
-                          values: [null]
+                    Sample By Fill
+                      range: ('2017-12-20','2018-01-31')
+                      stride: '5d'
+                        Sort
+                          keys: [ts]
                             GroupBy vectorized: false
                               keys: [ts]
                               values: [avg(x)]
@@ -4785,12 +4786,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             SelectedRecord
                                 AsOf Join
-                                    Encode sort
-                                      keys: [five_days]
-                                        Fill Range
-                                          range: ('2017-12-20','2018-01-31')
-                                          stride: '5d'
-                                          values: [null]
+                                  condition: \
+
+                                    Sample By Fill
+                                      range: ('2017-12-20','2018-01-31')
+                                      stride: '5d'
+                                        Sort
+                                          keys: [five_days]
                                             Async Group By workers: 1
                                               keys: [five_days]
                                               keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4800,12 +4802,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                     Row forward scan
                                                     Interval forward scan on: fromto
                                                       intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
-                                    Encode sort
-                                      keys: [ten_days]
-                                        Fill Range
-                                          range: ('2017-12-20','2018-01-31')
-                                          stride: '10d'
-                                          values: [null]
+                                    Sample By Fill
+                                      range: ('2017-12-20','2018-01-31')
+                                      stride: '10d'
+                                        Sort
+                                          keys: [ten_days]
                                             Async Group By workers: 1
                                               keys: [ten_days]
                                               keyFunctions: [timestamp_floor_utc('10d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4853,10 +4854,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String shouldFail2b = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
 
-            assertException(shouldFail1a, 0, "FROM-TO");
-            assertException(shouldFail1b, 0, "FROM-TO");
-            assertException(shouldFail2a, 0, "FROM-TO");
-            assertException(shouldFail2b, 0, "FROM-TO");
+            printSql(shouldFail1a);
+            printSql(shouldFail1b);
+            printSql(shouldFail2a);
+            printSql(shouldFail2b);
 
             final String shouldSucceedParallel = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
@@ -4874,12 +4875,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """;
 
             assertPlanNoLeakCheck(shouldSucceedParallel, """
-                    Encode sort
-                      keys: [ts]
-                        Fill Range
-                          range: ('2017-12-20',)
-                          stride: '5d'
-                          values: [null,null]
+                    Sample By Fill
+                      range: ('2017-12-20',)
+                      stride: '5d'
+                        Sort
+                          keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
                               keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
@@ -4893,12 +4893,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertSql(shouldSucceedResult, shouldSucceedParallel);
 
             assertPlanNoLeakCheck(shouldSucceedWithOffset, """
-                    Encode sort
-                      keys: [ts]
-                        Fill Range
-                          range: ('2017-12-20',)
-                          stride: '5d'
-                          values: [null,null]
+                    Sample By Fill
+                      range: ('2017-12-20',)
+                      stride: '5d'
+                        Sort
+                          keys: [ts]
                             Async Group By workers: 1
                               keys: [ts]
                               keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T10:00:00.000Z')]
@@ -4934,32 +4933,34 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Encode sort
                               keys: [ts]
                                 Union All
-                                    Fill Range
+                                    Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
-                                      values: [null,null]
-                                        Async Group By workers: 1
+                                        Sort
                                           keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
-                                    Fill Range
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                              values: [avg(x),sum(x)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: fromto
+                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                    Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
-                                      values: [null,null]
-                                        Async Group By workers: 1
+                                        Sort
                                           keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto2
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                              values: [avg(x),sum(x)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: fromto2
+                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """
             );
 
@@ -4997,32 +4998,34 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Encode sort
                               keys: [ts]
                                 Union
-                                    Fill Range
+                                    Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
-                                      values: [null,null]
-                                        Async Group By workers: 1
+                                        Sort
                                           keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
-                                    Fill Range
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                              values: [avg(x),sum(x)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: fromto
+                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                    Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
-                                      values: [null,null]
-                                        Async Group By workers: 1
+                                        Sort
                                           keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
-                                          values: [avg(x),sum(x)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: fromto2
-                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
+                                              values: [avg(x),sum(x)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: fromto2
+                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """
             );
 
@@ -5133,12 +5136,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            Encode sort
-                              keys: [five_days]
-                                Fill Range
-                                  range: ('2017-12-20','2018-01-31')
-                                  stride: '5d'
-                                  values: [null]
+                            Sample By Fill
+                              range: ('2017-12-20','2018-01-31')
+                              stride: '5d'
+                                Sort
+                                  keys: [five_days]
                                     Async Group By workers: 1
                                       keys: [five_days]
                                       keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]

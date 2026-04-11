@@ -6615,11 +6615,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'", """
                     SelectedRecord
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              stride: '1h'
-                              values: [null]
+                        Sample By Fill
+                          stride: '1h'
+                            Sort
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
@@ -6633,11 +6632,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // with rewrite
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(null) align to calendar", """
                     SelectedRecord
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              stride: '1h'
-                              values: [null]
+                        Sample By Fill
+                          stride: '1h'
+                            Sort
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('1h',ts)]
@@ -6664,13 +6662,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select s, first(i) from a sample by 1h fill(prev) align to calendar", """
-                    Sample By
-                      fill: prev
-                      keys: [s]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Sort
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [s,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
         });
     }
@@ -6688,26 +6693,40 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(prev) align to calendar", """
-                    Sample By
-                      fill: prev
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Sort
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
 
             assertPlanNoLeakCheck("select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar", """
-                    Sample By
-                      fill: prev
-                      values: [first(i)]
-                        SelectedRecord
-                            AsOf Join Fast
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                          fill: prev
+                            Sort
+                              keys: [ts]
+                                GroupBy vectorized: false
+                                  keys: [ts]
+                                  values: [first(i)]
+                                    SelectedRecord
+                                        AsOf Join Fast
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
                     """);
         });
     }
@@ -6726,13 +6745,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select s, first(i) from a sample by 1h fill(1) align to calendar", """
-                    Sample By
-                      fill: value
-                      keys: [s]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                            Sort
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [s,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
         });
     }
@@ -6751,11 +6776,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'", """
                     SelectedRecord
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              stride: '1h'
-                              values: [1]
+                        Sample By Fill
+                          stride: '1h'
+                            Sort
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('1h',ts,'1970-01-01T10:00:00.000Z')]
@@ -6769,11 +6793,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // with rewrite
             assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(1) align to calendar", """
                     SelectedRecord
-                        Encode sort
-                          keys: [ts]
-                            Fill Range
-                              stride: '1h'
-                              values: [1]
+                        Sample By Fill
+                          stride: '1h'
+                            Sort
+                              keys: [ts]
                                 Async Group By workers: 1
                                   keys: [ts]
                                   keyFunctions: [timestamp_floor_utc('1h',ts)]
@@ -7030,13 +7053,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select l, first(i) from a sample by 1h fill(null) align to calendar", """
-                    Sample By
-                      fill: null
-                      keys: [l]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1h'
+                            Sort
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [l,ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [first(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
         });
     }
@@ -7080,13 +7109,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar", """
-                    Sample By
-                      fill: value
-                      keys: [l]
-                      values: [first(i),last(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1d'
+                            Sort
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [l,ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                  values: [first(i),last(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
         });
     }
@@ -7105,13 +7140,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar", """
-                    Sample By
-                      fill: value
-                      keys: [l]
-                      values: [first(i),last(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
+                    SelectedRecord
+                        Sample By Fill
+                          stride: '1d'
+                          fill: prev
+                            Sort
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [l,ts]
+                                  keyFunctions: [timestamp_floor_utc('1d',ts)]
+                                  values: [first(i),last(i)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
                     """);
         });
     }

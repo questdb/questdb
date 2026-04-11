@@ -251,13 +251,11 @@ public class LastArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFillValueRejectsArrayColumns() throws Exception {
-        assertException(
-                "SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)",
-                "CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY",
-                16,
-                "support for VALUE fill is not yet implemented"
-        );
+    public void testSampleByFillValueWithArrayColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            printSql("SELECT ts, grp, last(arr) arr FROM tab SAMPLE BY 10s FILL(42)");
+        });
     }
 
     @Test

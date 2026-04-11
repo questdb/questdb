@@ -88,7 +88,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -98,7 +98,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | 4. Cross-Column Prev | 1/1 | Complete | 2026-04-10 |
 | 5. Verification and Hardening | 1/1 | Complete | 2026-04-10 |
 | 6. Keyed Fill with FROM/TO Range | 1/1 | Complete | 2026-04-10 |
-| 7. PREV Type-Safe Fast Path | 0/1 | Not started | - |
+| 7. PREV Type-Safe Fast Path | 1/1 | Complete | 2026-04-10 |
+| 8. Fix Remaining Test Regressions | 0/1 | In Progress | — |
 
 ### Phase 6: Keyed Fill with FROM/TO Range
 **Goal**: Keyed FILL queries with FROM/TO range emit the cartesian product of all keys for every bucket in the range, including leading and trailing fill rows for all keys
@@ -128,3 +129,19 @@ Plans:
 **Plans:** 1 plan
 Plans:
 - [x] 07-01-PLAN.md -- Per-column snapshot, type matrix, optimizer gate, legacy fallback, mixed-fill and nano tests
+
+### Phase 8: Fix Remaining Test Regressions
+**Goal**: Fix 81 test failures across 7 suites caused by plan text changes, factory class changes, and the nano timestamp path
+**Depends on**: Phase 7
+**Requirements**: COR-01 (extended to all suites)
+**Success Criteria** (what must be TRUE):
+  1. ExplainPlanTest: 522/522 pass (fix 8 plan text mismatches)
+  2. SqlOptimiserTest: 171/171 pass (fix 14 plan + should-fail + error text)
+  3. RecordCursorMemoryUsageTest: 9/9 pass (fix 3 factory class assertions)
+  4. SqlParserTest: 1059/1059 pass (fix 4 parse tree mismatches)
+  5. FirstArrayGroupByFunctionFactoryTest: 11/11 pass
+  6. LastArrayGroupByFunctionFactoryTest: 20/20 pass
+  7. SampleByNanoTimestampTest: 279/279 pass (fix 50 metadata/random-access)
+**Plans:** 1 plan
+Plans:
+- [ ] 08-01-PLAN.md -- Fix 31 small-suite failures (plan text, factory classes, parse models, should-fail conversions) + 50 SampleByNanoTimestampTest failures

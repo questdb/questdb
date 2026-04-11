@@ -85,7 +85,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillNullRecordCursorReleasesMemoryOnCloseCalendar() throws Exception { //prev / value
-        testSampleByCursorReleasesMemoryOnClose("FILL(null)", SampleByFillNullRecordCursorFactory.class, "CALENDAR");
+        testSampleByCursorReleasesMemoryOnClose("FILL(null)", SelectedRecordCursorFactory.class, "CALENDAR");
     }
 
     @Test
@@ -95,7 +95,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillPrevRecordCursorReleasesMemoryOnCloseCalendar() throws Exception {
-        testSampleByCursorReleasesMemoryOnClose("FILL(prev)", SampleByFillPrevRecordCursorFactory.class, "CALENDAR");
+        testSampleByCursorReleasesMemoryOnClose("FILL(prev)", SelectedRecordCursorFactory.class, "CALENDAR");
     }
 
     @Test
@@ -105,7 +105,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFillValueRecordCursorReleasesMemoryOnCloseCalendar() throws Exception { //prev / value
-        testSampleByCursorReleasesMemoryOnClose("FILL(10)", SampleByFillValueRecordCursorFactory.class, "CALENDAR");
+        testSampleByCursorReleasesMemoryOnClose("FILL(10)", SelectedRecordCursorFactory.class, "CALENDAR");
     }
 
     @Test
