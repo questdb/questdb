@@ -317,12 +317,15 @@ public class CompiledTickExpression extends UntypedFunction {
                 long offset = ir.getQuick(toOff + j * 3);
                 long width = ir.getQuick(toOff + j * 3 + 1);
                 long zoneMatch = ir.getQuick(toOff + j * 3 + 2);
-                long lo = dayStart + offset;
+                long anchor = dayStart + offset;
+                long lo = anchor;
                 long hi;
                 if (durationPartCount > 0 && !hasDurationWithExchange) {
-                    hi = applyDuration(lo) - 1;
+                    long endExclusive = applyDuration(anchor);
+                    lo = IntervalUtils.resolveDurationLo(anchor, endExclusive);
+                    hi = IntervalUtils.resolveDurationHi(anchor, endExclusive);
                 } else {
-                    hi = lo + width;
+                    hi = anchor + width;
                 }
                 if (zoneMatch != Long.MIN_VALUE) {
                     // Per-element tz: convert to UTC first
@@ -342,7 +345,11 @@ public class CompiledTickExpression extends UntypedFunction {
                 out.add(lo, hi);
             }
         } else if (durationPartCount > 0 && !hasDurationWithExchange) {
-            out.add(dayStart, applyDuration(dayStart) - 1);
+            long endExclusive = applyDuration(dayStart);
+            out.add(
+                    IntervalUtils.resolveDurationLo(dayStart, endExclusive),
+                    IntervalUtils.resolveDurationHi(dayStart, endExclusive)
+            );
         } else {
             out.add(dayStart, timestampDriver.endOfDay(dayStart));
         }
@@ -382,7 +389,9 @@ public class CompiledTickExpression extends UntypedFunction {
         if (isDayLevel) {
             emitDayInterval(timestamp, out);
         } else if (durationPartCount > 0 && !hasDurationWithExchange) {
-            out.add(timestamp, applyDuration(timestamp) - 1);
+            long endExclusive = applyDuration(timestamp);
+            out.add(IntervalUtils.resolveDurationLo(timestamp, endExclusive),
+                    IntervalUtils.resolveDurationHi(timestamp, endExclusive));
         } else {
             out.add(timestamp, timestamp);
         }
