@@ -253,13 +253,21 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
                     if (valueCount > 2) {
                         // Full Gorilla encoding
                         long gorillaDataAddress = dataAddress + offset;
-                        int gorillaDataLength = dataLength - offset;
+                        int remainingBytes = dataLength - offset;
+
+                        // Each Gorilla-encoded value uses at most 36 bits
+                        // (4-bit prefix '1111' + 32-bit signed delta-of-delta).
+                        // Clamp the bit reader boundary to this theoretical
+                        // maximum so that corrupted Gorilla data cannot read
+                        // arbitrarily far into subsequent columns' data.
+                        int remainingValues = valueCount - 2;
+                        int maxGorillaBytes = (int) ((remainingValues * 36L + 7) / 8);
+                        int gorillaDataLength = Math.min(remainingBytes, maxGorillaBytes);
 
                         gorillaDecoder.reset(firstTimestamp, secondTimestamp, gorillaDataAddress, gorillaDataLength);
 
                         // Decode all remaining values and cache them to avoid double decoding.
                         // This also computes the byte count of the compressed data.
-                        int remainingValues = valueCount - 2;
                         if (gorillaDecodedValues == null || gorillaDecodedValues.length < remainingValues) {
                             gorillaDecodedValues = new long[remainingValues];
                         }
