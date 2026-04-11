@@ -144,4 +144,4 @@ Plans:
   7. SampleByNanoTimestampTest: 279/279 pass (fix 50 metadata/random-access)
 **Plans:** 1 plan
 Plans:
-- [ ] 08-01-PLAN.md -- Fix 31 small-suite failures (plan text, factory classes, parse models, should-fail conversions) + 50 SampleByNanoTimestampTest failures
+- [x] 08-01-PLAN.md -- Fix 31 small-suite failures (plan text, factory classes, parse models, should-fail conversions) + 50 SampleByNanoTimestampTest failures

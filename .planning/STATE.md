@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-04-10T18:13:21.373Z"
-last_activity: 2026-04-10
+stopped_at: Completed 08-01-PLAN.md (partial - 60/81 fixes)
+last_updated: "2026-04-11T20:22:59.173Z"
+last_activity: 2026-04-11
 progress:
-  total_phases: 7
-  completed_phases: 5
-  total_plans: 6
-  completed_plans: 5
-  percent: 83
+  total_phases: 8
+  completed_phases: 6
+  total_plans: 7
+  completed_plans: 6
+  percent: 86
 ---
 
 # Project State
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 Phase: 3 of 5 (Keyed Fill Cursor)
 Plan: 1 of 1 in current phase (complete)
 Status: Phase complete — ready for verification
-Last activity: 2026-04-10
+Last activity: 2026-04-11
 
 Progress: [######....] 60%
 
@@ -56,6 +56,7 @@ Progress: [######....] 60%
 | Phase 06-keyed-fill-with-from-to-range P01 | 4 | 2 tasks | 2 files |
 | Phase 04 P01 | 27m | 1 tasks | 4 files |
 | Phase 07 P01 | 49m | 2 tasks | 5 files |
+| Phase 08 P01 | 273m | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,7 @@ Recent decisions affecting current work:
 - [Phase 04]: Optimizer gate relaxed from size-1-only to hasLinearFill() predicate, allowing multi-fill specs on fast path
 - [Phase 07]: IntList prevSourceCols replaces boolean hasPrevFill for per-column PREV snapshot tracking
 - [Phase 07]: Two-layer type defense: optimizer gate (best-effort) + generateFill safety net (SqlException)
+- [Phase 08]: supportsRandomAccess=false for all fill cursor tests; ASOF JOIN also routes through fast path
 
 ### Roadmap Evolution
 
@@ -97,6 +99,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-10T18:13:21.371Z
-Stopped at: Completed 07-01-PLAN.md
+Last session: 2026-04-11T20:22:53.534Z
+Stopped at: Completed 08-01-PLAN.md (partial - 60/81 fixes)
 Resume file: None
