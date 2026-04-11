@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -161,12 +162,12 @@ public class Unordered4Map implements Map, Reopenable {
             }
 
             this.entrySize = Bytes.align4b(KEY_SIZE + valueSize);
-            final long sizeBytes = entrySize * this.keyCapacity;
+            // Allocate one extra slot at the end for the zero key entry.
+            final long sizeBytes = entrySize * (this.keyCapacity + 1);
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memset(memStart, sizeBytes, 0);
-            memLimit = memStart + sizeBytes;
-            zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
-            Vect.memset(zeroMemStart, entrySize, 0);
+            memLimit = memStart + entrySize * this.keyCapacity;
+            zeroMemStart = memLimit; // zero key lives right after the hash table
 
             value = new Unordered4MapValue(valueSize, valueOffsets);
             value2 = new Unordered4MapValue(valueSize, valueOffsets);
@@ -191,15 +192,14 @@ public class Unordered4Map implements Map, Reopenable {
         size = 0;
         nResizes = 0;
         hasZero = false;
-        Vect.memset(memStart, memLimit - memStart, 0);
-        Vect.memset(zeroMemStart, entrySize, 0);
+        Vect.memset(memStart, memLimit - memStart + entrySize, 0);
     }
 
     @Override
     public void close() {
         if (memStart != 0) {
-            memLimit = memStart = Unsafe.free(memStart, memLimit - memStart, memoryTag);
-            zeroMemStart = Unsafe.free(zeroMemStart, entrySize, memoryTag);
+            memLimit = memStart = Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
+            zeroMemStart = 0;
             free = 0;
             size = 0;
             hasZero = false;
@@ -212,6 +212,11 @@ public class Unordered4Map implements Map, Reopenable {
             return cursor.init(memStart, memLimit, zeroMemStart, size + 1);
         }
         return cursor.init(memStart, memLimit, 0, size);
+    }
+
+    @Override
+    public long getEntryBase() {
+        return memStart;
     }
 
     @Override
@@ -293,6 +298,75 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     @Override
+    public long probeBatch(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        final int directColumnIndex = mapSink.getDirectColumnIndex();
+        if (directColumnIndex >= 0) {
+            return probeBatchDirect(record.getPageAddress(directColumnIndex), batchStart, batchEnd, batchAddr);
+        }
+
+        for (long r = batchStart; r < batchEnd; r++) {
+            record.setRowIndex(r);
+            mapSink.copy(record, key);
+            final int k = key.key;
+
+            long startAddress;
+            boolean isNew;
+            if (k != 0) {
+                long hashCode = Hash.hashInt64(k);
+                startAddress = getStartAddress(hashCode & mask);
+                for (; ; ) {
+                    int existing = Unsafe.getUnsafe().getInt(startAddress);
+                    if (existing == 0) {
+                        // New entry — write the key and handle bookkeeping.
+                        Unsafe.getUnsafe().putInt(startAddress, k);
+                        if (--free == 0) {
+                            try {
+                                rehash();
+                            } catch (CairoException e) {
+                                free = 1;
+                                throw e;
+                            }
+                            // Re-locate after rehash.
+                            startAddress = getStartAddress(hashCode & mask);
+                            while (Unsafe.getUnsafe().getInt(startAddress) != k) {
+                                startAddress = getNextAddress(startAddress);
+                            }
+                        }
+                        size++;
+                        isNew = true;
+                        break;
+                    } else if (existing == k) {
+                        isNew = false;
+                        break;
+                    }
+                    startAddress = getNextAddress(startAddress);
+                }
+            } else {
+                // Zero key — stored in the dedicated slot at the end of the buffer.
+                startAddress = zeroMemStart;
+                isNew = !hasZero;
+                if (isNew) {
+                    hasZero = true;
+                }
+            }
+
+            long packed = (r << 39) | ((startAddress - memStart) & 0x7F_FFFF_FFFFL);
+            if (isNew) {
+                packed |= Long.MIN_VALUE;
+            }
+            Unsafe.getUnsafe().putLong(batchAddr, packed);
+            batchAddr += Long.BYTES;
+        }
+        return memStart;
+    }
+
+    @Override
     public void reopen(int keyCapacity, long heapSize) {
         if (memStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
@@ -309,23 +383,31 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     @Override
+    public void reserveCapacity(long additionalKeys) {
+        if (free < additionalKeys) {
+            long required = keyCapacity + (long) Math.ceil((additionalKeys - free) / loadFactor);
+            rehash(Numbers.ceilPow2(required));
+        }
+    }
+
+    @Override
     public void restoreInitialCapacity() {
         if (memStart == 0 || keyCapacity != initialKeyCapacity) {
-            final long sizeBytes = entrySize * initialKeyCapacity;
+            // Allocate one extra slot at the end for the zero key entry.
+            final long sizeBytes = entrySize * (initialKeyCapacity + 1);
             long newMemStart;
             if (memStart == 0) {
                 newMemStart = Unsafe.malloc(sizeBytes, memoryTag);
             } else {
-                newMemStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+                newMemStart = Unsafe.realloc(memStart, memLimit - memStart + entrySize, sizeBytes, memoryTag);
             }
             memStart = newMemStart;
-            memLimit = memStart + sizeBytes;
+            memLimit = memStart + entrySize * initialKeyCapacity;
+            zeroMemStart = memLimit;
             keyCapacity = initialKeyCapacity;
             mask = keyCapacity - 1;
-        }
-
-        if (zeroMemStart == 0) {
-            zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
+        } else if (zeroMemStart == 0) {
+            zeroMemStart = memLimit;
         }
 
         clear();
@@ -396,6 +478,58 @@ public class Unordered4Map implements Map, Reopenable {
         return getStartAddress(memStart, index);
     }
 
+    private long probeBatchDirect(long columnAddr, long batchStart, long batchEnd, long batchAddr) {
+        for (long r = batchStart; r < batchEnd; r++) {
+            final int k = Unsafe.getUnsafe().getInt(columnAddr + r * Integer.BYTES);
+
+            long startAddress;
+            boolean isNew;
+            if (k != 0) {
+                long hashCode = Hash.hashInt64(k);
+                startAddress = getStartAddress(hashCode & mask);
+                for (; ; ) {
+                    int existing = Unsafe.getUnsafe().getInt(startAddress);
+                    if (existing == 0) {
+                        Unsafe.getUnsafe().putInt(startAddress, k);
+                        if (--free == 0) {
+                            try {
+                                rehash();
+                            } catch (CairoException e) {
+                                free = 1;
+                                throw e;
+                            }
+                            startAddress = getStartAddress(hashCode & mask);
+                            while (Unsafe.getUnsafe().getInt(startAddress) != k) {
+                                startAddress = getNextAddress(startAddress);
+                            }
+                        }
+                        size++;
+                        isNew = true;
+                        break;
+                    } else if (existing == k) {
+                        isNew = false;
+                        break;
+                    }
+                    startAddress = getNextAddress(startAddress);
+                }
+            } else {
+                startAddress = zeroMemStart;
+                isNew = !hasZero;
+                if (isNew) {
+                    hasZero = true;
+                }
+            }
+
+            long packed = (r << 39) | ((startAddress - memStart) & 0x7F_FFFF_FFFFL);
+            if (isNew) {
+                packed |= Long.MIN_VALUE;
+            }
+            Unsafe.getUnsafe().putLong(batchAddr, packed);
+            batchAddr += Long.BYTES;
+        }
+        return memStart;
+    }
+
     private void rehash() {
         rehash((long) keyCapacity << 1);
     }
@@ -411,9 +545,10 @@ public class Unordered4Map implements Map, Reopenable {
             return;
         }
 
-        final long newSizeBytes = entrySize * newKeyCapacity;
+        // Allocate one extra slot at the end for the zero key entry.
+        final long newSizeBytes = entrySize * (newKeyCapacity + 1);
         final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
-        final long newMemLimit = newMemStart + newSizeBytes;
+        final long newMemLimit = newMemStart + entrySize * newKeyCapacity;
         Vect.memset(newMemStart, newSizeBytes, 0);
         final int newMask = (int) newKeyCapacity - 1;
 
@@ -433,10 +568,17 @@ public class Unordered4Map implements Map, Reopenable {
             Vect.memcpy(newAddr, addr, entrySize);
         }
 
-        Unsafe.free(memStart, memLimit - memStart, memoryTag);
+        // Copy the zero key entry to the new end-of-buffer slot.
+        final long newZeroMemStart = newMemLimit;
+        if (hasZero) {
+            Vect.memcpy(newZeroMemStart, zeroMemStart, entrySize);
+        }
+
+        Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
 
         memStart = newMemStart;
-        memLimit = newMemStart + newSizeBytes;
+        memLimit = newMemLimit;
+        zeroMemStart = newZeroMemStart;
         mask = newMask;
         free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
         keyCapacity = (int) newKeyCapacity;

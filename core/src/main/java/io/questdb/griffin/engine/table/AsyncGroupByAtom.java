@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
@@ -74,6 +75,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final PerWorkerLocks perWorkerLocks;
     // Initialized lazily.
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
+    private final ObjList<DirectLongList> perWorkerBatchLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final GroupByShardingContext shardingCtx;
     // Initialized lazily.
@@ -204,6 +206,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             perWorkerLongTopKLists = new ObjList<>(workerCount);
             perWorkerLongTopKLists.setAll(workerCount, null);
+
+            // Pre-allocate per-worker batch scratch buffers for batched dispatch.
+            final int subBatchSize = 2048; // TODO: make configurable
+            perWorkerBatchLists = new ObjList<>(workerCount + 1);
+            // +1 for the owner slot (-1 maps to index 0)
+            for (int i = 0; i < workerCount + 1; i++) {
+                perWorkerBatchLists.extendAndSet(i, new DirectLongList(subBatchSize, MemoryTag.NATIVE_DEFAULT));
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -245,6 +255,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             }
         }
         Misc.free(filterCtx);
+        Misc.freeObjList(perWorkerBatchLists);
     }
 
     public ObjList<Map> getDestShards() {
@@ -253,6 +264,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public AsyncFilterContext getFilterContext() {
         return filterCtx;
+    }
+
+    public DirectLongList getBatchList(int slotId) {
+        // slotId -1 (owner) maps to index 0, worker slots 0..N-1 map to 1..N
+        return perWorkerBatchLists.getQuick(slotId + 1);
     }
 
     public GroupByMapFragment getFragment(int slotId) {
@@ -383,7 +399,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
         if (slotId == -1 || perWorkerGroupByFunctions == null) {
             return ownerGroupByFunctions;
         }

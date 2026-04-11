@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
@@ -96,9 +97,9 @@ public class RecordSinkFactory {
             if (keyFunctions != null) {
                 sink.setFunctions(keyFunctions);
             }
-            return sink;
+            return maybeWrapWithDirectColumn(sink, columnTypes, columnFilter, keyFunctions);
         }
-        return createSinkFromClass(clazz, keyFunctions);
+        return createSinkFromClass(clazz, columnTypes, columnFilter, keyFunctions);
     }
 
     public static RecordSink getInstance(
@@ -550,16 +551,84 @@ public class RecordSinkFactory {
      * Creates an instance of a record sink class previously generated via getInstanceClass().
      * This legacy method only works with non-null classes (does not support looping fallback).
      */
-    private static RecordSink createSinkFromClass(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
+    private static RecordSink createSinkFromClass(
+            Class<RecordSink> clazz,
+            ColumnTypes columnTypes,
+            ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions
+    ) {
         try {
             final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
             if (keyFunctions != null) {
                 sink.setFunctions(keyFunctions);
             }
-            return sink;
+            return maybeWrapWithDirectColumn(sink, columnTypes, columnFilter, keyFunctions);
         } catch (Exception e) {
             LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
             throw BytecodeException.INSTANCE;
+        }
+    }
+
+    private static RecordSink maybeWrapWithDirectColumn(
+            RecordSink sink,
+            ColumnTypes columnTypes,
+            ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions
+    ) {
+        // Case 1: single key function that's a direct column reference.
+        if (keyFunctions != null && keyFunctions.size() == 1 && columnFilter.getColumnCount() == 0) {
+            final Function keyFunc = keyFunctions.getQuick(0);
+            if (keyFunc instanceof ColumnFunction columnFunc) {
+                final int columnType = ColumnType.tagOf(keyFunc.getType());
+                if (isSupportedDirectColumnType(columnType)) {
+                    return new DirectColumnRecordSink(sink, columnFunc.getColumnIndex());
+                }
+            }
+        }
+        // Case 2: single column from the column filter (direct column GROUP BY key).
+        if ((keyFunctions == null || keyFunctions.size() == 0) && columnFilter.getColumnCount() == 1) {
+            final int columnIndex = columnFilter.getColumnIndexFactored(0);
+            if (columnIndex >= 0) {
+                final int columnType = ColumnType.tagOf(columnTypes.getColumnType(columnIndex));
+                if (isSupportedDirectColumnType(columnType)) {
+                    return new DirectColumnRecordSink(sink, columnIndex);
+                }
+            }
+        }
+        return sink;
+    }
+
+    private static boolean isSupportedDirectColumnType(int columnType) {
+        return columnType == ColumnType.INT
+                || columnType == ColumnType.IPv4
+                || columnType == ColumnType.SYMBOL
+                || columnType == ColumnType.LONG
+                || columnType == ColumnType.DATE
+                || columnType == ColumnType.TIMESTAMP;
+    }
+
+    private static class DirectColumnRecordSink implements RecordSink {
+        private final RecordSink delegate;
+        private final int directColumnIndex;
+
+        DirectColumnRecordSink(RecordSink delegate, int directColumnIndex) {
+            this.delegate = delegate;
+            this.directColumnIndex = directColumnIndex;
+        }
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            delegate.copy(r, w);
+        }
+
+        @Override
+        public int getDirectColumnIndex() {
+            return directColumnIndex;
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            delegate.setFunctions(keyFunctions);
         }
     }
 

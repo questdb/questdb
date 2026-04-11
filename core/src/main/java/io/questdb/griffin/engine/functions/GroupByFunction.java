@@ -26,13 +26,16 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Mutable;
+import io.questdb.std.Unsafe;
 
 public interface GroupByFunction extends Function, Mutable {
     int SAMPLE_BY_FILL_LINEAR = 4;
@@ -346,6 +349,48 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default boolean supportsBatchComputation() {
         return false;
+    }
+
+    /**
+     * Aggregates {@code rowCount} input values into per-row output entries
+     * in the keyed GROUP BY path. The default implementation loops over the
+     * batch and delegates to {@link #computeFirst}/{@link #computeNext}.
+     * Individual functions may override with tight loops for direct column
+     * arguments.
+     * <p>
+     * Each packed long in {@code batchAddr} has the layout:
+     * {@code [isNew:1][rowIndex:24][offset:39]}.
+     *
+     * @param record          page frame record, positioned via setRowIndex
+     * @param map             the map owning the entries
+     * @param entryBase       stable base address ({@link Map#getEntryBase()}), pre-resolved by the reducer
+     * @param valueByteOffset byte offset of this function's value slot from the entry start,
+     *                        pre-resolved by the reducer
+     * @param batchAddr       native pointer to {@code rowCount} packed longs (8 bytes each)
+     * @param rowCount        number of entries to process
+     * @param baseRowId       absolute row id of the first row in the sub-batch
+     */
+    default void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            Map map,
+            long entryBase,
+            long valueByteOffset,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        for (long i = 0; i < rowCount; i++) {
+            long packed = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            long offset = packed & 0x7F_FFFF_FFFFL;
+            int rowIndex = (int) ((packed >>> 39) & 0xFF_FFFF);
+            record.setRowIndex(rowIndex);
+            MapValue value = map.valueAt(entryBase + offset);
+            if (packed < 0) {
+                computeFirst(value, record, baseRowId + rowIndex);
+            } else {
+                computeNext(value, record, baseRowId + rowIndex);
+            }
+        }
     }
 
     @Override

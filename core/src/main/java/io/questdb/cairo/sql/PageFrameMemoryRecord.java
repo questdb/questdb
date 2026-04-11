@@ -130,6 +130,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         clear();
     }
 
+    public long getPageAddress(int columnIndex) {
+        return pageAddresses.get(columnOffset + columnIndex);
+    }
+
     @Override
     public ArrayView getArray(int columnIndex, int columnType) {
         final BorrowedArray array = borrowedArray(columnIndex);

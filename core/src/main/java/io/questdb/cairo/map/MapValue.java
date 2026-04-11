@@ -136,4 +136,13 @@ public interface MapValue extends Record {
 
     default void setNew(boolean isNew) {
     }
+
+    /**
+     * Returns the offset of this entry relative to {@link Map#getEntryBase()}.
+     * Returns Long.MIN_VALUE if the entry cannot participate in batched dispatch
+     * (e.g. zero-key entries stored in separate memory).
+     */
+    default long getStartOffset() {
+        return Long.MIN_VALUE;
+    }
 }

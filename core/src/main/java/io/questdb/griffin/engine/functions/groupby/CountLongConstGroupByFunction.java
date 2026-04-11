@@ -26,12 +26,15 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 
 public class CountLongConstGroupByFunction extends LongFunction implements GroupByFunction {
     private int valueIndex;
@@ -44,6 +47,24 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, 1);
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            Map map,
+            long entryBase,
+            long valueByteOffset,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        for (long i = 0; i < rowCount; i++) {
+            long packed = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            long offset = packed & 0x7F_FFFF_FFFFL;
+            long addr = entryBase + offset + valueByteOffset;
+            Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+        }
     }
 
     @Override

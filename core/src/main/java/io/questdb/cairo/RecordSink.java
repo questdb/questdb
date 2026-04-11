@@ -35,5 +35,14 @@ import io.questdb.std.ObjList;
 public interface RecordSink {
     void copy(Record r, RecordSinkSPI w);
 
+    /**
+     * Returns the page frame column index when the sink copies a single
+     * fixed-size column that can be read directly from native memory.
+     * Returns -1 otherwise.
+     */
+    default int getDirectColumnIndex() {
+        return -1;
+    }
+
     void setFunctions(ObjList<Function> keyFunctions);
 }

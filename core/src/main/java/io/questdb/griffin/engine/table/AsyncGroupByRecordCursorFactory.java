@@ -227,7 +227,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             long baseRowId = record.getRowId();
 
             if (fragment.isNotSharded()) {
-                aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
+                aggregateNonShardedBatched(record, frameRowCount, baseRowId, atom, slotId, fragment, mapSink);
             } else {
                 aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
             }
@@ -319,6 +319,59 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 functionUpdater.updateNew(value, record, baseRowId + r);
             } else {
                 functionUpdater.updateExisting(value, record, baseRowId + r);
+            }
+        }
+    }
+
+    private static void aggregateNonShardedBatched(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        final Map map = fragment.reopenMap();
+        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+        final DirectLongList batch = atom.getBatchList(slotId);
+        final int subBatchSize = 2048;
+
+        // Pre-resolve per-function value byte offsets once per frame.
+        final int functionCount = functions.size();
+        long entryBase = map.getEntryBase();
+        // Use a dummy valueAt to compute byte offsets.
+        final MapValue tmpValue = map.valueAt(entryBase);
+        final long[] valueByteOffsets = new long[functionCount];
+        for (int i = 0; i < functionCount; i++) {
+            valueByteOffsets[i] = tmpValue.getAddress(functions.getQuick(i).getValueIndex()) - entryBase;
+        }
+
+        for (long batchStart = 0; batchStart < frameRowCount; batchStart += subBatchSize) {
+            final long batchEnd = Math.min(batchStart + subBatchSize, frameRowCount);
+            final long batchRows = batchEnd - batchStart;
+
+            map.reserveCapacity(batchRows);
+
+            // Ensure the batch buffer has enough capacity for raw writes.
+            batch.clear();
+            batch.ensureCapacity(batchRows);
+            final long batchAddr = batch.getAddress();
+
+            // Probe phase — delegate to the map for inlined probe loop.
+            entryBase = map.probeBatch(record, mapSink, batchStart, batchEnd, batchAddr);
+
+            // Update phase — one call per function per sub-batch.
+            for (int i = 0; i < functionCount; i++) {
+                functions.getQuick(i).computeKeyedBatch(
+                        record,
+                        map,
+                        entryBase,
+                        valueByteOffsets[i],
+                        batchAddr,
+                        batchRows,
+                        baseRowId + batchStart
+                );
             }
         }
     }
