@@ -13,7 +13,7 @@ no-default-features = false
 [advisories]
 ignore = [
     { id = "RUSTSEC-2024-0375", reason = "atty is a transitive dev-dependency of criterion, not shipped" },
-    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but has no security issue, will migrate to pastey" },
+    { id = "RUSTSEC-2024-0436", reason = "paste is a transitive dev-dependency of parquet, not shipped" },
 ]
 
 [licenses]
