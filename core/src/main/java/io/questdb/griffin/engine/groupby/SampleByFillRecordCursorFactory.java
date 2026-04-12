@@ -633,7 +633,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getDouble(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getDouble(outputColToKeyPos[col]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return Double.longBitsToDouble(prevValue(col));
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return Double.longBitsToDouble(prevValue(col));
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDouble(null);
                 return Double.NaN;
             }
@@ -643,7 +644,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getFloat(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getFloat(outputColToKeyPos[col]);
-                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return Float.intBitsToFloat((int) prevValue(col));
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev())
+                    return Float.intBitsToFloat((int) prevValue(col));
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getFloat(null);
                 return Float.NaN;
             }
@@ -742,8 +744,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public void getDecimal128(int col, io.questdb.std.Decimal128 sink) {
-                if (!isGapFilling) { baseRecord.getDecimal128(col, sink); return; }
-                if (fillMode(col) == FILL_CONSTANT) { constantFills.getQuick(col).getDecimal128(null, sink); return; }
+                if (!isGapFilling) {
+                    baseRecord.getDecimal128(col, sink);
+                    return;
+                }
+                if (fillMode(col) == FILL_CONSTANT) {
+                    constantFills.getQuick(col).getDecimal128(null, sink);
+                }
             }
 
             @Override
@@ -758,8 +765,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public void getDecimal256(int col, io.questdb.std.Decimal256 sink) {
-                if (!isGapFilling) { baseRecord.getDecimal256(col, sink); return; }
-                if (fillMode(col) == FILL_CONSTANT) { constantFills.getQuick(col).getDecimal256(null, sink); return; }
+                if (!isGapFilling) {
+                    baseRecord.getDecimal256(col, sink);
+                    return;
+                }
+                if (fillMode(col) == FILL_CONSTANT) {
+                    constantFills.getQuick(col).getDecimal256(null, sink);
+                }
             }
 
             @Override
@@ -854,8 +866,13 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public void getLong256(int col, io.questdb.std.str.CharSink<?> sink) {
-                if (!isGapFilling) { baseRecord.getLong256(col, sink); return; }
-                if (fillMode(col) == FILL_CONSTANT) { constantFills.getQuick(col).getLong256(null, sink); return; }
+                if (!isGapFilling) {
+                    baseRecord.getLong256(col, sink);
+                    return;
+                }
+                if (fillMode(col) == FILL_CONSTANT) {
+                    constantFills.getQuick(col).getLong256(null, sink);
+                }
             }
 
             @Override
