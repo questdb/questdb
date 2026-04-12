@@ -510,6 +510,30 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFunctionColumnWithSameNameAsJoinModelColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (a INT, c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t1 VALUES (1, 10, '2024-01-01T00:00:00.000000Z'), (2, 20, '2024-01-01T01:00:00.000000Z')");
+            execute("INSERT INTO t2 VALUES (1, 100, '2024-01-01T00:00:00.000000Z'), (2, 200, '2024-01-01T01:00:00.000000Z')");
+
+            assertSql(
+                    """
+                            a\tc
+                            1\t100
+                            2\t200
+                            """,
+                    """
+                            SELECT t1.a, coalesce(c, 0) c
+                            FROM t1
+                            JOIN t2 ON t1.a = t2.a
+                            ORDER BY t1.a
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFunctionMemoizationBasicColumnRefCount() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (a int, b double, c string)");
