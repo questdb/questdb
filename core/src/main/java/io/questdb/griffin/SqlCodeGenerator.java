@@ -3326,6 +3326,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     timestampIndex = origIndex;
                 }
             }
+            // The timestamp column may not be present in the output metadata when
+            // the fill query is wrapped by an outer GROUP BY that projects
+            // different columns. In that case skip fill entirely.
+            if (timestampIndex < 0) {
+                Misc.freeObjList(fillValues);
+                return groupByFactory;
+            }
             int timestampType = groupByFactory.getMetadata().getColumnType(timestampIndex);
             TimestampDriver driver = getTimestampDriver(timestampType);
             fillFromFunc = driver.getTimestampConstantNull();

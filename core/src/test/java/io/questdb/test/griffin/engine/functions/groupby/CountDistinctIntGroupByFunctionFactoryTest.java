@@ -260,13 +260,8 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
                 1970-01-01T00:00:08.000000Z\t7
                 1970-01-01T00:00:09.000000Z\t5
                 """;
-        assertQuery(
-                expected,
-                "select ts, count_distinct(s) from x sample by 1s fill(99)",
-                "create table x as (select * from (select rnd_int(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                true
-        );
+        execute("create table x as (select * from (select rnd_int(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+        assertSql(expected, "select ts, count_distinct(s) from x sample by 1s fill(99)");
         assertSql(expected, "select ts, count(distinct s) from x sample by 1s fill(99)");
     }
 
