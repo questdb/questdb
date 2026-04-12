@@ -4986,9 +4986,9 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(FROM_TO_DDL);
             printSql("""
-                            select ts, avg(x), first(x), last(x), x from fromto
-                            where s != '5'
-                            sample by 5d from '2017-12-20' to '2018-01-31' fill(42)""");
+                    select ts, avg(x), first(x), last(x), x from fromto
+                    where s != '5'
+                    sample by 5d from '2017-12-20' to '2018-01-31' fill(42)""");
             printSql("""
                     select ts, avg(x), first(x), last(x), x from fromto
                     where s != '5'
