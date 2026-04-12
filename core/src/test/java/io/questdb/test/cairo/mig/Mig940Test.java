@@ -120,6 +120,7 @@ public class Mig940Test extends AbstractCairoTest {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
 
             final FilesFacade ff = configuration.getFilesFacade();
@@ -157,6 +158,7 @@ public class Mig940Test extends AbstractCairoTest {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
 
             final FilesFacade ff = configuration.getFilesFacade();
@@ -179,11 +181,12 @@ public class Mig940Test extends AbstractCairoTest {
                 TableUtils.setPathForParquetPartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
                 long fd = ff.openRW(path.$(), 0);
                 try {
-                    // Overwrite magic bytes with garbage.
+                    // Overwrite the parquet footer (at the end of the file) with garbage.
+                    long fileSize = ff.length(fd);
                     long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                     try {
                         Unsafe.getUnsafe().putLong(buf, 0xDEADBEEFDEADBEEFL);
-                        ff.write(fd, buf, 8, 0);
+                        ff.write(fd, buf, 8, fileSize - 8);
                     } finally {
                         Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
                     }
@@ -206,6 +209,7 @@ public class Mig940Test extends AbstractCairoTest {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
 
             final FilesFacade ff = configuration.getFilesFacade();
