@@ -557,7 +557,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * Writes server-assigned timestamp for all rows (atNow case).
      * The designated timestamp uses 128-bit format: (timestamp, rowId) pairs.
-     * Each row gets a fresh timestamp from getTicks() to match row-by-row behavior.
+     * All rows in the batch receive the same server timestamp so that the
+     * caller's pre-captured min/max stays consistent with the written data.
      */
     public void putServerAssignedTimestampColumnar(int rowCount) {
         checkDistressed();
@@ -567,8 +568,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
         MemoryMA dataMem = getDataColumn(timestampIndex);
         long startRowId = getSegmentRowCount();
+        long timestamp = timestampDriver.getTicks();
         for (int row = 0; row < rowCount; row++) {
-            long timestamp = timestampDriver.getTicks();
             dataMem.putLong128(timestamp, startRowId + row);
         }
         setRowValueNotNullColumnar(timestampIndex, startRowId + rowCount - 1);

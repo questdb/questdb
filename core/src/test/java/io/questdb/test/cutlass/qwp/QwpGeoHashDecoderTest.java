@@ -38,6 +38,7 @@ import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -764,20 +765,7 @@ public class QwpGeoHashDecoderTest {
 
     private void assertNullableEncoderRoundTrip(long[] values, boolean[] nulls, int precision) throws QwpParseException {
         try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-            QwpTableBuffer buffer = new QwpTableBuffer("test_geohash");
-
-            QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, true);
-            QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-            for (int i = 0; i < values.length; i++) {
-                if (nulls[i]) {
-                    col.addNull();
-                } else {
-                    col.addGeoHash(values[i], precision);
-                }
-                tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                buffer.nextRow();
-            }
+            QwpTableBuffer buffer = getQwpTableBuffer(values, nulls, precision);
 
             int size = encoder.encode(buffer, false);
             QwpBufferWriter buf = encoder.getBuffer();
@@ -812,5 +800,23 @@ public class QwpGeoHashDecoderTest {
                 Assert.assertFalse(table.hasNextRow());
             }
         }
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(long[] values, boolean[] nulls, int precision) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_geohash");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, true);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < values.length; i++) {
+            if (nulls[i]) {
+                col.addNull();
+            } else {
+                col.addGeoHash(values[i], precision);
+            }
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
     }
 }

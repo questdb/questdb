@@ -29,6 +29,7 @@ import io.questdb.cutlass.qwp.protocol.QwpBitReader;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -235,21 +236,7 @@ public class QwpBitReaderTest {
     public void testRoundTripMixedBitWidths() throws QwpParseException {
         long addr = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT);
         try {
-            QwpBitWriter writer = new QwpBitWriter();
-            writer.reset(addr, 64);
-
-            // Write various bit widths (simulating Gorilla timestamp encoding)
-            writer.writeBit(0);           // 1 bit: delta==0 indicator
-            writer.writeBits(0b10, 2);    // 2 bits: prefix for 7-bit bucket
-            writer.writeSigned(-5, 7);    // 7 bits: signed delta
-            writer.writeBits(0b110, 3);   // 3 bits: prefix for 9-bit bucket
-            writer.writeSigned(100, 9);   // 9 bits: signed delta
-            writer.writeBits(0b1111, 4);  // 4 bits: prefix for 32-bit bucket
-            writer.writeSigned(-1_000_000, 32); // 32 bits: signed delta
-            writer.flush();
-
-            QwpBitReader reader = new QwpBitReader();
-            reader.reset(addr, writer.getPosition() - addr);
+            QwpBitReader reader = getQwpBitReader(addr);
 
             Assert.assertEquals(0, reader.readBit());
             Assert.assertEquals(0b10, reader.readBits(2));
@@ -544,17 +531,7 @@ public class QwpBitReaderTest {
     public void testWriteReadSignedValues() throws QwpParseException {
         long addr = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
         try {
-            QwpBitWriter writer = new QwpBitWriter();
-            writer.reset(addr, 32);
-
-            // Write some signed values using different bit widths
-            writer.writeSigned(-1, 7);   // -1 in 7-bit two's complement
-            writer.writeSigned(5, 7);    // 5 in 7-bit two's complement
-            writer.writeSigned(-100, 9); // -100 in 9-bit two's complement
-            writer.flush();
-
-            QwpBitReader reader = new QwpBitReader();
-            reader.reset(addr, writer.getPosition() - addr);
+            QwpBitReader reader = getBitReader(addr);
 
             Assert.assertEquals(-1, reader.readSigned(7));
             Assert.assertEquals(5, reader.readSigned(7));
@@ -579,6 +556,40 @@ public class QwpBitReaderTest {
         } finally {
             Unsafe.free(addr, 16, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static @NotNull QwpBitReader getBitReader(long addr) {
+        QwpBitWriter writer = new QwpBitWriter();
+        writer.reset(addr, 32);
+
+        // Write some signed values using different bit widths
+        writer.writeSigned(-1, 7);   // -1 in 7-bit two's complement
+        writer.writeSigned(5, 7);    // 5 in 7-bit two's complement
+        writer.writeSigned(-100, 9); // -100 in 9-bit two's complement
+        writer.flush();
+
+        QwpBitReader reader = new QwpBitReader();
+        reader.reset(addr, writer.getPosition() - addr);
+        return reader;
+    }
+
+    private static @NotNull QwpBitReader getQwpBitReader(long addr) {
+        QwpBitWriter writer = new QwpBitWriter();
+        writer.reset(addr, 64);
+
+        // Write various bit widths (simulating Gorilla timestamp encoding)
+        writer.writeBit(0);           // 1 bit: delta==0 indicator
+        writer.writeBits(0b10, 2);    // 2 bits: prefix for 7-bit bucket
+        writer.writeSigned(-5, 7);    // 7 bits: signed delta
+        writer.writeBits(0b110, 3);   // 3 bits: prefix for 9-bit bucket
+        writer.writeSigned(100, 9);   // 9 bits: signed delta
+        writer.writeBits(0b1111, 4);  // 4 bits: prefix for 32-bit bucket
+        writer.writeSigned(-1_000_000, 32); // 32 bits: signed delta
+        writer.flush();
+
+        QwpBitReader reader = new QwpBitReader();
+        reader.reset(addr, writer.getPosition() - addr);
+        return reader;
     }
 
     private static class QwpBitWriter {

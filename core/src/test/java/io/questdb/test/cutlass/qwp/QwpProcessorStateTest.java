@@ -27,9 +27,9 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -37,22 +37,24 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
 import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
+import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSchema;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -599,20 +601,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 Unsafe.getUnsafe().putByte(addr, (byte) 1);
                 Unsafe.getUnsafe().putByte(addr + 1, (byte) 0x01);
 
-                final QwpArrayColumnCursor arrayCursor = new QwpArrayColumnCursor();
-                arrayCursor.of(addr, 2, 1, QwpConstants.TYPE_DOUBLE_ARRAY);
-
-                final QwpTableBlockCursor cursor = new QwpTableBlockCursor() {
-                    @Override
-                    public QwpArrayColumnCursor getArrayColumn(int index) {
-                        return arrayCursor;
-                    }
-
-                    @Override
-                    public int getRowCount() {
-                        return 1;
-                    }
-                };
+                final QwpTableBlockCursor cursor = getQwpTableBlockCursor(addr);
 
                 final String tableName = "invalid_deferred_array_col";
                 final ObjList<QwpColumnDef> schema = new ObjList<>();
@@ -998,6 +987,23 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         Field field = QwpTudCache.class.getDeclaredField("tableUpdateDetails");
         field.setAccessible(true);
         return ((LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails>) field.get(cache)).size();
+    }
+
+    private static @NotNull QwpTableBlockCursor getQwpTableBlockCursor(long addr) throws QwpParseException {
+        final QwpArrayColumnCursor arrayCursor = new QwpArrayColumnCursor();
+        arrayCursor.of(addr, 2, 1, QwpConstants.TYPE_DOUBLE_ARRAY);
+
+        return new QwpTableBlockCursor() {
+            @Override
+            public QwpArrayColumnCursor getArrayColumn(int index) {
+                return arrayCursor;
+            }
+
+            @Override
+            public int getRowCount() {
+                return 1;
+            }
+        };
     }
 
     private static void replaceWriterWithFake(WalTableUpdateDetails tud, boolean isTableDropped) throws Exception {

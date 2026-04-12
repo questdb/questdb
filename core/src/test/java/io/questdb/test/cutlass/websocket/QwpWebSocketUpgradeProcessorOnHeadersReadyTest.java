@@ -34,7 +34,6 @@ import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
 import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
 import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
@@ -54,13 +53,6 @@ import java.nio.charset.StandardCharsets;
 
 public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCairoTest {
     private static final int TINY_BUFFER_SIZE = 64;
-
-    @SuppressWarnings("unchecked")
-    private static LocalValue<QwpProcessorState> getLV() throws Exception {
-        Field lvField = QwpWebSocketUpgradeProcessor.class.getDeclaredField("LV");
-        lvField.setAccessible(true);
-        return (LocalValue<QwpProcessorState>) lvField.get(null);
-    }
 
     @Test
     public void testOnHeadersReadyFailsHardWhenBadRequestResponseDoesNotFitBuffer() throws Exception {
@@ -90,34 +82,6 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     }
 
     @Test
-    public void testOnHeadersReadyFailsHardWhenUpgradeRequiredResponseDoesNotFitBuffer() throws Exception {
-        assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-            LocalValue<QwpProcessorState> lv = getLV();
-
-            long bufferAddr = Unsafe.malloc(TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            try (
-                    MockHttpRequestHeader header = new MockHttpRequestHeader();
-                    TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, TINY_BUFFER_SIZE))
-            ) {
-                header.setHeader("Upgrade", "websocket");
-                header.setHeader("Connection", "Upgrade");
-                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
-                header.setHeader("Sec-WebSocket-Version", "12");
-
-                assertBufferTooSmallFailure(processor, context, "426 upgrade response");
-
-                Assert.assertEquals(0, context.getMockRawSocket().sentSize);
-                Assert.assertFalse(context.isSwitchProtocolCalled());
-                Assert.assertNull(lv.get(context));
-            } finally {
-                Unsafe.free(bufferAddr, TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
     public void testOnHeadersReadyFailsHardWhenHandshakeResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -135,6 +99,34 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                 header.setHeader("Sec-WebSocket-Version", "13");
 
                 assertBufferTooSmallFailure(processor, context, "101 handshake response");
+
+                Assert.assertEquals(0, context.getMockRawSocket().sentSize);
+                Assert.assertFalse(context.isSwitchProtocolCalled());
+                Assert.assertNull(lv.get(context));
+            } finally {
+                Unsafe.free(bufferAddr, TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyFailsHardWhenUpgradeRequiredResponseDoesNotFitBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpProcessorState> lv = getLV();
+
+            long bufferAddr = Unsafe.malloc(TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MockHttpRequestHeader header = new MockHttpRequestHeader();
+                    TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, TINY_BUFFER_SIZE))
+            ) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "12");
+
+                assertBufferTooSmallFailure(processor, context, "426 upgrade response");
 
                 Assert.assertEquals(0, context.getMockRawSocket().sentSize);
                 Assert.assertFalse(context.isSwitchProtocolCalled());
@@ -187,69 +179,11 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
         }
     }
 
-    private static class MockRawSocket implements HttpRawSocket {
-        private final long bufferAddress;
-        private final int bufferSize;
-        private int sentSize;
-
-        private MockRawSocket(long bufferAddress, int bufferSize) {
-            this.bufferAddress = bufferAddress;
-            this.bufferSize = bufferSize;
-        }
-
-        @Override
-        public long getBufferAddress() {
-            return bufferAddress;
-        }
-
-        @Override
-        public int getBufferSize() {
-            return bufferSize;
-        }
-
-        @Override
-        public void send(int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sentSize = size;
-        }
-    }
-
-    private static class TestableContext extends HttpConnectionContext {
-        private final MockHttpRequestHeader requestHeader;
-        private final MockRawSocket rawSocket;
-        private boolean switchProtocolCalled;
-
-        private TestableContext(
-                HttpFullFatServerConfiguration config,
-                MockHttpRequestHeader requestHeader,
-                MockRawSocket rawSocket
-        ) {
-            super(config, PlainSocketFactory.INSTANCE);
-            this.requestHeader = requestHeader;
-            this.rawSocket = rawSocket;
-        }
-
-        MockRawSocket getMockRawSocket() {
-            return rawSocket;
-        }
-
-        @Override
-        public HttpRawSocket getRawResponseSocket() {
-            return rawSocket;
-        }
-
-        @Override
-        public HttpRequestHeader getRequestHeader() {
-            return requestHeader;
-        }
-
-        boolean isSwitchProtocolCalled() {
-            return switchProtocolCalled;
-        }
-
-        @Override
-        public void switchProtocol() {
-            switchProtocolCalled = true;
-        }
+    @SuppressWarnings("unchecked")
+    private static LocalValue<QwpProcessorState> getLV() throws Exception {
+        Field lvField = QwpWebSocketUpgradeProcessor.class.getDeclaredField("LV");
+        lvField.setAccessible(true);
+        return (LocalValue<QwpProcessorState>) lvField.get(null);
     }
 
     private static class MockHttpRequestHeader implements HttpRequestHeader, AutoCloseable {
@@ -382,6 +316,71 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
             }
             headerNames.add(new Utf8String(name));
             headerValues.add(directValue);
+        }
+    }
+
+    private static class MockRawSocket implements HttpRawSocket {
+        private final long bufferAddress;
+        private final int bufferSize;
+        private int sentSize;
+
+        private MockRawSocket(long bufferAddress, int bufferSize) {
+            this.bufferAddress = bufferAddress;
+            this.bufferSize = bufferSize;
+        }
+
+        @Override
+        public long getBufferAddress() {
+            return bufferAddress;
+        }
+
+        @Override
+        public int getBufferSize() {
+            return bufferSize;
+        }
+
+        @Override
+        public void send(int size) {
+            sentSize = size;
+        }
+    }
+
+    private static class TestableContext extends HttpConnectionContext {
+        private final MockRawSocket rawSocket;
+        private final MockHttpRequestHeader requestHeader;
+        private boolean switchProtocolCalled;
+
+        private TestableContext(
+                HttpFullFatServerConfiguration config,
+                MockHttpRequestHeader requestHeader,
+                MockRawSocket rawSocket
+        ) {
+            super(config, PlainSocketFactory.INSTANCE);
+            this.requestHeader = requestHeader;
+            this.rawSocket = rawSocket;
+        }
+
+        @Override
+        public HttpRawSocket getRawResponseSocket() {
+            return rawSocket;
+        }
+
+        @Override
+        public HttpRequestHeader getRequestHeader() {
+            return requestHeader;
+        }
+
+        @Override
+        public void switchProtocol() {
+            switchProtocolCalled = true;
+        }
+
+        MockRawSocket getMockRawSocket() {
+            return rawSocket;
+        }
+
+        boolean isSwitchProtocolCalled() {
+            return switchProtocolCalled;
         }
     }
 }

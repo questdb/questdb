@@ -55,11 +55,42 @@ import java.nio.charset.StandardCharsets;
  */
 public class QwpWebSocketUpgradeProcessorResumeSendTest extends AbstractCairoTest {
 
-    @SuppressWarnings("unchecked")
-    private static LocalValue<QwpProcessorState> getLV() throws Exception {
-        Field lvField = QwpWebSocketUpgradeProcessor.class.getDeclaredField("LV");
-        lvField.setAccessible(true);
-        return (LocalValue<QwpProcessorState>) lvField.get(null);
+    @Test
+    public void testResumeSendBlockedAckThenDeferredError() throws Exception {
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpProcessorState> lv = getLV();
+
+            long bufferAddr = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT);
+            try (TestableContext context = new TestableContext(httpConfig, new MockRawSocket(bufferAddr, 256))) {
+                QwpProcessorState state = new QwpProcessorState(
+                        1024, 1024, engine,
+                        httpConfig.getLineHttpProcessorConfiguration()
+                );
+                state.of(-1, AllowAllSecurityContext.INSTANCE);
+                lv.set(context, state);
+
+                state.setHighestProcessedSequence(3);
+                state.onAckBlocked(3);
+                state.onErrorBlocked((byte) 3, 4L, "bad batch");
+
+                Assert.assertTrue(state.isSending());
+                Assert.assertEquals(4L, state.getDeferredErrorSequence());
+                Assert.assertEquals(3, state.getDeferredErrorStatus());
+                Assert.assertEquals("bad batch", state.getDeferredErrorMessage().toString());
+
+                processor.resumeSend(context);
+
+                Assert.assertTrue(context.isResumeResponseSendCalled());
+                Assert.assertTrue(state.isSendReady());
+                Assert.assertEquals(3L, state.getLastAckedSequence());
+                Assert.assertTrue(context.getMockRawSocket().sentSize > 0);
+                assertErrorFrame(bufferAddr, context.getMockRawSocket().sentSize);
+            } finally {
+                Unsafe.free(bufferAddr, 256, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
@@ -176,46 +207,8 @@ public class QwpWebSocketUpgradeProcessorResumeSendTest extends AbstractCairoTes
         });
     }
 
-    @Test
-    public void testResumeSendBlockedAckThenDeferredError() throws Exception {
-        assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-            LocalValue<QwpProcessorState> lv = getLV();
-
-            long bufferAddr = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT);
-            try (TestableContext context = new TestableContext(httpConfig, new MockRawSocket(bufferAddr, 256))) {
-                QwpProcessorState state = new QwpProcessorState(
-                        1024, 1024, engine,
-                        httpConfig.getLineHttpProcessorConfiguration()
-                );
-                state.of(-1, AllowAllSecurityContext.INSTANCE);
-                lv.set(context, state);
-
-                state.setHighestProcessedSequence(3);
-                state.onAckBlocked(3);
-                state.onErrorBlocked((byte) 3, 4L, "bad batch");
-
-                Assert.assertTrue(state.isSending());
-                Assert.assertEquals(4L, state.getDeferredErrorSequence());
-                Assert.assertEquals(3, state.getDeferredErrorStatus());
-                Assert.assertEquals("bad batch", state.getDeferredErrorMessage().toString());
-
-                processor.resumeSend(context);
-
-                Assert.assertTrue(context.isResumeResponseSendCalled());
-                Assert.assertTrue(state.isSendReady());
-                Assert.assertEquals(3L, state.getLastAckedSequence());
-                Assert.assertTrue(context.getMockRawSocket().sentSize > 0);
-                assertErrorFrame(bufferAddr, context.getMockRawSocket().sentSize, 4L, (byte) 3, "bad batch");
-            } finally {
-                Unsafe.free(bufferAddr, 256, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    private static void assertErrorFrame(long bufferAddr, int frameSize, long expectedSequence, byte expectedStatus, String expectedMessage) {
-        byte[] expectedMessageBytes = expectedMessage.getBytes(StandardCharsets.UTF_8);
+    private static void assertErrorFrame(long bufferAddr, int frameSize) {
+        byte[] expectedMessageBytes = "bad batch".getBytes(StandardCharsets.UTF_8);
         int expectedPayloadLen = 11 + expectedMessageBytes.length;
 
         Assert.assertEquals((byte) 0x82, Unsafe.getUnsafe().getByte(bufferAddr));
@@ -223,8 +216,8 @@ public class QwpWebSocketUpgradeProcessorResumeSendTest extends AbstractCairoTes
         Assert.assertEquals(expectedPayloadLen + 2, frameSize);
 
         long payloadAddr = bufferAddr + 2;
-        Assert.assertEquals(expectedStatus, Unsafe.getUnsafe().getByte(payloadAddr));
-        Assert.assertEquals(expectedSequence, readLittleEndianLong(payloadAddr + 1));
+        Assert.assertEquals((byte) 3, Unsafe.getUnsafe().getByte(payloadAddr));
+        Assert.assertEquals(4L, readLittleEndianLong(payloadAddr + 1));
         Assert.assertEquals(expectedMessageBytes.length, readLittleEndianShort(payloadAddr + 9));
 
         byte[] actualMessageBytes = new byte[expectedMessageBytes.length];
@@ -234,9 +227,11 @@ public class QwpWebSocketUpgradeProcessorResumeSendTest extends AbstractCairoTes
         Assert.assertArrayEquals(expectedMessageBytes, actualMessageBytes);
     }
 
-    private static int readLittleEndianShort(long addr) {
-        return (Unsafe.getUnsafe().getByte(addr) & 0xFF)
-                | ((Unsafe.getUnsafe().getByte(addr + 1) & 0xFF) << 8);
+    @SuppressWarnings("unchecked")
+    private static LocalValue<QwpProcessorState> getLV() throws Exception {
+        Field lvField = QwpWebSocketUpgradeProcessor.class.getDeclaredField("LV");
+        lvField.setAccessible(true);
+        return (LocalValue<QwpProcessorState>) lvField.get(null);
     }
 
     private static long readLittleEndianLong(long addr) {
@@ -245,6 +240,11 @@ public class QwpWebSocketUpgradeProcessorResumeSendTest extends AbstractCairoTes
             value |= (long) (Unsafe.getUnsafe().getByte(addr + i) & 0xFF) << (i * 8);
         }
         return value;
+    }
+
+    private static int readLittleEndianShort(long addr) {
+        return (Unsafe.getUnsafe().getByte(addr) & 0xFF)
+                | ((Unsafe.getUnsafe().getByte(addr + 1) & 0xFF) << 8);
     }
 
     private static class MockRawSocket implements HttpRawSocket {
@@ -286,22 +286,22 @@ public class QwpWebSocketUpgradeProcessorResumeSendTest extends AbstractCairoTes
             this.mockRawSocket = mockRawSocket;
         }
 
-        MockRawSocket getMockRawSocket() {
-            return mockRawSocket;
-        }
-
         @Override
         public HttpRawSocket getRawResponseSocket() {
             return mockRawSocket;
         }
 
-        boolean isResumeResponseSendCalled() {
-            return resumeResponseSendCalled;
-        }
-
         @Override
         public void resumeResponseSend() {
             resumeResponseSendCalled = true;
+        }
+
+        MockRawSocket getMockRawSocket() {
+            return mockRawSocket;
+        }
+
+        boolean isResumeResponseSendCalled() {
+            return resumeResponseSendCalled;
         }
     }
 }

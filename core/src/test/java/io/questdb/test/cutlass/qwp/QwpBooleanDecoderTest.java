@@ -34,6 +34,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -207,22 +208,27 @@ public class QwpBooleanDecoderTest {
         return -1;
     }
 
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(boolean[] values, boolean[] nulls, boolean useNullBitmap) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_bool");
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_BOOLEAN, useNullBitmap);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+        for (int i = 0; i < values.length; i++) {
+            if (useNullBitmap && nulls[i]) {
+                col.addNull();
+            } else {
+                col.addBoolean(values[i]);
+            }
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
     private void assertRoundTrip(boolean[] values, boolean[] nulls) throws Exception {
         assertMemoryLeak(() -> {
             boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_bool");
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_BOOLEAN, useNullBitmap);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-                for (int i = 0; i < values.length; i++) {
-                    if (useNullBitmap && nulls[i]) {
-                        col.addNull();
-                    } else {
-                        col.addBoolean(values[i]);
-                    }
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(values, nulls, useNullBitmap);
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();
