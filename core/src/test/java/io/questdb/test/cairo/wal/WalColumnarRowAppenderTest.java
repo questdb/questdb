@@ -3481,7 +3481,8 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                         if (row % 2 == 0) {
                             assertTrue("Row " + row + " should be NaN (null)", Float.isNaN(record.getFloat(0)));
                         } else {
-                            assertEquals((float) row / 2 + 1.5f, record.getFloat(0), 1e-6f);
+                            //noinspection IntegerDivisionInFloatingPointContext
+                            assertEquals(row / 2 * 1.0f + 1.5f, record.getFloat(0), 1e-6f);
                         }
                         row++;
                     }
