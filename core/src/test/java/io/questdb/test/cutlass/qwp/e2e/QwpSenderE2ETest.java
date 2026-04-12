@@ -60,7 +60,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     public void testAsyncModeAutoFlushOnClose() throws Exception {
         runInContext((port) -> {
             // Don't call flush() - close() should flush automatically
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, false)) {
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
                 for (int i = 0; i < 25; i++) {
                     sender.table("async_auto_flush")
                             .longColumn("id", i)
@@ -77,7 +77,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testAsyncModeLargeNumberOfRows() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, false)) {
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
                 for (int i = 0; i < 25_000_000; i++) {
                     sender.table("async_large")
                             .longColumn("id", i)
@@ -95,7 +95,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testAsyncModeMultipleRows() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, false)) {
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
                 for (int i = 0; i < 200_000; i++) {
                     sender.table("async_multi")
                             .longColumn("id", i)
@@ -112,7 +112,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testAsyncModeSingleRow() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, false)) {
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
                 sender.table("async_single")
                         .longColumn("value", 42L)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
@@ -136,7 +136,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             // Configure to flush every 2 rows - creates many small batches
             try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                    "localhost", port, false,
+                    "localhost", port, null,
                     2, // autoFlushRows - very small to force many batches
                     1024 * 1024, // autoFlushBytes
                     100_000_000L, // autoFlushIntervalNanos
@@ -160,7 +160,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testAsyncModeWithMultipleTables() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, false)) {
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
                 for (int i = 0; i < 50; i++) {
                     // Interleave writes to two tables
                     sender.table("async_table_a")
@@ -185,7 +185,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             // Configure to flush every 10 rows
             try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                    "localhost", port, false,
+                    "localhost", port, null,
                     10, // autoFlushRows
                     1024 * 1024, // autoFlushBytes
                     100_000_000L, // autoFlushIntervalNanos
@@ -1772,7 +1772,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 final int senderIdx = s;
                 threads[s] = new Thread(() -> {
                     try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                            "localhost", port, false,
+                            "localhost", port, null,
                             autoFlushRows,
                             1024 * 1024,
                             100_000_000L,
@@ -1824,7 +1824,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 final int senderIdx = s;
                 threads[s] = new Thread(() -> {
                     try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                            "localhost", port, false,
+                            "localhost", port, null,
                             autoFlushRows,
                             1024 * 1024,
                             100_000_000L,
@@ -1883,7 +1883,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 final int senderIdx = s;
                 threads[s] = new Thread(() -> {
                     try (QwpWebSocketSender sender = QwpWebSocketSender.connect(
-                            "localhost", port, false,
+                            "localhost", port, null,
                             autoFlushRows,
                             1024 * 1024,
                             100_000_000L,
@@ -2931,7 +2931,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             long baseTs = 1_000_000_000_000L;
             long step = 1000L;
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, false)) {
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
                 // Send rows with descending timestamps so every row is out of order
                 for (int i = 0; i < rowCount; i++) {
                     long ts = baseTs + (rowCount - 1 - i) * step;

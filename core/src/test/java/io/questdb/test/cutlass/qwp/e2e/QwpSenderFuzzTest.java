@@ -697,7 +697,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     private void startThread(int port, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter, Rnd rnd) {
         new Thread(() -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, false)) {
+            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
                 long points = 0;
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {
