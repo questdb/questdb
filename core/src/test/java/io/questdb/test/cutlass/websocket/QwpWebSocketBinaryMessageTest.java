@@ -119,7 +119,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
 
                 // Build a minimal valid QWP message with 0 rows:
                 //   12-byte header  +  table-header (name + rowCount=0 + columnCount=0)
-                ByteBuffer zeroRowMsg = buildZeroRowQwpMessage("zero_row_test");
+                ByteBuffer zeroRowMsg = buildZeroRowQwpMessage();
                 webSocket.sendBinary(zeroRowMsg, true).get(5, TimeUnit.SECONDS);
 
                 // The server should reply with an ACK (binary frame).
@@ -589,8 +589,8 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
      *                   varint(columnCount=0), schemaMode=FULL(0x00)]
      * </pre>
      */
-    private static ByteBuffer buildZeroRowQwpMessage(String tableName) {
-        byte[] nameBytes = tableName.getBytes(StandardCharsets.UTF_8);
+    private static ByteBuffer buildZeroRowQwpMessage() {
+        byte[] nameBytes = "zero_row_test".getBytes(StandardCharsets.UTF_8);
         // Table header: varint(nameLen) + name + varint(0) + varint(0) + byte(0x00)
         // For short names, varint is 1 byte each.
         int tableHeaderLen = 1 + nameBytes.length + 1 + 1 + 1;

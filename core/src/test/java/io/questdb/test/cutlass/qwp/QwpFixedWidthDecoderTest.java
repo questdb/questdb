@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpBufferWriter;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpFixedWidthColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
@@ -35,6 +36,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -78,20 +80,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_BYTE, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    if (nulls[i]) {
-                        col.addNull();
-                    } else {
-                        col.addByte(values[i]);
-                    }
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -132,16 +121,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DATE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    col.addLong(values[i]);
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(QwpConstants.TYPE_DATE, rowCount, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -178,16 +158,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    col.addDouble(values[i]);
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -224,16 +195,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    col.addDouble(values[i]);
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -275,20 +237,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    if (nulls[i]) {
-                        col.addNull();
-                    } else {
-                        col.addDouble(values[i]);
-                    }
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -340,16 +289,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    col.addFloat(values[i]);
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -386,16 +326,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    col.addFloat(values[i]);
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -435,20 +366,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    if (nulls[i]) {
-                        col.addNull();
-                    } else {
-                        col.addFloat(values[i]);
-                    }
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -548,20 +466,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_INT, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    if (nulls[i]) {
-                        col.addNull();
-                    } else {
-                        col.addInt(values[i]);
-                    }
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -705,20 +610,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_LONG, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    if (nulls[i]) {
-                        col.addNull();
-                    } else {
-                        col.addLong(values[i]);
-                    }
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -782,20 +674,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_SHORT, true);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    if (nulls[i]) {
-                        col.addNull();
-                    } else {
-                        col.addShort(values[i]);
-                    }
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, nulls, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -831,16 +710,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = values.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_TIMESTAMP, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    col.addLong(values[i]);
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(QwpConstants.TYPE_TIMESTAMP, rowCount, values);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -877,16 +747,7 @@ public class QwpFixedWidthDecoderTest {
             int rowCount = hiValues.length;
 
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table");
-
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_UUID, false);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-
-                for (int i = 0; i < rowCount; i++) {
-                    col.addUuid(hiValues[i], loValues[i]);
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(rowCount, hiValues, loValues);
 
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
@@ -977,5 +838,169 @@ public class QwpFixedWidthDecoderTest {
             }
         }
         return -1;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(int rowCount, boolean[] nulls, byte[] values) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_BYTE, true);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            if (nulls[i]) {
+                col.addNull();
+            } else {
+                col.addByte(values[i]);
+            }
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(int rowCount, double[] values) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, false);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            col.addDouble(values[i]);
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(int rowCount, boolean[] nulls, double[] values) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_DOUBLE, true);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            if (nulls[i]) {
+                col.addNull();
+            } else {
+                col.addDouble(values[i]);
+            }
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(int rowCount, float[] values) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, false);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            col.addFloat(values[i]);
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(int rowCount, boolean[] nulls, float[] values) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_FLOAT, true);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            if (nulls[i]) {
+                col.addNull();
+            } else {
+                col.addFloat(values[i]);
+            }
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(int rowCount, boolean[] nulls, int[] values) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_INT, true);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            if (nulls[i]) {
+                col.addNull();
+            } else {
+                col.addInt(values[i]);
+            }
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(int rowCount, boolean[] nulls, long[] values) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_LONG, true);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            if (nulls[i]) {
+                col.addNull();
+            } else {
+                col.addLong(values[i]);
+            }
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(int rowCount, boolean[] nulls, short[] values) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_SHORT, true);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            if (nulls[i]) {
+                col.addNull();
+            } else {
+                col.addShort(values[i]);
+            }
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(byte typeTimestamp, int rowCount, long[] values) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", typeTimestamp, false);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            col.addLong(values[i]);
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(int rowCount, long[] hiValues, long[] loValues) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_table");
+
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_UUID, false);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+
+        for (int i = 0; i < rowCount; i++) {
+            col.addUuid(hiValues[i], loValues[i]);
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
     }
 }

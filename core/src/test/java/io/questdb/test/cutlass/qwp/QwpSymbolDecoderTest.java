@@ -37,6 +37,7 @@ import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -350,6 +351,12 @@ public class QwpSymbolDecoderTest {
     }
 
     @Test
+    public void testSymbolIndexMapping() throws Exception {
+        String[] values = {"same", "same", "same", "same"};
+        assertRoundTrip(values, null);
+    }
+
+    @Test
     public void testSymbolIndexRejectsNegativeVarintValue() {
         int size = 64;
         long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
@@ -372,12 +379,6 @@ public class QwpSymbolDecoderTest {
         } finally {
             Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
         }
-    }
-
-    @Test
-    public void testSymbolIndexMapping() throws Exception {
-        String[] values = {"same", "same", "same", "same"};
-        assertRoundTrip(values, null);
     }
 
     @Test
@@ -478,22 +479,27 @@ public class QwpSymbolDecoderTest {
         return -1;
     }
 
+    private static @NotNull QwpTableBuffer getQwpTableBuffer(String[] values, boolean[] nulls, boolean useNullBitmap) {
+        QwpTableBuffer buffer = new QwpTableBuffer("test_symbol");
+        QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_SYMBOL, useNullBitmap);
+        QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+        for (int i = 0; i < values.length; i++) {
+            if (useNullBitmap && nulls[i]) {
+                col.addNull();
+            } else {
+                col.addSymbol(values[i]);
+            }
+            tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
+            buffer.nextRow();
+        }
+        return buffer;
+    }
+
     private void assertRoundTrip(String[] values, boolean[] nulls) throws Exception {
         assertMemoryLeak(() -> {
             boolean useNullBitmap = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                QwpTableBuffer buffer = new QwpTableBuffer("test_symbol");
-                QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("val", TYPE_SYMBOL, useNullBitmap);
-                QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
-                for (int i = 0; i < values.length; i++) {
-                    if (useNullBitmap && nulls[i]) {
-                        col.addNull();
-                    } else {
-                        col.addSymbol(values[i]);
-                    }
-                    tsCol.addLong(1_000_000_000_000L + i * 1_000_000L);
-                    buffer.nextRow();
-                }
+                QwpTableBuffer buffer = getQwpTableBuffer(values, nulls, useNullBitmap);
                 int size = encoder.encode(buffer, false);
                 QwpBufferWriter buf = encoder.getBuffer();
                 long ptr = buf.getBufferPtr();

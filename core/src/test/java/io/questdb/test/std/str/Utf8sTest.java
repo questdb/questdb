@@ -690,13 +690,12 @@ public class Utf8sTest {
 
     @Test
     public void testEqualsNullCases() {
-        Utf8Sequence nullSeq = null;
         Utf8Sequence abc = utf8("abc");
         // Both null
-        Assert.assertTrue(Utf8s.equals(nullSeq, nullSeq));
+        Assert.assertTrue(Utf8s.equals(null, (@org.jetbrains.annotations.Nullable Utf8Sequence) null));
         // One null
-        Assert.assertFalse(Utf8s.equals(abc, nullSeq));
-        Assert.assertFalse(Utf8s.equals(nullSeq, abc));
+        Assert.assertFalse(Utf8s.equals(abc, null));
+        Assert.assertFalse(Utf8s.equals(null, abc));
     }
 
     @Test

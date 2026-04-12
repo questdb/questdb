@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -55,7 +55,6 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 0,
                         4096,
                         actionsBuf
                 );
@@ -69,7 +68,6 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 0,
                         6000,
                         actionsBuf
                 );
@@ -344,6 +342,26 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeActionHelpers() {
+        MergeAction action = new MergeAction();
+
+        action.setMerge(0, 10, 99, 5, 14);
+        Assert.assertEquals(90, action.getRowGroupRowCount());
+        Assert.assertEquals(10, action.getO3RowCount());
+        Assert.assertEquals(100, action.getTotalRowCount());
+
+        action.setCopyRowGroupSlice(1, 0, 49);
+        Assert.assertEquals(50, action.getRowGroupRowCount());
+        Assert.assertEquals(0, action.getO3RowCount());
+        Assert.assertEquals(50, action.getTotalRowCount());
+
+        action.setCopyO3(100, 199);
+        Assert.assertEquals(0, action.getRowGroupRowCount());
+        Assert.assertEquals(100, action.getO3RowCount());
+        Assert.assertEquals(100, action.getTotalRowCount());
+    }
+
+    @Test
     public void testMergeOutputSplitting() throws Exception {
         assertMemoryLeak(() -> {
             ObjList<MergeAction> actionsBuf = new ObjList<>();
@@ -484,7 +502,6 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             rowGroupBounds.clear();
             rgRows = 200_000;
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 1, 200_000, rgRows);
-            overlapO3 = 50_000;
             gapO3 = 25;
             long[] mixedO3b = new long[overlapO3 + gapO3];
             for (int i = 0; i < overlapO3; i++) {
@@ -520,26 +537,6 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMergeActionHelpers() {
-        MergeAction action = new MergeAction();
-
-        action.setMerge(0, 10, 99, 5, 14);
-        Assert.assertEquals(90, action.getRowGroupRowCount());
-        Assert.assertEquals(10, action.getO3RowCount());
-        Assert.assertEquals(100, action.getTotalRowCount());
-
-        action.setCopyRowGroupSlice(1, 0, 49);
-        Assert.assertEquals(50, action.getRowGroupRowCount());
-        Assert.assertEquals(0, action.getO3RowCount());
-        Assert.assertEquals(50, action.getTotalRowCount());
-
-        action.setCopyO3(100, 199);
-        Assert.assertEquals(0, action.getRowGroupRowCount());
-        Assert.assertEquals(100, action.getO3RowCount());
-        Assert.assertEquals(100, action.getTotalRowCount());
-    }
-
-    @Test
     public void testMixedOverlapAndGap() throws Exception {
         assertMemoryLeak(() -> {
             LongList rowGroupBounds = new LongList();
@@ -558,7 +555,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 4,
+                        4,
                         actionsBuf
                 );
 
@@ -610,7 +607,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 2,
+                        2,
                         actionsBuf
                 );
 
@@ -640,7 +637,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 2,
+                        2,
                         actionsBuf
                 );
 
@@ -674,7 +671,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 2,
+                        2,
                         actionsBuf
                 );
 
@@ -715,7 +712,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 1,
+                        1,
                         actionsBuf
                 );
 
@@ -759,7 +756,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 1,
+                        1,
                         actionsBuf
                 );
 
@@ -797,7 +794,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 2,
+                        2,
                         actionsBuf
                 );
 
@@ -836,7 +833,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 2,
+                        2,
                         actionsBuf
                 );
 
@@ -873,7 +870,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 2,
+                        2,
                         actionsBuf
                 );
 
@@ -927,7 +924,6 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 0,
                         0,
                         actionsBuf
                 );
@@ -970,7 +966,7 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 int n = computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
-                        0, 2,
+                        2,
                         actionsBuf
                 );
 
@@ -991,36 +987,14 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     private static int computeMergeActions(
             LongList rowGroupBounds,
             long sortedTimestampsAddr,
-            long srcOooLo,
-            long srcOooHi,
-            ObjList<MergeAction> actionsBuf
-    ) {
-        return O3ParquetMergeStrategy.computeMergeActions(
-                rowGroupBounds,
-                sortedTimestampsAddr,
-                srcOooLo,
-                srcOooHi,
-                O3ParquetMergeStrategy.DEFAULT_SMALL_ROW_GROUP_THRESHOLD,
-                Integer.MAX_VALUE,
-                actionsBuf,
-                new LongList(),
-                new LongList()
-        );
-    }
-
-    private static int computeMergeActions(
-            LongList rowGroupBounds,
-            long sortedTimestampsAddr,
-            long srcOooLo,
-            long srcOooHi,
             int smallRowGroupThreshold,
             ObjList<MergeAction> actionsBuf
     ) {
         return O3ParquetMergeStrategy.computeMergeActions(
                 rowGroupBounds,
                 sortedTimestampsAddr,
-                srcOooLo,
-                srcOooHi,
+                0,
+                0,
                 smallRowGroupThreshold,
                 Integer.MAX_VALUE,
                 actionsBuf,

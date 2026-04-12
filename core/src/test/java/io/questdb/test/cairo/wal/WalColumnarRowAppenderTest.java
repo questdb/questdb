@@ -693,6 +693,101 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Verifies that putServerAssignedTimestampColumnar assigns the same server
+     * timestamp to all rows in a batch, so the caller's pre-captured min/max
+     * (passed to endColumnarWrite) matches the actual data written to the WAL.
+     * <p>
+     * An auto-incrementing clock is used to detect whether getTicks() is called
+     * once (correct) or per-row (would produce a stale min/max mismatch).
+     */
+    @Test
+    public void testColumnarWrite_ServerAssignedTimestamp_ConsistentMinMax() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(new TableModel(configuration, "test_server_ts_consistent", PartitionBy.HOUR)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 5;
+            long valuesAddr = Unsafe.malloc((long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            // Auto-incrementing clock: each getTicks() call returns baseTs + (callCount * step).
+            // If putServerAssignedTimestampColumnar calls getTicks() once, all rows get the
+            // same timestamp. If it called per-row, rows would get different timestamps and
+            // the event maxTimestamp (set from the pre-captured now) would be stale.
+            long baseTs = 100_000_000L;
+            long tsStep = 1_000_000L;
+            long[] callCount = {0};
+            io.questdb.cairo.MicrosTimestampDriver driver =
+                    (io.questdb.cairo.MicrosTimestampDriver) io.questdb.cairo.MicrosTimestampDriver.INSTANCE;
+            io.questdb.std.datetime.Clock originalClock = testMicrosClock;
+            driver.setTicker(() -> baseTs + callCount[0]++ * tsStep);
+            try {
+                for (int i = 0; i < rowCount; i++) {
+                    Unsafe.getUnsafe().putInt(valuesAddr + (long) i * Integer.BYTES, i);
+                }
+
+                // Simulate what QwpWalAppender does: capture now before writing columns.
+                // Call 0 => baseTs
+                long now = driver.getTicks();
+
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putFixedColumn(0, valuesAddr, rowCount, Integer.BYTES, 0, rowCount);
+
+                    // putServerAssignedTimestampColumnar calls getTicks() once.
+                    // Call 1 => baseTs + tsStep. All 5 rows get this value.
+                    walWriter.putServerAssignedTimestampColumnar(rowCount);
+
+                    // QwpWalAppender passes the pre-captured now as min/max.
+                    appender.endColumnarWrite(now, now, false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(
+                        sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+
+                    // Verify all rows have the same timestamp
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    long firstTs = Long.MIN_VALUE;
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        long ts = record.getTimestamp(1);
+                        if (row == 0) {
+                            firstTs = ts;
+                        } else {
+                            assertEquals("All rows should have the same server-assigned timestamp",
+                                    firstTs, ts);
+                        }
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+
+                    // Verify WAL event maxTimestamp matches the pre-captured now
+                    io.questdb.cairo.wal.WalEventCursor eventCursor = reader.getWalEventCursor();
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(io.questdb.cairo.wal.WalTxnType.DATA, eventCursor.getType());
+
+                    io.questdb.cairo.wal.WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    long eventMaxTimestamp = dataInfo.getMaxTimestamp();
+                    assertEquals(now, eventMaxTimestamp);
+
+                    // All data timestamps are the same (single getTicks inside the method)
+                    assertEquals(baseTs + tsStep, firstTs);
+                }
+            } finally {
+                Unsafe.free(valuesAddr, (long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                driver.setTicker(originalClock);
+            }
+        });
+    }
+
     @Test
     public void testColumnarWrite_SingleRow() throws Exception {
         assertMemoryLeak(() -> {
@@ -1288,6 +1383,62 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPutArrayColumn_1D_Double_VaryingLengths() throws Exception {
+        assertMemoryLeak(() -> {
+            int nDims = 1;
+            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
+            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_varlen", PartitionBy.HOUR)
+                    .col("arr", columnType)
+                    .timestamp("ts")
+                    .wal()
+            );
+
+            int rowCount = 4;
+            int[][] lengths = {{1}, {5}, {2}, {10}};
+            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
+                for (int i = 0; i < rowCount; i++) {
+                    int len = lengths[i][0];
+                    double[] values = new double[len];
+                    for (int j = 0; j < len; j++) {
+                        values[j] = i * 100.0 + j;
+                    }
+                    wf.addDoubleRow(new int[]{len}, values);
+                }
+                wf.build();
+
+                long[] timestamps = makeTimestamps(rowCount);
+                String walName;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walName = walWriter.getWalName();
+                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+                    appender.beginColumnarWrite(rowCount);
+                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
+                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
+                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
+                    walWriter.commit();
+                }
+
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
+                    RecordCursor cursor = reader.getDataCursor();
+                    Record record = cursor.getRecord();
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        ArrayView arr = record.getArray(0, columnType);
+                        assertFalse(arr.isNull());
+                        int len = lengths[row][0];
+                        assertEquals(len, arr.getDimLen(0));
+                        for (int j = 0; j < len; j++) {
+                            assertEquals(row * 100.0 + j, arr.getDouble(j), 1e-15);
+                        }
+                        row++;
+                    }
+                    assertEquals(rowCount, row);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPutArrayColumn_1D_Double_WithNulls_Alternating() throws Exception {
         assertMemoryLeak(() -> {
             int nDims = 1;
@@ -1438,62 +1589,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                     assertTrue(cursor.hasNext());
                     assertTrue(record.getArray(0, columnType).isNull());
                     assertFalse(cursor.hasNext());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testPutArrayColumn_1D_Double_VaryingLengths() throws Exception {
-        assertMemoryLeak(() -> {
-            int nDims = 1;
-            int columnType = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
-            TableToken tableToken = createTable(new TableModel(configuration, "test_arr_1d_varlen", PartitionBy.HOUR)
-                    .col("arr", columnType)
-                    .timestamp("ts")
-                    .wal()
-            );
-
-            int rowCount = 4;
-            int[][] lengths = {{1}, {5}, {2}, {10}};
-            try (ArrayColumnWireFormat wf = new ArrayColumnWireFormat(rowCount, nDims, false)) {
-                for (int i = 0; i < rowCount; i++) {
-                    int len = lengths[i][0];
-                    double[] values = new double[len];
-                    for (int j = 0; j < len; j++) {
-                        values[j] = i * 100.0 + j;
-                    }
-                    wf.addDoubleRow(new int[]{len}, values);
-                }
-                wf.build();
-
-                long[] timestamps = makeTimestamps(rowCount);
-                String walName;
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    walName = walWriter.getWalName();
-                    ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
-                    appender.beginColumnarWrite(rowCount);
-                    appender.putArrayColumn(0, wf.cursor, rowCount, columnType);
-                    putTimestampColumn(appender, walWriter, timestamps, rowCount);
-                    appender.endColumnarWrite(timestamps[0], timestamps[rowCount - 1], false);
-                    walWriter.commit();
-                }
-
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
-                    RecordCursor cursor = reader.getDataCursor();
-                    Record record = cursor.getRecord();
-                    int row = 0;
-                    while (cursor.hasNext()) {
-                        ArrayView arr = record.getArray(0, columnType);
-                        assertFalse(arr.isNull());
-                        int len = lengths[row][0];
-                        assertEquals(len, arr.getDimLen(0));
-                        for (int j = 0; j < len; j++) {
-                            assertEquals(row * 100.0 + j, arr.getDouble(j), 1e-15);
-                        }
-                        row++;
-                    }
-                    assertEquals(rowCount, row);
                 }
             }
         });
@@ -3386,7 +3481,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                         if (row % 2 == 0) {
                             assertTrue("Row " + row + " should be NaN (null)", Float.isNaN(record.getFloat(0)));
                         } else {
-                            assertEquals(row / 2 * 1.0f + 1.5f, record.getFloat(0), 1e-6f);
+                            assertEquals((float) row / 2 + 1.5f, record.getFloat(0), 1e-6f);
                         }
                         row++;
                     }
@@ -8304,6 +8399,102 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     /**
+     * Helper to build QwpArrayColumnCursor wire format data.
+     * <p>
+     * Wire format:
+     * <pre>
+     * [null bitmap flag: 1 byte]
+     * [null bitmap: ceil(rowCount/8) bytes, if flag != 0]
+     * For each non-null row:
+     *   [nDims: 1 byte]
+     *   [dim sizes: nDims * 4 bytes, int32 LE each]
+     *   [values: totalElements * 8 bytes, LE]
+     * </pre>
+     */
+    private static class ArrayColumnWireFormat implements AutoCloseable {
+        final QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
+        final boolean hasNulls;
+        final int nDims;
+        final int rowCount;
+        private final java.io.ByteArrayOutputStream dataStream = new java.io.ByteArrayOutputStream();
+        private final boolean[] nullFlags;
+        long dataAddress;
+        int dataLength;
+
+        ArrayColumnWireFormat(int rowCount, int nDims, boolean hasNulls) {
+            this.rowCount = rowCount;
+            this.nDims = nDims;
+            this.hasNulls = hasNulls;
+            this.nullFlags = new boolean[rowCount];
+        }
+
+        @Override
+        public void close() {
+            if (dataAddress != 0) {
+                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
+                dataAddress = 0;
+            }
+        }
+
+        private void writeInt(int value) {
+            dataStream.write(value & 0xFF);
+            dataStream.write((value >> 8) & 0xFF);
+            dataStream.write((value >> 16) & 0xFF);
+            dataStream.write((value >> 24) & 0xFF);
+        }
+
+        private void writeLong(long value) {
+            for (int i = 0; i < 8; i++) {
+                dataStream.write((int) ((value >> (i * 8)) & 0xFF));
+            }
+        }
+
+        void addDoubleRow(int[] shape, double[] values) {
+            assert shape.length == nDims;
+            dataStream.write((byte) nDims);
+            for (int dimSize : shape) {
+                writeInt(dimSize);
+            }
+            for (double v : values) {
+                writeLong(Double.doubleToRawLongBits(v));
+            }
+        }
+
+        void addNullRow(int rowIndex) {
+            nullFlags[rowIndex] = true;
+        }
+
+        void build() throws QwpParseException {
+            byte[] rowData = dataStream.toByteArray();
+
+            int bitmapSize = hasNulls ? QwpNullBitmap.sizeInBytes(rowCount) : 0;
+            dataLength = 1 + bitmapSize + rowData.length;
+            dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
+
+            long addr = dataAddress;
+            Unsafe.getUnsafe().putByte(addr, (byte) (hasNulls ? 1 : 0));
+            addr++;
+
+            if (hasNulls) {
+                QwpNullBitmapTestUtil.fillNoneNull(addr, rowCount);
+                for (int i = 0; i < rowCount; i++) {
+                    if (nullFlags[i]) {
+                        QwpNullBitmapTestUtil.setNull(addr, i);
+                    }
+                }
+                addr += bitmapSize;
+            }
+
+            for (int i = 0; i < rowData.length; i++) {
+                Unsafe.getUnsafe().putByte(addr + i, rowData[i]);
+            }
+
+            byte typeCode = QwpConstants.TYPE_DOUBLE_ARRAY;
+            cursor.of(dataAddress, dataLength, rowCount, typeCode);
+        }
+    }
+
+    /**
      * Helper to build wire format for QwpBooleanColumnCursor.
      * Wire format:
      * - [null bitmap flag byte]
@@ -8632,116 +8823,6 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
         @Override
         public void close() {
             Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    /**
-     * Helper to build QwpArrayColumnCursor wire format data.
-     * <p>
-     * Wire format:
-     * <pre>
-     * [null bitmap flag: 1 byte]
-     * [null bitmap: ceil(rowCount/8) bytes, if flag != 0]
-     * For each non-null row:
-     *   [nDims: 1 byte]
-     *   [dim sizes: nDims * 4 bytes, int32 LE each]
-     *   [values: totalElements * 8 bytes, LE]
-     * </pre>
-     */
-    private static class ArrayColumnWireFormat implements AutoCloseable {
-        final QwpArrayColumnCursor cursor = new QwpArrayColumnCursor();
-        final boolean hasNulls;
-        final int nDims;
-        final int rowCount;
-        private final java.io.ByteArrayOutputStream dataStream = new java.io.ByteArrayOutputStream();
-        private final boolean[] nullFlags;
-        long dataAddress;
-        int dataLength;
-
-        private boolean isLongArray;
-
-        ArrayColumnWireFormat(int rowCount, int nDims, boolean hasNulls) {
-            this.rowCount = rowCount;
-            this.nDims = nDims;
-            this.hasNulls = hasNulls;
-            this.nullFlags = new boolean[rowCount];
-        }
-
-        void addDoubleRow(int[] shape, double[] values) {
-            assert shape.length == nDims;
-            dataStream.write((byte) nDims);
-            for (int dimSize : shape) {
-                writeInt(dimSize);
-            }
-            for (double v : values) {
-                writeLong(Double.doubleToRawLongBits(v));
-            }
-        }
-
-        void addLongRow(int[] shape, long[] values) {
-            assert shape.length == nDims;
-            isLongArray = true;
-            dataStream.write((byte) nDims);
-            for (int dimSize : shape) {
-                writeInt(dimSize);
-            }
-            for (long v : values) {
-                writeLong(v);
-            }
-        }
-
-        void addNullRow(int rowIndex) {
-            nullFlags[rowIndex] = true;
-        }
-
-        void build() throws QwpParseException {
-            byte[] rowData = dataStream.toByteArray();
-
-            int bitmapSize = hasNulls ? QwpNullBitmap.sizeInBytes(rowCount) : 0;
-            dataLength = 1 + bitmapSize + rowData.length;
-            dataAddress = Unsafe.malloc(dataLength, MemoryTag.NATIVE_DEFAULT);
-
-            long addr = dataAddress;
-            Unsafe.getUnsafe().putByte(addr, (byte) (hasNulls ? 1 : 0));
-            addr++;
-
-            if (hasNulls) {
-                QwpNullBitmapTestUtil.fillNoneNull(addr, rowCount);
-                for (int i = 0; i < rowCount; i++) {
-                    if (nullFlags[i]) {
-                        QwpNullBitmapTestUtil.setNull(addr, i);
-                    }
-                }
-                addr += bitmapSize;
-            }
-
-            for (int i = 0; i < rowData.length; i++) {
-                Unsafe.getUnsafe().putByte(addr + i, rowData[i]);
-            }
-
-            byte typeCode = isLongArray ? QwpConstants.TYPE_LONG_ARRAY : QwpConstants.TYPE_DOUBLE_ARRAY;
-            cursor.of(dataAddress, dataLength, rowCount, typeCode);
-        }
-
-        @Override
-        public void close() {
-            if (dataAddress != 0) {
-                Unsafe.free(dataAddress, dataLength, MemoryTag.NATIVE_DEFAULT);
-                dataAddress = 0;
-            }
-        }
-
-        private void writeInt(int value) {
-            dataStream.write(value & 0xFF);
-            dataStream.write((value >> 8) & 0xFF);
-            dataStream.write((value >> 16) & 0xFF);
-            dataStream.write((value >> 24) & 0xFF);
-        }
-
-        private void writeLong(long value) {
-            for (int i = 0; i < 8; i++) {
-                dataStream.write((int) ((value >> (i * 8)) & 0xFF));
-            }
         }
     }
 }
