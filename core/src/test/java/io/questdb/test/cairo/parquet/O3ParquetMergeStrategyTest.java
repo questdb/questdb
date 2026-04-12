@@ -52,11 +52,16 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             long sortedTimestampsAddr = allocateSortedTimestamps(300);
             try {
                 // With threshold=4096, rg0 (5000 rows) is NOT small -> COPY_O3
-                int n = computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
+                        0,
+                        0,
                         4096,
-                        actionsBuf
+                        Integer.MAX_VALUE,
+                        actionsBuf,
+                        new LongList(),
+                        new LongList()
                 );
 
                 Assert.assertEquals(3, n);
@@ -65,11 +70,16 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
                 Assert.assertEquals(ActionType.COPY_ROW_GROUP_SLICE, actionsBuf.get(2).type);
 
                 // With threshold=6000, rg0 (5000 rows) IS small -> MERGE
-                n = computeMergeActions(
+                n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
+                        0,
+                        0,
                         6000,
-                        actionsBuf
+                        Integer.MAX_VALUE,
+                        actionsBuf,
+                        new LongList(),
+                        new LongList()
                 );
 
                 Assert.assertEquals(2, n);
@@ -921,11 +931,16 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             // Single O3 row at timestamp 550, within RG5's range [500..599]
             long sortedTimestampsAddr = allocateSortedTimestamps(550);
             try {
-                int n = computeMergeActions(
+                int n = O3ParquetMergeStrategy.computeMergeActions(
                         rowGroupBounds,
                         sortedTimestampsAddr,
                         0,
-                        actionsBuf
+                        0,
+                        0,
+                        Integer.MAX_VALUE,
+                        actionsBuf,
+                        new LongList(),
+                        new LongList()
                 );
 
                 // Expected: 5 COPY (RG0-4) + 1 MERGE (RG5) + 4 COPY (RG6-9) = 10 actions
@@ -987,15 +1002,15 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
     private static int computeMergeActions(
             LongList rowGroupBounds,
             long sortedTimestampsAddr,
-            int smallRowGroupThreshold,
+            long srcOooHi,
             ObjList<MergeAction> actionsBuf
     ) {
         return O3ParquetMergeStrategy.computeMergeActions(
                 rowGroupBounds,
                 sortedTimestampsAddr,
                 0,
-                0,
-                smallRowGroupThreshold,
+                srcOooHi,
+                O3ParquetMergeStrategy.DEFAULT_SMALL_ROW_GROUP_THRESHOLD,
                 Integer.MAX_VALUE,
                 actionsBuf,
                 new LongList(),
