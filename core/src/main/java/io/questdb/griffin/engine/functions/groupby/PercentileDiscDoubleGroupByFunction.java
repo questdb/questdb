@@ -182,6 +182,11 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, LONG_NULL);
     }

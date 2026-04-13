@@ -115,6 +115,18 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     }
 
     @Test
+    public void testEmptyGroupSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::double AS val, timestamp_sequence('2024-01-01T00:00:00', 3600000000L) ts FROM long_sequence(3)) TIMESTAMP(ts)");
+            assertSql(
+                    "percentile_disc\n" +
+                            "[1.0,3.0]\n",
+                    "SELECT percentile_disc(val, ARRAY[0.25, 0.75]::DOUBLE[]) FROM test"
+            );
+        });
+    }
+
+    @Test
     public void testMultiPercentileDiscGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (" +
