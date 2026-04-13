@@ -123,7 +123,7 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
     public void testStatusCodesSynchronizedBetweenServerAndClient() {
         assertClientDecodesStatus(QwpConstants.STATUS_OK, "OK");
         assertClientDecodesStatus(QwpConstants.STATUS_PARSE_ERROR, "PARSE_ERROR");
-        assertClientDecodesStatus(QwpConstants.STATUS_SCHEMA_MISMATCH, "SCHEMA_ERROR");
+        assertClientDecodesStatus(QwpConstants.STATUS_SCHEMA_MISMATCH, "SCHEMA_MISMATCH");
         assertClientDecodesStatus(QwpConstants.STATUS_WRITE_ERROR, "WRITE_ERROR");
         assertClientDecodesStatus(QwpConstants.STATUS_SECURITY_ERROR, "SECURITY_ERROR");
         assertClientDecodesStatus(QwpConstants.STATUS_INTERNAL_ERROR, "INTERNAL_ERROR");
