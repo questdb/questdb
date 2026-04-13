@@ -858,4 +858,75 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testPercentileLargePartitionCapacityGrowth() throws Exception {
+        // Exercises capacity growth path in partitioned window percentile:
+        // INITIAL_CAPACITY=16 doubles through 16 -> 32 -> 64 -> 128 for 100-row partition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE large_part AS (" +
+                    "SELECT x % 2 AS g, CAST(x AS DOUBLE) AS value FROM long_sequence(100)" +
+                    ")");
+
+            // g=0 (even): 50 values [2, 4, 6, ..., 100]
+            //   percentile_disc(0.5): ceil(50 * 0.5) - 1 = 24 -> sorted[24] = 50.0
+            // g=1 (odd): 50 values [1, 3, 5, ..., 99]
+            //   percentile_disc(0.5): ceil(50 * 0.5) - 1 = 24 -> sorted[24] = 49.0
+            assertQueryNoLeakCheck(
+                    """
+                            g\tpercentile_disc
+                            0\t50.0
+                            1\t49.0
+                            """,
+                    "SELECT DISTINCT g, percentile_disc(value, 0.5) OVER (PARTITION BY g) FROM large_part ORDER BY g",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+
+            // percentile_cont(0.5): position = 0.5 * (50 - 1) = 24.5
+            //   g=0 even: lerp(sorted[24], sorted[25]) = lerp(50.0, 52.0) = 51.0
+            //   g=1 odd: lerp(sorted[24], sorted[25]) = lerp(49.0, 51.0) = 50.0
+            assertQueryNoLeakCheck(
+                    """
+                            g\tpercentile_cont
+                            0\t51.0
+                            1\t50.0
+                            """,
+                    "SELECT DISTINCT g, percentile_cont(value, 0.5) OVER (PARTITION BY g) FROM large_part ORDER BY g",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+
+            // Multi-percentile variants
+            assertQueryNoLeakCheck(
+                    """
+                            g\tpercentile_disc
+                            0\t[26.0,50.0,76.0]
+                            1\t[25.0,49.0,75.0]
+                            """,
+                    "SELECT DISTINCT g, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) OVER (PARTITION BY g) FROM large_part ORDER BY g",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            g\tpercentile_cont
+                            0\t[26.5,51.0,75.5]
+                            1\t[25.5,50.0,74.5]
+                            """,
+                    "SELECT DISTINCT g, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) OVER (PARTITION BY g) FROM large_part ORDER BY g",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
 }

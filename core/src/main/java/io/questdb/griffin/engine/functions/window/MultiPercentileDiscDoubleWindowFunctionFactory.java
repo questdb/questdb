@@ -115,6 +115,11 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
 
     // Handles percentile_disc() over (partition by x) with multiple percentiles
     static class MultiPercentileDiscOverPartitionFunction extends BasePartitionedWindowFunction implements WindowArrayFunction {
+        private static final long CAPACITY_OFFSET = 0;
+        private static final long DATA_OFFSET = 16;
+        private static final int INITIAL_CAPACITY = 16;
+        private static final long SIZE_OFFSET_BLOCK = 8;
+
         private final MemoryARW listMemory;
         private final Function percentilesFunc;
         private final int percentilesPos;
@@ -222,23 +227,34 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                 long listPtr;
 
                 if (value.isNew()) {
-                    // Allocate space for size (8 bytes) + first value (8 bytes)
-                    long allocPtr = listMemory.appendAddressFor(16) - listMemory.getPageAddress(0);
-                    listMemory.putLong(allocPtr, 1); // size
-                    listMemory.putDouble(allocPtr + 8, d); // first value
-                    listPtr = allocPtr;
+                    // Allocate: [capacity(8) | size(8) | data(INITIAL_CAPACITY * 8)]
+                    long bytes = DATA_OFFSET + INITIAL_CAPACITY * 8L;
+                    listPtr = listMemory.appendAddressFor(bytes) - listMemory.getPageAddress(0);
+                    listMemory.putLong(listPtr + CAPACITY_OFFSET, INITIAL_CAPACITY);
+                    listMemory.putLong(listPtr + SIZE_OFFSET_BLOCK, 1);
+                    listMemory.putDouble(listPtr + DATA_OFFSET, d);
                 } else {
                     listPtr = value.getLong(0);
-                    long size = listMemory.getLong(listPtr);
-                    // Allocate new block for size + all values
-                    long newPtr = listMemory.appendAddressFor(8 + (size + 1) * 8) - listMemory.getPageAddress(0);
-                    listMemory.putLong(newPtr, size + 1); // new size
-                    // Copy old values
-                    for (long i = 0; i < size; i++) {
-                        listMemory.putDouble(newPtr + 8 + i * 8, listMemory.getDouble(listPtr + 8 + i * 8));
+                    long size = listMemory.getLong(listPtr + SIZE_OFFSET_BLOCK);
+                    long capacity = listMemory.getLong(listPtr + CAPACITY_OFFSET);
+
+                    if (size >= capacity) {
+                        // Grow: allocate 2x capacity, copy values, abandon old block
+                        long newCapacity = capacity * 2;
+                        long bytes = DATA_OFFSET + newCapacity * 8L;
+                        long newPtr = listMemory.appendAddressFor(bytes) - listMemory.getPageAddress(0);
+                        listMemory.putLong(newPtr + CAPACITY_OFFSET, newCapacity);
+                        listMemory.putLong(newPtr + SIZE_OFFSET_BLOCK, size + 1);
+                        for (long i = 0; i < size; i++) {
+                            listMemory.putDouble(newPtr + DATA_OFFSET + i * 8, listMemory.getDouble(listPtr + DATA_OFFSET + i * 8));
+                        }
+                        listMemory.putDouble(newPtr + DATA_OFFSET + size * 8, d);
+                        listPtr = newPtr;
+                    } else {
+                        // Append in-place: capacity allows it
+                        listMemory.putDouble(listPtr + DATA_OFFSET + size * 8, d);
+                        listMemory.putLong(listPtr + SIZE_OFFSET_BLOCK, size + 1);
                     }
-                    listMemory.putDouble(newPtr + 8 + size * 8, d);
-                    listPtr = newPtr;
                 }
                 value.putLong(0, listPtr);
             }
@@ -259,7 +275,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             while (cursor.hasNext()) {
                 MapValue value = record.getValue();
                 long listPtr = value.getLong(0);
-                long size = listMemory.getLong(listPtr);
+                long size = listMemory.getLong(listPtr + SIZE_OFFSET_BLOCK);
 
                 if (size > 0) {
                     // Get percentiles array
@@ -267,8 +283,8 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                     FlatArrayView view = percentiles.flatView();
                     int percentileCount = view.length();
 
-                    // Sort the list (values start at listPtr + 8)
-                    quickSort(listPtr + 8, 0, size - 1);
+                    // Sort the list (values start at listPtr + DATA_OFFSET)
+                    quickSort(listPtr + DATA_OFFSET, 0, size - 1);
 
                     // Allocate result array: count (8 bytes) + percentile values
                     long resultPtr = resultMemory.appendAddressFor(8 + percentileCount * 8L) - resultMemory.getPageAddress(0);
@@ -280,7 +296,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                         double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
 
                         int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
-                        double resultValue = listMemory.getDouble(listPtr + 8 + N * 8L);
+                        double resultValue = listMemory.getDouble(listPtr + DATA_OFFSET + N * 8L);
                         resultMemory.putDouble(resultPtr + 8 + i * 8L, resultValue);
                     }
 
