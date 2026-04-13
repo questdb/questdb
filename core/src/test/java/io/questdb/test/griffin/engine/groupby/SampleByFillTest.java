@@ -390,6 +390,30 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullSparseDataLargeRange() throws Exception {
+        assertMemoryLeak(() -> {
+            // 2 data points ~1 year apart, 1h stride = ~8760 empty buckets.
+            // Before the recursive-to-iterative fix in emitNextFillRow(), this
+            // query caused StackOverflowError from O(gap_count) recursive
+            // hasNext() calls.
+            execute("CREATE TABLE sparse (key SYMBOL, val DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("INSERT INTO sparse VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 2.0, '2024-12-31T00:00:00.000000Z')");
+            // Verify completion without StackOverflowError and correct row count.
+            // 2024 is a leap year (366 days). From Jan 1 00:00 to Dec 31 00:00
+            // = 365 days = 8760 hours + the final bucket = 8761 hourly buckets.
+            assertSql(
+                    "count\n8761\n",
+                    "SELECT count() FROM (" +
+                            "SELECT ts, key, avg(val) FROM sparse " +
+                            "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)"
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevCrossColumnBadAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -497,6 +521,71 @@ public class SampleByFillTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: x
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevGeoHash() throws Exception {
+        assertMemoryLeak(() -> {
+            // Non-keyed query with geohash columns and FILL(PREV).
+            // Two rows 2h apart. 1h stride creates a gap at 01:00.
+            // FILL(PREV) must carry forward geo values from 00:00 into the
+            // 01:00 fill row, not return zero/null.
+            // Covers getGeoByte (3b), getGeoShort (15b), getGeoInt (6c=30b),
+            // getGeoLong (8c=40b).
+            execute("CREATE TABLE g (g1 GEOHASH(3b), g2 GEOHASH(15b), " +
+                    "g4 GEOHASH(6c), g8 GEOHASH(8c), " +
+                    "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO g VALUES " +
+                    "(cast('8' AS GEOHASH(3b)), cast('sp0' AS GEOHASH(15b)), " +
+                    " cast('sp052n' AS GEOHASH(6c)), cast('sp052n01' AS GEOHASH(8c)), " +
+                    " '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('s' AS GEOHASH(3b)), cast('u33' AS GEOHASH(15b)), " +
+                    " cast('u33d8b' AS GEOHASH(6c)), cast('u33d8b12' AS GEOHASH(8c)), " +
+                    " '2024-01-01T02:00:00.000000Z')");
+            // 3 buckets: 00:00 (data), 01:00 (PREV fill), 02:00 (data)
+            // The 01:00 row must carry forward values from 00:00
+            assertSql(
+                    """
+                            ts\tfirst\tfirst1\tfirst2\tfirst3
+                            2024-01-01T00:00:00.000000Z\t010\tsp0\tsp052n\tsp052n01
+                            2024-01-01T01:00:00.000000Z\t010\tsp0\tsp052n\tsp052n01
+                            2024-01-01T02:00:00.000000Z\t110\tu33\tu33d8b\tu33d8b12
+                            """,
+                    "SELECT ts, first(g1), first(g2), first(g4), first(g8) " +
+                            "FROM g SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevGeoHashKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed query with geo columns and FILL(PREV).
+            // Two symbol keys, each with their own geohash aggregates.
+            // Verify per-key geo PREV tracking (London's prev does not bleed
+            // into Paris).
+            execute("CREATE TABLE geo_weather (city SYMBOL, g GEOHASH(6c), " +
+                    "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO geo_weather VALUES " +
+                    "('London', cast('gcpuuz' AS GEOHASH(6c)), '2024-01-01T00:00:00.000000Z')," +
+                    "('Paris', cast('u09tvw' AS GEOHASH(6c)), '2024-01-01T00:00:00.000000Z')," +
+                    "('London', cast('gcpvn0' AS GEOHASH(6c)), '2024-01-01T02:00:00.000000Z')");
+            // At 01:00: London gap -> prev = gcpuuz, Paris gap -> prev = u09tvw
+            // At 02:00: London data = gcpvn0, Paris gap -> prev = u09tvw
+            assertSql(
+                    """
+                            ts\tcity\tfirst
+                            2024-01-01T00:00:00.000000Z\tLondon\tgcpuuz
+                            2024-01-01T00:00:00.000000Z\tParis\tu09tvw
+                            2024-01-01T01:00:00.000000Z\tLondon\tgcpuuz
+                            2024-01-01T01:00:00.000000Z\tParis\tu09tvw
+                            2024-01-01T02:00:00.000000Z\tLondon\tgcpvn0
+                            2024-01-01T02:00:00.000000Z\tParis\tu09tvw
+                            """,
+                    "SELECT ts, city, first(g) FROM geo_weather " +
+                            "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR"
             );
         });
     }
