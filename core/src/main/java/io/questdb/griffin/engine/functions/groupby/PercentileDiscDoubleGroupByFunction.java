@@ -198,7 +198,7 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("percentile_disc(").val(arg).val(')');
+        sink.val("percentile_disc(").val(arg).val(',').val(percentileFunc).val(')');
     }
 
     @Override

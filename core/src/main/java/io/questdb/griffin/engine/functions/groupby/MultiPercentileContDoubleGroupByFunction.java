@@ -151,6 +151,6 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("percentile_cont(").val(arg).val(')');
+        sink.val("percentile_cont(").val(arg).val(',').val(percentileFunc).val(')');
     }
 }

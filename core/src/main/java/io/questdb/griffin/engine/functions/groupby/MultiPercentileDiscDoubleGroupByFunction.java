@@ -261,7 +261,7 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("percentile_disc(").val(arg).val(')');
+        sink.val("percentile_disc(").val(arg).val(',').val(percentileFunc).val(')');
     }
 
     @Override
