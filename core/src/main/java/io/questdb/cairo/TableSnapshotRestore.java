@@ -630,51 +630,53 @@ public class TableSnapshotRestore implements QuietCloseable {
             // mmap _pm metadata to read parquet file size and provide metadata to the decoder.
             path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            final long parquetSize;
-            try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
-                parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
-                parquetSize = parquetMetaReader.getParquetFileSize();
-            }
-
-            // mmap data.parquet
-            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
-            if (!ff.exists(path.$())) {
-                ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
-                return;
-            }
-
-            long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             try {
-                partitionDecoder.of(parquetMetaAddr, parquetMetadataFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                final long parquetSize;
+                try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
+                    parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
+                    parquetSize = parquetMetaReader.getParquetFileSize();
+                }
 
-                // Set path to native partition directory (where index files go)
-                path.trimTo(pathTableLen);
-                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-                int partitionPathLen = path.size();
+                // mmap data.parquet
+                path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+                if (!ff.exists(path.$())) {
+                    LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
+                    return;
+                }
 
-                rebuildParquetPartitionIndexes(
-                        ff,
-                        configuration,
-                        path,
-                        partitionPathLen,
-                        partitionDecoder,
-                        rowGroupBuffers,
-                        parquetColumns,
-                        indexWriters,
-                        tableMetadata,
-                        columnVersionReader,
-                        partitionTimestamp,
-                        partitionRowCount
-                );
-            } catch (CairoException e) {
-                LOG.error().$("could not rebuild bitmap indexes for parquet partition [path=").$(path)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", msg=").$safe(e.getFlyweightMessage())
-                        .I$();
-                throw e;
+                long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                try {
+                    partitionDecoder.of(parquetMetaAddr, parquetMetadataFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                    // Set path to native partition directory (where index files go)
+                    path.trimTo(pathTableLen);
+                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                    int partitionPathLen = path.size();
+
+                    rebuildParquetPartitionIndexes(
+                            ff,
+                            configuration,
+                            path,
+                            partitionPathLen,
+                            partitionDecoder,
+                            rowGroupBuffers,
+                            parquetColumns,
+                            indexWriters,
+                            tableMetadata,
+                            columnVersionReader,
+                            partitionTimestamp,
+                            partitionRowCount
+                    );
+                } catch (CairoException e) {
+                    LOG.error().$("could not rebuild bitmap indexes for parquet partition [path=").$(path)
+                            .$(", errno=").$(e.getErrno())
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .I$();
+                    throw e;
+                } finally {
+                    ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
             } finally {
-                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
