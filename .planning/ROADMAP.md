@@ -88,7 +88,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -100,6 +100,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8
 | 6. Keyed Fill with FROM/TO Range | 1/1 | Complete | 2026-04-10 |
 | 7. PREV Type-Safe Fast Path | 1/1 | Complete | 2026-04-10 |
 | 8. Fix Remaining Test Regressions | 0/1 | In Progress | — |
+| 9. Fix Critical Review Findings | 0/1 | Not Started | — |
 
 ### Phase 6: Keyed Fill with FROM/TO Range
 **Goal**: Keyed FILL queries with FROM/TO range emit the cartesian product of all keys for every bucket in the range, including leading and trailing fill rows for all keys
@@ -145,3 +146,17 @@ Plans:
 **Plans:** 1 plan
 Plans:
 - [x] 08-01-PLAN.md -- Fix 31 small-suite failures (plan text, factory classes, parse models, should-fail conversions) + 50 SampleByNanoTimestampTest failures
+
+### Phase 9: Fix Critical Review Findings
+**Goal**: Fix 3 critical bugs from code review: geo PREV silent null, unchecked findValue NPE, recursive hasNext stack overflow
+**Depends on**: Phase 8
+**Requirements**: CR-01, CR-02, CR-03, CR-04
+**Success Criteria** (what must be TRUE):
+  1. `FILL(PREV)` with geo aggregate columns carries forward previous values (not silent null)
+  2. `findValue()` at line 351 has null guard — no NPE on key mismatch
+  3. `emitNextFillRow()` → `hasNext()` recursion replaced with loop — no StackOverflowError on sparse data with large FROM/TO range
+  4. All existing tests still pass (329 SampleByFillTest + SampleByTest + SampleByNanoTimestampTest)
+  5. Javadoc at line 67 updated to match `followedOrderByAdvice=false`
+**Plans:** 1 plan
+Plans:
+- [ ] 09-01-PLAN.md -- Fix geo PREV null, findValue NPE guard, recursive hasNext stack overflow, Javadoc fix + regression tests
