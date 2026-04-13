@@ -868,12 +868,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         int columnSlotSize = getColumnBase(1);
         columnTops.removeIndexBlock(colTopStart, columnSlotSize / 2);
 
+        Misc.free(parquetMetaDecoders.get(partitionIndex));
         Misc.free(parquetMetadataPartitions.get(partitionIndex));
         Misc.free(parquetPartitions.get(partitionIndex));
-        Misc.free(parquetMetaDecoders.get(partitionIndex));
+        parquetMetaDecoders.remove(partitionIndex);
         parquetMetadataPartitions.remove(partitionIndex);
         parquetPartitions.remove(partitionIndex);
-        parquetMetaDecoders.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
         LOG.info().$("closed deleted partition [table=").$(tableToken)
                 .$(", ts=").$ts(ColumnType.getTimestampDriver(timestampType), partitionTimestamp)
@@ -889,12 +889,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void closeParquetPartition(int partitionIndex) {
+        Misc.free(parquetMetaDecoders.getQuick(partitionIndex));
+        parquetMetaDecoders.setQuick(partitionIndex, null);
         Misc.free(parquetMetadataPartitions.getQuick(partitionIndex));
         parquetMetadataPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
         Misc.free(parquetPartitions.getQuick(partitionIndex));
         parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
-        Misc.free(parquetMetaDecoders.getQuick(partitionIndex));
-        parquetMetaDecoders.setQuick(partitionIndex, null);
         int columnBase = getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
             closeIndexReader(columnBase, i);
@@ -1157,9 +1157,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void freeParquetPartitions() {
+        Misc.freeObjList(parquetMetaDecoders);
         Misc.freeObjList(parquetMetadataPartitions);
         Misc.freeObjList(parquetPartitions);
-        Misc.freeObjList(parquetMetaDecoders);
     }
 
     private void freeSymbolMapReaders() {
