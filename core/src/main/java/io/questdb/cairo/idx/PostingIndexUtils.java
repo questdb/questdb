@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -162,8 +162,6 @@ public final class PostingIndexUtils {
     public static final byte ENCODING_ADAPTIVE = 0;
     public static final byte ENCODING_DELTA = 1;
     public static final byte ENCODING_EF = 2;
-    // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
-    static final int EF_HEADER_SIZE = 17;
     public static final int FORMAT_VERSION = 1;
     // Generation directory entry (32 bytes per generation, 8-byte aligned)
     public static final int GEN_DIR_ENTRY_SIZE = 32;
@@ -200,6 +198,8 @@ public final class PostingIndexUtils {
     public static final int STRIDE_MODE_PREFIX_SIZE = 4; // mode(1B) + bitWidth/reserved(1B) + padding(2B)
     public static final int STRIDE_FLAT_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
     public static final int STRIDE_FLAT_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
+    // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
+    static final int EF_HEADER_SIZE = 17;
 
     private PostingIndexUtils() {
     }
@@ -270,55 +270,54 @@ public final class PostingIndexUtils {
             decodeKeyEF(srcAddr, dest);
             return;
         }
-        int blockCount = firstWord;
-        if (blockCount < 0 || blockCount > MAX_BLOCK_COUNT) {
-            throw CairoException.critical(0).put("corrupt posting index: invalid blockCount [blockCount=").put(blockCount).put(']');
+        if (firstWord < 0 || firstWord > MAX_BLOCK_COUNT) {
+            throw CairoException.critical(0).put("corrupt posting index: invalid blockCount [blockCount=").put(firstWord).put(']');
         }
         long pos = srcAddr + 4;
 
         // Read valueCounts[]
-        int[] valueCounts = new int[blockCount];
-        for (int b = 0; b < blockCount; b++) {
+        int[] valueCounts = new int[firstWord];
+        for (int b = 0; b < firstWord; b++) {
             valueCounts[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
         }
-        pos += blockCount;
+        pos += firstWord;
 
         long firstValuesAddr = 0;
         long minDeltasAddr = 0;
         long blockDeltasAddr = 0;
         try {
             // Read firstValues[] (off-heap)
-            firstValuesAddr = Unsafe.malloc((long) blockCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            for (int b = 0; b < blockCount; b++) {
+            firstValuesAddr = Unsafe.malloc((long) firstWord * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            for (int b = 0; b < firstWord; b++) {
                 Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
                         Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
             }
-            pos += (long) blockCount * Long.BYTES;
+            pos += (long) firstWord * Long.BYTES;
 
             // Read minDeltas[] (off-heap)
-            minDeltasAddr = Unsafe.malloc((long) blockCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            for (int b = 0; b < blockCount; b++) {
+            minDeltasAddr = Unsafe.malloc((long) firstWord * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            for (int b = 0; b < firstWord; b++) {
                 Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
                         Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
             }
-            pos += (long) blockCount * Long.BYTES;
+            pos += (long) firstWord * Long.BYTES;
 
             // Read bitWidths[]
-            int[] bitWidths = new int[blockCount];
-            for (int b = 0; b < blockCount; b++) {
+            int[] bitWidths = new int[firstWord];
+            for (int b = 0; b < firstWord; b++) {
                 bitWidths[b] = Unsafe.getUnsafe().getByte(pos + b) & 0xFF;
             }
-            pos += blockCount;
+            pos += firstWord;
 
             // Skip packedOffsets (only present for multi-block keys)
-            if (blockCount > 1) {
-                pos += (long) blockCount * Integer.BYTES;
+            if (firstWord > 1) {
+                pos += (long) firstWord * Integer.BYTES;
             }
 
             // Decode each block — only count-1 deltas are packed (first value is in firstValues[])
             int destIdx = 0;
             blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            for (int b = 0; b < blockCount; b++) {
+            for (int b = 0; b < firstWord; b++) {
                 int count = valueCounts[b];
                 int bitWidth = bitWidths[b];
                 int numDeltas = count - 1;
@@ -345,13 +344,96 @@ public final class PostingIndexUtils {
             }
         } finally {
             if (firstValuesAddr != 0) {
-                Unsafe.free(firstValuesAddr, (long) blockCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                Unsafe.free(firstValuesAddr, (long) firstWord * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
             if (minDeltasAddr != 0) {
-                Unsafe.free(minDeltasAddr, (long) blockCount * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                Unsafe.free(minDeltasAddr, (long) firstWord * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
             if (blockDeltasAddr != 0) {
                 Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+        }
+    }
+
+    /**
+     * Decodes an Elias-Fano encoded key into a Java array.
+     */
+    public static void decodeKeyEF(long srcAddr, long[] dest) {
+        long pos = srcAddr + 4; // skip sentinel
+        int n = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF;
+        pos += 1;
+        long u = Unsafe.getUnsafe().getLong(pos);
+        pos += 8;
+
+        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
+        long lowStart = pos;
+        int lowBytes = efLowBytesAligned(n, L);
+        long highStart = pos + lowBytes;
+        long numHighWordsL = (n + (u >>> L) + 63) / 64;
+        if (numHighWordsL > Integer.MAX_VALUE) {
+            throw CairoException.critical(0).put("EF index too large");
+        }
+        int numHighWords = (int) numHighWordsL;
+
+        int outputIdx = 0;
+        for (int w = 0; w < numHighWords && outputIdx < n; w++) {
+            long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
+            if (word == 0) continue;
+            long base = (long) w * 64 - outputIdx;
+            while (word != 0 && outputIdx < n) {
+                int trail = Long.numberOfTrailingZeros(word);
+                long low = readBitsWord(lowStart, (long) outputIdx * L, L) & lowMask;
+                dest[outputIdx++] = ((base + trail) << L) | low;
+                base--;
+                word &= word - 1;
+            }
+        }
+    }
+
+    /**
+     * Decodes an Elias-Fano encoded key directly to native memory.
+     * Two-pass: (1) SIMD bulk-unpack low bits, (2) scan high bits and merge.
+     */
+    public static void decodeKeyEFToNative(long srcAddr, long destAddr) {
+        long pos = srcAddr + 4; // skip sentinel
+        int n = Unsafe.getUnsafe().getInt(pos);
+        pos += 4;
+        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF;
+        pos += 1;
+        long u = Unsafe.getUnsafe().getLong(pos);
+        pos += 8;
+
+        long lowStart = pos;
+        int lowBytes = efLowBytesAligned(n, L);
+        long highStart = pos + lowBytes;
+        long numHighWordsL = (n + (u >>> L) + 63) / 64;
+        if (numHighWordsL > Integer.MAX_VALUE) {
+            throw CairoException.critical(0).put("EF index too large");
+        }
+        int numHighWords = (int) numHighWordsL;
+
+        // Pass 1: SIMD bulk-unpack all low bits into destAddr
+        if (L > 0) {
+            BitpackUtils.unpackAllValues(lowStart, n, L, 0, destAddr);
+        } else {
+            Unsafe.getUnsafe().setMemory(destAddr, (long) n * Long.BYTES, (byte) 0);
+        }
+
+        // Pass 2: scan high bits, merge into destAddr via read-modify-write
+        int outputIdx = 0;
+        for (int w = 0; w < numHighWords && outputIdx < n; w++) {
+            long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
+            if (word == 0) continue;
+            long base = (long) w * 64 - outputIdx;
+            while (word != 0 && outputIdx < n) {
+                int trail = Long.numberOfTrailingZeros(word);
+                long addr = destAddr + (long) outputIdx * 8;
+                Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) | ((base + trail) << L));
+                outputIdx++;
+                base--;
+                word &= word - 1;
             }
         }
     }
@@ -370,48 +452,47 @@ public final class PostingIndexUtils {
             decodeKeyEFToNative(srcAddr, destAddr);
             return;
         }
-        int blockCount = firstWord;
-        if (blockCount < 0 || blockCount > MAX_BLOCK_COUNT) {
-            throw CairoException.critical(0).put("corrupt posting index: invalid blockCount [blockCount=").put(blockCount).put(']');
+        if (firstWord < 0 || firstWord > MAX_BLOCK_COUNT) {
+            throw CairoException.critical(0).put("corrupt posting index: invalid blockCount [blockCount=").put(firstWord).put(']');
         }
         long pos = srcAddr + 4;
 
-        ctx.ensureCapacity(blockCount);
+        ctx.ensureCapacity(firstWord);
         long valueCountsAddr = ctx.valueCountsAddr;
         long firstValuesAddr = ctx.firstValuesAddr;
         long minDeltasAddr = ctx.minDeltasAddr;
         long bitWidthsAddr = ctx.bitWidthsAddr;
         long blockDeltasAddr = ctx.blockDeltasAddr;
 
-        for (int b = 0; b < blockCount; b++) {
+        for (int b = 0; b < firstWord; b++) {
             Unsafe.getUnsafe().putInt(valueCountsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
         }
-        pos += blockCount;
+        pos += firstWord;
 
-        for (int b = 0; b < blockCount; b++) {
+        for (int b = 0; b < firstWord; b++) {
             Unsafe.getUnsafe().putLong(firstValuesAddr + (long) b * Long.BYTES,
                     Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
         }
-        pos += (long) blockCount * Long.BYTES;
+        pos += (long) firstWord * Long.BYTES;
 
-        for (int b = 0; b < blockCount; b++) {
+        for (int b = 0; b < firstWord; b++) {
             Unsafe.getUnsafe().putLong(minDeltasAddr + (long) b * Long.BYTES,
                     Unsafe.getUnsafe().getLong(pos + (long) b * Long.BYTES));
         }
-        pos += (long) blockCount * Long.BYTES;
+        pos += (long) firstWord * Long.BYTES;
 
-        for (int b = 0; b < blockCount; b++) {
+        for (int b = 0; b < firstWord; b++) {
             Unsafe.getUnsafe().putInt(bitWidthsAddr + (long) b * Integer.BYTES, Unsafe.getUnsafe().getByte(pos + b) & 0xFF);
         }
-        pos += blockCount;
+        pos += firstWord;
 
         // Skip packedOffsets (only present for multi-block keys)
-        if (blockCount > 1) {
-            pos += (long) blockCount * Integer.BYTES;
+        if (firstWord > 1) {
+            pos += (long) firstWord * Integer.BYTES;
         }
 
         int destIdx = 0;
-        for (int b = 0; b < blockCount; b++) {
+        for (int b = 0; b < firstWord; b++) {
             int count = Unsafe.getUnsafe().getInt(valueCountsAddr + (long) b * Integer.BYTES);
             int bitWidth = Unsafe.getUnsafe().getInt(bitWidthsAddr + (long) b * Integer.BYTES);
             int numDeltas = count - 1;
@@ -438,8 +519,6 @@ public final class PostingIndexUtils {
             }
         }
     }
-
-
 
     /**
      * Encodes sorted values for a single key using delta + FoR64 bitpacking.
@@ -606,6 +685,63 @@ public final class PostingIndexUtils {
             }
             pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
         }
+
+        return (int) (pos - destAddr);
+    }
+
+    /**
+     * Encodes sorted long values using Elias-Fano encoding directly from native memory.
+     * Format: [sentinel:4B][count:4B][L:1B][universe:8B][lowBits][highBits]
+     */
+    public static int encodeKeyEF(long srcAddr, int count, long destAddr) {
+        long lastValue = Unsafe.getUnsafe().getLong(srcAddr + (long) (count - 1) * Long.BYTES);
+        long u = lastValue + 1;
+        int L = Math.max(0, 63 - Long.numberOfLeadingZeros(u / count));
+        long lowMask = (1L << L) - 1;
+
+        long pos = destAddr;
+        Unsafe.getUnsafe().putInt(pos, EF_FORMAT_SENTINEL);
+        pos += 4;
+        Unsafe.getUnsafe().putInt(pos, count);
+        pos += 4;
+        Unsafe.getUnsafe().putByte(pos, (byte) L);
+        pos += 1;
+        Unsafe.getUnsafe().putLong(pos, u);
+        pos += 8;
+
+        long lowStart = pos;
+        int lowBytes = efLowBytesAligned(count, L);
+        for (long i = 0; i < lowBytes; i += 8) {
+            Unsafe.getUnsafe().putLong(lowStart + i, 0);
+        }
+        for (int i = 0; i < count; i++) {
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+            writeBitsWord(lowStart, (long) i * L, val & lowMask, L);
+        }
+        pos += lowBytes;
+
+        long highStart = pos;
+        long totalHighBits = count + (u >>> L);
+        long numHighWordsL = (totalHighBits + 63) / 64;
+        if (numHighWordsL > Integer.MAX_VALUE) {
+            throw CairoException.critical(0).put("EF index too large");
+        }
+        int numHighWords = (int) numHighWordsL;
+        int highBytes = numHighWords * 8;
+        for (long i = 0; i < highBytes; i += 8) {
+            Unsafe.getUnsafe().putLong(highStart + i, 0);
+        }
+        long bitPos = 0;
+        long prevHigh = 0;
+        for (int i = 0; i < count; i++) {
+            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
+            long high = val >>> L;
+            bitPos += (high - prevHigh);
+            setBitWord(highStart, bitPos);
+            bitPos++;
+            prevHigh = high;
+        }
+        pos += highBytes;
 
         return (int) (pos - destAddr);
     }
@@ -910,6 +1046,10 @@ public final class PostingIndexUtils {
         return (strideCount(keyCount) + 1) * Integer.BYTES;
     }
 
+    // ==================================================================================
+    // Elias-Fano encode/decode
+    // ==================================================================================
+
     public static LPSZ valueFileName(Path path, CharSequence name, long columnNameTxn) {
         path.concat(name).put(".pv");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
@@ -984,6 +1124,61 @@ public final class PostingIndexUtils {
         pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
         return (int) (pos - destAddr);
+    }
+
+    private static void setBitWord(long baseAddr, long bitPos) {
+        long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
+        int bitOffset = (int) (bitPos & 63);
+        long word = Unsafe.getUnsafe().getLong(wordAddr);
+        Unsafe.getUnsafe().putLong(wordAddr, word | (1L << bitOffset));
+    }
+
+    // ==================================================================================
+    // Elias-Fano support methods for readers
+    // ==================================================================================
+
+    private static void writeBitsWord(long baseAddr, long bitPos, long value, int numBits) {
+        if (numBits == 0) return;
+        long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
+        int bitOffset = (int) (bitPos & 63);
+        long mask = (numBits < 64) ? (1L << numBits) - 1 : -1L;
+        long word = Unsafe.getUnsafe().getLong(wordAddr);
+        word = (word & ~(mask << bitOffset)) | ((value & mask) << bitOffset);
+        Unsafe.getUnsafe().putLong(wordAddr, word);
+        if (bitOffset + numBits > 64) {
+            long word2 = Unsafe.getUnsafe().getLong(wordAddr + 8);
+            int bitsInSecond = bitOffset + numBits - 64;
+            long mask2 = (1L << bitsInSecond) - 1;
+            word2 = (word2 & ~mask2) | ((value >>> (64 - bitOffset)) & mask2);
+            Unsafe.getUnsafe().putLong(wordAddr + 8, word2);
+        }
+    }
+
+
+    // ==================================================================================
+    // Bit manipulation helpers for Elias-Fano
+    // ==================================================================================
+
+    /**
+     * Computes 8-byte-aligned size for the EF low bits region.
+     */
+    static int efLowBytesAligned(int n, int L) {
+        return (int) ((((long) n * L + 63) >>> 6) << 3);
+    }
+
+    /**
+     * Reads numBits starting at bitPos using 64-bit aligned loads.
+     */
+    static long readBitsWord(long baseAddr, long bitPos, int numBits) {
+        if (numBits == 0) return 0;
+        long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
+        int bitOffset = (int) (bitPos & 63);
+        long word = Unsafe.getUnsafe().getLong(wordAddr);
+        long value = word >>> bitOffset;
+        if (bitOffset + numBits > 64) {
+            value |= Unsafe.getUnsafe().getLong(wordAddr + 8) << (64 - bitOffset);
+        }
+        return (numBits < 64) ? value & ((1L << numBits) - 1) : value;
     }
 
     /**
@@ -1061,207 +1256,6 @@ public final class PostingIndexUtils {
             if (blockDeltasAddr == 0) {
                 blockDeltasAddr = Unsafe.malloc((long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
-        }
-    }
-
-    // ==================================================================================
-    // Elias-Fano encode/decode
-    // ==================================================================================
-
-    /**
-     * Decodes an Elias-Fano encoded key into a Java array.
-     */
-    public static void decodeKeyEF(long srcAddr, long[] dest) {
-        long pos = srcAddr + 4; // skip sentinel
-        int n = Unsafe.getUnsafe().getInt(pos);
-        pos += 4;
-        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF;
-        pos += 1;
-        long u = Unsafe.getUnsafe().getLong(pos);
-        pos += 8;
-
-        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
-        long lowStart = pos;
-        int lowBytes = efLowBytesAligned(n, L);
-        long highStart = pos + lowBytes;
-        long numHighWordsL = (n + (u >>> L) + 63) / 64;
-        if (numHighWordsL > Integer.MAX_VALUE) {
-            throw CairoException.critical(0).put("EF index too large");
-        }
-        int numHighWords = (int) numHighWordsL;
-
-        int outputIdx = 0;
-        for (int w = 0; w < numHighWords && outputIdx < n; w++) {
-            long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
-            if (word == 0) continue;
-            long base = (long) w * 64 - outputIdx;
-            while (word != 0 && outputIdx < n) {
-                int trail = Long.numberOfTrailingZeros(word);
-                long low = readBitsWord(lowStart, (long) outputIdx * L, L) & lowMask;
-                dest[outputIdx++] = ((base + trail) << L) | low;
-                base--;
-                word &= word - 1;
-            }
-        }
-    }
-
-    /**
-     * Decodes an Elias-Fano encoded key directly to native memory.
-     * Two-pass: (1) SIMD bulk-unpack low bits, (2) scan high bits and merge.
-     */
-    public static void decodeKeyEFToNative(long srcAddr, long destAddr) {
-        long pos = srcAddr + 4; // skip sentinel
-        int n = Unsafe.getUnsafe().getInt(pos);
-        pos += 4;
-        int L = Unsafe.getUnsafe().getByte(pos) & 0xFF;
-        pos += 1;
-        long u = Unsafe.getUnsafe().getLong(pos);
-        pos += 8;
-
-        long lowStart = pos;
-        int lowBytes = efLowBytesAligned(n, L);
-        long highStart = pos + lowBytes;
-        long numHighWordsL = (n + (u >>> L) + 63) / 64;
-        if (numHighWordsL > Integer.MAX_VALUE) {
-            throw CairoException.critical(0).put("EF index too large");
-        }
-        int numHighWords = (int) numHighWordsL;
-
-        // Pass 1: SIMD bulk-unpack all low bits into destAddr
-        if (L > 0) {
-            BitpackUtils.unpackAllValues(lowStart, n, L, 0, destAddr);
-        } else {
-            Unsafe.getUnsafe().setMemory(destAddr, (long) n * Long.BYTES, (byte) 0);
-        }
-
-        // Pass 2: scan high bits, merge into destAddr via read-modify-write
-        int outputIdx = 0;
-        for (int w = 0; w < numHighWords && outputIdx < n; w++) {
-            long word = Unsafe.getUnsafe().getLong(highStart + (long) w * 8);
-            if (word == 0) continue;
-            long base = (long) w * 64 - outputIdx;
-            while (word != 0 && outputIdx < n) {
-                int trail = Long.numberOfTrailingZeros(word);
-                long addr = destAddr + (long) outputIdx * 8;
-                Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) | ((base + trail) << L));
-                outputIdx++;
-                base--;
-                word &= word - 1;
-            }
-        }
-    }
-
-    /**
-     * Encodes sorted long values using Elias-Fano encoding directly from native memory.
-     * Format: [sentinel:4B][count:4B][L:1B][universe:8B][lowBits][highBits]
-     */
-    public static int encodeKeyEF(long srcAddr, int count, long destAddr) {
-        long lastValue = Unsafe.getUnsafe().getLong(srcAddr + (long) (count - 1) * Long.BYTES);
-        long u = lastValue + 1;
-        int L = Math.max(0, 63 - Long.numberOfLeadingZeros(u / count));
-        long lowMask = (L < 64) ? (1L << L) - 1 : -1L;
-
-        long pos = destAddr;
-        Unsafe.getUnsafe().putInt(pos, EF_FORMAT_SENTINEL);
-        pos += 4;
-        Unsafe.getUnsafe().putInt(pos, count);
-        pos += 4;
-        Unsafe.getUnsafe().putByte(pos, (byte) L);
-        pos += 1;
-        Unsafe.getUnsafe().putLong(pos, u);
-        pos += 8;
-
-        long lowStart = pos;
-        int lowBytes = efLowBytesAligned(count, L);
-        for (long i = 0; i < lowBytes; i += 8) {
-            Unsafe.getUnsafe().putLong(lowStart + i, 0);
-        }
-        for (int i = 0; i < count; i++) {
-            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
-            writeBitsWord(lowStart, (long) i * L, val & lowMask, L);
-        }
-        pos += lowBytes;
-
-        long highStart = pos;
-        long totalHighBits = count + (u >>> L);
-        long numHighWordsL = (totalHighBits + 63) / 64;
-        if (numHighWordsL > Integer.MAX_VALUE) {
-            throw CairoException.critical(0).put("EF index too large");
-        }
-        int numHighWords = (int) numHighWordsL;
-        int highBytes = numHighWords * 8;
-        for (long i = 0; i < highBytes; i += 8) {
-            Unsafe.getUnsafe().putLong(highStart + i, 0);
-        }
-        long bitPos = 0;
-        long prevHigh = 0;
-        for (int i = 0; i < count; i++) {
-            long val = Unsafe.getUnsafe().getLong(srcAddr + (long) i * Long.BYTES);
-            long high = val >>> L;
-            bitPos += (high - prevHigh);
-            setBitWord(highStart, bitPos);
-            bitPos++;
-            prevHigh = high;
-        }
-        pos += highBytes;
-
-        return (int) (pos - destAddr);
-    }
-
-    // ==================================================================================
-    // Elias-Fano support methods for readers
-    // ==================================================================================
-
-
-
-    /**
-     * Computes 8-byte-aligned size for the EF low bits region.
-     */
-    static int efLowBytesAligned(int n, int L) {
-        return (int) ((((long) n * L + 63) >>> 6) << 3);
-    }
-
-
-    // ==================================================================================
-    // Bit manipulation helpers for Elias-Fano
-    // ==================================================================================
-
-    /**
-     * Reads numBits starting at bitPos using 64-bit aligned loads.
-     */
-    static long readBitsWord(long baseAddr, long bitPos, int numBits) {
-        if (numBits == 0) return 0;
-        long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
-        int bitOffset = (int) (bitPos & 63);
-        long word = Unsafe.getUnsafe().getLong(wordAddr);
-        long value = word >>> bitOffset;
-        if (bitOffset + numBits > 64) {
-            value |= Unsafe.getUnsafe().getLong(wordAddr + 8) << (64 - bitOffset);
-        }
-        return (numBits < 64) ? value & ((1L << numBits) - 1) : value;
-    }
-
-    private static void setBitWord(long baseAddr, long bitPos) {
-        long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
-        int bitOffset = (int) (bitPos & 63);
-        long word = Unsafe.getUnsafe().getLong(wordAddr);
-        Unsafe.getUnsafe().putLong(wordAddr, word | (1L << bitOffset));
-    }
-
-    private static void writeBitsWord(long baseAddr, long bitPos, long value, int numBits) {
-        if (numBits == 0) return;
-        long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
-        int bitOffset = (int) (bitPos & 63);
-        long mask = (numBits < 64) ? (1L << numBits) - 1 : -1L;
-        long word = Unsafe.getUnsafe().getLong(wordAddr);
-        word = (word & ~(mask << bitOffset)) | ((value & mask) << bitOffset);
-        Unsafe.getUnsafe().putLong(wordAddr, word);
-        if (bitOffset + numBits > 64) {
-            long word2 = Unsafe.getUnsafe().getLong(wordAddr + 8);
-            int bitsInSecond = bitOffset + numBits - 64;
-            long mask2 = (1L << bitsInSecond) - 1;
-            word2 = (word2 & ~mask2) | ((value >>> (64 - bitOffset)) & mask2);
-            Unsafe.getUnsafe().putLong(wordAddr + 8, word2);
         }
     }
 
