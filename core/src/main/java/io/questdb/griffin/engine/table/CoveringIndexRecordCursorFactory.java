@@ -557,7 +557,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 while ((frame = frameCursor.next()) != null) {
                     BitmapIndexReader reader = tableReader.getBitmapIndexReader(
                             frame.getPartitionIndex(), indexColumnIndex, BitmapIndexReader.DIR_FORWARD);
-                    RowCursor rc = reader.getCursor(true, TableUtils.toIndexKey(symbolKey),
+                    RowCursor rc = reader.getCursor(0, TableUtils.toIndexKey(symbolKey),
                             frame.getRowLo(), frame.getRowHi() - 1);
                     if (rc instanceof CoveringRowCursor coveringCursor) {
                         int count = coveringCursor.getCoveredValueCount();
@@ -652,7 +652,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // file I/O; otherwise fall back to column files.
                     BitmapIndexReader bwdReader = tableReader.getBitmapIndexReader(
                             partitionIndex, indexColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-                    RowCursor bwdCursor = bwdReader.getCursor(true, indexKey, rowLo, rowHi);
+                    RowCursor bwdCursor = bwdReader.getCursor(0, indexKey, rowLo, rowHi);
                     if (bwdCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
                         coveringRecord.of(crc);
                         coveringRecord.setSymbolKey(rawSymbolKey);
@@ -680,7 +680,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // No filter: use forward reader and seekToLast for covering data
                     BitmapIndexReader fwdReader = tableReader.getBitmapIndexReader(
                             partitionIndex, indexColumnIndex, BitmapIndexReader.DIR_FORWARD);
-                    RowCursor rowCursor = fwdReader.getCursor(true, indexKey, rowLo, rowHi);
+                    RowCursor rowCursor = fwdReader.getCursor(0, indexKey, rowLo, rowHi);
                     if (rowCursor instanceof CoveringRowCursor crc) {
                         long lastRowId = crc.seekToLast();
                         if (lastRowId >= 0) {
@@ -740,7 +740,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     BitmapIndexReader.DIR_FORWARD
             );
             RowCursor rowCursor = indexReader.getCursor(
-                    true,
+                    0,
                     TableUtils.toIndexKey(rawSymbolKey),
                     rowLo,
                     rowHi - 1
@@ -1061,7 +1061,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     BitmapIndexReader.DIR_FORWARD
             );
             RowCursor rowCursor = indexReader.getCursor(
-                    true,
+                    0,
                     TableUtils.toIndexKey(rawSymbolKey),
                     rowLo,
                     rowHi - 1

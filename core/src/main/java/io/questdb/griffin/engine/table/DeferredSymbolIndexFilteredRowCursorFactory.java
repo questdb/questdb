@@ -41,12 +41,12 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
             int columnIndex,
             Function symbolFunction,
             Function filter,
-            boolean cachedIndexReaderCursor,
+            int slotId,
             int indexDirection
     ) {
         this.columnIndex = columnIndex;
         this.symbolFunction = symbolFunction;
-        cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor, indexDirection);
+        cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, slotId, indexDirection);
     }
 
     @Override

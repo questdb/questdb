@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -93,13 +93,13 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
-    public long size() {
-        return isTreeMapBuilt ? rows.size() : -1;
+    public long preComputedStateSize() {
+        return (isTreeMapBuilt ? 1 : 0) + rows.size();
     }
 
     @Override
-    public long preComputedStateSize() {
-        return (isTreeMapBuilt ? 1 : 0) + rows.size();
+    public long size() {
+        return isTreeMapBuilt ? rows.size() : -1;
     }
 
     @Override
@@ -115,7 +115,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         int index = found.keyIndex(symbolKey);
         if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
+            RowCursor cursor = indexReader.getCursor(0, symbolKey, partitionLo, partitionHi);
             if (cursor.hasNext()) {
                 final long rowId = Rows.toRowID(frameIndex, cursor.next());
                 rows.add(rowId);

@@ -29,16 +29,23 @@ import io.questdb.NullIndexFrameCursor;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 public class BitmapIndexFwdNullReader implements BitmapIndexReader {
-    private final NullCursor cursor = new NullCursor();
+    private final ObjList<NullCursor> cursorSlots = new ObjList<>();
     private long columnTxn;
     private long partitionTxn;
 
     public BitmapIndexFwdNullReader(long columnTxn, long partitionTxn) {
         this.columnTxn = columnTxn;
         this.partitionTxn = partitionTxn;
+    }
+
+    @Override
+    public void close() {
+        Misc.clear(cursorSlots);
     }
 
     @Override
@@ -52,12 +59,16 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-        final NullCursor cursor = cachedInstance ? this.cursor : new NullCursor();
-        // Cursor only returns records when key is for the NULL value.
-        cursor.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
-        cursor.value = 0;
-        return cursor;
+    public RowCursor getCursor(int slotId, int key, long minValue, long maxValue) {
+        assert slotId >= 0 : "slotId must be non-negative";
+        NullCursor c = cursorSlots.getQuiet(slotId);
+        if (c == null) {
+            c = new NullCursor();
+            cursorSlots.extendAndSet(slotId, c);
+        }
+        c.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
+        c.value = 0;
+        return c;
     }
 
     @Override

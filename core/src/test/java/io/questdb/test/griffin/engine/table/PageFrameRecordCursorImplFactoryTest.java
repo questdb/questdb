@@ -119,7 +119,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        true,
+                        0,
                         BitmapIndexReader.DIR_FORWARD,
                         null
                 );
@@ -1019,7 +1019,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        true,
+                        0,
                         BitmapIndexReader.DIR_FORWARD,
                         null
                 );

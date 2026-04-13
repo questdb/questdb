@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -41,9 +42,7 @@ import io.questdb.std.str.Path;
  * Uses PostingGenLookup for tiered gen-to-key mapping with cached metadata.
  */
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
-    private final Cursor cursor = new Cursor();
-    private final ObjList<Cursor> extraCursors = new ObjList<>();
-    private int extraCursorIdx;
+    private final ObjList<Cursor> cursorSlots = new ObjList<>();
 
     public PostingIndexBwdReader(
             CairoConfiguration configuration,
@@ -58,53 +57,28 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
     @Override
     public void close() {
-        cursor.close();
-        for (int i = 0, n = extraCursors.size(); i < n; i++) {
-            extraCursors.getQuick(i).close();
-        }
-        extraCursors.clear();
-        extraCursorIdx = 0;
         super.close();
+        Misc.freeObjListAndClear(cursorSlots);
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
+    public RowCursor getCursor(int slotId, int key, long minValue, long maxValue) {
+        assert slotId >= 0 : "slotId must be non-negative";
         if (key >= keyCount) {
             updateKeyCount();
         }
 
         if (key < keyCount) {
-            final Cursor c;
-            if (cachedInstance) {
-                c = cursor;
-                shrinkExtraCursors();
-            } else {
-                c = extraCursor();
+            Cursor c = cursorSlots.getQuiet(slotId);
+            if (c == null) {
+                c = new Cursor();
+                cursorSlots.extendAndSet(slotId, c);
             }
             c.of(key, minValue, maxValue);
             return c;
         }
 
         return EmptyRowCursor.INSTANCE;
-    }
-
-    private Cursor extraCursor() {
-        if (extraCursorIdx < extraCursors.size()) {
-            return extraCursors.getQuick(extraCursorIdx++);
-        }
-        Cursor c = new Cursor();
-        extraCursors.add(c);
-        extraCursorIdx++;
-        return c;
-    }
-
-    private void shrinkExtraCursors() {
-        for (int i = extraCursors.size() - 1; i >= extraCursorIdx; i--) {
-            extraCursors.getQuick(i).close();
-            extraCursors.setQuick(i, null);
-        }
-        extraCursors.setPos(extraCursorIdx);
-        extraCursorIdx = 0;
     }
 
     private class Cursor extends AbstractCoveringCursor {
@@ -121,10 +95,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private int efL;
         private long efLowMask;
         private long efLowStart;
-        private int efNumHighWords;
         private long efRankDirAddr;
         private int efRankDirCapacity;
-        private int efTotalCount;
         private int encodedBlockCount;
         private long flatBaseValue;
         private int flatBitWidth;
@@ -146,6 +118,20 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long srcMinDeltasAddr;
         private long srcPackedOffsetsAddr;
         private long srcValueCountsAddr;
+
+        @Override
+        public void close() {
+            if (blockBufferAddr != 0) {
+                Unsafe.free(blockBufferAddr, (long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBufferAddr = 0;
+            }
+            if (efRankDirAddr != 0) {
+                Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                efRankDirAddr = 0;
+                efRankDirCapacity = 0;
+            }
+            closeCoveringResources();
+        }
 
         @Override
         public boolean hasNext() {
@@ -211,7 +197,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
 
                 // Advance to previous generation
-                if (!advanceToPrevRelevantGen()) {
+                if (advanceToPrevRelevantGen()) {
                     return false;
                 }
             }
@@ -235,11 +221,11 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int lookupTier = genLookup.getTier();
 
             if (lookupTier == PostingGenLookup.TIER_PER_KEY) {
-                return advanceWithPerKeyLookupReverse();
+                return !advanceWithPerKeyLookupReverse();
             } else if (lookupTier == PostingGenLookup.TIER_SBBF) {
-                return advanceWithSbbfLookupReverse();
+                return !advanceWithSbbfLookupReverse();
             } else {
-                return advanceWithLinearScanReverse();
+                return !advanceWithLinearScanReverse();
             }
         }
 
@@ -258,7 +244,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
 
-                loadSparseGenWithBinarySearch(currentGen);
+                loadSparseGenByPrefixSum(currentGen);
                 if (encodedBlockCount > 0 || isFlatMode || isEFMode) {
                     return true;
                 }
@@ -268,39 +254,34 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         private boolean advanceWithPerKeyLookupReverse() {
-            while (true) {
-                if (lookupPos >= lookupEnd) {
-                    int nextSparseGen = genLookup.getGenIndex(lookupPos);
+            if (lookupPos >= lookupEnd) {
+                int nextSparseGen = genLookup.getGenIndex(lookupPos);
 
-                    // Check dense gens between currentGen-1 and this sparse gen (in reverse)
-                    currentGen--;
-                    while (currentGen > nextSparseGen) {
-                        if (genLookup.getGenKeyCount(currentGen) >= 0) {
-                            loadDenseGenerationCached(currentGen);
-                            return true;
-                        }
-                        currentGen--;
-                    }
-
-                    // Load sparse gen directly
-                    int posInGen = genLookup.getPosInGen(lookupPos);
-                    lookupPos--;
-                    currentGen = nextSparseGen;
-                    loadSparseGenDirect(currentGen, posInGen);
-                    return true;
-                }
-
-                // No more sparse hits — check remaining dense gens in reverse
                 currentGen--;
-                while (currentGen >= 0) {
+                while (currentGen > nextSparseGen) {
                     if (genLookup.getGenKeyCount(currentGen) >= 0) {
                         loadDenseGenerationCached(currentGen);
                         return true;
                     }
                     currentGen--;
                 }
-                return false;
+
+                int posInGen = genLookup.getPosInGen(lookupPos);
+                lookupPos--;
+                currentGen = nextSparseGen;
+                loadSparseGenDirect(currentGen, posInGen);
+                return true;
             }
+
+            currentGen--;
+            while (currentGen >= 0) {
+                if (genLookup.getGenKeyCount(currentGen) >= 0) {
+                    loadDenseGenerationCached(currentGen);
+                    return true;
+                }
+                currentGen--;
+            }
+            return false;
         }
 
         private boolean advanceWithSbbfLookupReverse() {
@@ -323,13 +304,25 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
 
-                loadSparseGenWithBinarySearch(currentGen);
+                loadSparseGenByPrefixSum(currentGen);
                 if (encodedBlockCount > 0 || isFlatMode || isEFMode) {
                     return true;
                 }
                 currentGen--;
             }
             return false;
+        }
+
+        private void clearBlockState() {
+            this.encodedBlockCount = 0;
+            this.currentBlock = -1;
+            this.minBlock = 0;
+            this.blockBufferPos = -1;
+            this.constantDeltaRemaining = 0;
+            this.isEFMode = false;
+            this.efHighWordIdx = -1;
+            this.isFlatMode = false;
+            this.flatRemaining = 0;
         }
 
         private void decodeBlock(int b) {
@@ -343,8 +336,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 long minD = numDeltas > 0
                         ? Unsafe.getUnsafe().getLong(srcMinDeltasAddr + (long) b * Long.BYTES)
                         : 0;
-                long lastValue = firstValue + (long) numDeltas * minD;
-                constantDeltaValue = lastValue;
+                constantDeltaValue = firstValue + (long) numDeltas * minD;
                 constantDeltaStep = -minD;
                 constantDeltaRemaining = count;
                 blockBufferPos = -1;
@@ -548,6 +540,81 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             readDeltaBlockMetadata(encodedAddr, totalValueCount);
         }
 
+        private void loadSparseGenByPrefixSum(int gen) {
+            if (cursorReloadGeneration != reloadGeneration) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
+                this.constantDeltaRemaining = 0;
+                this.isEFMode = false;
+                this.isFlatMode = false;
+                this.flatRemaining = 0;
+                return;
+            }
+            this.isCurrentGenDense = false;
+            computePerColumnSidecarOffsets(gen);
+            long genFileOffset = genLookup.getGenFileOffset(gen);
+            long genDataSize = genLookup.getGenDataSize(gen);
+            int genKeyCount = genLookup.getGenKeyCount(gen);
+            int activeKeyCount = -genKeyCount;
+
+            valueMem.extend(genFileOffset + genDataSize);
+            Unsafe.getUnsafe().loadFence();
+            long genAddr = valueMem.addressOf(genFileOffset);
+
+            // Use stored prefix-sum for O(1) key lookup
+            int minKey = genLookup.getGenMinKey(gen);
+            int maxKey = genLookup.getGenMaxKey(gen);
+            if (requestedKey < minKey || requestedKey > maxKey) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
+                this.isFlatMode = false;
+                return;
+            }
+
+            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen));
+            int k = requestedKey - minKey;
+            int start = Unsafe.getUnsafe().getInt(prefixSumAddr + (long) k * Integer.BYTES);
+            int end = Unsafe.getUnsafe().getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES);
+            if (start == end) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
+                this.isFlatMode = false;
+                return;
+            }
+
+            this.isFlatMode = false;
+
+            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
+            long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+            long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+            int totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) start * Integer.BYTES);
+            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) start * Integer.BYTES);
+            long encodedAddr = genAddr + headerSize + dataOffset;
+
+            if (totalValueCount == 0) {
+                this.encodedBlockCount = 0;
+                this.currentBlock = -1;
+                this.blockBufferPos = -1;
+                return;
+            }
+
+            // For sparse gens, compute sidecar base and set ordinal past the end
+            if (coverCount > 0) {
+                int sidecarBase = 0;
+                for (int i = 0; i < start; i++) {
+                    sidecarBase += Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
+                }
+                this.sidecarOrdinal = sidecarBase + totalValueCount;
+            } else {
+                this.sidecarOrdinal = totalValueCount;
+            }
+
+            readDeltaBlockMetadata(encodedAddr, totalValueCount);
+        }
+
         private void loadSparseGenDirect(int gen, int idx) {
             if (cursorReloadGeneration != reloadGeneration) {
                 this.encodedBlockCount = 0;
@@ -600,88 +667,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             readDeltaBlockMetadata(encodedAddr, totalValueCount);
         }
 
-        private void loadSparseGenWithBinarySearch(int gen) {
-            if (cursorReloadGeneration != reloadGeneration) {
-                this.encodedBlockCount = 0;
-                this.currentBlock = -1;
-                this.blockBufferPos = -1;
-                this.constantDeltaRemaining = 0;
-                this.isEFMode = false;
-                this.isFlatMode = false;
-                this.flatRemaining = 0;
-                return;
-            }
-            this.isCurrentGenDense = false;
-            computePerColumnSidecarOffsets(gen);
-            long genFileOffset = genLookup.getGenFileOffset(gen);
-            long genDataSize = genLookup.getGenDataSize(gen);
-            int genKeyCount = genLookup.getGenKeyCount(gen);
-            int activeKeyCount = -genKeyCount;
-
-            valueMem.extend(genFileOffset + genDataSize);
-            Unsafe.getUnsafe().loadFence();
-            long genAddr = valueMem.addressOf(genFileOffset);
-
-            // Use stored prefix-sum for O(1) key lookup
-            int minKey = genLookup.getGenMinKey(gen);
-            int maxKey = genLookup.getGenMaxKey(gen);
-            if (requestedKey < minKey || requestedKey > maxKey) {
-                this.encodedBlockCount = 0;
-                this.currentBlock = -1;
-                this.blockBufferPos = -1;
-                this.isFlatMode = false;
-                return;
-            }
-
-            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen));
-            int k = requestedKey - minKey;
-            int start = Unsafe.getUnsafe().getInt(prefixSumAddr + (long) k * Integer.BYTES);
-            int end = Unsafe.getUnsafe().getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES);
-            if (start == end) {
-                this.encodedBlockCount = 0;
-                this.currentBlock = -1;
-                this.blockBufferPos = -1;
-                this.isFlatMode = false;
-                return;
-            }
-            int idx = start;
-
-            this.isFlatMode = false;
-
-            int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
-            long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
-            long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
-            int totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
-            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
-            long encodedAddr = genAddr + headerSize + dataOffset;
-
-            if (totalValueCount == 0) {
-                this.encodedBlockCount = 0;
-                this.currentBlock = -1;
-                this.blockBufferPos = -1;
-                return;
-            }
-
-            // For sparse gens, compute sidecar base and set ordinal past the end
-            if (coverCount > 0) {
-                int sidecarBase = 0;
-                for (int i = 0; i < idx; i++) {
-                    sidecarBase += Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
-                }
-                this.sidecarOrdinal = sidecarBase + totalValueCount;
-            } else {
-                this.sidecarOrdinal = totalValueCount;
-            }
-
-            readDeltaBlockMetadata(encodedAddr, totalValueCount);
-        }
-
         private void readDeltaBlockMetadata(long encodedAddr, int totalValueCount) {
             long pos = encodedAddr;
             int firstWord = Unsafe.getUnsafe().getInt(pos);
             if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
                 pos += 4;
-                efTotalCount = Unsafe.getUnsafe().getInt(pos);
+                int efTotalCount = Unsafe.getUnsafe().getInt(pos);
                 pos += 4;
                 efL = Unsafe.getUnsafe().getByte(pos) & 0xFF;
                 pos += 1;
@@ -691,7 +682,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 efLowStart = pos;
                 int lowBytes = PostingIndexUtils.efLowBytesAligned(efTotalCount, efL);
                 efHighStart = pos + lowBytes;
-                efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
+                int efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
                 // Build rank directory for reverse iteration
                 if (efNumHighWords > efRankDirCapacity) {
                     if (efRankDirAddr != 0) {
@@ -713,31 +704,30 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 blockBufferPos = -1;
                 return;
             }
-            int blockCount = firstWord;
             isEFMode = false;
-            if (blockCount < 0 || blockCount > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
+            if (firstWord < 0 || firstWord > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
                 throw CairoException.critical(0).put("corrupt posting index: invalid block count [blockCount=")
-                        .put(blockCount).put(", totalValues=").put(totalValueCount).put(']');
+                        .put(firstWord).put(", totalValues=").put(totalValueCount).put(']');
             }
             pos += 4;
 
             // Point directly into mapped value memory — no copies
             srcValueCountsAddr = pos;
-            pos += blockCount;
+            pos += firstWord;
 
             srcFirstValuesAddr = pos;
-            pos += (long) blockCount * Long.BYTES;
+            pos += (long) firstWord * Long.BYTES;
 
             srcMinDeltasAddr = pos;
-            pos += (long) blockCount * Long.BYTES;
+            pos += (long) firstWord * Long.BYTES;
 
             srcBitWidthsAddr = pos;
-            pos += blockCount;
+            pos += firstWord;
 
             // packedOffsets only present for multi-block keys
-            if (blockCount > 1) {
+            if (firstWord > 1) {
                 srcPackedOffsetsAddr = pos;
-                pos += (long) blockCount * Integer.BYTES;
+                pos += (long) firstWord * Integer.BYTES;
             } else {
                 srcPackedOffsetsAddr = 0;
             }
@@ -745,9 +735,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             packedDataStart = pos;
 
             // Trim trailing blocks (highest values) above maxValue.
-            int endBlock = blockCount;
-            if (maxValue < Long.MAX_VALUE && blockCount > 1) {
-                int lo = 0, hi = blockCount - 1;
+            int endBlock = firstWord;
+            if (maxValue < Long.MAX_VALUE && firstWord > 1) {
+                int lo = 0, hi = firstWord - 1;
                 while (lo < hi) {
                     int mid = (lo + hi + 1) >>> 1;
                     if (Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) mid * Long.BYTES) <= maxValue) {
@@ -761,8 +751,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
             // Trim leading blocks (lowest values) below minValue.
             int startBlock = 0;
-            if (minValue > 0 && blockCount > 1) {
-                int lo = 0, hi = blockCount - 1;
+            if (minValue > 0 && firstWord > 1) {
+                int lo = 0, hi = firstWord - 1;
                 while (lo < hi) {
                     int mid = (lo + hi + 1) >>> 1;
                     if (Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) mid * Long.BYTES) <= minValue) {
@@ -776,9 +766,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
             // Adjust sidecar ordinal for trimmed trailing blocks — those values
             // are never iterated, so the ordinal must not count them.
-            if (endBlock < blockCount && coverCount > 0) {
+            if (endBlock < firstWord && coverCount > 0) {
                 int trailingTrimmedCount = 0;
-                for (int b = endBlock; b < blockCount; b++) {
+                for (int b = endBlock; b < firstWord; b++) {
                     trailingTrimmedCount += Unsafe.getUnsafe().getByte(srcValueCountsAddr + b) & 0xFF;
                 }
                 this.sidecarOrdinal -= trailingTrimmedCount;
@@ -790,39 +780,24 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             this.blockBufferPos = -1;
         }
 
-        void close() {
-            if (blockBufferAddr != 0) {
-                Unsafe.free(blockBufferAddr, (long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockBufferAddr = 0;
-            }
-            if (efRankDirAddr != 0) {
-                Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                efRankDirAddr = 0;
-                efRankDirCapacity = 0;
-            }
-            closeCoveringResources();
-        }
-
         void of(int key, long minValue, long maxValue) {
             this.cursorReloadGeneration = reloadGeneration;
             // Re-allocate buffer if freed by close()
             if (blockBufferAddr == 0) {
                 blockBufferAddr = Unsafe.malloc((long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
+
+            clearBlockState();
+            resetCoveringState();
+
             if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
                 currentGen = -1;
-                encodedBlockCount = 0;
-                currentBlock = -1;
-                blockBufferPos = -1;
-                constantDeltaRemaining = 0;
                 return;
             }
 
             this.requestedKey = key;
             this.minValue = minValue;
             this.maxValue = maxValue;
-            this.constantDeltaRemaining = 0;
-            resetCoveringState();
 
             // Fast path: sealed single-generation index with dense gen 0.
             // Load directly without tier lookup or advance machinery.
@@ -849,7 +824,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 this.lookupEnd = 0;
             }
 
-            if (!advanceToPrevRelevantGen()) {
+            if (advanceToPrevRelevantGen()) {
                 currentGen = -1;
                 encodedBlockCount = 0;
                 currentBlock = -1;

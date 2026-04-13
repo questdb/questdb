@@ -70,13 +70,13 @@ public interface BitmapIndexReader extends Closeable {
      * minimum and maximum, both of which are inclusive. Order of values is
      * determined by specific implementations of this method.
      *
-     * @param cachedInstance when this parameter is true, index reader may return singleton instance of cursor.
-     * @param key            index key
-     * @param minValue       inclusive minimum value
-     * @param maxValue       inclusive maximum value
+     * @param slotId   cursor slot identifier (non-negative)
+     * @param key      index key
+     * @param minValue inclusive minimum value
+     * @param maxValue inclusive maximum value
      * @return index value cursor, relative to the minValue
      */
-    RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue);
+    RowCursor getCursor(int slotId, int key, long minValue, long maxValue);
 
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();

@@ -37,7 +37,7 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
             int columnIndex,
             int symbolKey,
             Function filter,
-            boolean cachedIndexReaderCursor,
+            int slotId,
             int indexDirection,
             Function symbolFunction
     ) {
@@ -46,7 +46,7 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
                 columnIndex,
                 symbolKey,
                 filter,
-                cachedIndexReaderCursor,
+                slotId,
                 indexDirection
         );
         this.symbolFunction = symbolFunction;

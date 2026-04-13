@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -81,6 +81,11 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     }
 
     @Override
+    public long preComputedStateSize() {
+        return isFindPending ? 1 : 0;
+    }
+
+    @Override
     public void setSymbolKey(int symbolKey) {
         super.setSymbolKey(TableUtils.toIndexKey(symbolKey));
     }
@@ -88,11 +93,6 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     @Override
     public long size() {
         return -1;
-    }
-
-    @Override
-    public long preComputedStateSize() {
-        return isFindPending ? 1 : 0;
     }
 
     @Override
@@ -118,7 +118,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
 
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
+            RowCursor cursor = indexReader.getCursor(1, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
                 recordA.setRowIndex(cursor.next() - partitionLo);
                 if (filter.getBool(recordA)) {

@@ -176,7 +176,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
                 current = pageFrame
                         .getBitmapIndexReader(columnIndex, indexDirection)
                         .getCursor(
-                                true,
+                                0,
                                 symbolKeys.getQuick(index++),
                                 pageFrame.getPartitionLo(),
                                 pageFrame.getPartitionHi() - 1

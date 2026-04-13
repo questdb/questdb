@@ -74,7 +74,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
 
                 // Read backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(configuration, path.trimTo(plen), "bp_bwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                     int count = 0;
                     long prev = Long.MAX_VALUE;
                     while (cursor.hasNext()) {
@@ -114,7 +114,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(configuration, path.trimTo(plen), "bp_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(count, cursor.next());
@@ -160,7 +160,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 // Read Legacy
                 LongList legacyValues = new LongList();
                 try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "bp_legacy_cmp", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                     while (cursor.hasNext()) {
                         legacyValues.add(cursor.next());
                     }
@@ -169,7 +169,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 // Read BP
                 LongList bpValues = new LongList();
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(configuration, path.trimTo(plen), "bp_cmp", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                     while (cursor.hasNext()) {
                         bpValues.add(cursor.next());
                     }
@@ -194,10 +194,10 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(configuration, path, "bp_empty", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                     Assert.assertFalse("Key 0 should be empty", cursor.hasNext());
 
-                    cursor = reader.getCursor(true, 5, 0, Long.MAX_VALUE);
+                    cursor = reader.getCursor(0, 5, 0, Long.MAX_VALUE);
                     Assert.assertTrue(cursor.hasNext());
                     Assert.assertEquals(100, cursor.next());
                     Assert.assertTrue(cursor.hasNext());
@@ -275,7 +275,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(configuration, path, "bp_large", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                     int idx = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("Mismatch at index " + idx,
@@ -325,7 +325,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                 // Read all keys and verify correctness (exercises PostingGenLookup)
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(configuration, path.trimTo(plen), "bp_manykeys", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     for (int key = 0; key < keyCount; key++) {
-                        RowCursor cursor = reader.getCursor(false, key, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
                         int idx = 0;
                         while (cursor.hasNext()) {
                             Assert.assertEquals("Key " + key + " mismatch at " + idx,
@@ -508,7 +508,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), "bp_seal_conc", COLUMN_NAME_TXN_NONE, -1, 0)) {
                         reader.reloadConditionally();
-                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
 
                         // Read half the values from the cursor
                         LongList partialValues = new LongList();
@@ -597,7 +597,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
     private LongList readAllBP(Path path, CharSequence name, int key) {
         LongList values = new LongList();
         try (PostingIndexFwdReader reader = new PostingIndexFwdReader(configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-            RowCursor cursor = reader.getCursor(false, key, 0, Long.MAX_VALUE);
+            RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
             while (cursor.hasNext()) {
                 values.add(cursor.next());
             }
@@ -608,7 +608,7 @@ public class PostingIndexOracleTest extends AbstractCairoTest {
     private LongList readAllLegacy(Path path, int key) {
         LongList values = new LongList();
         try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path, "bp_mk_legacy", COLUMN_NAME_TXN_NONE, -1, 0)) {
-            RowCursor cursor = reader.getCursor(false, key, 0, Long.MAX_VALUE);
+            RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
             while (cursor.hasNext()) {
                 values.add(cursor.next());
             }

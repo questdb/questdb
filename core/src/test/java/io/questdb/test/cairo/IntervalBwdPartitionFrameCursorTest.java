@@ -631,7 +631,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(true, i, low, limit - 1);
+                RowCursor ic = indexReader.getCursor(0, i, low, limit - 1);
                 CharSequence expected = symbolTable.valueOf((int) (i - low - 1));
                 while (ic.hasNext()) {
                     long row = ic.next();

@@ -205,14 +205,14 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                     for (int key = 0; key < symbolCount; key++) {
                         int indexKey = TableUtils.toIndexKey(key);
                         if (!foundKeys.get(indexKey)) {
-                            RowCursor c = indexReader.getCursor(true, indexKey, frame.getRowLo(), frame.getRowHi() - 1);
+                            RowCursor c = indexReader.getCursor(0, indexKey, frame.getRowLo(), frame.getRowHi() - 1);
                             if (c.hasNext() && !foundKeys.getAndSet(indexKey)) {
                                 foundCount++;
                             }
                         }
                     }
                     if (!foundKeys.get(0)) {
-                        RowCursor c = indexReader.getCursor(true, 0, frame.getRowLo(), frame.getRowHi() - 1);
+                        RowCursor c = indexReader.getCursor(0, 0, frame.getRowLo(), frame.getRowHi() - 1);
                         if (c.hasNext() && !foundKeys.getAndSet(0)) {
                             foundCount++;
                         }

@@ -3312,7 +3312,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
         long calculatedRowCount = 0;
         for (int i = 0; i < symbolCount; i++) {
-            final RowCursor rowCursor = indexReader.getCursor(true, i + 1, 0, Long.MAX_VALUE);
+            final RowCursor rowCursor = indexReader.getCursor(0, i + 1, 0, Long.MAX_VALUE);
             while (rowCursor.hasNext()) {
                 record.setRecordIndex(Rows.toRowID(partitionIndex, rowCursor.next()));
                 Assert.assertEquals(i, record.getInt(columnIndex));

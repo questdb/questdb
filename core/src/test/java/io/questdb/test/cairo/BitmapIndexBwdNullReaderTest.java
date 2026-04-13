@@ -45,14 +45,14 @@ public class BitmapIndexBwdNullReaderTest {
             final int n = rnd.nextPositiveInt() % 1024;
 
             int m = n;
-            RowCursor cursor = reader.getCursor(true, 0, 0, n);
+            RowCursor cursor = reader.getCursor(0, 0, 0, n);
             while (cursor.hasNext()) {
                 Assert.assertEquals(m--, cursor.next());
             }
             Assert.assertEquals(-1, m);
 
             // non-null key
-            cursor = reader.getCursor(true, 42, 0, n);
+            cursor = reader.getCursor(0, 42, 0, n);
             Assert.assertFalse(cursor.hasNext());
         }
     }

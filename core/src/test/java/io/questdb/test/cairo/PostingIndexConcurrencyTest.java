@@ -77,7 +77,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
             while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
                 reader.reloadConditionally();
-                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                 long prev = Long.MAX_VALUE;
                 int count = 0;
                 while (cursor.hasNext()) {
@@ -106,7 +106,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                      configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
             while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
                 reader.reloadConditionally();
-                RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                 long prev = -1;
                 int count = 0;
                 while (cursor.hasNext()) {
@@ -227,7 +227,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                                 while (!Thread.interrupted() && writerDone.getCount() > 0) {
                                     try {
                                         reader.reloadConditionally();
-                                        RowCursor cursor = reader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                                         long prev = -1;
                                         while (cursor.hasNext()) {
                                             long val = cursor.next();

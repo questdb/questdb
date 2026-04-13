@@ -25,10 +25,15 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.NullIndexFrameCursor;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -37,8 +42,8 @@ import io.questdb.std.str.Path;
  */
 public class BitmapIndexFwdReader extends AbstractIndexReader {
     private static final Log LOG = LogFactory.getLog(BitmapIndexFwdReader.class);
-    private final Cursor cursor = new Cursor();
-    private final NullCursor nullCursor = new NullCursor();
+    private final ObjList<Cursor> cursorSlots = new ObjList<>();
+    private final ObjList<NullCursor> nullCursorSlots = new ObjList<>();
 
     public BitmapIndexFwdReader(
             CairoConfiguration configuration,
@@ -52,25 +57,40 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
+    public void close() {
+        super.close();
+        Misc.clear(cursorSlots);
+        Misc.clear(nullCursorSlots);
+    }
+
+    @Override
+    public RowCursor getCursor(int slotId, int key, long minValue, long maxValue) {
+        assert slotId >= 0 : "slotId must be non-negative";
         if (key >= keyCount) {
             updateKeyCount();
         }
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            // we need to return some nulls and the whole set of actual index values
-            final NullCursor nullCursor = getNullCursor(cachedInstance);
-            nullCursor.nullPos = minValue;
+            NullCursor nc = nullCursorSlots.getQuiet(slotId);
+            if (nc == null) {
+                nc = new NullCursor();
+                nullCursorSlots.extendAndSet(slotId, nc);
+            }
+            nc.nullPos = minValue;
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
-            nullCursor.nullCount = Math.min(columnTop, hi);
-            nullCursor.of(key, minValue, maxValue, keyCount);
-            return nullCursor;
+            nc.nullCount = Math.min(columnTop, hi);
+            nc.of(key, minValue, maxValue, keyCount);
+            return nc;
         }
 
         if (key < keyCount) {
-            final Cursor cursor = getCursor(cachedInstance);
-            cursor.of(key, minValue, maxValue, keyCount);
-            return cursor;
+            Cursor c = cursorSlots.getQuiet(slotId);
+            if (c == null) {
+                c = new Cursor();
+                cursorSlots.extendAndSet(slotId, c);
+            }
+            c.of(key, minValue, maxValue, keyCount);
+            return c;
         }
 
         return EmptyRowCursor.INSTANCE;
@@ -83,20 +103,16 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         }
 
         if (key < keyCount) {
-            final Cursor cursor = getCursor(false);
-            cursor.of(key, minRowId, maxRowId, keyCount);
-            return cursor;
+            Cursor c = cursorSlots.getQuiet(0);
+            if (c == null) {
+                c = new Cursor();
+                cursorSlots.extendAndSet(0, c);
+            }
+            c.of(key, minRowId, maxRowId, keyCount);
+            return c;
         }
 
         return NullIndexFrameCursor.INSTANCE;
-    }
-
-    private Cursor getCursor(boolean cachedInstance) {
-        return cachedInstance ? cursor : new Cursor();
-    }
-
-    private NullCursor getNullCursor(boolean cachedInstance) {
-        return cachedInstance ? nullCursor : new NullCursor();
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {

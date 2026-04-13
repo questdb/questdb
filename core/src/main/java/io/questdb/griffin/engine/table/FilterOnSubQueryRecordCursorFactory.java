@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -256,7 +256,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
                                 rowCursorFactory = new SymbolIndexRowCursorFactory(
                                         columnIndex,
                                         symbolKey,
-                                        false,
+                                        cursorFactories.size(),
                                         BitmapIndexReader.DIR_FORWARD,
                                         null
                                 );
@@ -265,7 +265,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
                                         columnIndex,
                                         symbolKey,
                                         filter,
-                                        false,
+                                        cursorFactories.size(),
                                         BitmapIndexReader.DIR_FORWARD,
                                         null
                                 );

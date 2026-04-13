@@ -5775,14 +5775,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             if (symbol == SymbolTable.VALUE_NOT_FOUND) {
                                 rcf = new LatestByValueDeferredIndexedRowCursorFactory(
                                         latestByIndex,
-                                        symbolValueFunc,
-                                        false
+                                        symbolValueFunc
                                 );
                             } else {
                                 rcf = new LatestByValueIndexedRowCursorFactory(
                                         latestByIndex,
-                                        symbol,
-                                        false
+                                        symbol
                                 );
                             }
                             return new PageFrameRecordCursorFactory(
@@ -9336,7 +9334,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     rcf = new DeferredSymbolIndexRowCursorFactory(
                                             keyColumnIndex,
                                             symbolFunc,
-                                            true,
+                                            0,
                                             indexDirection
                                     );
                                 } else {
@@ -9344,7 +9342,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             keyColumnIndex,
                                             symbolFunc,
                                             filter,
-                                            true,
+                                            0,
                                             indexDirection
                                     );
                                 }
@@ -9353,7 +9351,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     rcf = new SymbolIndexRowCursorFactory(
                                             keyColumnIndex,
                                             symbolKey,
-                                            true,
+                                            0,
                                             indexDirection,
                                             null
                                     );
@@ -9362,7 +9360,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             keyColumnIndex,
                                             symbolKey,
                                             filter,
-                                            true,
+                                            0,
                                             indexDirection,
                                             null
                                     );

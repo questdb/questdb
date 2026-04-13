@@ -164,7 +164,7 @@ public class PostingIndexBenchmarkSuite {
             BitmapIndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key : s.pointKeys) {
-                    RowCursor c = reader.getCursor(true, key, 0, Long.MAX_VALUE);
+                    RowCursor c = reader.getCursor(0, key, 0, Long.MAX_VALUE);
                     while (c.hasNext()) c.next();
                 }
             } finally {
@@ -179,7 +179,7 @@ public class PostingIndexBenchmarkSuite {
             BitmapIndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key : s.rangeKeys) {
-                    RowCursor c = reader.getCursor(true, key, s.maxRow / 4, s.maxRow * 3 / 4);
+                    RowCursor c = reader.getCursor(0, key, s.maxRow / 4, s.maxRow * 3 / 4);
                     while (c.hasNext()) c.next();
                 }
             } finally {
@@ -194,7 +194,7 @@ public class PostingIndexBenchmarkSuite {
             BitmapIndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key = 0; key < s.keyCount; key++) {
-                    RowCursor c = reader.getCursor(true, key, 0, Long.MAX_VALUE);
+                    RowCursor c = reader.getCursor(0, key, 0, Long.MAX_VALUE);
                     while (c.hasNext()) c.next();
                 }
             } finally {
@@ -210,7 +210,7 @@ public class PostingIndexBenchmarkSuite {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0)) {
                 for (int key : s.readKeys) {
-                    RowCursor cursor = reader.getCursor(true, key, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
                     if ("covering".equals(s.mode) && cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
                         while (crc.hasNext()) {
                             crc.next();
@@ -360,7 +360,7 @@ public class PostingIndexBenchmarkSuite {
         try (Path path = new Path().of(dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                 for (int key : keys) {
-                    RowCursor cursor = reader.getCursor(true, key, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
                     while (cursor.hasNext()) {
                         long rowId = cursor.next();
                         sum += switch (ct) {
@@ -381,7 +381,7 @@ public class PostingIndexBenchmarkSuite {
         try (Path path = new Path().of(dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                 for (int key : keys) {
-                    RowCursor cursor = reader.getCursor(true, key, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
                     if (cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
                         while (crc.hasNext()) {
                             crc.next();
@@ -618,7 +618,7 @@ public class PostingIndexBenchmarkSuite {
                 try (Path path = new Path().of(baseDir)) {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                         for (int key : queryKeys) {
-                            RowCursor cursor = reader.getCursor(true, key, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
                             while (cursor.hasNext()) {
                                 long rowId = cursor.next();
                                 long pageNum = (rowId * ct.size) / PAGE_SIZE;

@@ -28,11 +28,11 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 
 class SymbolIndexFilteredRowCursor implements RowCursor {
-    private final boolean cachedIndexReaderCursor;
     private final int columnIndex;
     private final Function filter;
     private final int indexDirection;
     private final PageFrameMemoryRecord record;
+    private final int slotId;
     private RowCursor rowCursor;
     private long rowIndex;
     private int symbolKey;
@@ -41,22 +41,22 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
             int columnIndex,
             int symbolKey,
             Function filter,
-            boolean cachedIndexReaderCursor,
+            int slotId,
             int indexDirection
     ) {
-        this(columnIndex, filter, cachedIndexReaderCursor, indexDirection);
+        this(columnIndex, filter, slotId, indexDirection);
         of(symbolKey);
     }
 
     public SymbolIndexFilteredRowCursor(
             int columnIndex,
             Function filter,
-            boolean cachedIndexReaderCursor,
+            int slotId,
             int indexDirection
     ) {
         this.columnIndex = columnIndex;
         this.filter = filter;
-        this.cachedIndexReaderCursor = cachedIndexReaderCursor;
+        this.slotId = slotId;
         this.indexDirection = indexDirection;
         this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     }
@@ -86,7 +86,7 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     public SymbolIndexFilteredRowCursor of(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         this.rowCursor = pageFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
-                .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(slotId, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
         record.init(pageFrameMemory);
         record.setRowIndex(0);
         return this;

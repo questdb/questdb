@@ -1454,7 +1454,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader: genCount=2, but per-gen sidecars exist
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         assertTrue(((CoveringRowCursor) cursor).hasCovering());
 
@@ -1511,7 +1511,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Verify ALL 30 covered values across both gens
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                         assertTrue(cc.hasCovering());
                         for (int i = 0; i < 30; i++) {
                             assertTrue("row " + i, cc.hasNext());
@@ -1612,7 +1612,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Key 260 is in stride 1, local key 4
-                        RowCursor cursor = reader.getCursor(true, 260, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 260, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
@@ -1623,7 +1623,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
 
                         // Key 299 is in stride 1, local key 43
-                        cursor = reader.getCursor(true, 299, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(0, 299, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
@@ -1632,7 +1632,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
 
                         // Key 0 is in stride 0 (control)
-                        cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
@@ -2671,7 +2671,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader sees genCount=2 with per-gen sidecar data
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         // Per-gen sidecars: hasCovering() returns true
@@ -2732,7 +2732,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Key 0: only gen 0 data (rows 0,2)
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
@@ -2743,7 +2743,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
 
                         // Key 1: gen 0 + gen 1 (rows 1,3,4,5)
-                        cc = (CoveringRowCursor) reader.getCursor(true, 1, 0, Long.MAX_VALUE);
+                        cc = (CoveringRowCursor) reader.getCursor(0, 1, 0, Long.MAX_VALUE);
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
                         assertEquals(1, cc.next());
@@ -2802,7 +2802,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Key 1: rows 1,3,5,7,9,11,13,15,17,19
-                        RowCursor cursor = reader.getCursor(true, 1, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 1, 0, Long.MAX_VALUE);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         int count = 0;
@@ -2858,7 +2858,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
 
@@ -4860,7 +4860,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
 
@@ -6422,7 +6422,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Key 0 is in stride 0 (clean stride) — should have correct covered value
-                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue("covering should be available after incremental seal", cc.hasCovering());
@@ -6432,7 +6432,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
 
                         // Key 100 is in stride 0 (clean stride)
-                        cursor = reader.getCursor(true, 100, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(0, 100, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
@@ -6441,7 +6441,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
 
                         // Key 260 is in stride 1 (dirty stride) — should also work
-                        cursor = reader.getCursor(true, 260, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(0, 260, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
@@ -7278,7 +7278,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                    RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                     // Cursor should still implement CoveringRowCursor but hasCovering() returns false
                     assertTrue(cursor instanceof CoveringRowCursor);
                     assertFalse(((CoveringRowCursor) cursor).hasCovering());
@@ -7634,7 +7634,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Read back with covering cursor — verify both row IDs and covered values
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
@@ -7655,7 +7655,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
 
                         // key 1: rows 1, 4 -> values 20.0, 50.0
-                        cursor = reader.getCursor(true, 1, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(0, 1, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
 

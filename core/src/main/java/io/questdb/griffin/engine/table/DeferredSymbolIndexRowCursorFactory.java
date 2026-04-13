@@ -33,22 +33,22 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
-    private final boolean cachedIndexReaderCursor;
     private final int columnIndex;
     private final int indexDirection;
+    private final int slotId;
     private final Function symbol;
     private int symbolKey;
 
     public DeferredSymbolIndexRowCursorFactory(
             int columnIndex,
             Function symbol,
-            boolean cachedIndexReaderCursor,
+            int slotId,
             int indexDirection
     ) {
         this.columnIndex = columnIndex;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.symbol = symbol;
-        this.cachedIndexReaderCursor = cachedIndexReaderCursor;
+        this.slotId = slotId;
         this.indexDirection = indexDirection;
     }
 
@@ -60,7 +60,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
 
         return pageFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
-                .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(slotId, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
     }
 
     @Override

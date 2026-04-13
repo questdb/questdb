@@ -34,22 +34,22 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 
 public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFactory {
-    private final boolean cachedIndexReaderCursor;
     private final int columnIndex;
     private final int indexDirection;
+    private final int slotId;
     private final Function symbolFunction;
     private int symbolKey;
 
     public SymbolIndexRowCursorFactory(
             int columnIndex,
             int symbolKey,
-            boolean cachedIndexReaderCursor,
+            int slotId,
             int indexDirection,
             Function symbolFunction
     ) {
         this.columnIndex = columnIndex;
         this.symbolKey = TableUtils.toIndexKey(symbolKey);
-        this.cachedIndexReaderCursor = cachedIndexReaderCursor;
+        this.slotId = slotId;
         this.indexDirection = indexDirection;
         this.symbolFunction = symbolFunction;
     }
@@ -58,7 +58,7 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         return pageFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
-                .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(slotId, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
     }
 
     @Override

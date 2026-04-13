@@ -162,14 +162,14 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
                 rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolFunction,
-                        cursorFactories.size() == 0,
+                        cursorFactories.size(),
                         indexDirection
                 );
             } else {
                 rowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        cursorFactories.size() == 0,
+                        cursorFactories.size(),
                         indexDirection,
                         symbolFunction
                 );
@@ -180,7 +180,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
                         columnIndex,
                         symbolFunction,
                         filter,
-                        cursorFactories.size() == 0,
+                        cursorFactories.size(),
                         indexDirection
                 );
             } else {
@@ -188,7 +188,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
                         columnIndex,
                         symbolKey,
                         filter,
-                        cursorFactories.size() == 0,
+                        cursorFactories.size(),
                         indexDirection,
                         symbolFunction
                 );

@@ -1546,7 +1546,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                         // expect only the very first row in zero partition to have 'sy1' symbol value
                         StaticSymbolTable symbolTable = reader.getSymbolTable(columnIndex);
-                        RowCursor ic = indexReader.getCursor(true, TableUtils.toIndexKey(symbolTable.keyOf("sy1")), 0, 1);
+                        RowCursor ic = indexReader.getCursor(0, TableUtils.toIndexKey(symbolTable.keyOf("sy1")), 0, 1);
                         Assert.assertTrue(ic.hasNext());
                         Assert.assertEquals(0, ic.next());
                         Assert.assertFalse(ic.hasNext());

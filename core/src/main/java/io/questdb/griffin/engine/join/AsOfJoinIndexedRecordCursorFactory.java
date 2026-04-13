@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -168,7 +168,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 // Use Record.getUpdateRowId() to get the absolute row ID.
                 slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo()));
                 final long rowLo = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
-                RowCursor rowCursor = indexReader.getCursor(false, symbolKey, rowLo, rowMax + rowLo);
+                RowCursor rowCursor = indexReader.getCursor(0, symbolKey, rowLo, rowMax + rowLo);
 
                 // Check the first entry only. They are sorted descending by timestamp,
                 // so there aren't any entries more recent than the first one.

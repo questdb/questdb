@@ -24,23 +24,27 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 
 public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFactory {
-    private final boolean cachedIndexReaderCursor;
     private final int columnIndex;
     private final LatestByValueIndexedRowCursor cursor = new LatestByValueIndexedRowCursor();
     private final Function symbolFunc;
     private int symbolKey;
 
-    public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc, boolean cachedIndexReaderCursor) {
+    public LatestByValueDeferredIndexedRowCursorFactory(int columnIndex, Function symbolFunc) {
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;
         symbolKey = SymbolTable.VALUE_NOT_FOUND;
-        this.cachedIndexReaderCursor = cachedIndexReaderCursor;
     }
 
     @Override
@@ -48,7 +52,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             RowCursor indexReaderCursor = pageFrame
                     .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
-                    .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                    .getCursor(0, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
 
             if (indexReaderCursor.hasNext()) {
                 cursor.of(indexReaderCursor.next());
