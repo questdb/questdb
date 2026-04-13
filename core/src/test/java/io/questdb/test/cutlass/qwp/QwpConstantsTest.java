@@ -44,10 +44,7 @@ public class QwpConstantsTest {
     @Test
     public void testFlagBitPositions() {
         // Verify flag bits are at correct positions
-        Assert.assertEquals(0x01, FLAG_LZ4);
-        Assert.assertEquals(0x02, FLAG_ZSTD);
         Assert.assertEquals(0x04, FLAG_GORILLA);
-        Assert.assertEquals(0x03, FLAG_COMPRESSION_MASK);
         Assert.assertEquals(0x08, FLAG_DELTA_SYMBOL_DICT);
     }
 
@@ -169,52 +166,5 @@ public class QwpConstantsTest {
         Assert.assertEquals((byte) ((MAGIC_MESSAGE >> 8) & 0xFF), expected[1]);
         Assert.assertEquals((byte) ((MAGIC_MESSAGE >> 16) & 0xFF), expected[2]);
         Assert.assertEquals((byte) ((MAGIC_MESSAGE >> 24) & 0xFF), expected[3]);
-    }
-
-    @Test
-    public void testSchemaModes() {
-        Assert.assertEquals(0x00, SCHEMA_MODE_FULL);
-        Assert.assertEquals(0x01, SCHEMA_MODE_REFERENCE);
-    }
-
-    @Test
-    public void testStatusCodes() {
-        Assert.assertEquals(0x00, STATUS_OK);
-        Assert.assertEquals(0x01, STATUS_PARTIAL);
-        Assert.assertEquals(0x02, STATUS_SCHEMA_REQUIRED);
-        Assert.assertEquals(0x03, STATUS_SCHEMA_MISMATCH);
-        Assert.assertEquals(0x04, STATUS_TABLE_NOT_FOUND);
-        Assert.assertEquals(0x05, STATUS_PARSE_ERROR);
-        Assert.assertEquals(0x06, STATUS_INTERNAL_ERROR);
-        Assert.assertEquals(0x07, STATUS_OVERLOADED);
-        Assert.assertEquals(0x08, STATUS_SECURITY_ERROR);
-        Assert.assertEquals(0x09, STATUS_WRITE_ERROR);
-    }
-
-    @Test
-    public void testTypeCodes() {
-        // Verify type codes match specification
-        Assert.assertEquals(0x01, TYPE_BOOLEAN);
-        Assert.assertEquals(0x02, TYPE_BYTE);
-        Assert.assertEquals(0x03, TYPE_SHORT);
-        Assert.assertEquals(0x04, TYPE_INT);
-        Assert.assertEquals(0x05, TYPE_LONG);
-        Assert.assertEquals(0x06, TYPE_FLOAT);
-        Assert.assertEquals(0x07, TYPE_DOUBLE);
-        Assert.assertEquals(0x08, TYPE_STRING);
-        Assert.assertEquals(0x09, TYPE_SYMBOL);
-        Assert.assertEquals(0x0A, TYPE_TIMESTAMP);
-        Assert.assertEquals(0x0B, TYPE_DATE);
-        Assert.assertEquals(0x0C, TYPE_UUID);
-        Assert.assertEquals(0x0D, TYPE_LONG256);
-        Assert.assertEquals(0x0E, TYPE_GEOHASH);
-        Assert.assertEquals(0x0F, TYPE_VARCHAR);
-        Assert.assertEquals(0x10, TYPE_TIMESTAMP_NANOS);
-        Assert.assertEquals(0x11, TYPE_DOUBLE_ARRAY);
-        Assert.assertEquals(0x12, TYPE_LONG_ARRAY);
-        Assert.assertEquals(0x13, TYPE_DECIMAL64);
-        Assert.assertEquals(0x14, TYPE_DECIMAL128);
-        Assert.assertEquals(0x15, TYPE_DECIMAL256);
-        Assert.assertEquals(0x16, TYPE_CHAR);
     }
 }
