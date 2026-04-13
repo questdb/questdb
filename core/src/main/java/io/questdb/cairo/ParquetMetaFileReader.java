@@ -359,6 +359,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         this.fileSize = fileSize;
         this.footerAddr = addr + footerOffset;
         this.columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
+        long headerEndOffset = HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
+        if (headerEndOffset > fileSize) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm columnCount [count=").put(columnCount)
+                    .put(", fileSize=").put(fileSize)
+                    .put(']');
+        }
         this.rowGroupCount = Unsafe.getUnsafe().getInt(this.footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
 
         final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;

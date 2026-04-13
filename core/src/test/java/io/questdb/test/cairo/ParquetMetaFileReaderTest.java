@@ -316,6 +316,25 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorruptedColumnCountValidatedBeforeAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                // Corrupt columnCount to a huge value. Without the bounds check,
+                // accessing column descriptors would read past the mmap (SIGSEGV).
+                Unsafe.getUnsafe().putInt(file.dataPtr + 20, 1_000_000_000);
+
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                try {
+                    reader.of(file.dataPtr, file.dataLen);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage().contains("invalid _pm columnCount"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFileTooSmall() throws Exception {
         assertMemoryLeak(() -> {
             // Allocate a tiny buffer that's too small for any valid _pm file
