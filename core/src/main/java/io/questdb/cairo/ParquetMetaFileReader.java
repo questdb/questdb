@@ -355,10 +355,11 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(']');
         }
 
-        this.addr = addr;
-        this.fileSize = fileSize;
-        this.footerAddr = addr + footerOffset;
-        this.columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
+        // Use local variables for all validation. Fields are only assigned
+        // at the very end so that a validation failure leaves isOpen()==false,
+        // preventing double-munmap in callers that check isOpen() in catch blocks.
+        long footerAddr = addr + footerOffset;
+        int columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
         long headerEndOffset = HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
         if (headerEndOffset > fileSize) {
             throw CairoException.critical(0)
@@ -366,7 +367,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(", fileSize=").put(fileSize)
                     .put(']');
         }
-        this.rowGroupCount = Unsafe.getUnsafe().getInt(this.footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
+        int rowGroupCount = Unsafe.getUnsafe().getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
 
         final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
         final long footerLengthUnsigned = Integer.toUnsignedLong(footerLength);
@@ -379,9 +380,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
         long rowCount = 0;
         for (int i = 0; i < rowGroupCount; i++) {
-            rowCount += Unsafe.getUnsafe().getLong(rowGroupBlockAddr(i));
+            long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * 4;
+            int stored = Unsafe.getUnsafe().getInt(entryAddr);
+            rowCount += Unsafe.getUnsafe().getLong(addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT));
         }
-        this.totalRowCount = rowCount;
 
         long featureFlags = Unsafe.getUnsafe().getLong(addr + HEADER_FEATURE_FLAGS_OFF);
         long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK;
@@ -397,6 +399,14 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put("unexpected _pm footer feature bytes [bytes=").put(footerExtra)
                     .put(']');
         }
+
+        // All validations passed — commit state.
+        this.addr = addr;
+        this.fileSize = fileSize;
+        this.footerAddr = footerAddr;
+        this.columnCount = columnCount;
+        this.rowGroupCount = rowGroupCount;
+        this.totalRowCount = rowCount;
     }
 
     private static native boolean canSkipRowGroup0(
