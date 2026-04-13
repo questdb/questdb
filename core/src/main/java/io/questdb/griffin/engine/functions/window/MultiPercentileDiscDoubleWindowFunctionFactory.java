@@ -295,6 +295,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             super.reopen();
             listMemory.close();
             resultMemory.close();
+            result = Misc.free(result);
         }
 
         @Override
@@ -302,6 +303,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             super.reset();
             Misc.free(listMemory);
             Misc.free(resultMemory);
+            result = Misc.free(result);
         }
 
         @Override
@@ -319,6 +321,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             super.toTop();
             listMemory.truncate();
             resultMemory.truncate();
+            result = Misc.free(result);
         }
 
         private long partition(long listPtr, long left, long right) {
@@ -374,6 +377,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
         private final Function percentilesFunc;
         private final int percentilesPos;
         private final int type;
+        private boolean isResultValid;
         private DirectArray result;
         private double[] results;
         private long size;
@@ -396,6 +400,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             Misc.free(percentilesFunc);
             Misc.free(listMemory);
             Misc.free(result);
+            results = null;
         }
 
         @Override
@@ -405,7 +410,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                 result.setType(type);
             }
 
-            if (results != null) {
+            if (isResultValid) {
                 result.setDimLen(0, results.length);
                 result.applyShape();
                 for (int i = 0; i < results.length; i++) {
@@ -457,7 +462,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
         @Override
         public void preparePass2() {
             if (size == 0) {
-                results = null;
+                isResultValid = false;
                 return;
             }
 
@@ -468,8 +473,11 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             // Sort the list
             quickSort(0, size - 1);
 
-            // Calculate results for all percentiles
-            results = new double[percentileCount];
+            // Pre-allocate or reuse results array
+            if (results == null || results.length < percentileCount) {
+                results = new double[percentileCount];
+            }
+
             for (int i = 0; i < percentileCount; i++) {
                 double percentile = view.getDoubleAtAbsIndex(i);
                 double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
@@ -477,13 +485,16 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                 int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
                 results[i] = listMemory.getDouble(N * 8L);
             }
+
+            isResultValid = true;
         }
 
         @Override
         public void reopen() {
             listMemory.close();
             size = 0;
-            results = null;
+            result = Misc.free(result);
+            isResultValid = false;
         }
 
         @Override
@@ -491,7 +502,8 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             super.reset();
             Misc.free(listMemory);
             size = 0;
-            results = null;
+            result = Misc.free(result);
+            isResultValid = false;
         }
 
         @Override
@@ -506,7 +518,8 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             super.toTop();
             listMemory.truncate();
             size = 0;
-            results = null;
+            result = Misc.free(result);
+            isResultValid = false;
         }
 
         private long partition(long left, long right) {
