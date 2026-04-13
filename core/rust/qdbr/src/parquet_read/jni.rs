@@ -253,13 +253,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     }
 }
 
+const QUESTDB_ENCODING_PLAIN: i32 = 1;
+const QUESTDB_ENCODING_RLE_DICTIONARY: i32 = 2;
+const QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY: i32 = 3;
+const QUESTDB_ENCODING_DELTA_BINARY_PACKED: i32 = 4;
+const QUESTDB_ENCODING_BYTE_STREAM_SPLIT: i32 = 5;
+
 fn questdb_encoding_id_to_parquet_encoding(encoding_id: i32) -> ParquetResult<i32> {
     match encoding_id {
-        1 => Ok(0), // PLAIN
-        2 => Ok(8), // RLE_DICTIONARY
-        3 => Ok(6), // DELTA_LENGTH_BYTE_ARRAY
-        4 => Ok(5), // DELTA_BINARY_PACKED
-        5 => Ok(9), // BYTE_STREAM_SPLIT
+        QUESTDB_ENCODING_PLAIN => Ok(0),
+        QUESTDB_ENCODING_RLE_DICTIONARY => Ok(8),
+        QUESTDB_ENCODING_DELTA_LENGTH_BYTE_ARRAY => Ok(6),
+        QUESTDB_ENCODING_DELTA_BINARY_PACKED => Ok(5),
+        QUESTDB_ENCODING_BYTE_STREAM_SPLIT => Ok(9),
         _ => Err(fmt_err!(
             InvalidType,
             "unsupported parquet encoding id {}",

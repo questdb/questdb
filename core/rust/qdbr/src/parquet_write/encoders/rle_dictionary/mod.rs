@@ -62,7 +62,7 @@ impl<S> ColumnChunkDictState<S> {
         }
         Self {
             num_rows: 0,
-            keys: Vec::new(),
+            keys: Vec::with_capacity(num_rows),
             validity,
             null_count: 0,
             stats,

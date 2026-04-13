@@ -199,7 +199,7 @@ fn make_i16_data(row_count: usize, null_pct: u8, null_value: i16) -> Vec<i16> {
     let mut data = Vec::with_capacity(row_count);
     for i in 0..row_count {
         let base = if null_pct > 0 {
-            (i % 32000) as i16
+            (i % 32_000) as i16
         } else {
             (i as i16).wrapping_add(1)
         };
@@ -633,7 +633,7 @@ fn make_int96_data(row_count: usize, null_pct: u8) -> Vec<[u8; 12]> {
         if is_null_at(i, null_pct) {
             data.push(null_value);
         } else {
-            let julian_date = JULIAN_UNIX_EPOCH + 18000 + (i / 1000) as u32;
+            let julian_date = JULIAN_UNIX_EPOCH + 18_000 + (i / 1000) as u32;
             let nanos_in_day = (i % 1000) as u64 * 1_000_000_000;
             let mut bytes = [0u8; 12];
             bytes[0..8].copy_from_slice(&nanos_in_day.to_le_bytes());

@@ -118,7 +118,7 @@ fn dict_chunk_stats_int() {
         (1..=10).collect(),
         (100..=110).collect(),
         (1000..=1010).collect(),
-        (10000..=10010).collect(),
+        (10_000..=10_010).collect(),
     ];
     let columns: Vec<Column> = parts
         .iter()
@@ -130,7 +130,7 @@ fn dict_chunk_stats_int() {
     let datas = data_pages(&pages);
     assert_eq!(datas.len(), 1);
     let (min, max) = page_i32_min_max(datas[0]);
-    assert_eq!((min, max), (1, 10010));
+    assert_eq!((min, max), (1, 10_010));
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn dict_chunk_stats_decimal64() {
     };
     let (min, max) = read_stats(datas[0]);
     assert_eq!(min, 100i64.to_be_bytes());
-    assert_eq!(max, 11000i64.to_be_bytes());
+    assert_eq!(max, 11_000i64.to_be_bytes());
 }
 
 #[test]

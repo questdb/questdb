@@ -74,7 +74,7 @@ pub fn encode_string(
                     let key = if let Some(&id) = dict_map.get(&utf16) {
                         id
                     } else {
-                        total_dict_bytes += 4 + utf16.len() * 2;
+                        total_dict_bytes += 4 + utf16.len() * 3;
                         let id = u32::try_from(dict_entries.len())
                             .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
                         dict_map.insert(utf16, id);
