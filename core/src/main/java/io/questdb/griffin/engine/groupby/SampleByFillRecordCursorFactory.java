@@ -64,7 +64,7 @@ import java.util.Arrays;
  * Pass 1: iterate sorted base cursor, discover all unique key combinations.
  * Pass 2: iterate again, emit data rows + fill rows for missing keys per bucket.
  * <p>
- * Expects sorted input (ORDER BY ts). Reports followedOrderByAdvice=true.
+ * Expects sorted input (ORDER BY ts). Reports followedOrderByAdvice=false — the outer sort handles ordering.
  */
 public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int FILL_CONSTANT = -1;
@@ -311,7 +311,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
             // If we're in the middle of emitting fill rows for absent keys
             if (isEmittingFills) {
-                return emitNextFillRow();
+                if (emitNextFillRow()) {
+                    return true;
+                }
+                // emitNextFillRow exhausted gap buckets — fall through to main loop
             }
 
             while (nextBucketTimestamp < maxTimestamp) {
@@ -349,6 +352,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         MapKey mapKey = keysMap.withKey();
                         keySink.copy(baseRecord, mapKey);
                         MapValue value = mapKey.findValue();
+                        assert value != null : "key discovered in pass 1 must exist in keysMap";
                         int keyIdx = (int) value.getLong(KEY_INDEX_SLOT);
                         keyPresent[keyIdx] = true;
                         if (hasPrevFill) {
@@ -370,7 +374,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // Emit fills for absent keys in the current bucket
                         isEmittingFills = true;
                         keysMapCursor.toTop();
-                        return emitNextFillRow();
+                        if (emitNextFillRow()) {
+                            return true;
+                        }
+                        continue; // gap fills exhausted, continue main loop
                     }
 
                     if (keysMap != null && keyCount > 0) {
@@ -378,7 +385,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         isEmittingFills = true;
                         keysMapCursor.toTop();
                         Arrays.fill(keyPresent, 0, keyCount, false);
-                        return emitNextFillRow();
+                        if (emitNextFillRow()) {
+                            return true;
+                        }
+                        continue; // gap fills exhausted, continue main loop
                     }
 
                     // Non-keyed gap
@@ -444,22 +454,37 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private boolean emitNextFillRow() {
-            while (keysMapCursor.hasNext()) {
-                MapValue value = keysMapRecord.getValue();
-                int keyIdx = (int) value.getLong(KEY_INDEX_SLOT);
-                if (!keyPresent[keyIdx]) {
-                    fillRecord.isGapFilling = true;
-                    fillTimestampFunc.value = nextBucketTimestamp;
-                    return true;
+            while (true) {
+                // Inner loop: scan remaining keys in current bucket
+                while (keysMapCursor.hasNext()) {
+                    MapValue value = keysMapRecord.getValue();
+                    int keyIdx = (int) value.getLong(KEY_INDEX_SLOT);
+                    if (!keyPresent[keyIdx]) {
+                        fillRecord.isGapFilling = true;
+                        fillTimestampFunc.value = nextBucketTimestamp;
+                        return true;
+                    }
                 }
+                // Bucket exhausted — advance
+                Arrays.fill(keyPresent, 0, keyCount, false);
+                nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
+                hasDataForCurrentBucket = false;
+                isEmittingFills = false;
+
+                // Check if next bucket also needs fills (iterative, no recursion)
+                if (nextBucketTimestamp >= maxTimestamp) {
+                    return false;
+                }
+                if (hasPendingRow && pendingTs == nextBucketTimestamp) {
+                    return false; // next bucket has data — let hasNext() handle it
+                }
+                if (baseCursorExhausted && !hasExplicitTo) {
+                    return false;
+                }
+                // Next bucket is a gap — emit fills for all keys
+                isEmittingFills = true;
+                keysMapCursor.toTop();
             }
-            // All keys checked — done with this bucket's fills
-            Arrays.fill(keyPresent, 0, keyCount, false);
-            nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
-            hasDataForCurrentBucket = false;
-            isEmittingFills = false;
-            // Continue with the main loop
-            return hasNext();
         }
 
         private void initialize() {
@@ -809,6 +834,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getGeoByte(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getGeoByte(outputColToKeyPos[col]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (byte) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoByte(null);
                 return 0;
             }
@@ -818,6 +844,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getGeoInt(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getGeoInt(outputColToKeyPos[col]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoInt(null);
                 return Numbers.INT_NULL;
             }
@@ -827,6 +854,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getGeoLong(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getGeoLong(outputColToKeyPos[col]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoLong(null);
                 return Numbers.LONG_NULL;
             }
@@ -836,6 +864,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (!isGapFilling) return baseRecord.getGeoShort(col);
                 int mode = fillMode(col);
                 if (mode == FILL_KEY) return keysMapRecord.getGeoShort(outputColToKeyPos[col]);
+                if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (short) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoShort(null);
                 return 0;
             }
