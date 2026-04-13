@@ -37,7 +37,7 @@ features:
 - **Batch processing**: Multiple tables and rows per message
 - **Optional compression**: LZ4 or Zstd at the message level
 - **Gorilla timestamp compression**: Delta-of-delta encoding for timestamps
-- **Schema references**: Reference previously sent schemas by monotonic ID
+- **Schema references**: Reference previously sent schemas by numeric ID
 
 ### Magic Bytes
 
@@ -301,9 +301,10 @@ column set changes.
 └─────────────────────────────────────────┘
 ```
 
-Schema IDs are dense, monotonically increasing integers starting at 0,
-assigned by the client and scoped to the lifetime of a single connection.
-They are global across all tables on the connection (not per-table).
+Schema IDs are non-negative integers assigned by the client and scoped to
+the lifetime of a single connection. They are global across all tables on
+the connection (not per-table). Clients typically assign them sequentially
+starting at 0, but the server does not require any particular ordering.
 
 The `type_code` byte contains the column type (0x01 through 0x16).
 
@@ -323,8 +324,9 @@ Used for subsequent batches when the server has already registered the schema.
 ```
 
 The server looks up the schema by its ID in the per-connection schema
-registry. IDs must arrive in strictly increasing order for full-mode
-schemas; the server rejects out-of-sequence IDs.
+registry. Full-mode schemas may arrive in any order and may re-register
+an existing ID; the server accepts any ID within the per-connection
+schema-ID limit.
 
 ---
 
