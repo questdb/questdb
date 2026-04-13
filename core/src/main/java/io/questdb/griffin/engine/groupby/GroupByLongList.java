@@ -190,40 +190,41 @@ public class GroupByLongList {
             throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", size=" + size());
         }
         while (from < to && lo < hi) {
-            int pivotIndex = partition(lo, hi);
+            long packed = partition3Way(lo, hi);
+            int lt = (int) (packed >>> 32);
+            int gt = (int) packed;
 
-            // Find which indices fall into which partition
-            int splitPoint = from;
-            while (splitPoint < to && indices[splitPoint] < pivotIndex) {
-                splitPoint++;
+            // Find which indices fall into each region: <lt, [lt..gt], >gt
+            int splitLeft = from;
+            while (splitLeft < to && indices[splitLeft] < lt) {
+                splitLeft++;
             }
 
-            // Skip the pivot itself if it's one of our target indices
-            int afterPivot = splitPoint;
-            while (afterPivot < to && indices[afterPivot] == pivotIndex) {
-                afterPivot++;
+            // Skip indices in the equal partition [lt..gt]
+            int splitRight = splitLeft;
+            while (splitRight < to && indices[splitRight] <= gt) {
+                splitRight++;
             }
 
-            boolean hasLeft = splitPoint > from;
-            boolean hasRight = afterPivot < to;
+            boolean hasLeft = splitLeft > from;
+            boolean hasRight = splitRight < to;
 
             if (hasLeft && hasRight) {
-                // Recurse on smaller side, iterate on larger to limit stack depth
-                if ((pivotIndex - lo) <= (hi - pivotIndex)) {
-                    quickSelectMultiple(lo, pivotIndex - 1, indices, from, splitPoint);
-                    lo = pivotIndex + 1;
-                    from = afterPivot;
+                if ((lt - lo) <= (hi - gt)) {
+                    quickSelectMultiple(lo, lt - 1, indices, from, splitLeft);
+                    lo = gt + 1;
+                    from = splitRight;
                 } else {
-                    quickSelectMultiple(pivotIndex + 1, hi, indices, afterPivot, to);
-                    hi = pivotIndex - 1;
-                    to = splitPoint;
+                    quickSelectMultiple(gt + 1, hi, indices, splitRight, to);
+                    hi = lt - 1;
+                    to = splitLeft;
                 }
             } else if (hasLeft) {
-                hi = pivotIndex - 1;
-                to = splitPoint;
+                hi = lt - 1;
+                to = splitLeft;
             } else if (hasRight) {
-                lo = pivotIndex + 1;
-                from = afterPivot;
+                lo = gt + 1;
+                from = splitRight;
             } else {
                 break;
             }
@@ -258,22 +259,11 @@ public class GroupByLongList {
     }
 
     /**
-     * Partition method using median-of-three pivot selection.
-     * Returns the final position of the pivot element.
-     * <p>
-     * After partitioning:
-     * - All elements to the left of the pivot are <= pivot
-     * - All elements to the right of the pivot are >= pivot
-     *
-     * @param lo the index of the first element, inclusive
-     * @param hi the index of the last element, inclusive
-     * @return the final index of the pivot element
+     * DNF three-way partition for quickSelectMultiple.
+     * Returns packed lt|gt as a long: lt in upper 32 bits, gt in lower 32 bits.
      */
-    private int partition(int lo, int hi) {
-        // Use median-of-three for better pivot selection
+    private long partition3Way(int lo, int hi) {
         int mid = lo + (hi - lo) / 2;
-
-        // Order lo, mid, hi
         if (getQuick(mid) < getQuick(lo)) {
             swap(lo, mid);
         }
@@ -283,36 +273,43 @@ public class GroupByLongList {
         if (getQuick(mid) < getQuick(hi)) {
             swap(mid, hi);
         }
-
-        // Now hi is the median, use it as pivot
         long pivot = getQuick(hi);
-        int i = lo - 1;
-
-        for (int j = lo; j < hi; j++) {
-            if (getQuick(j) <= pivot) {
+        int lt = lo;
+        int gt = hi;
+        int i = lo;
+        while (i <= gt) {
+            long v = getQuick(i);
+            if (v < pivot) {
+                swap(lt, i);
+                lt++;
                 i++;
-                swap(i, j);
+            } else if (v > pivot) {
+                swap(i, gt);
+                gt--;
+            } else {
+                i++;
             }
         }
-
-        swap(i + 1, hi);
-        return i + 1;
+        return ((long) lt << 32) | (gt & 0xFFFFFFFFL);
     }
 
     /**
-     * Internal QuickSelect implementation using the partition method.
-     * Iterative to avoid StackOverflowError on degenerate inputs (e.g. all-identical values).
+     * Internal QuickSelect implementation using DNF three-way partition.
+     * Iterative to avoid StackOverflowError on degenerate inputs.
+     * Handles all-equal data in O(n) because the equal partition is skipped entirely.
      */
     private void quickSelectImpl(int lo, int hi, int k) {
         while (lo < hi) {
-            int pivotIndex = partition(lo, hi);
+            long packed = partition3Way(lo, hi);
+            int lt = (int) (packed >>> 32);
+            int gt = (int) packed;
 
-            if (k < pivotIndex) {
-                hi = pivotIndex - 1;
-            } else if (k > pivotIndex) {
-                lo = pivotIndex + 1;
+            if (k < lt) {
+                hi = lt - 1;
+            } else if (k > gt) {
+                lo = gt + 1;
             } else {
-                break;
+                break; // k is in the equal partition
             }
         }
     }

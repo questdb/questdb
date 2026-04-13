@@ -165,10 +165,18 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        final long destPtr = destValue.getLong(valueIndex);
-        listA.of(destPtr);
-
         final long srcPtr = srcValue.getLong(valueIndex);
+        if (srcPtr <= 0) {
+            return; // source is null/empty, nothing to merge
+        }
+
+        final long destPtr = destValue.getLong(valueIndex);
+        if (destPtr <= 0) {
+            destValue.putLong(valueIndex, srcPtr);
+            return; // destination is null/empty, take source as-is
+        }
+
+        listA.of(destPtr);
         listB.of(srcPtr);
 
         final long outPtr = listA.size() > listB.size() ? listA.add(listB) : listB.add(listA);

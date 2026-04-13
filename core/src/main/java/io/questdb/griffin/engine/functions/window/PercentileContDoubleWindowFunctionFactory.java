@@ -80,6 +80,10 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
         Function percentileFunc = args.getQuick(1);
         int percentilePos = argPositions.getQuick(1);
 
+        if (!percentileFunc.isConstant()) {
+            throw SqlException.$(percentilePos, "percentile argument must be a constant");
+        }
+
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         windowContext.validate(position, false);
 
