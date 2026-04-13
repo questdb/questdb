@@ -101,7 +101,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 7. PREV Type-Safe Fast Path | 1/1 | Complete | 2026-04-10 |
 | 8. Fix Remaining Test Regressions | 0/1 | In Progress | — |
 | 9. Fix Critical Review Findings | 0/1 | Not Started | — |
-| 10. Fix Offset-Aware Bucket Alignment | 0/1 | Not Started | — |
+| 10. Fix Offset-Aware Bucket Alignment | 1/1 | Complete   | 2026-04-13 |
 
 ### Phase 6: Keyed Fill with FROM/TO Range
 **Goal**: Keyed FILL queries with FROM/TO range emit the cartesian product of all keys for every bucket in the range, including leading and trailing fill rows for all keys
@@ -171,6 +171,6 @@ Plans:
   2. Fill cursor's bucket sequence matches timestamp_floor_utc bucket boundaries for all offset values
   3. Non-keyed and keyed queries with offset + FROM (no TO) produce correct, finite results
   4. All existing tests still pass
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [ ] 10-01-PLAN.md -- Propagate calendar offset through optimizer/codegen/factory, fix bucket alignment in initialize(), add 5 offset+fill tests
+- [x] 10-01-PLAN.md -- Propagate calendar offset through optimizer/codegen/factory, fix bucket alignment in initialize(), add 5 offset+fill tests

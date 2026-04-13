@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 09-01-PLAN.md
-last_updated: "2026-04-13T11:21:04.977Z"
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-04-13T14:41:44.710Z"
 last_activity: 2026-04-13
 progress:
-  total_phases: 9
-  completed_phases: 7
-  total_plans: 8
-  completed_plans: 7
-  percent: 88
+  total_phases: 10
+  completed_phases: 8
+  total_plans: 9
+  completed_plans: 8
+  percent: 89
 ---
 
 # Project State
@@ -58,6 +58,7 @@ Progress: [######....] 60%
 | Phase 07 P01 | 49m | 2 tasks | 5 files |
 | Phase 08 P01 | 273m | 2 tasks | 7 files |
 | Phase 09 P01 | 23m | 2 tasks | 2 files |
+| Phase 10 P01 | 16m | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,7 @@ Recent decisions affecting current work:
 - [Phase 08]: supportsRandomAccess=false for all fill cursor tests; ASOF JOIN also routes through fast path
 - [Phase 09]: Assert guard (not null-check) at findValue() because pass 1 discovers all keys from the same cursor
 - [Phase 09]: Iterative while(true) loop in emitNextFillRow replaces recursive hasNext call; hasNext call sites fall through on false
+- [Phase 10]: Propagate fillOffset only for non-timezone queries to avoid double-application of offset
 
 ### Roadmap Evolution
 
@@ -102,6 +104,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-13T11:21:04.975Z
-Stopped at: Completed 09-01-PLAN.md
+Last session: 2026-04-13T14:41:44.707Z
+Stopped at: Completed 10-01-PLAN.md
 Resume file: None
