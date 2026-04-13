@@ -7,7 +7,6 @@
 /// thousands of row groups.
 use crate::error::{Error, Result};
 
-
 /// Cached footer data from the original Parquet file.
 /// Stores the raw Thrift-serialized bytes and the byte offsets of each
 /// individual RowGroup entry within those bytes.
@@ -238,34 +237,34 @@ mod tests {
     use super::*;
     use parquet_format_safe::thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
     use parquet_format_safe::{
-        ColumnChunk, ColumnMetaData, CompressionCodec, Encoding, FieldRepetitionType,
-        FileMetaData, KeyValue, RowGroup, SchemaElement, Statistics, Type,
+        ColumnChunk, ColumnMetaData, CompressionCodec, Encoding, FieldRepetitionType, FileMetaData,
+        KeyValue, RowGroup, SchemaElement, Statistics, Type,
     };
 
     /// Helper: creates a root SchemaElement with the given number of children.
     fn root_schema(name: &str, num_children: i32) -> SchemaElement {
         SchemaElement::new(
-            None::<Type>,                     // type_
-            None::<i32>,                      // type_length
-            None::<FieldRepetitionType>,      // repetition_type
-            name.to_string(),                 // name
-            num_children,                     // num_children
+            None::<Type>,                               // type_
+            None::<i32>,                                // type_length
+            None::<FieldRepetitionType>,                // repetition_type
+            name.to_string(),                           // name
+            num_children,                               // num_children
             None::<parquet_format_safe::ConvertedType>, // converted_type
-            None::<i32>,                      // scale
-            None::<i32>,                      // precision
-            None::<i32>,                      // field_id
-            None::<parquet_format_safe::LogicalType>, // logical_type
+            None::<i32>,                                // scale
+            None::<i32>,                                // precision
+            None::<i32>,                                // field_id
+            None::<parquet_format_safe::LogicalType>,   // logical_type
         )
     }
 
     /// Helper: creates a leaf SchemaElement for a column.
     fn leaf_schema(name: &str, type_: Type) -> SchemaElement {
         SchemaElement::new(
-            type_,                            // type_
-            None::<i32>,                      // type_length
-            FieldRepetitionType::OPTIONAL,    // repetition_type
-            name.to_string(),                 // name
-            None::<i32>,                      // num_children (leaf)
+            type_,                         // type_
+            None::<i32>,                   // type_length
+            FieldRepetitionType::OPTIONAL, // repetition_type
+            name.to_string(),              // name
+            None::<i32>,                   // num_children (leaf)
             None::<parquet_format_safe::ConvertedType>,
             None::<i32>,
             None::<i32>,
@@ -277,13 +276,13 @@ mod tests {
     /// Helper: creates a simple RowGroup with no columns.
     fn empty_row_group(num_rows: i64, ordinal: i16) -> RowGroup {
         RowGroup::new(
-            vec![],          // columns
-            100,             // total_byte_size
-            num_rows,        // num_rows
+            vec![],   // columns
+            100,      // total_byte_size
+            num_rows, // num_rows
             None::<Vec<parquet_format_safe::SortingColumn>>,
-            None::<i64>,     // file_offset
-            None::<i64>,     // total_compressed_size
-            ordinal,         // ordinal
+            None::<i64>, // file_offset
+            None::<i64>, // total_compressed_size
+            ordinal,     // ordinal
         )
     }
 
@@ -295,25 +294,25 @@ mod tests {
             vec![col_name.to_string()],
             CompressionCodec::SNAPPY,
             num_values,
-            num_values * 8,     // total_uncompressed_size
-            num_values * 6,     // total_compressed_size
+            num_values * 8, // total_uncompressed_size
+            num_values * 6, // total_compressed_size
             None::<Vec<KeyValue>>,
             0,                  // data_page_offset
             None::<i64>,        // index_page_offset
             None::<i64>,        // dictionary_page_offset
             None::<Statistics>, // statistics
             None::<Vec<parquet_format_safe::PageEncodingStats>>,
-            None::<i64>,        // bloom_filter_offset
-            None::<i32>,        // bloom_filter_length
+            None::<i64>, // bloom_filter_offset
+            None::<i32>, // bloom_filter_length
         );
         ColumnChunk::new(
-            None::<String>,  // file_path
-            0,               // file_offset
-            meta,            // meta_data
-            None::<i64>,     // offset_index_offset
-            None::<i32>,     // offset_index_length
-            None::<i64>,     // column_index_offset
-            None::<i32>,     // column_index_length
+            None::<String>, // file_path
+            0,              // file_offset
+            meta,           // meta_data
+            None::<i64>,    // offset_index_offset
+            None::<i32>,    // offset_index_length
+            None::<i64>,    // column_index_offset
+            None::<i32>,    // column_index_length
             None::<parquet_format_safe::ColumnCryptoMetaData>,
             None::<Vec<u8>>, // encrypted_column_metadata
         )
@@ -433,10 +432,10 @@ mod tests {
         let stats = Statistics::new(
             Some(vec![0xFF, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), // max
             Some(vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), // min
-            Some(42i64),   // null_count
-            Some(999i64),  // distinct_count
-            None::<Vec<u8>>, // max_value
-            None::<Vec<u8>>, // min_value
+            Some(42i64),                                                // null_count
+            Some(999i64),                                               // distinct_count
+            None::<Vec<u8>>,                                            // max_value
+            None::<Vec<u8>>,                                            // min_value
         );
 
         let meta = ColumnMetaData::new(
@@ -457,20 +456,33 @@ mod tests {
             None::<i32>,
         );
         let cc = ColumnChunk::new(
-            None::<String>, 0, meta,
-            None::<i64>, None::<i32>, None::<i64>, None::<i32>,
-            None::<parquet_format_safe::ColumnCryptoMetaData>, None::<Vec<u8>>,
+            None::<String>,
+            0,
+            meta,
+            None::<i64>,
+            None::<i32>,
+            None::<i64>,
+            None::<i32>,
+            None::<parquet_format_safe::ColumnCryptoMetaData>,
+            None::<Vec<u8>>,
         );
 
         let rg = RowGroup::new(
-            vec![cc], 40_000, 5000,
+            vec![cc],
+            40_000,
+            5000,
             None::<Vec<parquet_format_safe::SortingColumn>>,
-            None::<i64>, Some(30_000i64), 0i16,
+            None::<i64>,
+            Some(30_000i64),
+            0i16,
         );
 
         let metadata = FileMetaData::new(
             2,
-            vec![root_schema("stats_table", 1), leaf_schema("value", Type::INT64)],
+            vec![
+                root_schema("stats_table", 1),
+                leaf_schema("value", Type::INT64),
+            ],
             5000,
             vec![rg],
             None::<Vec<KeyValue>>,
@@ -485,7 +497,13 @@ mod tests {
         assert_eq!(cache.row_group_count(), 1);
 
         let rg = deserialize_row_group(cache.row_group_bytes(0));
-        let stats = rg.columns[0].meta_data.as_ref().unwrap().statistics.as_ref().unwrap();
+        let stats = rg.columns[0]
+            .meta_data
+            .as_ref()
+            .unwrap()
+            .statistics
+            .as_ref()
+            .unwrap();
         assert_eq!(stats.null_count, Some(42));
         assert_eq!(stats.distinct_count, Some(999));
     }
@@ -505,16 +523,14 @@ mod tests {
             ),
         ];
 
-        let rgs: Vec<RowGroup> = (0..2)
-            .map(|i| empty_row_group(500, i as i16))
-            .collect();
+        let rgs: Vec<RowGroup> = (0..2).map(|i| empty_row_group(500, i as i16)).collect();
 
         let metadata = FileMetaData::new(
             1,
             vec![root_schema("kv_test", 0)],
             1000,
             rgs,
-            kvs,  // key_value_metadata is field 5 which comes AFTER row_groups (field 4)
+            kvs, // key_value_metadata is field 5 which comes AFTER row_groups (field 4)
             Some("questdb-test-suite".to_string()),
             None::<Vec<parquet_format_safe::ColumnOrder>>,
             None::<parquet_format_safe::EncryptionAlgorithm>,
@@ -544,9 +560,13 @@ mod tests {
             .map(|i| {
                 let cols = vec![make_column_chunk("ts", Type::INT64, 100)];
                 RowGroup::new(
-                    cols, 800, 100,
+                    cols,
+                    800,
+                    100,
                     None::<Vec<parquet_format_safe::SortingColumn>>,
-                    None::<i64>, Some(600i64), i as i16,
+                    None::<i64>,
+                    Some(600i64),
+                    i as i16,
                 )
             })
             .collect();
@@ -598,9 +618,9 @@ mod tests {
 
         // FileMetaData field 2 (schema, list<SchemaElement>): delta=1, type=9 (LIST)
         data.push(0x19); // (1 << 4) | 9
-        // List header: 1 element, elem_type=12 (STRUCT)
+                         // List header: 1 element, elem_type=12 (STRUCT)
         data.push(0x1C); // (1 << 4) | 12
-        // Minimal SchemaElement: just field 4 (name), then STOP
+                         // Minimal SchemaElement: just field 4 (name), then STOP
         data.push(0x48); // field 4, delta=4, type=8 (BINARY)
         data.push(0x04); // varint: string length = 4
         data.extend_from_slice(b"root");
@@ -612,13 +632,13 @@ mod tests {
 
         // FileMetaData field 4 (row_groups, list<RowGroup>): delta=1, type=9 (LIST)
         data.push(0x19); // (1 << 4) | 9
-        // List header: 1 element, elem_type=12 (STRUCT)
+                         // List header: 1 element, elem_type=12 (STRUCT)
         data.push(0x1C); // (1 << 4) | 12
 
         // --- RowGroup struct ---
         // Field 1 (columns, list<ColumnChunk>): delta=1, type=9 (LIST)
         data.push(0x19); // (1 << 4) | 9
-        // Empty list: 0 elements, elem_type=12 (STRUCT)
+                         // Empty list: 0 elements, elem_type=12 (STRUCT)
         data.push(0x0C); // (0 << 4) | 12
 
         // Field 2 (total_byte_size, I64): delta=1, type=6
@@ -670,7 +690,7 @@ mod tests {
             2000,
             16_000,
             8_000,
-            col_kvs,  // key_value_metadata on the column
+            col_kvs, // key_value_metadata on the column
             0,
             None::<i64>,
             Some(100i64), // dictionary_page_offset
@@ -680,20 +700,33 @@ mod tests {
             None::<i32>,
         );
         let cc = ColumnChunk::new(
-            None::<String>, 0, meta,
-            None::<i64>, None::<i32>, None::<i64>, None::<i32>,
-            None::<parquet_format_safe::ColumnCryptoMetaData>, None::<Vec<u8>>,
+            None::<String>,
+            0,
+            meta,
+            None::<i64>,
+            None::<i32>,
+            None::<i64>,
+            None::<i32>,
+            None::<parquet_format_safe::ColumnCryptoMetaData>,
+            None::<Vec<u8>>,
         );
 
         let rg = RowGroup::new(
-            vec![cc], 16_000, 2000,
+            vec![cc],
+            16_000,
+            2000,
             None::<Vec<parquet_format_safe::SortingColumn>>,
-            None::<i64>, Some(8_000i64), 0i16,
+            None::<i64>,
+            Some(8_000i64),
+            0i16,
         );
 
         let metadata = FileMetaData::new(
             2,
-            vec![root_schema("kv_col_test", 1), leaf_schema("name", Type::BYTE_ARRAY)],
+            vec![
+                root_schema("kv_col_test", 1),
+                leaf_schema("name", Type::BYTE_ARRAY),
+            ],
             2000,
             vec![rg],
             None::<Vec<KeyValue>>,
@@ -754,7 +787,9 @@ mod tests {
                     make_column_chunk("val", Type::DOUBLE, 500),
                 ];
                 RowGroup::new(
-                    cols, 8000, 500,
+                    cols,
+                    8000,
+                    500,
                     None::<Vec<parquet_format_safe::SortingColumn>>,
                     Some(i as i64 * 8000),
                     Some(6000i64),
@@ -809,9 +844,12 @@ mod tests {
     fn test_truncated_footer_returns_error() {
         let rg = RowGroup::new(
             vec![make_column_chunk("x", Type::INT32, 10)],
-            80, 10,
+            80,
+            10,
             None::<Vec<parquet_format_safe::SortingColumn>>,
-            None::<i64>, None::<i64>, 0i16,
+            None::<i64>,
+            None::<i64>,
+            0i16,
         );
         let metadata = FileMetaData::new(
             1,

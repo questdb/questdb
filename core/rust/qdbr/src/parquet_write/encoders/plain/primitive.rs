@@ -12,7 +12,10 @@ use parquet2::statistics::{
 use parquet2::types::NativeType;
 
 use crate::parquet::error::ParquetResult;
-use crate::parquet_write::encoders::helpers::{collect_partition_chunk_views, PartitionChunkView};
+use crate::parquet_write::encoders::helpers::{
+    collect_partition_chunk_views, rows_per_primitive_page, slice_partition_chunk_views,
+    PartitionChunkView,
+};
 use crate::parquet_write::encoders::numeric::{self, SimdEncodable, StatsUpdater};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
@@ -34,6 +37,7 @@ pub fn encode_simd<T>(
 where
     T: SimdEncodable,
 {
+    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
@@ -48,10 +52,12 @@ where
         columns,
         first_partition_start,
         last_partition_end,
+        rows_per_page,
         bloom_set,
-        |bloom| {
+        |window, bloom| {
+            let page_segments = slice_partition_chunk_views(&segments, window);
             numeric::slice_segments_to_page_simd::<T>(
-                &segments,
+                &page_segments,
                 options,
                 primitive_type.clone(),
                 Encoding::Plain,
@@ -74,6 +80,7 @@ where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Default + num_traits::AsPrimitive<P> + Debug + Copy,
 {
+    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
@@ -88,10 +95,12 @@ where
         columns,
         first_partition_start,
         last_partition_end,
+        rows_per_page,
         bloom_set,
-        |bloom| {
+        |window, bloom| {
+            let page_segments = slice_partition_chunk_views(&segments, window);
             numeric::int_segments_to_page_notnull::<T, P>(
-                &segments,
+                &page_segments,
                 options,
                 primitive_type.clone(),
                 Encoding::Plain,
@@ -115,6 +124,7 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Debug + Copy,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
+    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
@@ -129,10 +139,12 @@ where
         columns,
         first_partition_start,
         last_partition_end,
+        rows_per_page,
         bloom_set,
-        |bloom| {
+        |window, bloom| {
+            let page_segments = slice_partition_chunk_views(&segments, window);
             numeric::int_segments_to_page_nullable::<T, P, UNSIGNED_STATS>(
-                &segments,
+                &page_segments,
                 options,
                 primitive_type.clone(),
                 Encoding::Plain,
@@ -154,6 +166,7 @@ pub fn encode_decimal<T>(
 where
     T: Nullable + NativeType + Debug + Copy,
 {
+    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
@@ -168,10 +181,12 @@ where
         columns,
         first_partition_start,
         last_partition_end,
+        rows_per_page,
         bloom_set,
-        |bloom| {
+        |window, bloom| {
+            let page_segments = slice_partition_chunk_views(&segments, window);
             numeric::decimal_segments_to_page_plain::<T>(
-                &segments,
+                &page_segments,
                 options,
                 primitive_type.clone(),
                 bloom,
@@ -189,6 +204,7 @@ pub fn encode_boolean(
     options: WriteOptions,
     _bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
+    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
@@ -199,8 +215,12 @@ pub fn encode_boolean(
         columns,
         first_partition_start,
         last_partition_end,
+        rows_per_page,
         None,
-        |_bloom| boolean_segments_to_page(&segments, options, primitive_type.clone()),
+        |window, _bloom| {
+            let page_segments = slice_partition_chunk_views(&segments, window);
+            boolean_segments_to_page(&page_segments, options, primitive_type.clone())
+        },
     )
 }
 

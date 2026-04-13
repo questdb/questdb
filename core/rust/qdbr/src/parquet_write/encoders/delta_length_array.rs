@@ -28,7 +28,7 @@ use parquet2::schema::types::PrimitiveType;
 
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::encoders::helpers::{
-    lock_bloom_set, partition_slice_range, rows_per_page, ChunkSlice, PartitionPageSlices,
+    lock_bloom_set, partition_slice_range, rows_per_primitive_page, ChunkSlice, PartitionPageSlices,
 };
 use crate::parquet_write::encoders::plain::{binary_to_page, string_to_page, varchar_to_page};
 use crate::parquet_write::file::WriteOptions;
@@ -44,7 +44,7 @@ pub fn encode_string(
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    let rpp = rows_per_page(&options, 8);
+    let rpp = rows_per_primitive_page(&options, primitive_type.physical_type);
     encode_per_partition(
         columns,
         first_partition_start,
@@ -78,7 +78,7 @@ pub fn encode_binary(
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    let rpp = rows_per_page(&options, 8);
+    let rpp = rows_per_primitive_page(&options, primitive_type.physical_type);
     encode_per_partition(
         columns,
         first_partition_start,
@@ -112,7 +112,7 @@ pub fn encode_varchar(
     options: WriteOptions,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
-    let rpp = rows_per_page(&options, 8);
+    let rpp = rows_per_primitive_page(&options, primitive_type.physical_type);
     encode_per_partition(
         columns,
         first_partition_start,

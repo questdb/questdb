@@ -46,9 +46,9 @@ use qdb_core::col_type::ColumnTypeTag;
 /// Encode a column chunk into Parquet pages, dispatching by physical type.
 ///
 /// `columns` carries one Column per partition (length 1 for single-partition
-/// row groups, N for multi-partition). All encoder paths materialize the
-/// selected logical chunk across those partitions and emit a single data page
-/// for it; dictionary paths prepend one dict page for the chunk.
+/// row groups, N for multi-partition). Encoder families may emit one or more
+/// data pages for the selected logical chunk depending on `data_page_size`;
+/// dictionary paths still prepend a single dict page per chunk.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_column_chunk(
     encoding: Encoding,
@@ -769,28 +769,33 @@ fn encode_array_raw(
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<Vec<Page>> {
-    use crate::parquet_write::encoders::helpers::partition_chunk_slice;
+    use crate::parquet_write::encoders::helpers::{
+        partition_slice_range, rows_per_group_page, PartitionPageSlices,
+    };
     let num_partitions = columns.len();
-    let mut pages = Vec::with_capacity(num_partitions);
+    let rows_per_page = rows_per_group_page(&options, columns[0].data_type)?;
+    let mut pages = Vec::new();
     for (part_idx, column) in columns.iter().enumerate() {
-        let chunk = partition_chunk_slice(
+        let (chunk_offset, chunk_length) = partition_slice_range(
             part_idx,
             num_partitions,
-            column,
+            column.row_count,
             first_partition_start,
             last_partition_end,
         );
         // SAFETY: JNI-backed, page-aligned, valid `[u8; 16]` aux entries.
         let aux: &[[u8; 16]] = unsafe { transmute_slice(column.secondary_data) };
-        let page = array::array_to_raw_page(
-            &aux[chunk.lower_bound..chunk.upper_bound],
-            column.primary_data,
-            chunk.adjusted_column_top,
-            options,
-            pt.clone(),
-            encoding,
-        )?;
-        pages.push(page);
+        for slice in PartitionPageSlices::new(column, chunk_offset, chunk_length, rows_per_page) {
+            let page = array::array_to_raw_page(
+                &aux[slice.lower_bound..slice.upper_bound],
+                column.primary_data,
+                slice.adjusted_column_top,
+                options,
+                pt.clone(),
+                encoding,
+            )?;
+            pages.push(page);
+        }
     }
     Ok(pages)
 }
@@ -998,7 +1003,9 @@ fn encode_group_dispatch(
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<Vec<Page>> {
-    use crate::parquet_write::encoders::helpers::partition_chunk_slice;
+    use crate::parquet_write::encoders::helpers::{
+        partition_slice_range, rows_per_group_page, PartitionPageSlices,
+    };
     let num_partitions = columns.len();
     let column_tag = columns[0].data_type.tag();
     if column_tag != ColumnTypeTag::Array {
@@ -1020,29 +1027,32 @@ fn encode_group_dispatch(
         }
     };
     let dim = columns[0].data_type.array_dimensionality()? as usize;
+    let rows_per_page = rows_per_group_page(&options, columns[0].data_type)?;
 
-    let mut pages = Vec::with_capacity(num_partitions);
+    let mut pages = Vec::new();
     for (part_idx, column) in columns.iter().enumerate() {
-        let chunk = partition_chunk_slice(
+        let (chunk_offset, chunk_length) = partition_slice_range(
             part_idx,
             num_partitions,
-            column,
+            column.row_count,
             first_partition_start,
             last_partition_end,
         );
         // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
         // page-aligned. The byte content represents valid `[u8; 16]` aux entries.
         let aux: &[[u8; 16]] = unsafe { transmute_slice(column.secondary_data) };
-        let page = array::array_to_page(
-            primitive_type.clone(),
-            dim,
-            &aux[chunk.lower_bound..chunk.upper_bound],
-            column.primary_data,
-            chunk.adjusted_column_top,
-            options,
-            encoding,
-        )?;
-        pages.push(page);
+        for slice in PartitionPageSlices::new(column, chunk_offset, chunk_length, rows_per_page) {
+            let page = array::array_to_page(
+                primitive_type.clone(),
+                dim,
+                &aux[slice.lower_bound..slice.upper_bound],
+                column.primary_data,
+                slice.adjusted_column_top,
+                options,
+                encoding,
+            )?;
+            pages.push(page);
+        }
     }
     Ok(pages)
 }

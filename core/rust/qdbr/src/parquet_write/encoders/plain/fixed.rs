@@ -10,7 +10,8 @@ use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
-    collect_partition_chunk_views, FlatValidity, PartitionChunkView,
+    collect_partition_chunk_views, rows_per_primitive_page, slice_partition_chunk_views,
+    FlatValidity, PartitionChunkView,
 };
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
@@ -32,6 +33,7 @@ pub fn encode_fixed_len_bytes<const N: usize>(
     reverse: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
+    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
     let segments = collect_partition_chunk_views(
         columns,
         first_partition_start,
@@ -46,9 +48,17 @@ pub fn encode_fixed_len_bytes<const N: usize>(
         columns,
         first_partition_start,
         last_partition_end,
+        rows_per_page,
         bloom_set,
-        |bloom| {
-            bytes_segments_to_page::<N>(&segments, reverse, options, primitive_type.clone(), bloom)
+        |window, bloom| {
+            let page_segments = slice_partition_chunk_views(&segments, window);
+            bytes_segments_to_page::<N>(
+                &page_segments,
+                reverse,
+                options,
+                primitive_type.clone(),
+                bloom,
+            )
         },
     )
 }

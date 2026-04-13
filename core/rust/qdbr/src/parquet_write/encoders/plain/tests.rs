@@ -111,15 +111,19 @@ fn encode_simd_long_with_column_top() {
 }
 
 #[test]
-fn encode_simd_single_page_ignores_data_page_size() {
+fn encode_simd_honors_data_page_size() {
     let data: Vec<i64> = (0..1000).collect();
     let col = make_column_with_top("col", ColumnTypeTag::Long, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Long);
     let opts = WriteOptions { data_page_size: Some(256), ..write_options() };
     let pages = encode_simd::<i64>(&[col], 0, data.len(), &pt, opts, None).expect("encode");
-    assert_eq!(pages.len(), 1);
-    let (num_values, _, _) = v2_header(&pages[0]);
-    assert_eq!(num_values, 1000);
+    assert_eq!(pages.len(), 32);
+    for page in &pages[..pages.len() - 1] {
+        let (num_values, _, _) = v2_header(page);
+        assert_eq!(num_values, 32);
+    }
+    let (last_num_values, _, _) = v2_header(pages.last().expect("last page"));
+    assert_eq!(last_num_values, 8);
 }
 
 #[test]

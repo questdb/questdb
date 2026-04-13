@@ -29,7 +29,7 @@ use parquet2::types::NativeType;
 
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::encoders::helpers::{
-    lock_bloom_set, partition_slice_range, rows_per_page, ChunkSlice, PartitionPageSlices,
+    lock_bloom_set, partition_slice_range, rows_per_primitive_page, ChunkSlice, PartitionPageSlices,
 };
 use crate::parquet_write::encoders::numeric::{self, SimdEncodable, StatsUpdater};
 use crate::parquet_write::file::WriteOptions;
@@ -50,7 +50,7 @@ pub fn encode_simd<T>(
 where
     T: SimdEncodable,
 {
-    let rpp = rows_per_page(&options, std::mem::size_of::<T>());
+    let rpp = rows_per_primitive_page(&options, primitive_type.physical_type);
     encode_per_partition(
         columns,
         first_partition_start,
@@ -87,7 +87,7 @@ where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Default + num_traits::AsPrimitive<P> + Debug,
 {
-    let rpp = rows_per_page(&options, std::mem::size_of::<P>());
+    let rpp = rows_per_primitive_page(&options, primitive_type.physical_type);
     encode_per_partition(
         columns,
         first_partition_start,
@@ -126,7 +126,7 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Debug,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
-    let rpp = rows_per_page(&options, std::mem::size_of::<P>());
+    let rpp = rows_per_primitive_page(&options, primitive_type.physical_type);
     encode_per_partition(
         columns,
         first_partition_start,

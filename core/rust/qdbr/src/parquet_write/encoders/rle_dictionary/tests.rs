@@ -444,13 +444,7 @@ fn dict_empty_input_yields_empty_dict() {
     let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Int);
     let pages = encode_simd::<i32>(&[col], 0, 0, &pt, write_options(), None).expect("encode");
-    let dicts = dict_pages(&pages);
-    assert_eq!(dicts.len(), 1);
-    assert_eq!(dicts[0].num_values, 0);
-    let datas = data_pages(&pages);
-    assert_eq!(datas.len(), 1);
-    let h = page_v2_header(datas[0]);
-    assert_eq!(h.num_values, 0);
+    assert!(pages.is_empty());
 }
 
 #[test]
@@ -464,6 +458,20 @@ fn dict_single_value_partition() {
     assert_eq!(dicts[0].num_values, 1);
     let (min, max) = page_i32_min_max(data_pages(&pages)[0]);
     assert_eq!((min, max), (42, 42));
+}
+
+#[test]
+fn dict_keeps_single_data_page_per_chunk() {
+    let data: Vec<i32> = (0..20).collect();
+    let col = make_column_with_top("col", ColumnTypeTag::Int, &data, 0, 0);
+    let pt = primitive_type_for(ColumnTypeTag::Int);
+    let opts = WriteOptions { data_page_size: Some(64), ..write_options() };
+    let pages = encode_simd::<i32>(&[col], 0, data.len(), &pt, opts, None).expect("encode");
+
+    assert_eq!(dict_pages(&pages).len(), 1);
+    let datas = data_pages(&pages);
+    assert_eq!(datas.len(), 1);
+    assert_eq!(page_v2_header(datas[0]).num_values, 20);
 }
 
 #[test]

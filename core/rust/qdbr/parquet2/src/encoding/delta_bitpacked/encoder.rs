@@ -23,10 +23,7 @@ pub fn encode_i32<I: Iterator<Item = i64>>(iterator: I, buffer: &mut Vec<u8>) {
     encode_impl::<_, true>(iterator, buffer)
 }
 
-fn encode_impl<I: Iterator<Item = i64>, const WRAP32: bool>(
-    mut iterator: I,
-    buffer: &mut Vec<u8>,
-) {
+fn encode_impl<I: Iterator<Item = i64>, const WRAP32: bool>(mut iterator: I, buffer: &mut Vec<u8>) {
     let block_size = 128;
     let mini_blocks = 1;
 

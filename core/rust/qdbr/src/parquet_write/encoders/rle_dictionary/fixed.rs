@@ -59,6 +59,9 @@ pub fn encode_fixed_len_bytes<const N: usize>(
 ) -> ParquetResult<Vec<Page>> {
     let num_partitions = columns.len();
     let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
+    if total_rows == 0 {
+        return Ok(vec![]);
+    }
     let null_value = fixed_len_null_value::<N>();
 
     let mut dict_map: RapidHashMap<[u8; N], u32> = RapidHashMap::default();
@@ -154,6 +157,9 @@ where
 {
     let num_partitions = columns.len();
     let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
+    if total_rows == 0 {
+        return Ok(vec![]);
+    }
     let mut dict_map: RapidHashMap<T::Bytes, u32> = RapidHashMap::default();
     let mut dict_entries: Vec<T> = Vec::new();
     let mut state = ColumnChunkDictState::<MaxMin<T>>::new(

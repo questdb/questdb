@@ -376,7 +376,9 @@ fn min_compression_ratio_met() -> Result<()> {
 fn min_compression_ratio_not_met_falls_back_to_uncompressed() -> Result<()> {
     // Random-looking data that won't compress well with snappy,
     // combined with an impossibly high ratio threshold.
-    let data: Vec<i32> = (0..10_000).map(|i: i32| i.wrapping_mul(0x9E3779B1u32 as i32)).collect();
+    let data: Vec<i32> = (0..10_000)
+        .map(|i: i32| i.wrapping_mul(0x9E3779B1u32 as i32))
+        .collect();
     let (codec, values) = write_and_read_codec(&data, CompressionOptions::Snappy, 100.0)?;
     // With ratio=100.0 the check will always fail → fall back to uncompressed.
     assert_eq!(codec, parquet2::compression::Compression::Uncompressed);
@@ -388,8 +390,7 @@ fn min_compression_ratio_not_met_falls_back_to_uncompressed() -> Result<()> {
 fn min_compression_ratio_uncompressed_codec_is_noop() -> Result<()> {
     // When the requested codec is already Uncompressed, ratio check is irrelevant.
     let data: Vec<i32> = (0..1_000).collect();
-    let (codec, values) =
-        write_and_read_codec(&data, CompressionOptions::Uncompressed, 100.0)?;
+    let (codec, values) = write_and_read_codec(&data, CompressionOptions::Uncompressed, 100.0)?;
     assert_eq!(codec, parquet2::compression::Compression::Uncompressed);
     assert_eq!(values, data.iter().copied().map(Some).collect::<Vec<_>>());
     Ok(())

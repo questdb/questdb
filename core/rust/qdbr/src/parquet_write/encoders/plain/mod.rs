@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use parquet2::page::Page;
 
 use crate::parquet::error::ParquetResult;
-use crate::parquet_write::encoders::helpers::{column_chunk_row_count, lock_bloom_set};
+use crate::parquet_write::encoders::helpers::{
+    column_chunk_row_count, lock_bloom_set, page_row_windows, PageRowWindow,
+};
 use crate::parquet_write::schema::Column;
 
 mod fixed;
@@ -23,23 +25,30 @@ pub use varlen::{
     string_to_dict_pages, string_to_page, varchar_to_dict_pages, varchar_to_page,
 };
 
-/// Internal helper: materialize the whole selected column chunk into a single
-/// page. Locks the bloom set once for the chunk.
+/// Internal helper: split the selected column chunk into one or more data pages
+/// using the configured `rows_per_page` heuristic. Locks the bloom set once for
+/// the whole chunk.
 fn encode_column_chunk<F>(
     columns: &[Column],
     first_partition_start: usize,
     last_partition_end: usize,
+    rows_per_page: usize,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
     mut emit: F,
 ) -> ParquetResult<Vec<Page>>
 where
-    F: FnMut(Option<&mut HashSet<u64>>) -> ParquetResult<Page>,
+    F: FnMut(PageRowWindow, Option<&mut HashSet<u64>>) -> ParquetResult<Page>,
 {
-    if column_chunk_row_count(columns, first_partition_start, last_partition_end) == 0 {
+    let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
+    if total_rows == 0 {
         return Ok(vec![]);
     }
 
     let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
-    let bloom = bloom_guard.as_deref_mut();
-    Ok(vec![emit(bloom)?])
+    let mut bloom = bloom_guard.as_deref_mut();
+    let mut pages = Vec::with_capacity(total_rows.div_ceil(rows_per_page));
+    for window in page_row_windows(total_rows, rows_per_page) {
+        pages.push(emit(window, bloom.as_deref_mut())?);
+    }
+    Ok(pages)
 }

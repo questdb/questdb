@@ -30,8 +30,11 @@ pub fn encode_string(
 ) -> ParquetResult<Vec<Page>> {
     let num_partitions = columns.len();
     let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
+    if total_rows == 0 {
+        return Ok(vec![]);
+    }
     let mut dict_map: RapidHashMap<&[u16], u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<&[u16]> = Vec::new();
+    let mut dict_entries: Vec<Vec<u8>> = Vec::new();
     let mut total_dict_bytes = 0usize;
     let mut state = ColumnChunkDictState::<BinaryMaxMinStats>::new(
         Repetition::Optional,
@@ -74,14 +77,22 @@ pub fn encode_string(
                     let key = if let Some(&id) = dict_map.get(&utf16) {
                         id
                     } else {
-                        total_dict_bytes += 4 + utf16.len() * 3;
+                        let mut utf8 = Vec::with_capacity(utf16.len() * 3);
+                        let utf8_len = write_utf8_from_utf16_iter(&mut utf8, utf16.iter().copied())
+                            .map_err(|e| {
+                                fmt_err!(Layout, "invalid UTF-16 data in string column: {e}")
+                            })?;
+                        total_dict_bytes += 4 + utf8_len;
                         let id = u32::try_from(dict_entries.len())
                             .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
                         dict_map.insert(utf16, id);
-                        dict_entries.push(utf16);
+                        dict_entries.push(utf8);
                         id
                     };
                     state.push_optional_value(key);
+                    if let Some(ref mut stats) = state.stats {
+                        stats.update(&dict_entries[key as usize]);
+                    }
                 }
                 None => {
                     state.push_optional_null();
@@ -95,19 +106,11 @@ pub fn encode_string(
     {
         let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
         let mut bloom = bloom_guard.as_deref_mut();
-        for utf16 in &dict_entries {
-            let entry_start = dict_buffer.len();
-            dict_buffer.extend_from_slice(&(0u32).to_le_bytes());
-            let utf8_len = write_utf8_from_utf16_iter(&mut dict_buffer, utf16.iter().copied())
-                .map_err(|e| fmt_err!(Layout, "invalid UTF-16 data in string column: {e}"))?;
-            let utf8_len_bytes = (utf8_len as u32).to_le_bytes();
-            dict_buffer[entry_start..(entry_start + 4)].copy_from_slice(&utf8_len_bytes);
-            let utf8_slice = &dict_buffer[entry_start + 4..entry_start + 4 + utf8_len];
+        for utf8 in &dict_entries {
+            dict_buffer.extend_from_slice(&(utf8.len() as u32).to_le_bytes());
+            dict_buffer.extend_from_slice(utf8);
             if let Some(ref mut h) = bloom {
-                h.insert(hash_byte(utf8_slice));
-            }
-            if let Some(ref mut stats) = state.stats {
-                stats.update(utf8_slice);
+                h.insert(hash_byte(utf8));
             }
         }
     }
@@ -221,6 +224,9 @@ where
 {
     let num_partitions = columns.len();
     let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
+    if total_rows == 0 {
+        return Ok(vec![]);
+    }
     let mut dict_map: RapidHashMap<&[u8], u32> = RapidHashMap::default();
     let mut dict_entries: Vec<&[u8]> = Vec::new();
     let mut total_keys_bytes = 0usize;
@@ -255,6 +261,9 @@ where
                         id
                     };
                     state.push_optional_value(key);
+                    if let Some(ref mut stats) = state.stats {
+                        stats.update(s);
+                    }
                 }
                 None => {
                     state.push_optional_null();
@@ -272,9 +281,6 @@ where
             dict_buffer.extend_from_slice(entry);
             if let Some(ref mut h) = bloom {
                 h.insert(hash_byte(entry));
-            }
-            if let Some(ref mut stats) = state.stats {
-                stats.update(entry);
             }
         }
     }
