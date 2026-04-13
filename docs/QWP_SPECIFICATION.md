@@ -684,7 +684,6 @@ varints for per-table error details:
 |------|--------|-----------------|-----------|------------------------------------------------------|
 | 0    | `0x00` | OK              | -         | Batch accepted                                       |
 | 1    | `0x01` | PARTIAL         | No        | Some rows failed; error payload has per-table details |
-| 2    | `0x02` | SCHEMA_REQUIRED | Yes       | Schema ID not recognized; resend with full schema     |
 | 3    | `0x03` | SCHEMA_MISMATCH | No        | Column type incompatible with existing table          |
 | 4    | `0x04` | TABLE_NOT_FOUND | No        | Table does not exist (auto-create disabled)           |
 | 5    | `0x05` | PARSE_ERROR     | No        | Malformed message                                    |
