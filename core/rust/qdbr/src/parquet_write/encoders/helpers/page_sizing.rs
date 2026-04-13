@@ -5,15 +5,11 @@ use crate::parquet_write::file::WriteOptions;
 use parquet2::schema::types::PhysicalType;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
-/// Default cap on uncompressed data page size, mirroring the legacy
-/// `DEFAULT_PAGE_SIZE` constant in `file.rs` before the rework.
-#[allow(dead_code)]
+/// Default cap on uncompressed data page size.
 pub const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 
 /// Compute the number of rows per data page for a given primitive size.
-/// Mirrors the legacy `column_chunk_to_primitive_pages` formula.
 #[inline]
-#[allow(dead_code)]
 pub fn rows_per_page(options: &WriteOptions, bytes_per_row: usize) -> usize {
     let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
     cmp::max(max_page_size / bytes_per_row, 1)

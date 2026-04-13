@@ -265,25 +265,25 @@ pub fn collect_varlen_segments<'a, I>(
     columns: &'a [Column],
     first_partition_start: usize,
     last_partition_end: usize,
-    transmuter: impl Fn(&'a Column) -> &'a [I],
+    transmuter: impl Fn(&'a Column) -> ParquetResult<&'a [I]>,
     data_source: impl Fn(&'a Column) -> &'a [u8],
-) -> Vec<VarlenChunkSegment<'a, I>> {
-    columns
-        .iter()
-        .zip(column_chunk_slices(
-            columns,
-            first_partition_start,
-            last_partition_end,
-        ))
-        .map(|(column, chunk)| {
-            let index_data = transmuter(column);
-            VarlenChunkSegment {
-                adjusted_column_top: chunk.adjusted_column_top,
-                index: &index_data[chunk.lower_bound..chunk.upper_bound],
-                data: data_source(column),
-            }
-        })
-        .collect()
+) -> ParquetResult<Vec<VarlenChunkSegment<'a, I>>> {
+    let mut segments = Vec::with_capacity(columns.len());
+
+    for (column, chunk) in columns.iter().zip(column_chunk_slices(
+        columns,
+        first_partition_start,
+        last_partition_end,
+    )) {
+        let index_data = transmuter(column)?;
+        segments.push(VarlenChunkSegment {
+            adjusted_column_top: chunk.adjusted_column_top,
+            index: &index_data[chunk.lower_bound..chunk.upper_bound],
+            data: data_source(column),
+        });
+    }
+
+    Ok(segments)
 }
 
 /// Slice varlen segments to a page window, analogous to
@@ -337,7 +337,6 @@ pub struct PartitionPageSlices {
 }
 
 impl PartitionPageSlices {
-    #[allow(dead_code)]
     pub fn new(
         column: &Column,
         chunk_offset: usize,

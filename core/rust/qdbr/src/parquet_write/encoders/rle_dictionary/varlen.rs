@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use parquet2::bloom_filter::hash_byte;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
@@ -13,8 +12,8 @@ use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{transmute_slice, BinaryMaxMinStats};
 
 use super::{
-    build_dict_page, build_var_dict_data_page, column_chunk_row_count, lock_bloom_set,
-    partition_chunk_slice, write_utf8_from_utf16_iter, ColumnChunkDictState, Repetition,
+    build_varlen_dict_pages, column_chunk_row_count, partition_chunk_slice,
+    write_utf8_from_utf16_iter, ColumnChunkDictState, Repetition,
 };
 
 type ByteSliceIter<'a> = Box<dyn Iterator<Item = ParquetResult<Option<&'a [u8]>>> + 'a>;
@@ -101,37 +100,14 @@ pub fn encode_string(
         }
     }
 
-    // Pass 2: fill the dict buffer at exact size and compute stats/bloom.
-    let mut dict_buffer = Vec::with_capacity(total_dict_bytes);
-    {
-        let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
-        let mut bloom = bloom_guard.as_deref_mut();
-        for utf8 in &dict_entries {
-            dict_buffer.extend_from_slice(&(utf8.len() as u32).to_le_bytes());
-            dict_buffer.extend_from_slice(utf8);
-            if let Some(ref mut h) = bloom {
-                h.insert(hash_byte(utf8));
-            }
-        }
-    }
-
-    let dict_entry_count = dict_entries.len();
-    let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
-    let data_page = build_var_dict_data_page(
-        &state.keys,
-        state.validity.as_ref(),
-        state.num_rows,
-        state.null_count,
-        dict_entry_count,
-        stats,
+    build_varlen_dict_pages(
+        dict_entries.iter().map(|e| e.as_slice()),
+        total_dict_bytes,
+        state,
+        bloom_set.as_ref(),
         primitive_type,
         options,
-        Repetition::Optional,
-    )?;
-    Ok(vec![
-        Page::Dict(build_dict_page(dict_buffer, dict_entry_count)),
-        Page::Data(data_page),
-    ])
+    )
 }
 
 /// Encode a Binary column as RleDictionary pages.
@@ -272,36 +248,14 @@ where
         }
     }
 
-    let mut dict_buffer = Vec::with_capacity(total_keys_bytes);
-    {
-        let mut bloom_guard = lock_bloom_set(bloom_set.as_ref())?;
-        let mut bloom = bloom_guard.as_deref_mut();
-        for entry in &dict_entries {
-            dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
-            dict_buffer.extend_from_slice(entry);
-            if let Some(ref mut h) = bloom {
-                h.insert(hash_byte(entry));
-            }
-        }
-    }
-
-    let dict_entry_count = dict_entries.len();
-    let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
-    let data_page = build_var_dict_data_page(
-        &state.keys,
-        state.validity.as_ref(),
-        state.num_rows,
-        state.null_count,
-        dict_entry_count,
-        stats,
+    build_varlen_dict_pages(
+        dict_entries.iter().copied(),
+        total_keys_bytes,
+        state,
+        bloom_set.as_ref(),
         primitive_type,
         options,
-        Repetition::Optional,
-    )?;
-    Ok(vec![
-        Page::Dict(build_dict_page(dict_buffer, dict_entry_count)),
-        Page::Data(data_page),
-    ])
+    )
 }
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;

@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 
-use parquet2::bloom_filter::hash_native;
+use parquet2::bloom_filter::{hash_byte, hash_native};
 use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::DictPage;
@@ -21,7 +21,7 @@ use crate::parquet_write::encoders::helpers::{
 };
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
-use crate::parquet_write::util::{bit_width, build_plain_page, MaxMin};
+use crate::parquet_write::util::{bit_width, build_plain_page, BinaryMaxMinStats, MaxMin};
 
 mod fixed;
 mod primitive;
@@ -256,6 +256,48 @@ fn build_dict_page(dict_buffer: Vec<u8>, dict_entry_count: usize) -> DictPage {
     DictPage::new(dict_buffer, unique_count, false)
 }
 
+/// Serialize variable-length dict entries into the dict buffer, compute bloom hashes,
+/// build the dict + data pages, and return the final page vector.
+#[allow(clippy::too_many_arguments)]
+fn build_varlen_dict_pages<'a>(
+    dict_entries: impl ExactSizeIterator<Item = &'a [u8]>,
+    total_dict_bytes: usize,
+    state: ColumnChunkDictState<BinaryMaxMinStats>,
+    bloom_set: Option<&Arc<Mutex<HashSet<u64>>>>,
+    primitive_type: &PrimitiveType,
+    options: WriteOptions,
+) -> ParquetResult<Vec<parquet2::page::Page>> {
+    let dict_entry_count = dict_entries.len();
+    let mut dict_buffer = Vec::with_capacity(total_dict_bytes);
+    {
+        let mut bloom_guard = lock_bloom_set(bloom_set)?;
+        let mut bloom = bloom_guard.as_deref_mut();
+        for entry in dict_entries {
+            dict_buffer.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+            dict_buffer.extend_from_slice(entry);
+            if let Some(ref mut h) = bloom {
+                h.insert(hash_byte(entry));
+            }
+        }
+    }
+    let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
+    let data_page = build_primitive_dict_data_page(
+        &state.keys,
+        state.validity.as_ref(),
+        state.num_rows,
+        state.null_count,
+        dict_entry_count,
+        stats,
+        primitive_type,
+        options,
+        Repetition::Optional,
+    )?;
+    Ok(vec![
+        parquet2::page::Page::Dict(build_dict_page(dict_buffer, dict_entry_count)),
+        parquet2::page::Page::Data(data_page),
+    ])
+}
+
 fn build_primitive_stats<P: NativeType>(
     null_count: Option<i64>,
     statistics: MaxMin<P>,
@@ -323,27 +365,3 @@ fn build_primitive_dict_data_page(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_var_dict_data_page(
-    keys: &[u32],
-    validity: Option<&FlatValidity>,
-    num_rows: usize,
-    null_count: usize,
-    dict_entry_count: usize,
-    statistics: Option<ParquetStatistics>,
-    primitive_type: &PrimitiveType,
-    options: WriteOptions,
-    repetition: Repetition,
-) -> ParquetResult<parquet2::page::DataPage> {
-    build_primitive_dict_data_page(
-        keys,
-        validity,
-        num_rows,
-        null_count,
-        dict_entry_count,
-        statistics,
-        primitive_type,
-        options,
-        repetition,
-    )
-}

@@ -19,7 +19,7 @@ use crate::parquet_write::util::{transmute_slice, BinaryMaxMinStats, MaxMin};
 use crate::parquet_write::Nullable;
 
 use super::{
-    build_dict_page, build_var_dict_data_page, column_chunk_row_count, lock_bloom_set,
+    build_dict_page, build_primitive_dict_data_page, column_chunk_row_count, lock_bloom_set,
     partition_chunk_slice, upsert_dict_entry, ColumnChunkDictState, Repetition,
 };
 
@@ -126,7 +126,7 @@ pub fn encode_fixed_len_bytes<const N: usize>(
 
     let dict_entry_count = dict_entries.len();
     let stats = state.stats.map(|s| s.into_parquet_stats(state.null_count));
-    let data_page = build_var_dict_data_page(
+    let data_page = build_primitive_dict_data_page(
         &state.keys,
         state.validity.as_ref(),
         state.num_rows,
@@ -210,7 +210,7 @@ where
     let stats = state.stats.map(|s| {
         build_decimal_stats::<T>(Some(state.null_count as i64), s, primitive_type.clone())
     });
-    let data_page = build_var_dict_data_page(
+    let data_page = build_primitive_dict_data_page(
         &state.keys,
         state.validity.as_ref(),
         state.num_rows,

@@ -35,7 +35,9 @@ use parquet2::schema::types::PrimitiveType;
 use parquet2::statistics::ParquetStatistics;
 use parquet2::write::DynIter;
 
-use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetErrorReason, ParquetResult};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+
+use crate::parquet::error::{fmt_err, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
     column_chunk_row_count, lock_bloom_set, page_row_windows, partition_chunk_slice,
     rows_per_primitive_page, write_utf8_from_utf16_iter, FlatValidity,
@@ -337,6 +339,7 @@ fn build_symbol_page_stats(
     stats.into_parquet_stats(null_count)
 }
 
+/// Legacy single-partition API kept for benchmarks.  Delegates to [`encode`].
 #[allow(clippy::too_many_arguments)]
 pub fn symbol_to_pages(
     column_values: &[i32],
@@ -348,66 +351,26 @@ pub fn symbol_to_pages(
     _not_null_hint: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    let mut values_set = HashSet::with_capacity(offsets.len());
-    for &value in column_values {
-        if value >= 0 {
-            values_set.insert(value as u32);
-        }
-    }
-    let max_key = values_set.iter().copied().max().unwrap_or(0);
-    let (dict_buffer, dict_entry_count, value_ranges) = {
-        let mut bloom_guard = bloom_set
-            .as_ref()
-            .map(|arc| {
-                arc.lock()
-                    .map_err(|_| fmt_err!(Layout, "bloom filter mutex poisoned"))
-            })
-            .transpose()?;
-        prepare_symbol_dictionary(
-            &SymbolGlobalInfo { used_keys: values_set, max_key },
-            offsets,
-            chars,
-            bloom_guard.as_deref_mut(),
-        )
-        .context("could not write symbols dict map page")?
-    };
-    let mut merged_keys = Vec::with_capacity(column_top + column_values.len());
-    merged_keys.resize(column_top, -1);
-    merged_keys.extend_from_slice(column_values);
-    let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
-    let mut data_pages = Vec::with_capacity(merged_keys.len().div_ceil(rows_per_page));
-    for window in page_row_windows(merged_keys.len(), rows_per_page) {
-        let page_values = &merged_keys[window.row_offset..window.row_offset + window.row_count];
-        let validity = build_symbol_validity(page_values, 0);
-        let null_count = page_values.iter().filter(|&&key| key < 0).count();
-        let page_stats = options.write_statistics.then(|| {
-            build_symbol_page_stats(
-                page_values,
-                &dict_buffer,
-                &value_ranges,
-                &primitive_type,
-                null_count,
-            )
-        });
-        let data_page = symbol_to_data_page_with_validity(
-            page_values,
-            window.row_count,
-            max_key,
-            options,
-            primitive_type.clone(),
-            &validity,
-            page_stats,
-        )?;
-        data_pages.push(data_page);
-    }
-
-    let mut pages = Vec::with_capacity(1 + data_pages.len());
-    pages.push(Page::Dict(DictPage::new(
-        dict_buffer,
-        dict_entry_count,
+    let primary_data =
+        unsafe { std::slice::from_raw_parts(column_values.as_ptr() as *const u8, std::mem::size_of_val(column_values)) };
+    let column = Column::from_raw_data(
+        0,
+        "symbol",
+        ColumnType::new(ColumnTypeTag::Symbol, 0).code(),
+        column_top as i64,
+        column_top + column_values.len(),
+        primary_data.as_ptr(),
+        primary_data.len(),
+        chars.as_ptr(),
+        chars.len(),
+        offsets.as_ptr(),
+        offsets.len(),
         false,
-    )));
-    pages.extend(data_pages);
+        false,
+        0,
+    )?;
+    let row_count = column.row_count;
+    let pages = encode(&[column], 0, row_count, &primitive_type, options, bloom_set)?;
     Ok(DynIter::new(pages.into_iter().map(Ok)))
 }
 

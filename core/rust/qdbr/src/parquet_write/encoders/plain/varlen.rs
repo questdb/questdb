@@ -42,9 +42,9 @@ pub fn encode_string(
         last_partition_end,
         // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
         // page-aligned. The byte content represents valid `i64` offsets.
-        |column| unsafe { transmute_slice(column.secondary_data) },
+        |column| Ok(unsafe { transmute_slice(column.secondary_data) }),
         |column| column.primary_data,
-    );
+    )?;
     encode_column_chunk(
         columns,
         first_partition_start,
@@ -80,9 +80,9 @@ pub fn encode_binary(
         last_partition_end,
         // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
         // page-aligned. The byte content represents valid `i64` offsets.
-        |column| unsafe { transmute_slice(column.secondary_data) },
+        |column| Ok(unsafe { transmute_slice(column.secondary_data) }),
         |column| column.primary_data,
-    );
+    )?;
     encode_column_chunk(
         columns,
         first_partition_start,
@@ -118,9 +118,9 @@ pub fn encode_varchar(
         last_partition_end,
         // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
         // page-aligned. The byte content represents valid `[u8; 16]` aux entries.
-        |column| unsafe { transmute_slice(column.secondary_data) },
+        |column| Ok(unsafe { transmute_slice(column.secondary_data) }),
         |column| column.primary_data,
-    );
+    )?;
     encode_column_chunk(
         columns,
         first_partition_start,

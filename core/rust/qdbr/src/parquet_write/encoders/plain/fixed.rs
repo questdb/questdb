@@ -113,7 +113,7 @@ fn bytes_segments_to_page<const N: usize>(
     reverse: bool,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    bloom_hashes: Option<&mut HashSet<u64>>,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows: usize = segments.iter().map(PartitionChunkView::num_rows).sum();
     let null_value = fixed_null_value::<N>();
@@ -138,25 +138,23 @@ fn bytes_segments_to_page<const N: usize>(
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     if reverse {
         for segment in segments {
-            encode_fixed_plain_be(segment.slice, &mut buffer, null_value, &mut stats, None);
+            encode_fixed_plain_be(
+                segment.slice,
+                &mut buffer,
+                null_value,
+                &mut stats,
+                bloom_hashes.as_mut().map(|h| &mut **h),
+            );
         }
     } else {
         for segment in segments {
-            encode_fixed_plain(segment.slice, &mut buffer, null_value, &mut stats, None);
-        }
-    }
-
-    if let Some(h) = bloom_hashes {
-        for segment in segments {
-            for value in segment.slice.iter().filter(|&&value| value != null_value) {
-                if reverse {
-                    let mut reversed = *value;
-                    reversed.reverse();
-                    h.insert(hash_byte(reversed));
-                } else {
-                    h.insert(hash_byte(*value));
-                }
-            }
+            encode_fixed_plain(
+                segment.slice,
+                &mut buffer,
+                null_value,
+                &mut stats,
+                bloom_hashes.as_mut().map(|h| &mut **h),
+            );
         }
     }
 
