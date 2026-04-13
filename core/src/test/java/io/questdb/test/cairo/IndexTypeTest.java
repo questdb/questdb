@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,31 +25,11 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.IndexType;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class IndexTypeTest {
-
-    @Test
-    public void testNameOfAll() {
-        Assert.assertEquals("NONE", IndexType.nameOf(IndexType.NONE));
-        Assert.assertEquals("BITMAP", IndexType.nameOf(IndexType.BITMAP));
-        Assert.assertEquals("POSTING", IndexType.nameOf(IndexType.POSTING));
-        Assert.assertEquals("POSTING DELTA", IndexType.nameOf(IndexType.POSTING_DELTA));
-        Assert.assertEquals("UNKNOWN(99)", IndexType.nameOf((byte) 99));
-    }
-
-    @Test
-    public void testValueOf() {
-        Assert.assertEquals(IndexType.BITMAP, IndexType.valueOf("BITMAP"));
-        Assert.assertEquals(IndexType.BITMAP, IndexType.valueOf("bitmap"));
-        Assert.assertEquals(IndexType.POSTING, IndexType.valueOf("POSTING"));
-        Assert.assertEquals(IndexType.POSTING, IndexType.valueOf("posting"));
-        Assert.assertEquals(IndexType.NONE, IndexType.valueOf("NONE"));
-        Assert.assertEquals(IndexType.NONE, IndexType.valueOf("unknown_type"));
-        Assert.assertEquals(IndexType.NONE, IndexType.valueOf(null));
-        Assert.assertEquals(IndexType.NONE, IndexType.valueOf(""));
-    }
 
     @Test
     public void testIsIndexed() {
@@ -65,5 +45,45 @@ public class IndexTypeTest {
         Assert.assertFalse(IndexType.isPosting(IndexType.BITMAP));
         Assert.assertTrue(IndexType.isPosting(IndexType.POSTING));
         Assert.assertTrue(IndexType.isPosting(IndexType.POSTING_DELTA));
+    }
+
+    @Test
+    public void testNameOfAll() {
+        Assert.assertEquals("NONE", IndexType.nameOf(IndexType.NONE));
+        Assert.assertEquals("BITMAP", IndexType.nameOf(IndexType.BITMAP));
+        Assert.assertEquals("POSTING", IndexType.nameOf(IndexType.POSTING));
+        Assert.assertEquals("POSTING DELTA", IndexType.nameOf(IndexType.POSTING_DELTA));
+        Assert.assertEquals("UNKNOWN", IndexType.nameOf((byte) 99));
+    }
+
+    @Test
+    public void testPutNameSink() {
+        StringSink sink = new StringSink();
+        IndexType.putName(sink, IndexType.NONE);
+        Assert.assertEquals("NONE", sink.toString());
+        sink.clear();
+        IndexType.putName(sink, IndexType.BITMAP);
+        Assert.assertEquals("BITMAP", sink.toString());
+        sink.clear();
+        IndexType.putName(sink, IndexType.POSTING);
+        Assert.assertEquals("POSTING", sink.toString());
+        sink.clear();
+        IndexType.putName(sink, IndexType.POSTING_DELTA);
+        Assert.assertEquals("POSTING DELTA", sink.toString());
+        sink.clear();
+        IndexType.putName(sink, (byte) 99);
+        Assert.assertEquals("UNKNOWN(99)", sink.toString());
+    }
+
+    @Test
+    public void testValueOf() {
+        Assert.assertEquals(IndexType.BITMAP, IndexType.valueOf("BITMAP"));
+        Assert.assertEquals(IndexType.BITMAP, IndexType.valueOf("bitmap"));
+        Assert.assertEquals(IndexType.POSTING, IndexType.valueOf("POSTING"));
+        Assert.assertEquals(IndexType.POSTING, IndexType.valueOf("posting"));
+        Assert.assertEquals(IndexType.NONE, IndexType.valueOf("NONE"));
+        Assert.assertEquals(IndexType.NONE, IndexType.valueOf("unknown_type"));
+        Assert.assertEquals(IndexType.NONE, IndexType.valueOf(null));
+        Assert.assertEquals(IndexType.NONE, IndexType.valueOf(""));
     }
 }

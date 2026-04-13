@@ -441,7 +441,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             byte indexType = model.getIndexType();
             if (indexType != IndexType.BITMAP) {
                 sink.putAscii(" type ");
-                sink.putAscii(IndexType.nameOf(indexType));
+                IndexType.putName(sink, indexType);
             } else {
                 sink.putAscii(" capacity ");
                 sink.put(model.getIndexValueBlockSize());

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.std.Chars;
+import io.questdb.std.str.CharSink;
 
 /**
  * Defines the types of column indexes supported by QuestDB.
@@ -33,17 +34,13 @@ import io.questdb.std.Chars;
  */
 public final class IndexType {
     /**
-     * Mask for extracting the 2-bit index type value.
+     * Bitmap index (original BitmapIndex for SYMBOL columns).
      */
-    public static final int INDEX_TYPE_MASK = 0x03;
+    public static final byte BITMAP = 1;
     /**
      * No index on this column.
      */
     public static final byte NONE = 0;
-    /**
-     * Bitmap index (original BitmapIndex for SYMBOL columns).
-     */
-    public static final byte BITMAP = 1;
     /**
      * Posting index with adaptive row ID encoding.
      * Trial-encodes both Elias-Fano and delta-FoR per key and picks the smaller.
@@ -74,7 +71,10 @@ public final class IndexType {
     }
 
     /**
-     * Returns the name of the given index type.
+     * Returns the name of the given index type. Always returns a string constant
+     * (no allocation), so unknown values are reported as the plain "UNKNOWN" literal.
+     * Callers that need the numeric value of an unknown type should use one of the
+     * {@code putName} overloads, which render it into a sink without allocating.
      *
      * @param indexType the index type value
      * @return the name of the index type
@@ -85,8 +85,18 @@ public final class IndexType {
             case BITMAP -> "BITMAP";
             case POSTING -> "POSTING";
             case POSTING_DELTA -> "POSTING DELTA";
-            default -> "UNKNOWN(" + indexType + ")";
+            default -> "UNKNOWN";
         };
+    }
+
+    public static <T extends CharSink<?>> void putName(T sink, byte indexType) {
+        switch (indexType) {
+            case NONE -> sink.putAscii("NONE");
+            case BITMAP -> sink.putAscii("BITMAP");
+            case POSTING -> sink.putAscii("POSTING");
+            case POSTING_DELTA -> sink.putAscii("POSTING DELTA");
+            default -> sink.putAscii("UNKNOWN(").put(indexType).putAscii(')');
+        }
     }
 
     /**
@@ -107,9 +117,6 @@ public final class IndexType {
         }
         if (Chars.equalsIgnoreCase(name, "POSTING DELTA") || Chars.equalsIgnoreCase(name, "POSTING_DELTA")) {
             return POSTING_DELTA;
-        }
-        if (Chars.equalsIgnoreCase(name, "NONE")) {
-            return NONE;
         }
         return NONE;
     }

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -30,6 +30,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.idx.PostingIndexUtils.BLOCK_CAPACITY;
 
@@ -44,63 +45,6 @@ public final class IndexFactory {
 
     private IndexFactory() {
         // Utility class, no instances
-    }
-
-    /**
-     * Returns the key file name for the given index type.
-     *
-     * @param indexType     the type of index (BITMAP, POSTING)
-     * @param path          the path to append the file name to
-     * @param columnName    the column name
-     * @param columnNameTxn the column name transaction number
-     * @return the path with the key file name appended
-     */
-    public static LPSZ keyFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
-        return switch (indexType) {
-            case IndexType.BITMAP -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
-            case IndexType.POSTING, IndexType.POSTING_DELTA ->
-                    PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
-            default -> throw CairoException.critical(0)
-                    .put("unsupported index type for key file: ").put(IndexType.nameOf(indexType));
-        };
-    }
-
-    /**
-     * Returns the value file name for the given index type.
-     *
-     * @param indexType     the type of index (BITMAP, POSTING)
-     * @param path          the path to append the file name to
-     * @param columnName    the column name
-     * @param columnNameTxn the column name transaction number
-     * @return the path with the value file name appended
-     */
-    public static LPSZ valueFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
-        return switch (indexType) {
-            case IndexType.BITMAP -> BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
-            case IndexType.POSTING, IndexType.POSTING_DELTA ->
-                    PostingIndexUtils.valueFileName(path, columnName, columnNameTxn);
-            default -> throw CairoException.critical(0)
-                    .put("unsupported index type for value file: ").put(IndexType.nameOf(indexType));
-        };
-    }
-
-    /**
-     * Initializes the key memory for a new index of the given type.
-     *
-     * @param indexType     the type of index (BITMAP, POSTING)
-     * @param keyMem        the memory to initialize
-     * @param blockCapacity the value block capacity (used by BITMAP type)
-     * @throws CairoException if the index type is not supported
-     */
-    public static void initKeyMemory(byte indexType, MemoryMA keyMem, int blockCapacity) {
-        switch (indexType) {
-            case IndexType.BITMAP -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
-            case IndexType.POSTING, IndexType.POSTING_DELTA -> PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
-            case IndexType.NONE -> throw CairoException.critical(0)
-                    .put("cannot initialize key memory for index type NONE");
-            default -> throw CairoException.critical(0)
-                    .put("unsupported index type: ").put(IndexType.nameOf(indexType));
-        }
     }
 
     /**
@@ -136,8 +80,11 @@ public final class IndexFactory {
                     : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create reader for index type NONE");
-            default -> throw CairoException.critical(0)
-                    .put("unsupported index type: ").put(IndexType.nameOf(indexType));
+            default -> {
+                CairoException e = CairoException.critical(0).put("unsupported index type: ");
+                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
+                throw e;
+            }
         };
     }
 
@@ -157,8 +104,77 @@ public final class IndexFactory {
             case IndexType.POSTING_DELTA -> new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_DELTA);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create writer for index type NONE");
-            default -> throw CairoException.critical(0)
-                    .put("unsupported index type: ").put(IndexType.nameOf(indexType));
+            default -> {
+                CairoException e = CairoException.critical(0).put("unsupported index type: ");
+                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
+                throw e;
+            }
+        };
+    }
+
+    /**
+     * Initializes the key memory for a new index of the given type.
+     *
+     * @param indexType     the type of index (BITMAP, POSTING)
+     * @param keyMem        the memory to initialize
+     * @param blockCapacity the value block capacity (used by BITMAP type)
+     * @throws CairoException if the index type is not supported
+     */
+    public static void initKeyMemory(byte indexType, MemoryMA keyMem, int blockCapacity) {
+        switch (indexType) {
+            case IndexType.BITMAP -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
+            case IndexType.POSTING, IndexType.POSTING_DELTA -> PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
+            case IndexType.NONE -> throw CairoException.critical(0)
+                    .put("cannot initialize key memory for index type NONE");
+            default -> {
+                CairoException e = CairoException.critical(0).put("unsupported index type: ");
+                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Returns the key file name for the given index type.
+     *
+     * @param indexType     the type of index (BITMAP, POSTING)
+     * @param path          the path to append the file name to
+     * @param columnName    the column name
+     * @param columnNameTxn the column name transaction number
+     * @return the path with the key file name appended
+     */
+    public static LPSZ keyFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
+        return switch (indexType) {
+            case IndexType.BITMAP -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            case IndexType.POSTING, IndexType.POSTING_DELTA ->
+                    PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
+            default -> {
+                CairoException e = CairoException.critical(0).put("unsupported index type: ");
+                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
+                throw e;
+            }
+        };
+    }
+
+    /**
+     * Returns the value file name for the given index type.
+     *
+     * @param indexType     the type of index (BITMAP, POSTING)
+     * @param path          the path to append the file name to
+     * @param columnName    the column name
+     * @param columnNameTxn the column name transaction number
+     * @return the path with the value file name appended
+     */
+    public static LPSZ valueFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
+        return switch (indexType) {
+            case IndexType.BITMAP -> BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
+            case IndexType.POSTING, IndexType.POSTING_DELTA ->
+                    PostingIndexUtils.valueFileName(path, columnName, columnNameTxn);
+            default -> {
+                CairoException e = CairoException.critical(0).put("unsupported index type: ");
+                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
+                throw e;
+            }
         };
     }
 }

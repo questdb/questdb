@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -117,8 +117,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long constantDeltaValue;
         private int currentBlock;
         private int currentGen;
-        private int efHighWordIdx;
+        private long cursorReloadGeneration;
         private long efHighStart;
+        private int efHighWordIdx;
         private int efL;
         private long efLowMask;
         private long efLowStart;
@@ -145,7 +146,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long srcMinDeltasAddr;
         private long srcValueCountsAddr;
         private int totalValueCount;
-        private long cursorReloadGeneration;
 
         @Override
         public boolean hasNext() {
@@ -214,75 +214,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public long next() {
             return next - minValue;
-        }
-
-        void close() {
-            if (blockBufferAddr != 0) {
-                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockBufferAddr = 0;
-                blockBufferCapacity = 0;
-            }
-            closeCoveringResources();
-        }
-
-        void of(int key, long minValue, long maxValue) {
-            this.cursorReloadGeneration = reloadGeneration;
-            // Re-allocate fixed buffers if freed by close()
-            if (blockBufferAddr == 0) {
-                blockBufferCapacity = PostingIndexUtils.PACKED_BATCH_SIZE;
-                blockBufferAddr = Unsafe.malloc((long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
-                totalValueCount = 0;
-                currentGen = genCount;
-                encodedBlockCount = 0;
-                currentBlock = 0;
-                blockBufferPos = 0;
-                blockBufferEnd = 0;
-                constantDeltaRemaining = 0;
-                isFlatMode = false;
-                return;
-            }
-
-            this.requestedKey = key;
-            this.minValue = minValue;
-            this.maxValue = maxValue;
-
-            // Reset iteration state
-            this.encodedBlockCount = 0;
-            this.currentBlock = 0;
-            this.blockBufferPos = 0;
-            this.blockBufferEnd = 0;
-            this.constantDeltaRemaining = 0;
-            this.isFlatMode = false;
-            resetCoveringState();
-
-            // Fast path: sealed single-generation index with dense gen 0.
-            // Load directly without tier lookup or advance machinery.
-            // Set currentGen = genCount so advanceToNextRelevantGen() (called
-            // when blocks are exhausted) returns false immediately.
-            if (genCount == 1 && genLookup.getGenKeyCount(0) >= 0) {
-                this.currentGen = genCount;
-                this.lookupPos = 0;
-                this.lookupEnd = 0;
-                loadDenseGenerationCached(0);
-                return;
-            }
-
-            ensureGenLookup();
-
-            this.currentGen = -1; // will be advanced by first advanceToNextRelevantGen()
-
-            // Set up inverted index range for this key (Tier 1)
-            if (genLookup.isPerKeyMode() && key < genLookup.getKeyCount()) {
-                this.lookupPos = genLookup.getEntryStart(key);
-                this.lookupEnd = genLookup.getEntryEnd(key);
-            } else {
-                this.lookupPos = 0;
-                this.lookupEnd = 0;
-            }
-
-            advanceToNextRelevantGen();
         }
 
         private boolean advanceToNextRelevantGen() {
@@ -844,6 +775,75 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.currentBlock = startBlock;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
+        }
+
+        void close() {
+            if (blockBufferAddr != 0) {
+                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBufferAddr = 0;
+                blockBufferCapacity = 0;
+            }
+            closeCoveringResources();
+        }
+
+        void of(int key, long minValue, long maxValue) {
+            this.cursorReloadGeneration = reloadGeneration;
+            // Re-allocate fixed buffers if freed by close()
+            if (blockBufferAddr == 0) {
+                blockBufferCapacity = PostingIndexUtils.PACKED_BATCH_SIZE;
+                blockBufferAddr = Unsafe.malloc((long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
+                totalValueCount = 0;
+                currentGen = genCount;
+                encodedBlockCount = 0;
+                currentBlock = 0;
+                blockBufferPos = 0;
+                blockBufferEnd = 0;
+                constantDeltaRemaining = 0;
+                isFlatMode = false;
+                return;
+            }
+
+            this.requestedKey = key;
+            this.minValue = minValue;
+            this.maxValue = maxValue;
+
+            // Reset iteration state
+            this.encodedBlockCount = 0;
+            this.currentBlock = 0;
+            this.blockBufferPos = 0;
+            this.blockBufferEnd = 0;
+            this.constantDeltaRemaining = 0;
+            this.isFlatMode = false;
+            resetCoveringState();
+
+            // Fast path: sealed single-generation index with dense gen 0.
+            // Load directly without tier lookup or advance machinery.
+            // Set currentGen = genCount so advanceToNextRelevantGen() (called
+            // when blocks are exhausted) returns false immediately.
+            if (genCount == 1 && genLookup.getGenKeyCount(0) >= 0) {
+                this.currentGen = genCount;
+                this.lookupPos = 0;
+                this.lookupEnd = 0;
+                loadDenseGenerationCached(0);
+                return;
+            }
+
+            ensureGenLookup();
+
+            this.currentGen = -1; // will be advanced by first advanceToNextRelevantGen()
+
+            // Set up inverted index range for this key (Tier 1)
+            if (genLookup.isPerKeyMode() && key < genLookup.getKeyCount()) {
+                this.lookupPos = genLookup.getEntryStart(key);
+                this.lookupEnd = genLookup.getEntryEnd(key);
+            } else {
+                this.lookupPos = 0;
+                this.lookupEnd = 0;
+            }
+
+            advanceToNextRelevantGen();
         }
     }
 }

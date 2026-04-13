@@ -188,7 +188,9 @@ public class CairoColumn implements Sinkable {
         sink.put("isSymbolTableStatic=").put(isSymbolTableStatic()).put(", ");
         sink.put("symbolCached=").put(isSymbolCached()).put(", ");
         sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
-        sink.put("indexType=").put(IndexType.nameOf(getIndexType())).put(", ");
+        sink.put("indexType=");
+        IndexType.putName(sink, getIndexType());
+        sink.put(", ");
         sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
         int config = getParquetEncodingConfig();
         if (config == 0) {

@@ -255,7 +255,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     if (idxType == IndexType.BITMAP) {
                         sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
                     } else {
-                        sink.putAscii(" INDEX TYPE ").putAscii(IndexType.nameOf(idxType));
+                        sink.putAscii(" INDEX TYPE ");
+                        IndexType.putName(sink, idxType);
                         int[] coveringCols = column.getCoveringColumnIndices();
                         if (coveringCols != null && coveringCols.length > 0) {
                             sink.putAscii(" INCLUDE (");

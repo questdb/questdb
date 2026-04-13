@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -53,6 +53,31 @@ final class SplitBlockBloomFilter {
     private static final int SALT_7 = 0x5c6bfb31;
 
     private SplitBlockBloomFilter() {
+    }
+
+    // Pack two 32-bit masks into one 64-bit long for SWAR checks
+    private static long mask01(int key) {
+        long m0 = 1L << ((key * SALT_0) >>> 27);
+        long m1 = 1L << (((key * SALT_1) >>> 27) + 32);
+        return m0 | m1;
+    }
+
+    private static long mask23(int key) {
+        long m2 = 1L << ((key * SALT_2) >>> 27);
+        long m3 = 1L << (((key * SALT_3) >>> 27) + 32);
+        return m2 | m3;
+    }
+
+    private static long mask45(int key) {
+        long m4 = 1L << ((key * SALT_4) >>> 27);
+        long m5 = 1L << (((key * SALT_5) >>> 27) + 32);
+        return m4 | m5;
+    }
+
+    private static long mask67(int key) {
+        long m6 = 1L << ((key * SALT_6) >>> 27);
+        long m7 = 1L << (((key * SALT_7) >>> 27) + 32);
+        return m6 | m7;
     }
 
     static long allocate(int filterSize) {
@@ -144,30 +169,5 @@ final class SplitBlockBloomFilter {
                 && (w23 & m23) == m23
                 && (w45 & m45) == m45
                 && (w67 & m67) == m67;
-    }
-
-    // Pack two 32-bit masks into one 64-bit long for SWAR checks
-    private static long mask01(int key) {
-        long m0 = 1L << ((key * SALT_0) >>> 27);
-        long m1 = 1L << (((key * SALT_1) >>> 27) + 32);
-        return m0 | m1;
-    }
-
-    private static long mask23(int key) {
-        long m2 = 1L << ((key * SALT_2) >>> 27);
-        long m3 = 1L << (((key * SALT_3) >>> 27) + 32);
-        return m2 | m3;
-    }
-
-    private static long mask45(int key) {
-        long m4 = 1L << ((key * SALT_4) >>> 27);
-        long m5 = 1L << (((key * SALT_5) >>> 27) + 32);
-        return m4 | m5;
-    }
-
-    private static long mask67(int key) {
-        long m6 = 1L << ((key * SALT_6) >>> 27);
-        long m7 = 1L << (((key * SALT_7) >>> 27) + 32);
-        return m6 | m7;
     }
 }

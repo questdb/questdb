@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -115,8 +115,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long constantDeltaValue;
         private int currentBlock;
         private int currentGen;
-        private int efHighWordIdx;
+        private long cursorReloadGeneration;
         private long efHighStart;
+        private int efHighWordIdx;
         private int efL;
         private long efLowMask;
         private long efLowStart;
@@ -128,24 +129,23 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long flatBaseValue;
         private int flatBitWidth;
         private long flatDataBase;
-        private boolean isEFMode;
-        private boolean isFlatMode;
         private int flatRemaining;
         private int flatStartIdx;
+        private boolean isEFMode;
+        private boolean isFlatMode;
         private int lookupEnd;
         private int lookupPos;
         private long maxValue;
         private int minBlock;
         private long minValue;
         private long next;
+        private long packedDataStart;
         // Pointers into mapped value memory — set per generation, no copies
         private long srcBitWidthsAddr;
         private long srcFirstValuesAddr;
         private long srcMinDeltasAddr;
         private long srcPackedOffsetsAddr;
         private long srcValueCountsAddr;
-        private long packedDataStart;
-        private long cursorReloadGeneration;
 
         @Override
         public boolean hasNext() {
@@ -229,73 +229,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return next();
             }
             return -1;
-        }
-
-        void close() {
-            if (blockBufferAddr != 0) {
-                Unsafe.free(blockBufferAddr, (long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockBufferAddr = 0;
-            }
-            if (efRankDirAddr != 0) {
-                Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                efRankDirAddr = 0;
-                efRankDirCapacity = 0;
-            }
-            closeCoveringResources();
-        }
-
-        void of(int key, long minValue, long maxValue) {
-            this.cursorReloadGeneration = reloadGeneration;
-            // Re-allocate buffer if freed by close()
-            if (blockBufferAddr == 0) {
-                blockBufferAddr = Unsafe.malloc((long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-            if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
-                currentGen = -1;
-                encodedBlockCount = 0;
-                currentBlock = -1;
-                blockBufferPos = -1;
-                constantDeltaRemaining = 0;
-                return;
-            }
-
-            this.requestedKey = key;
-            this.minValue = minValue;
-            this.maxValue = maxValue;
-            this.constantDeltaRemaining = 0;
-            resetCoveringState();
-
-            // Fast path: sealed single-generation index with dense gen 0.
-            // Load directly without tier lookup or advance machinery.
-            // Set currentGen = -1 so advanceToPrevRelevantGen() (called
-            // when blocks are exhausted) returns false immediately.
-            if (genCount == 1 && genLookup.getGenKeyCount(0) >= 0) {
-                this.currentGen = -1;
-                this.lookupPos = -1;
-                this.lookupEnd = 0;
-                loadDenseGenerationCached(0);
-                return;
-            }
-
-            ensureGenLookup();
-
-            this.currentGen = genCount; // will be decremented
-
-            // Set up inverted index range for this key (Tier 1), reverse order
-            if (genLookup.isPerKeyMode() && key < genLookup.getKeyCount()) {
-                this.lookupPos = genLookup.getEntryEnd(key) - 1;
-                this.lookupEnd = genLookup.getEntryStart(key);
-            } else {
-                this.lookupPos = -1;
-                this.lookupEnd = 0;
-            }
-
-            if (!advanceToPrevRelevantGen()) {
-                currentGen = -1;
-                encodedBlockCount = 0;
-                currentBlock = -1;
-                blockBufferPos = -1;
-            }
         }
 
         private boolean advanceToPrevRelevantGen() {
@@ -470,7 +403,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             flatRemaining -= batch;
             blockBufferPos = batch - 1;
         }
-
 
         private void loadDenseGenerationCached(int gen) {
             if (cursorReloadGeneration != reloadGeneration) {
@@ -856,6 +788,73 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             this.currentBlock = endBlock - 1;
             this.minBlock = startBlock;
             this.blockBufferPos = -1;
+        }
+
+        void close() {
+            if (blockBufferAddr != 0) {
+                Unsafe.free(blockBufferAddr, (long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBufferAddr = 0;
+            }
+            if (efRankDirAddr != 0) {
+                Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                efRankDirAddr = 0;
+                efRankDirCapacity = 0;
+            }
+            closeCoveringResources();
+        }
+
+        void of(int key, long minValue, long maxValue) {
+            this.cursorReloadGeneration = reloadGeneration;
+            // Re-allocate buffer if freed by close()
+            if (blockBufferAddr == 0) {
+                blockBufferAddr = Unsafe.malloc((long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            if (keyCount == 0 || key < 0 || key >= keyCount || genCount == 0) {
+                currentGen = -1;
+                encodedBlockCount = 0;
+                currentBlock = -1;
+                blockBufferPos = -1;
+                constantDeltaRemaining = 0;
+                return;
+            }
+
+            this.requestedKey = key;
+            this.minValue = minValue;
+            this.maxValue = maxValue;
+            this.constantDeltaRemaining = 0;
+            resetCoveringState();
+
+            // Fast path: sealed single-generation index with dense gen 0.
+            // Load directly without tier lookup or advance machinery.
+            // Set currentGen = -1 so advanceToPrevRelevantGen() (called
+            // when blocks are exhausted) returns false immediately.
+            if (genCount == 1 && genLookup.getGenKeyCount(0) >= 0) {
+                this.currentGen = -1;
+                this.lookupPos = -1;
+                this.lookupEnd = 0;
+                loadDenseGenerationCached(0);
+                return;
+            }
+
+            ensureGenLookup();
+
+            this.currentGen = genCount; // will be decremented
+
+            // Set up inverted index range for this key (Tier 1), reverse order
+            if (genLookup.isPerKeyMode() && key < genLookup.getKeyCount()) {
+                this.lookupPos = genLookup.getEntryEnd(key) - 1;
+                this.lookupEnd = genLookup.getEntryStart(key);
+            } else {
+                this.lookupPos = -1;
+                this.lookupEnd = 0;
+            }
+
+            if (!advanceToPrevRelevantGen()) {
+                currentGen = -1;
+                encodedBlockCount = 0;
+                currentBlock = -1;
+                blockBufferPos = -1;
+            }
         }
     }
 }
