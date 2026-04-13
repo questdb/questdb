@@ -8297,6 +8297,7 @@ public class SqlOptimiser implements Mutable {
                 nested.setFillTo(sampleByTo);
                 nested.setFillStride(sampleBy);
                 nested.setFillValues(sampleByFill);
+                nested.setFillOffset(sampleByOffset);
 
                 // clear sample by (but keep FILL and FROM-TO)
                 nested.setSampleBy(null);

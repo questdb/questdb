@@ -101,7 +101,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             ArrayColumnTypes mapKeyTypes,
             ArrayColumnTypes mapValueTypes,
             IntList keyColIndices,
-            IntList symbolTableColIndices
+            IntList symbolTableColIndices,
+            long calendarOffset
     ) {
         super(metadata);
         this.base = base;
@@ -122,7 +123,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 configuration, metadata, timestampSampler,
                 fromFunc, toFunc, fillModes, constantFills,
                 timestampIndex, timestampType, prevSourceCols,
-                keySink, keysMap, keyColIndices, symbolTableColIndices
+                keySink, keysMap, keyColIndices, symbolTableColIndices,
+                calendarOffset
         );
     }
 
@@ -191,6 +193,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private static final int KEY_INDEX_SLOT = 0;
         private static final int PREV_START_SLOT = 2;
 
+        private final long calendarOffset;
         private final int columnCount;
         private final short[] columnTypes;
         private final ObjList<Function> constantFills;
@@ -243,8 +246,10 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 RecordSink keySink,
                 Map keysMap,
                 IntList keyColIndices,
-                IntList symbolTableColIndices
+                IntList symbolTableColIndices,
+                long calendarOffset
         ) {
+            this.calendarOffset = calendarOffset;
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;
@@ -544,7 +549,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 } else {
                     nextBucketTimestamp = fromTs;
                 }
-                timestampSampler.setStart(nextBucketTimestamp);
+                if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {
+                    // No explicit FROM but offset exists: align sampler grid
+                    // to the offset so round() matches timestamp_floor_utc buckets.
+                    timestampSampler.setOffset(calendarOffset);
+                    nextBucketTimestamp = timestampSampler.round(nextBucketTimestamp);
+                } else {
+                    // FROM exists or no offset: anchor sampler at fromTs + offset.
+                    // timestamp_floor_utc uses effectiveOffset = from + offset,
+                    // so the sampler grid must start at the same shifted point.
+                    timestampSampler.setStart(nextBucketTimestamp + calendarOffset);
+                    nextBucketTimestamp = nextBucketTimestamp + calendarOffset;
+                }
                 hasPendingRow = true;
                 pendingTs = firstTs;
                 if (maxTimestamp == Numbers.LONG_NULL) {
@@ -552,7 +568,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             } else {
                 if (fromTs != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
-                    nextBucketTimestamp = fromTs;
+                    nextBucketTimestamp = fromTs + calendarOffset;
                     timestampSampler.setStart(nextBucketTimestamp);
                 } else {
                     maxTimestamp = Long.MIN_VALUE;

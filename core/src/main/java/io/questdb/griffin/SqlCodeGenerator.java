@@ -366,6 +366,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -3354,6 +3355,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(driver, samplingInterval, samplingIntervalUnit, fillStride.position);
 
+            // Parse ALIGN TO CALENDAR WITH OFFSET for fill cursor alignment
+            long calendarOffset = 0;
+            final ExpressionNode fillOffsetNode = curr.getFillOffset();
+            if (fillOffsetNode != null) {
+                CharSequence offsetToken = fillOffsetNode.token;
+                if (offsetToken != null) {
+                    if (offsetToken.length() >= 2
+                            && offsetToken.charAt(0) == '\''
+                            && offsetToken.charAt(offsetToken.length() - 1) == '\'') {
+                        offsetToken = offsetToken.subSequence(1, offsetToken.length() - 1);
+                    }
+                    final long parsed = Dates.parseOffset(offsetToken);
+                    if (parsed != Numbers.LONG_NULL) {
+                        calendarOffset = driver.fromMinutes(Numbers.decodeLowInt(parsed));
+                    }
+                }
+            }
+
             // Build per-column fill specification
             final RecordMetadata groupByMetadata = groupByFactory.getMetadata();
             final int columnCount = groupByMetadata.getColumnCount();
@@ -3577,7 +3596,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     mapKeyTypes,
                     mapValueTypes,
                     keyColIndices,
-                    symbolTableColIndices
+                    symbolTableColIndices,
+                    calendarOffset
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);

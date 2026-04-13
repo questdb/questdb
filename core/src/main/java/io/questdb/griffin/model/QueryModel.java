@@ -195,6 +195,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private boolean distinct = false;
     private boolean explicitTimestamp;
     private ExpressionNode fillFrom;
+    private ExpressionNode fillOffset;
     private ExpressionNode fillStride;
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
@@ -573,6 +574,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByTo = null;
         sampleByFrom = null;
         fillFrom = null;
+        fillOffset = null;
         fillTo = null;
         fillStride = null;
         fillValues = null;
@@ -851,6 +853,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (fillFrom != null) {
             dst.setFillFrom(ExpressionNode.deepClone(expressionNodePool, fillFrom));
         }
+        if (fillOffset != null) {
+            dst.setFillOffset(ExpressionNode.deepClone(expressionNodePool, fillOffset));
+        }
         if (fillTo != null) {
             dst.setFillTo(ExpressionNode.deepClone(expressionNodePool, fillTo));
         }
@@ -983,6 +988,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getFillFrom() {
         return fillFrom;
+    }
+
+    public ExpressionNode getFillOffset() {
+        return fillOffset;
     }
 
     public ExpressionNode getFillStride() {
@@ -1719,6 +1728,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setFillFrom(ExpressionNode fillFrom) {
         this.fillFrom = fillFrom;
+    }
+
+    public void setFillOffset(ExpressionNode fillOffset) {
+        this.fillOffset = fillOffset;
     }
 
     public void setFillStride(ExpressionNode fillStride) {
