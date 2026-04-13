@@ -61,29 +61,29 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| COR-01 | — | Pending |
-| COR-02 | — | Pending |
-| COR-03 | — | Pending |
-| COR-04 | — | Pending |
-| COR-05 | — | Pending |
-| RES-01 | — | Pending |
-| RES-02 | — | Pending |
-| PERF-01 | — | Pending |
-| PERF-02 | — | Pending |
-| QUAL-01 | — | Pending |
-| QUAL-02 | — | Pending |
-| REG-01 | — | Pending |
-| REG-02 | — | Pending |
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
-| TEST-03 | — | Pending |
-| TEST-04 | — | Pending |
+| COR-01 | Phase 1 | Pending |
+| COR-02 | Phase 1 | Pending |
+| COR-03 | Phase 1 | Pending |
+| COR-04 | Phase 1 | Pending |
+| COR-05 | Phase 1 | Pending |
+| RES-01 | Phase 2 | Pending |
+| RES-02 | Phase 2 | Pending |
+| PERF-01 | Phase 3 | Pending |
+| PERF-02 | Phase 3 | Pending |
+| QUAL-01 | Phase 4 | Pending |
+| QUAL-02 | Phase 4 | Pending |
+| REG-01 | Phase 4 | Pending |
+| REG-02 | Phase 4 | Pending |
+| TEST-01 | Phase 4 | Pending |
+| TEST-02 | Phase 4 | Pending |
+| TEST-03 | Phase 4 | Pending |
+| TEST-04 | Phase 4 | Pending |
 
 **Coverage:**
 - v1 requirements: 17 total
-- Mapped to phases: 0
-- Unmapped: 17
+- Mapped to phases: 17
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-13*
-*Last updated: 2026-04-13 after initial definition*
+*Last updated: 2026-04-13 after roadmap creation*
