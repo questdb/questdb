@@ -102,12 +102,12 @@ pub fn encode_fixed_len_bytes<const N: usize>(
                     .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
                 let key = *dict_map.entry(stored).or_insert_with(|| {
                     dict_entries.push(stored);
+                    if let Some(ref mut stats) = state.stats {
+                        stats.update(&stored);
+                    }
                     next_id
                 });
                 state.push_optional_value(key);
-                if let Some(ref mut stats) = state.stats {
-                    stats.update(&stored);
-                }
             }
         }
     }
@@ -185,11 +185,13 @@ where
             if value.is_null() {
                 state.push_optional_null();
             } else {
-                let key = upsert_dict_entry(&mut dict_map, &mut dict_entries, value)?;
+                let key = upsert_dict_entry(
+                    &mut dict_map,
+                    &mut dict_entries,
+                    value,
+                    state.stats.as_mut(),
+                )?;
                 state.push_optional_value(key);
-                if let Some(ref mut stats) = state.stats {
-                    stats.update(value);
-                }
             }
         }
     }

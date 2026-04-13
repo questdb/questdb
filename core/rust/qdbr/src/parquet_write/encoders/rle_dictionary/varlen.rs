@@ -85,13 +85,13 @@ pub fn encode_string(
                         let id = u32::try_from(dict_entries.len())
                             .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
                         dict_map.insert(utf16, id);
+                        if let Some(ref mut stats) = state.stats {
+                            stats.update(&utf8);
+                        }
                         dict_entries.push(utf8);
                         id
                     };
                     state.push_optional_value(key);
-                    if let Some(ref mut stats) = state.stats {
-                        stats.update(&dict_entries[key as usize]);
-                    }
                 }
                 None => {
                     state.push_optional_null();
@@ -234,12 +234,12 @@ where
                         dict_map.insert(s, id);
                         dict_entries.push(s);
                         total_keys_bytes += 4 + s.len();
+                        if let Some(ref mut stats) = state.stats {
+                            stats.update(s);
+                        }
                         id
                     };
                     state.push_optional_value(key);
-                    if let Some(ref mut stats) = state.stats {
-                        stats.update(s);
-                    }
                 }
                 None => {
                     state.push_optional_null();

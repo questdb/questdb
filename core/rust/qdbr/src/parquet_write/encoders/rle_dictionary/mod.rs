@@ -161,11 +161,13 @@ where
                     "encode_primitive: Required column has column top but no default supplied"
                 )
             })?;
-            let default_key = upsert_dict_entry(&mut dict_map, &mut dict_entries, default_p)?;
+            let default_key = upsert_dict_entry(
+                &mut dict_map,
+                &mut dict_entries,
+                default_p,
+                state.stats.as_mut(),
+            )?;
             state.extend_required_values(default_key, chunk.adjusted_column_top);
-            if let Some(ref mut stats) = state.stats {
-                stats.update(default_p);
-            }
         } else if chunk.adjusted_column_top > 0 {
             state.extend_optional_nulls(chunk.adjusted_column_top);
         }
@@ -181,14 +183,12 @@ where
                 state.push_optional_null();
             } else {
                 let p = project(value);
-                let key = upsert_dict_entry(&mut dict_map, &mut dict_entries, p)?;
+                let key =
+                    upsert_dict_entry(&mut dict_map, &mut dict_entries, p, state.stats.as_mut())?;
                 if repetition.is_required() {
                     state.push_required_value(key);
                 } else {
                     state.push_optional_value(key);
-                }
-                if let Some(ref mut stats) = state.stats {
-                    stats.update(p);
                 }
             }
         }
@@ -227,10 +227,12 @@ where
     ])
 }
 
+#[inline]
 fn upsert_dict_entry<P>(
     dict_map: &mut RapidHashMap<P::Bytes, u32>,
     dict_entries: &mut Vec<P>,
     value: P,
+    stats: Option<&mut MaxMin<P>>,
 ) -> ParquetResult<u32>
 where
     P: NativeType,
@@ -244,6 +246,9 @@ where
         .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
     dict_map.insert(bytes, id);
     dict_entries.push(value);
+    if let Some(stats) = stats {
+        stats.update(value);
+    }
     Ok(id)
 }
 
