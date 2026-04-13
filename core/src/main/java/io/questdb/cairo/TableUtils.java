@@ -1732,7 +1732,12 @@ public final class TableUtils {
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
         try {
             try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
-                final int timestampIndex = metadata.getTimestampIndex();
+                final int readerTimestampIndex = metadata.getTimestampIndex();
+                // PartitionDescriptor.timestampIndex must be the writer column index (columnId),
+                // not the dense reader index, because the Rust encoder matches it against columnId values.
+                final int timestampIndex = readerTimestampIndex >= 0
+                        ? metadata.getColumnMetadata(readerTimestampIndex).getWriterIndex()
+                        : -1;
                 partitionDescriptor.of(tableName, partitionRowCount, timestampIndex);
 
                 final boolean useMetadataBloomFilters = bloomFilterColumns == null || bloomFilterColumns.isEmpty();
@@ -1746,8 +1751,8 @@ public final class TableUtils {
                     final String columnName = metadata.getColumnName(columnIndex);
                     final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
 
-                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnId);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnId);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
@@ -1772,7 +1777,7 @@ public final class TableUtils {
                             partitionDescriptor.setColumnAddr(columnAddr, columnSize);
 
                             // root symbol files use separate txn
-                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
+                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnId);
 
                             offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
                             if (!ff.exists(path.$())) {
