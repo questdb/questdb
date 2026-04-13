@@ -251,16 +251,15 @@ public final class Unsafe {
             incrMallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
-                    .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(getRssMemUsed())
+            throw CairoException.nonCritical().setOutOfMemory(true)
+                    .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [rssMemUsed=")
+                    .putSize(getRssMemUsed())
+                    .put(", rssMemLimit=")
+                    .putSize(getRssMemLimit())
                     .put(", size=")
-                    .put(size)
-                    .put(", memoryTag=").put(memoryTag)
-                    .put("], original message: ")
-                    .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
-            throw e;
+                    .putSize(size)
+                    .put(", memoryTag=").put(MemoryTag.nameOf(memoryTag))
+                    .put(']');
         }
     }
 
@@ -273,18 +272,17 @@ public final class Unsafe {
             incrReallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
-                    .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(getRssMemUsed())
+            throw CairoException.nonCritical().setOutOfMemory(true)
+                    .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [rssMemUsed=")
+                    .putSize(getRssMemUsed())
+                    .put(", rssMemLimit=")
+                    .putSize(getRssMemLimit())
                     .put(", oldSize=")
-                    .put(oldSize)
+                    .putSize(oldSize)
                     .put(", newSize=")
-                    .put(newSize)
-                    .put(", memoryTag=").put(memoryTag)
-                    .put("], original message: ")
-                    .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
-            throw e;
+                    .putSize(newSize)
+                    .put(", memoryTag=").put(MemoryTag.nameOf(memoryTag))
+                    .put(']');
         }
     }
 
@@ -329,11 +327,11 @@ public final class Unsafe {
             long usage = getRssMemUsed();
             if (usage + size > rssMemLimit) {
                 throw CairoException.nonCritical().setOutOfMemory(true)
-                        .put("global RSS memory limit exceeded [usage=")
-                        .put(usage)
-                        .put(", RSS_MEM_LIMIT=").put(rssMemLimit)
-                        .put(", size=").put(size)
-                        .put(", memoryTag=").put(memoryTag)
+                        .put("global RSS memory limit exceeded [rssMemUsed=")
+                        .putSize(usage)
+                        .put(", rssMemLimit=").putSize(rssMemLimit)
+                        .put(", size=").putSize(size)
+                        .put(", memoryTag=").put(MemoryTag.nameOf(memoryTag))
                         .put(']');
             }
         }

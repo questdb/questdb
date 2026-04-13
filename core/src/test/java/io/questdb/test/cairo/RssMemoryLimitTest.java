@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -68,7 +70,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
             }
-            capture.waitForRegex("QueryProgress err .*memoryTag=45");
+            capture.waitForRegex("QueryProgress err .*memoryTag=NATIVE_O3");
             capture.assertLoggedRE(" exe \\[.*, sql=`create atomic table x as \\(select rnd_timestamp\\(to_timestamp\\(");
             capture.assertLoggedRE(" err \\[.*, sql=`create atomic table x as \\(select rnd_timestamp\\(to_timestamp\\(");
         });
@@ -114,6 +116,35 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOomMessageContainsHumanReadableSizes() throws Exception {
+        assertMemoryLeak(() -> {
+            long currentUsage = Unsafe.getRssMemUsed();
+            // Set the limit to exactly the current usage so the next malloc triggers OOM
+            Unsafe.setRssMemLimit(currentUsage);
+            try {
+                Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
+                fail("Expected OOM exception");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isOutOfMemory());
+                CharSequence msg = e.getFlyweightMessage();
+                // Verify the message uses human-readable field names
+                TestUtils.assertContains(msg, "global RSS memory limit exceeded");
+                TestUtils.assertContains(msg, "rssMemUsed=");
+                TestUtils.assertContains(msg, "rssMemLimit=");
+                // Verify the memory tag is logged as a name, not a number
+                TestUtils.assertContains(msg, "memoryTag=" + MemoryTag.nameOf(MemoryTag.NATIVE_DEFAULT));
+                // Verify human-readable size units are present (KiB, MiB, or GiB)
+                Assert.assertTrue(
+                        "Expected human-readable size unit in message: " + msg,
+                        msg.toString().contains("KiB") || msg.toString().contains("MiB") || msg.toString().contains("GiB")
+                );
+            } finally {
+                Unsafe.setRssMemLimit(0);
+            }
+        });
+    }
+
+    @Test
     public void testSelect() throws Exception {
         assertMemoryLeak(14, () -> {
             execute("create table test as (select rnd_str() a, rnd_double() b from long_sequence(1000000))");
@@ -122,7 +153,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                     0,
                     "global RSS memory limit exceeded"
             );
-            capture.waitForRegex("QueryProgress err .*memoryTag=30");
+            capture.waitForRegex("QueryProgress err .*memoryTag=NATIVE_FAST_MAP_INT_LIST");
             capture.assertLoggedRE(" exe \\[.*, sql=`select a, sum\\(b\\) from test");
             capture.assertLoggedRE(" err \\[.*, sql=`select a, sum\\(b\\) from test");
         });
