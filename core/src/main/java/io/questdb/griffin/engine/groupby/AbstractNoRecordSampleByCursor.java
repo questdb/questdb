@@ -57,6 +57,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected long sampleLocalEpoch;
     protected long topTzOffset;
     private boolean areTimestampsInitialized;
+    private boolean isDstForward;
     private boolean isNotKeyedLoopInitialized;
     private long rowId;
     private long topLocalEpoch;
@@ -121,6 +122,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.baseCursor = baseCursor;
         baseRecord = baseCursor.getRecord();
         prevDst = Long.MIN_VALUE;
+        isDstForward = false;
         parseParams(baseCursor, executionContext);
         topNextDst = nextDstUtc;
         circuitBreaker = executionContext.getCircuitBreaker();
@@ -151,6 +153,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         // timezone offset is liable to change when we pass over DST edges
         tzOffset = topTzOffset;
         prevDst = Long.MIN_VALUE;
+        isDstForward = false;
         nextDstUtc = topNextDst;
         baseRecord = baseCursor.getRecord();
         rowId = 0;
@@ -159,9 +162,16 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     private void kludge(long newTzOffset) {
-        // time moved forward, we need to make sure we move our sample boundary
-        sampleLocalEpoch += (newTzOffset - tzOffset);
-        nextSampleLocalEpoch = sampleLocalEpoch;
+        long delta = newTzOffset - tzOffset;
+        sampleLocalEpoch += delta;
+        isDstForward = delta > 0;
+        // For calendar-based samplers (month/year), a backward DST shift can push
+        // nextSampleLocalEpoch across a calendar boundary (e.g., Sep 1 → Aug 31),
+        // causing addMonth/addYears to compute the wrong next bucket.
+        // Preserve nextSampleLocalEpoch for correct gap detection in that case.
+        if (!timestampSampler.isCalendarBased() || delta >= 0) {
+            nextSampleLocalEpoch = sampleLocalEpoch;
+        }
         tzOffset = newTzOffset;
     }
 
@@ -177,6 +187,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         if (timestamp - (tzOffset - newTzOffset) < nextSampleTimestamp) {
             // time moved backwards, we need to check if we should be collapsing this
             // hour into previous period or not
+            isDstForward = newTzOffset > tzOffset;
             updateValueWhenClockMovesBack(mapValue);
             nextSampleLocalEpoch = timestampSampler.round(timestamp);
             localEpoch = nextSampleLocalEpoch;
@@ -253,8 +264,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         localEpoch = timestampSampler.round(timestamp);
         // Sometimes rounding, especially around Days can throw localEpoch
         // to the "before" previous DST. When this happens we need to compensate for
-        // tzOffset subtraction at the time of delivery of the timestamp to client
-        if (localEpoch - tzOffset < prevDst) {
+        // tzOffset subtraction at the time of delivery of the timestamp to client.
+        // Only compensate for spring-forward (isDstForward): for fall-back the bucket
+        // boundary legitimately precedes prevDst and compensation would inflate localEpoch.
+        if (isDstForward && localEpoch - tzOffset < prevDst) {
             localEpoch += tzOffset;
         }
         GroupByUtils.toTop(groupByFunctions);

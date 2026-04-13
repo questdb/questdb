@@ -51,6 +51,11 @@ public class YearTimestampMicrosSampler implements TimestampSampler {
     }
 
     @Override
+    public boolean isCalendarBased() {
+        return true;
+    }
+
+    @Override
     public long nextTimestamp(long timestamp) {
         return addYears(timestamp, stepYears);
     }

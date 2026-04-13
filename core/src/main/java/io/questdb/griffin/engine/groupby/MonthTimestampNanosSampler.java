@@ -52,6 +52,11 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
     }
 
     @Override
+    public boolean isCalendarBased() {
+        return true;
+    }
+
+    @Override
     public long nextTimestamp(long timestamp) {
         try {
             return addMonth(timestamp, stepMonths);

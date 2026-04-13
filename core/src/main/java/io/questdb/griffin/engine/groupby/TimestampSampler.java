@@ -34,6 +34,16 @@ public interface TimestampSampler extends Sinkable {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Returns true for calendar-based samplers (month, year) where a sub-day DST
+     * shift can push a timestamp across a period boundary (e.g., Sep 1 → Aug 31).
+     * Fixed-interval samplers (hours, minutes, weeks) return false because their
+     * nextTimestamp() adds a constant and is not affected by such shifts.
+     */
+    default boolean isCalendarBased() {
+        return false;
+    }
+
     int getTimestampType();
 
     long nextTimestamp(long timestamp, long numSteps);
