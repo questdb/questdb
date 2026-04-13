@@ -148,12 +148,94 @@ public class GroupByLongList {
         return ptr;
     }
 
-    public void set(long index, long value) {
-        setValueAt(index, value);
+    /**
+     * QuickSelect algorithm to find the k-th smallest element.
+     * After this method returns, the element at index k will be in its final sorted position,
+     * and all elements before k will be less than or equal to it, and all elements after k
+     * will be greater than or equal to it.
+     * <p>
+     * This is more efficient than full sorting when only specific elements are needed.
+     * Time complexity: O(n) average case, O(n^2) worst case.
+     *
+     * @param lo the index of the first element, inclusive
+     * @param hi the index of the last element, inclusive
+     * @param k  the index of the element to select
+     */
+    public void quickSelect(int lo, int hi, int k) {
+        if (lo < 0 || hi >= size() || k < lo || k > hi) {
+            throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", k=" + k + ", size=" + size());
+        }
+        if (lo < hi) {
+            quickSelectImpl(lo, hi, k);
+        }
+    }
+
+    /**
+     * Optimized QuickSelect for multiple indices.
+     * Partitions recursively only for the partitions containing required indices.
+     * This avoids unnecessary work when selecting multiple percentiles.
+     * <p>
+     * The indices array must be sorted in ascending order.
+     * After this method returns, all elements at the specified indices will be
+     * in their final sorted positions.
+     *
+     * @param lo      the index of the first element, inclusive
+     * @param hi      the index of the last element, inclusive
+     * @param indices sorted array of indices to select
+     * @param from    start index in the indices array
+     * @param to      end index (exclusive) in the indices array
+     */
+    public void quickSelectMultiple(int lo, int hi, int[] indices, int from, int to) {
+        if (lo < 0 || hi >= size()) {
+            throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", size=" + size());
+        }
+        while (from < to && lo < hi) {
+            int pivotIndex = partition(lo, hi);
+
+            // Find which indices fall into which partition
+            int splitPoint = from;
+            while (splitPoint < to && indices[splitPoint] < pivotIndex) {
+                splitPoint++;
+            }
+
+            // Skip the pivot itself if it's one of our target indices
+            int afterPivot = splitPoint;
+            while (afterPivot < to && indices[afterPivot] == pivotIndex) {
+                afterPivot++;
+            }
+
+            boolean hasLeft = splitPoint > from;
+            boolean hasRight = afterPivot < to;
+
+            if (hasLeft && hasRight) {
+                // Recurse on smaller side, iterate on larger to limit stack depth
+                if ((pivotIndex - lo) <= (hi - pivotIndex)) {
+                    quickSelectMultiple(lo, pivotIndex - 1, indices, from, splitPoint);
+                    lo = pivotIndex + 1;
+                    from = afterPivot;
+                } else {
+                    quickSelectMultiple(pivotIndex + 1, hi, indices, afterPivot, to);
+                    hi = pivotIndex - 1;
+                    to = splitPoint;
+                }
+            } else if (hasLeft) {
+                hi = pivotIndex - 1;
+                to = splitPoint;
+            } else if (hasRight) {
+                lo = pivotIndex + 1;
+                from = afterPivot;
+            } else {
+                break;
+            }
+        }
     }
 
     public void resetPtr() {
         ptr = 0;
+    }
+
+    public void set(long index, long value) {
+        setValueAt(index, value);
     }
 
     public void setAllocator(GroupByAllocator allocator) {
@@ -173,6 +255,66 @@ public class GroupByLongList {
 
     public void sortAsUnsigned() {
         Vect.sortULongAscInPlace(ptr() + HEADER_SIZE, size());
+    }
+
+    /**
+     * Partition method using median-of-three pivot selection.
+     * Returns the final position of the pivot element.
+     * <p>
+     * After partitioning:
+     * - All elements to the left of the pivot are <= pivot
+     * - All elements to the right of the pivot are >= pivot
+     *
+     * @param lo the index of the first element, inclusive
+     * @param hi the index of the last element, inclusive
+     * @return the final index of the pivot element
+     */
+    private int partition(int lo, int hi) {
+        // Use median-of-three for better pivot selection
+        int mid = lo + (hi - lo) / 2;
+
+        // Order lo, mid, hi
+        if (getQuick(mid) < getQuick(lo)) {
+            swap(lo, mid);
+        }
+        if (getQuick(hi) < getQuick(lo)) {
+            swap(lo, hi);
+        }
+        if (getQuick(mid) < getQuick(hi)) {
+            swap(mid, hi);
+        }
+
+        // Now hi is the median, use it as pivot
+        long pivot = getQuick(hi);
+        int i = lo - 1;
+
+        for (int j = lo; j < hi; j++) {
+            if (getQuick(j) <= pivot) {
+                i++;
+                swap(i, j);
+            }
+        }
+
+        swap(i + 1, hi);
+        return i + 1;
+    }
+
+    /**
+     * Internal QuickSelect implementation using the partition method.
+     * Iterative to avoid StackOverflowError on degenerate inputs (e.g. all-identical values).
+     */
+    private void quickSelectImpl(int lo, int hi, int k) {
+        while (lo < hi) {
+            int pivotIndex = partition(lo, hi);
+
+            if (k < pivotIndex) {
+                hi = pivotIndex - 1;
+            } else if (k > pivotIndex) {
+                lo = pivotIndex + 1;
+            } else {
+                break;
+            }
+        }
     }
 
     private void setCapacity(int newCapacity) {
