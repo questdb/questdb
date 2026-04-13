@@ -70,9 +70,9 @@ Plans:
   5. Percentile window tests cover PARTITION BY paths, ORDER BY error rejection, and use assertQueryNoLeakCheck instead of assertSql
 **Plans:** 3 plans
 Plans:
-- [ ] 04-01-PLAN.md — Extract DoubleSort utility and replace 9 duplicate sort implementations
-- [ ] 04-02-PLAN.md — Fix toPlan output, register 10 group-by factories, create 4 window alias factories
-- [ ] 04-03-PLAN.md — Migrate assertSql to assertQueryNoLeakCheck, add alias/error/partition tests
+- [x] 04-01-PLAN.md — Extract DoubleSort utility and replace 9 duplicate sort implementations
+- [x] 04-02-PLAN.md — Fix toPlan output, register 10 group-by factories, create 4 window alias factories
+- [x] 04-03-PLAN.md — Migrate assertSql to assertQueryNoLeakCheck, add alias/error/partition tests
 
 ## Progress
 
