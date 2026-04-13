@@ -159,4 +159,4 @@ Plans:
   5. Javadoc at line 67 updated to match `followedOrderByAdvice=false`
 **Plans:** 1 plan
 Plans:
-- [ ] 09-01-PLAN.md -- Fix geo PREV null, findValue NPE guard, recursive hasNext stack overflow, Javadoc fix + regression tests
+- [x] 09-01-PLAN.md -- Fix geo PREV null, findValue NPE guard, recursive hasNext stack overflow, Javadoc fix + regression tests

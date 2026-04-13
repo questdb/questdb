@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 08-01-PLAN.md (partial - 60/81 fixes)
-last_updated: "2026-04-11T20:22:59.173Z"
-last_activity: 2026-04-11
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-04-13T11:21:04.977Z"
+last_activity: 2026-04-13
 progress:
-  total_phases: 8
-  completed_phases: 6
-  total_plans: 7
-  completed_plans: 6
-  percent: 86
+  total_phases: 9
+  completed_phases: 7
+  total_plans: 8
+  completed_plans: 7
+  percent: 88
 ---
 
 # Project State
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 Phase: 3 of 5 (Keyed Fill Cursor)
 Plan: 1 of 1 in current phase (complete)
 Status: Phase complete — ready for verification
-Last activity: 2026-04-11
+Last activity: 2026-04-13
 
 Progress: [######....] 60%
 
@@ -57,6 +57,7 @@ Progress: [######....] 60%
 | Phase 04 P01 | 27m | 1 tasks | 4 files |
 | Phase 07 P01 | 49m | 2 tasks | 5 files |
 | Phase 08 P01 | 273m | 2 tasks | 7 files |
+| Phase 09 P01 | 23m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,8 @@ Recent decisions affecting current work:
 - [Phase 07]: IntList prevSourceCols replaces boolean hasPrevFill for per-column PREV snapshot tracking
 - [Phase 07]: Two-layer type defense: optimizer gate (best-effort) + generateFill safety net (SqlException)
 - [Phase 08]: supportsRandomAccess=false for all fill cursor tests; ASOF JOIN also routes through fast path
+- [Phase 09]: Assert guard (not null-check) at findValue() because pass 1 discovers all keys from the same cursor
+- [Phase 09]: Iterative while(true) loop in emitNextFillRow replaces recursive hasNext call; hasNext call sites fall through on false
 
 ### Roadmap Evolution
 
@@ -99,6 +102,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-11T20:22:53.534Z
-Stopped at: Completed 08-01-PLAN.md (partial - 60/81 fixes)
+Last session: 2026-04-13T11:21:04.975Z
+Stopped at: Completed 09-01-PLAN.md
 Resume file: None
