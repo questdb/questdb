@@ -174,3 +174,17 @@ Plans:
 **Plans:** 1/1 plans complete
 Plans:
 - [x] 10-01-PLAN.md -- Propagate calendar offset through optimizer/codegen/factory, fix bucket alignment in initialize(), add 5 offset+fill tests
+
+### Phase 11: Hardening — Review Findings & Missing Test Coverage
+**Goal**: Fix remaining code review findings and add missing test coverage
+**Depends on**: Phase 10
+**Requirements**: Code review findings
+**Success Criteria** (what must be TRUE):
+  1. UUID key columns emit correct values in fill rows (FILL_KEY dispatch in getLong128Hi/Lo, getDecimal128/256, getLong256)
+  2. Geo null sentinels use GeoHashes.*_NULL (not 0 or Numbers.*_NULL)
+  3. NULL key value test exists (NULL SYMBOL/STRING as GROUP BY key)
+  4. CTE/subquery FILL_KEY reclassification test exists
+  5. DST test with sparse data generates fill rows during transition
+  6. Decimal8/16 null sentinels use Decimals.*_NULL
+  7. /review-pr passes with no critical or moderate findings on production code
+**Plans**: TBD

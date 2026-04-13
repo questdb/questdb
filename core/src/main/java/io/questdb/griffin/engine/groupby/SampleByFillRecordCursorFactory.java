@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
@@ -49,6 +50,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Decimals;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -789,7 +791,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     baseRecord.getDecimal128(col, sink);
                     return;
                 }
-                if (fillMode(col) == FILL_CONSTANT) {
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) {
+                    keysMapRecord.getDecimal128(outputColToKeyPos[col], sink);
+                    return;
+                }
+                if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getDecimal128(null, sink);
                 }
             }
@@ -801,7 +808,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal16(outputColToKeyPos[col]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (short) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal16(null);
-                return 0;
+                return Decimals.DECIMAL16_NULL;
             }
 
             @Override
@@ -810,7 +817,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     baseRecord.getDecimal256(col, sink);
                     return;
                 }
-                if (fillMode(col) == FILL_CONSTANT) {
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) {
+                    keysMapRecord.getDecimal256(outputColToKeyPos[col], sink);
+                    return;
+                }
+                if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getDecimal256(null, sink);
                 }
             }
@@ -842,7 +854,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal8(outputColToKeyPos[col]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (byte) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal8(null);
-                return 0;
+                return Decimals.DECIMAL8_NULL;
             }
 
             @Override
@@ -852,7 +864,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoByte(outputColToKeyPos[col]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (byte) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoByte(null);
-                return 0;
+                return GeoHashes.BYTE_NULL;
             }
 
             @Override
@@ -862,7 +874,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoInt(outputColToKeyPos[col]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoInt(null);
-                return Numbers.INT_NULL;
+                return GeoHashes.INT_NULL;
             }
 
             @Override
@@ -872,7 +884,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoLong(outputColToKeyPos[col]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoLong(null);
-                return Numbers.LONG_NULL;
+                return GeoHashes.NULL;
             }
 
             @Override
@@ -882,7 +894,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getGeoShort(outputColToKeyPos[col]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (short) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getGeoShort(null);
-                return 0;
+                return GeoHashes.SHORT_NULL;
             }
 
             @Override
@@ -898,14 +910,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             @Override
             public long getLong128Hi(int col) {
                 if (!isGapFilling) return baseRecord.getLong128Hi(col);
-                if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Hi(null);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getLong128Hi(outputColToKeyPos[col]);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Hi(null);
                 return Numbers.LONG_NULL;
             }
 
             @Override
             public long getLong128Lo(int col) {
                 if (!isGapFilling) return baseRecord.getLong128Lo(col);
-                if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Lo(null);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getLong128Lo(outputColToKeyPos[col]);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong128Lo(null);
                 return Numbers.LONG_NULL;
             }
 
@@ -915,7 +931,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     baseRecord.getLong256(col, sink);
                     return;
                 }
-                if (fillMode(col) == FILL_CONSTANT) {
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) {
+                    keysMapRecord.getLong256(outputColToKeyPos[col], sink);
+                    return;
+                }
+                if (mode == FILL_CONSTANT) {
                     constantFills.getQuick(col).getLong256(null, sink);
                 }
             }
@@ -923,14 +944,18 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             @Override
             public io.questdb.std.Long256 getLong256A(int col) {
                 if (!isGapFilling) return baseRecord.getLong256A(col);
-                if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getLong256A(null);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getLong256A(outputColToKeyPos[col]);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong256A(null);
                 return Long256Impl.NULL_LONG256;
             }
 
             @Override
             public io.questdb.std.Long256 getLong256B(int col) {
                 if (!isGapFilling) return baseRecord.getLong256B(col);
-                if (fillMode(col) == FILL_CONSTANT) return constantFills.getQuick(col).getLong256B(null);
+                int mode = fillMode(col);
+                if (mode == FILL_KEY) return keysMapRecord.getLong256B(outputColToKeyPos[col]);
+                if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getLong256B(null);
                 return Long256Impl.NULL_LONG256;
             }
 

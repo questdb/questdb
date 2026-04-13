@@ -48,6 +48,31 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullDstSparseData() throws Exception {
+        assertMemoryLeak(() -> {
+            // Sparse data around Europe/Riga DST fall-back on 2021-10-31.
+            // Riga switches from EEST (UTC+3) to EET (UTC+2) at 04:00 local
+            // (01:00 UTC). Data only at 00:00 UTC and 04:00 UTC; the buckets
+            // at 01:00, 02:00, 03:00 UTC must be filled with NULL.
+            execute("CREATE TABLE z (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO z VALUES " +
+                    "(1.0, '2021-10-31T00:00:00.000000Z')," +
+                    "(5.0, '2021-10-31T04:00:00.000000Z')");
+            assertSql(
+                    """
+                            s\tts
+                            1.0\t2021-10-31T00:00:00.000000Z
+                            null\t2021-10-31T01:00:00.000000Z
+                            null\t2021-10-31T02:00:00.000000Z
+                            null\t2021-10-31T03:00:00.000000Z
+                            5.0\t2021-10-31T04:00:00.000000Z
+                            """,
+                    "SELECT sum(val) s, ts FROM z SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Europe/Riga'"
+            );
+        });
+    }
+
+    @Test
     public void testFillNullEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -327,6 +352,29 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     "SELECT ts, city, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '10:00'",
                     "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedWithNullKey() throws Exception {
+        assertMemoryLeak(() -> {
+            // NULL symbol key forms its own group in the cartesian product.
+            // 2 buckets x 2 keys (null + London) = 4 rows.
+            execute("CREATE TABLE t (city SYMBOL, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(null, 10.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('London', 20.0, '2024-01-01T01:00:00.000000Z')," +
+                    "(null, 30.0, '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tcity\tavg
+                            2024-01-01T01:00:00.000000Z\t\t10.0
+                            2024-01-01T01:00:00.000000Z\tLondon\t20.0
+                            2024-01-01T02:00:00.000000Z\t\t30.0
+                            2024-01-01T02:00:00.000000Z\tLondon\tnull
+                            """,
+                    "SELECT ts, city, avg(temp) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR"
             );
         });
     }
@@ -749,6 +797,34 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     "SELECT ts, city, avg(temp) FROM weather " +
                             "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(PREV) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedCte() throws Exception {
+        assertMemoryLeak(() -> {
+            // Wrapping SAMPLE BY FILL(PREV) in a CTE verifies the FILL_KEY
+            // reclassification works correctly when the factory is reused
+            // as a subquery.
+            execute("CREATE TABLE weather (city STRING, temp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO weather VALUES " +
+                    "('London', 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('Paris', 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('Paris', 21.0, '2024-01-01T01:00:00.000000Z')," +
+                    "('London', 12.0, '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tcity\ta
+                            2024-01-01T00:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T00:00:00.000000Z\tParis\t20.0
+                            2024-01-01T01:00:00.000000Z\tParis\t21.0
+                            2024-01-01T01:00:00.000000Z\tLondon\t10.0
+                            2024-01-01T02:00:00.000000Z\tLondon\t12.0
+                            2024-01-01T02:00:00.000000Z\tParis\t21.0
+                            """,
+                    "WITH sq AS (SELECT ts, city, avg(temp) AS a FROM weather SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR) " +
+                            "SELECT * FROM sq"
             );
         });
     }
