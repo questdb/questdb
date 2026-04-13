@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.BitmapIndexUtils;
+import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -51,6 +53,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalDataRecord;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventCursor;
@@ -60,7 +63,6 @@ import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -1145,6 +1147,219 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testBitmapIndexExtendOnNonLastPartitionAppendDateOnly() throws Exception {
+        // Simulates what O3CopyJob.updateIndex does when appending to a non-last
+        // partition: opens BitmapIndexWriter with init=false using fd-based API.
+        // The fd-based BitmapIndexWriter.of() uses the 5-arg MemoryCMARWImpl.of()
+        // for keyMem. This test verifies that extend0() grows the key file in
+        // page-sized chunks (not 1 byte at a time).
+        int initialKeys = 1000;
+        int newKeys = 10_000;
+        int indexBlockCapacity = 4; // INDEX CAPACITY 4
+
+        AtomicInteger allocateCount = new AtomicInteger();
+        LongList allocateSizes = new LongList();
+        long[] trackedKeyFd = {-1};
+        AtomicBoolean tracking = new AtomicBoolean();
+
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (tracking.get() && fd == trackedKeyFd[0]) {
+                    allocateCount.incrementAndGet();
+                    allocateSizes.add(size);
+                }
+                return super.allocate(fd, size);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            try (Path path = new Path().of(root).concat("test_idx")) {
+                testFf.mkdir(path.$(), configuration.getMkDirMode());
+            }
+
+            try (
+                    Path path = new Path().of(root).concat("test_idx");
+                    BitmapIndexWriter w = new BitmapIndexWriter(configuration)
+            ) {
+                // Phase 1: create the index with init=true (simulates first partition creation).
+                // Path-based of() with indexBlockCapacity > 0 → init=true.
+                w.of(path, "sym", 0, indexBlockCapacity);
+                for (int key = 0; key < initialKeys; key++) {
+                    w.add(key, key);
+                }
+                w.commit();
+                w.close();
+
+                // Phase 2: reopen with init=false using fd-based API,
+                // exactly as O3CopyJob.updateIndex does for OPEN_MID_PARTITION_FOR_APPEND.
+                int plen = path.size();
+                long keyFd = TableUtils.openRW(
+                        testFf,
+                        BitmapIndexUtils.keyFileName(path.trimTo(plen), "sym", 0),
+                        LOG,
+                        configuration.getWriterFileOpenOpts()
+                );
+                long valueFd = TableUtils.openRW(
+                        testFf,
+                        BitmapIndexUtils.valueFileName(path.trimTo(plen), "sym", 0),
+                        LOG,
+                        configuration.getWriterFileOpenOpts()
+                );
+                trackedKeyFd[0] = keyFd;
+                tracking.set(true);
+
+                // init=false: O3CopyJob passes row > 0 → init = (row == 0) = false
+                w.of(configuration, keyFd, valueFd, false, indexBlockCapacity);
+
+                // Add new keys, simulating new unique symbols in O3 append.
+                for (int key = initialKeys; key < initialKeys + newKeys; key++) {
+                    w.add(key, key);
+                }
+                w.commit();
+
+                tracking.set(false);
+
+                LOG.info()
+                        .$("bitmap index .k allocate calls [initialKeys=").$(initialKeys)
+                        .$(", newKeys=").$(newKeys)
+                        .$(", allocateCount=").$(allocateCount.get())
+                        .I$();
+                for (int i = 0, n = allocateSizes.size(); i < n; i++) {
+                    LOG.info()
+                            .$("  allocate[").$(i)
+                            .$("] size=").$(allocateSizes.get(i))
+                            .I$();
+                }
+
+                // With the fix, extend0() rounds up to page-sized chunks, so
+                // 10K new keys (320KB of key data) should need very few allocate
+                // calls — not tens of thousands.
+                assertTrue(
+                        "expected fewer than 100 allocate() calls but got " + allocateCount.get(),
+                        allocateCount.get() < 100
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testBitmapIndexExtendOnNonLastPartitionWal() throws Exception {
+        // End-to-end WAL test: inserts batches of rows with unique symbols into
+        // a non-last partition, verifying the bitmap index .k file extends in
+        // page-sized chunks rather than per-putLong.
+        // Scaled down from the customer scenario (19 × 1M) to run in seconds.
+        int batchSize = 10_000;
+        int batches = 5;
+
+        AtomicInteger allocateCount = new AtomicInteger();
+        LongList allocateSizes = new LongList();
+        ConcurrentHashMap<Long, Boolean> indexKeyFds = new ConcurrentHashMap<>();
+        AtomicBoolean tracking = new AtomicBoolean();
+
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (tracking.get() && indexKeyFds.containsKey(fd)) {
+                    allocateCount.incrementAndGet();
+                    synchronized (allocateSizes) {
+                        allocateSizes.add(size);
+                    }
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                indexKeyFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > 0 && Utf8s.containsAscii(name, "2022-01-01") && Utf8s.endsWithAscii(name, ".k")) {
+                    indexKeyFds.put(fd, Boolean.TRUE);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (" +
+                    "sym SYMBOL NOCACHE INDEX CAPACITY 4," +
+                    "val INT," +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Seed: insert initial batch into day1 + 1 row for day2
+            execute("INSERT INTO " + tableName +
+                    " SELECT 'sym_' || x, x::INT, '2022-01-01T00:00:00.000000Z'" +
+                    " FROM long_sequence(" + batchSize + ")");
+            execute("INSERT INTO " + tableName +
+                    " VALUES ('sym_day2', 0, '2022-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // Insert batches into the non-last partition (day1).
+            // Each batch goes through O3 OPEN_MID_PARTITION_FOR_APPEND.
+            int totalAllocates = 0;
+            for (int batch = 1; batch < batches; batch++) {
+                long offset = (long) batch * batchSize;
+
+                allocateCount.set(0);
+                synchronized (allocateSizes) {
+                    allocateSizes.clear();
+                }
+                tracking.set(true);
+
+                execute("INSERT INTO " + tableName +
+                        " SELECT 'sym_' || (x + " + offset + "), (x + " + offset + ")::INT," +
+                        " '2022-01-01T00:00:00.000000Z'" +
+                        " FROM long_sequence(" + batchSize + ")");
+                drainWalQueue();
+
+                tracking.set(false);
+
+                int count = allocateCount.get();
+                totalAllocates += count;
+                long firstSize = 0;
+                long lastSize = 0;
+                synchronized (allocateSizes) {
+                    if (allocateSizes.size() > 0) {
+                        firstSize = allocateSizes.get(0);
+                        lastSize = allocateSizes.get(allocateSizes.size() - 1);
+                    }
+                }
+                LOG.info()
+                        .$("batch ").$(batch)
+                        .$(": allocate() calls=").$(count)
+                        .$(", firstSize=").$(firstSize)
+                        .$(", lastSize=").$(lastSize)
+                        .I$();
+            }
+
+            // Verify total row count
+            long expectedRows = (long) batches * batchSize + 1;
+            assertSql(
+                    "count\n" + expectedRows + "\n",
+                    "SELECT count() FROM " + tableName
+            );
+
+            // With the fix, each batch should need very few allocate calls
+            // (page-sized extends). Without the fix, each batch would produce
+            // ~40K allocate calls (one per putLong on new key entries).
+            LOG.info()
+                    .$("total allocate() calls across all batches: ").$(totalAllocates)
+                    .I$();
+            assertTrue(
+                    "expected fewer than 100 total allocate() calls but got " + totalAllocates,
+                    totalAllocates < 100
+            );
         });
     }
 
