@@ -150,6 +150,30 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileContRejectsOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) AS value FROM long_sequence(10))");
+            assertException(
+                    "SELECT percentile_cont(value, ARRAY[0.25, 0.5]) OVER (ORDER BY value) FROM test",
+                    7,
+                    "percentile_cont window function only supports whole partition frames"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContRejectsRowsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) AS value, x % 2 AS cat FROM long_sequence(10))");
+            assertException(
+                    "SELECT percentile_cont(value, ARRAY[0.25, 0.5]) OVER (PARTITION BY cat ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM test",
+                    7,
+                    "percentile_cont window function only supports whole partition frames"
+            );
+        });
+    }
+
+    @Test
     public void testMultiPercentileContWithExtremePercentiles() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
@@ -431,6 +455,30 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                     null,
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscRejectsOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) AS value FROM long_sequence(10))");
+            assertException(
+                    "SELECT percentile_disc(value, ARRAY[0.25, 0.5]) OVER (ORDER BY value) FROM test",
+                    7,
+                    "percentile_disc window function only supports whole partition frames"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscRejectsRowsFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) AS value, x % 2 AS cat FROM long_sequence(10))");
+            assertException(
+                    "SELECT percentile_disc(value, ARRAY[0.25, 0.5]) OVER (PARTITION BY cat ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM test",
+                    7,
+                    "percentile_disc window function only supports whole partition frames"
             );
         });
     }
@@ -1026,6 +1074,62 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             1\t[25.5,50.0,74.5]
                             """,
                     "SELECT DISTINCT g, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) OVER (PARTITION BY g) FROM large_part ORDER BY g",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testQuantileContAliasEquivalence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) AS value FROM long_sequence(10))");
+            // quantile_cont must produce the same result as percentile_cont
+            assertQueryNoLeakCheck(
+                    """
+                            pc\tqc
+                            5.5\t5.5
+                            5.5\t5.5
+                            5.5\t5.5
+                            5.5\t5.5
+                            5.5\t5.5
+                            5.5\t5.5
+                            5.5\t5.5
+                            5.5\t5.5
+                            5.5\t5.5
+                            5.5\t5.5
+                            """,
+                    "SELECT percentile_cont(value, 0.5) OVER () AS pc, quantile_cont(value, 0.5) OVER () AS qc FROM test",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testQuantileDiscAliasEquivalence() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) AS value FROM long_sequence(10))");
+            // quantile_disc must produce the same result as percentile_disc
+            assertQueryNoLeakCheck(
+                    """
+                            pd\tqd
+                            5.0\t5.0
+                            5.0\t5.0
+                            5.0\t5.0
+                            5.0\t5.0
+                            5.0\t5.0
+                            5.0\t5.0
+                            5.0\t5.0
+                            5.0\t5.0
+                            5.0\t5.0
+                            5.0\t5.0
+                            """,
+                    "SELECT percentile_disc(value, 0.5) OVER () AS pd, quantile_disc(value, 0.5) OVER () AS qd FROM test",
                     null,
                     null,
                     true,
