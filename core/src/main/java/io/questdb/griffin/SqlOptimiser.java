@@ -8297,7 +8297,12 @@ public class SqlOptimiser implements Mutable {
                 nested.setFillTo(sampleByTo);
                 nested.setFillStride(sampleBy);
                 nested.setFillValues(sampleByFill);
-                nested.setFillOffset(sampleByOffset);
+                // Propagate offset only for non-timezone queries. When a timezone
+                // is present, timestamp_floor_utc already accounts for the offset
+                // in its bucket computation, so the fill cursor must not shift again.
+                if (sampleByTimezoneName == null) {
+                    nested.setFillOffset(sampleByOffset);
+                }
 
                 // clear sample by (but keep FILL and FROM-TO)
                 nested.setSampleBy(null);

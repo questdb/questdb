@@ -307,6 +307,31 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullKeyedWithCalendarOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, city SYMBOL, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 'NYC', 10.0), " +
+                    "('2024-01-01T12:00:00.000000Z', 'LON', 20.0), " +
+                    "('2024-01-02T12:00:00.000000Z', 'NYC', 30.0)");
+            drainWalQueue();
+
+            // Buckets at 10:00. LON missing from second bucket.
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tcity\tavg
+                            2024-01-01T10:00:00.000000Z\tNYC\t10.0
+                            2024-01-01T10:00:00.000000Z\tLON\t20.0
+                            2024-01-02T10:00:00.000000Z\tNYC\t30.0
+                            2024-01-02T10:00:00.000000Z\tLON\tnull
+                            """,
+                    "SELECT ts, city, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '10:00'",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
     public void testFillNullMultipleAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x AS (" +
@@ -409,6 +434,81 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "SELECT count() FROM (" +
                             "SELECT ts, key, avg(val) FROM sparse " +
                             "SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR)"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullWithCalendarOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 1.0), " +
+                    "('2024-01-03T12:00:00.000000Z', 3.0)");
+            drainWalQueue();
+
+            // With offset '10:00', buckets start at 10:00 UTC each day.
+            // Data at Jan 1 12:00 falls in bucket [Jan 1 10:00, Jan 2 10:00)
+            // Data at Jan 3 12:00 falls in bucket [Jan 3 10:00, Jan 4 10:00)
+            // Gap bucket: [Jan 2 10:00, Jan 3 10:00) filled with NULL
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tavg
+                            2024-01-01T10:00:00.000000Z\t1.0
+                            2024-01-02T10:00:00.000000Z\tnull
+                            2024-01-03T10:00:00.000000Z\t3.0
+                            """,
+                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '10:00'",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullWithCalendarOffsetAndFromTo() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES ('2024-01-02T12:00:00.000000Z', 5.0)");
+            drainWalQueue();
+
+            // FROM '2024-01-01' TO '2024-01-04' with offset '02:00'
+            // timestamp_floor_utc computes effectiveOffset = from + offset,
+            // so buckets start at 02:00 each day.
+            // Data at Jan 2 12:00 falls in [Jan 2 02:00, Jan 3 02:00)
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tavg
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-02T02:00:00.000000Z\t5.0
+                            2024-01-03T02:00:00.000000Z\tnull
+                            """,
+                    "SELECT ts, avg(value) FROM test " +
+                            "SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-04' " +
+                            "FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00'",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testFillNullWithZeroOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 1.0), " +
+                    "('2024-01-03T12:00:00.000000Z', 3.0)");
+            drainWalQueue();
+
+            // Zero offset should behave identically to no offset
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tavg
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-02T00:00:00.000000Z\tnull
+                            2024-01-03T00:00:00.000000Z\t3.0
+                            """,
+                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:00'",
+                    "ts"
             );
         });
     }
@@ -814,6 +914,29 @@ public class SampleByFillTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: x
                             """
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevWithCalendarOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 1.0), " +
+                    "('2024-01-03T12:00:00.000000Z', 3.0)");
+            drainWalQueue();
+
+            // PREV fill with offset: gap bucket carries forward 1.0
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tavg
+                            2024-01-01T10:00:00.000000Z\t1.0
+                            2024-01-02T10:00:00.000000Z\t1.0
+                            2024-01-03T10:00:00.000000Z\t3.0
+                            """,
+                    "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(PREV) ALIGN TO CALENDAR WITH OFFSET '10:00'",
+                    "ts"
             );
         });
     }
