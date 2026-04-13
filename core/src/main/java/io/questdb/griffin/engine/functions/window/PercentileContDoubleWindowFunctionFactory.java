@@ -49,6 +49,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowExpression;
+import io.questdb.std.DoubleSort;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -259,7 +260,7 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
                     double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
 
                     // Sort the list (values start at listPtr + DATA_OFFSET)
-                    quickSort(listPtr + DATA_OFFSET, 0, size - 1);
+                    DoubleSort.sort(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1);
 
                     // Calculate continuous percentile with interpolation
                     double position = multiplier * (size - 1);
@@ -310,51 +311,6 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
             listMemory.truncate();
         }
 
-        private long partition(long listPtr, long left, long right) {
-            // Median-of-three pivot selection
-            long mid = left + (right - left) / 2;
-            if (listMemory.getDouble(listPtr + left * 8) > listMemory.getDouble(listPtr + mid * 8)) {
-                swap(listPtr, left, mid);
-            }
-            if (listMemory.getDouble(listPtr + left * 8) > listMemory.getDouble(listPtr + right * 8)) {
-                swap(listPtr, left, right);
-            }
-            if (listMemory.getDouble(listPtr + mid * 8) > listMemory.getDouble(listPtr + right * 8)) {
-                swap(listPtr, mid, right);
-            }
-            swap(listPtr, mid, right);
-
-            double pivot = listMemory.getDouble(listPtr + right * 8);
-            long i = left - 1;
-
-            for (long j = left; j < right; j++) {
-                if (listMemory.getDouble(listPtr + j * 8) < pivot) {
-                    i++;
-                    swap(listPtr, i, j);
-                }
-            }
-            swap(listPtr, i + 1, right);
-            return i + 1;
-        }
-
-        private void quickSort(long listPtr, long left, long right) {
-            while (left < right) {
-                long pi = partition(listPtr, left, right);
-                if (pi - left < right - pi) {
-                    quickSort(listPtr, left, pi - 1);
-                    left = pi + 1;
-                } else {
-                    quickSort(listPtr, pi + 1, right);
-                    right = pi - 1;
-                }
-            }
-        }
-
-        private void swap(long listPtr, long i, long j) {
-            double temp = listMemory.getDouble(listPtr + i * 8);
-            listMemory.putDouble(listPtr + i * 8, listMemory.getDouble(listPtr + j * 8));
-            listMemory.putDouble(listPtr + j * 8, temp);
-        }
     }
 
     // Handles percentile_cont() over () - whole result set
@@ -429,7 +385,7 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
             double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
 
             // Sort the list
-            quickSort(0, size - 1);
+            DoubleSort.sort(listMemory.getPageAddress(0), 0, size - 1);
 
             // Calculate continuous percentile with interpolation
             double position = multiplier * (size - 1);
@@ -476,51 +432,6 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
             result = Double.NaN;
         }
 
-        private long partition(long left, long right) {
-            // Median-of-three pivot selection
-            long mid = left + (right - left) / 2;
-            if (listMemory.getDouble(left * 8) > listMemory.getDouble(mid * 8)) {
-                swap(left, mid);
-            }
-            if (listMemory.getDouble(left * 8) > listMemory.getDouble(right * 8)) {
-                swap(left, right);
-            }
-            if (listMemory.getDouble(mid * 8) > listMemory.getDouble(right * 8)) {
-                swap(mid, right);
-            }
-            swap(mid, right);
-
-            double pivot = listMemory.getDouble(right * 8);
-            long i = left - 1;
-
-            for (long j = left; j < right; j++) {
-                if (listMemory.getDouble(j * 8) < pivot) {
-                    i++;
-                    swap(i, j);
-                }
-            }
-            swap(i + 1, right);
-            return i + 1;
-        }
-
-        private void quickSort(long left, long right) {
-            while (left < right) {
-                long pi = partition(left, right);
-                if (pi - left < right - pi) {
-                    quickSort(left, pi - 1);
-                    left = pi + 1;
-                } else {
-                    quickSort(pi + 1, right);
-                    right = pi - 1;
-                }
-            }
-        }
-
-        private void swap(long i, long j) {
-            double temp = listMemory.getDouble(i * 8);
-            listMemory.putDouble(i * 8, listMemory.getDouble(j * 8));
-            listMemory.putDouble(j * 8, temp);
-        }
     }
 
     static {
