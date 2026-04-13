@@ -43,7 +43,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             //   position(0.25) = 0.25*(5-1) = 1.0 → value at index 1 = 3.0
             //   position(0.50) = 0.50*(5-1) = 2.0 → value at index 2 = 5.0
             //   position(0.75) = 0.75*(5-1) = 3.0 → value at index 3 = 7.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             category\tvalue\tpercentile_cont
                             1\t1.0\t[3.0,5.0,7.0]
@@ -57,7 +57,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             1\t9.0\t[3.0,5.0,7.0]
                             0\t10.0\t[4.0,6.0,8.0]
                             """,
-                    "select category, value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over (partition by category) from test"
+                    "select category, value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over (partition by category) from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -95,7 +99,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     public void testMultiPercentileContOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_cont
                             1.0\t[3.25,5.5,7.75]
@@ -109,7 +113,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t[3.25,5.5,7.75]
                             10.0\t[3.25,5.5,7.75]
                             """,
-                    "select value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+                    "select value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -149,7 +157,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             // 0th: position = 0 * 9 = 0 → index 0 → 1.0
             // 50th: position = 0.5 * 9 = 4.5 → interpolate between 4 and 5 → 5.5
             // 100th: position = 1.0 * 9 = 9 → index 9 → 10.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_cont
                             1.0\t[1.0,5.5,10.0]
@@ -163,7 +171,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t[1.0,5.5,10.0]
                             10.0\t[1.0,5.5,10.0]
                             """,
-                    "select value, percentile_cont(value, ARRAY[0.0, 0.5, 1.0]) over () from test"
+                    "select value, percentile_cont(value, ARRAY[0.0, 0.5, 1.0]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -180,7 +192,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             // 25th percentile: position = 0.25 * 6 = 1.5 → interpolate between index 1 and 2 → 2 + 0.5*(4-2) = 3.0
             // 50th percentile: position = 0.50 * 6 = 3.0 → index 3 → 5.0
             // 75th percentile: position = 0.75 * 6 = 4.5 → interpolate between index 4 and 5 → 7 + 0.5*(8-7) = 7.5
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             x\tvalue\tpercentile_cont
                             1\t1.0\t[3.0,5.0,7.5]
@@ -194,7 +206,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9\tnull\t[3.0,5.0,7.5]
                             10\t10.0\t[3.0,5.0,7.5]
                             """,
-                    "select x, value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+                    "select x, value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -216,7 +232,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             //   25th: 0.25 * 4 = 1.0 → index 1 → 3.0
             //   50th: 0.50 * 4 = 2.0 → index 2 → 5.0
             //   75th: 0.75 * 4 = 3.0 → index 3 → 7.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             category\tvalue\tpercentile_cont
                             1\t1.0\t[3.0,5.0,7.0]
@@ -230,7 +246,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             1\t9.0\t[3.0,5.0,7.0]
                             0\t10.0\t[4.0,6.0,8.0]
                             """,
-                    "select category, value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over (partition by category) from test"
+                    "select category, value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over (partition by category) from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -249,7 +269,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             //   25th: 0.25 * 8 = 2.0 → index 2 → 3.0
             //   50th: 0.50 * 8 = 4.0 → index 4 → 6.0
             //   75th: 0.75 * 8 = 6.0 → index 6 → 8.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             x\tcategory\tvalue\tpercentile_cont
                             1\t2\t1.0\t[3.0,6.0,8.0]
@@ -263,7 +283,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9\t2\t9.0\t[3.0,6.0,8.0]
                             10\t2\t10.0\t[3.0,6.0,8.0]
                             """,
-                    "select x, category, value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over (partition by category) from test"
+                    "select x, category, value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over (partition by category) from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -276,13 +300,17 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             // 25th: position = 0.25 * 1 = 0.25 → 0.25 * (2.0 - 1.0) + 1.0 = 1.25
             // 50th: position = 0.50 * 1 = 0.50 → 0.50 * (2.0 - 1.0) + 1.0 = 1.5
             // 75th: position = 0.75 * 1 = 0.75 → 0.75 * (2.0 - 1.0) + 1.0 = 1.75
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_cont
                             1.0\t[1.25,1.5,1.75]
                             2.0\t[1.25,1.5,1.75]
                             """,
-                    "select value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+                    "select value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -301,7 +329,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             //   25th percentile index = ceil(5*0.25)-1 = 1 → 3.0
             //   50th percentile index = ceil(5*0.50)-1 = 2 → 5.0
             //   75th percentile index = ceil(5*0.75)-1 = 3 → 7.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             category\tvalue\tpercentile_disc
                             1\t1.0\t[3.0,5.0,7.0]
@@ -315,7 +343,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             1\t9.0\t[3.0,5.0,7.0]
                             0\t10.0\t[4.0,6.0,8.0]
                             """,
-                    "select category, value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over (partition by category) from test"
+                    "select category, value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over (partition by category) from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -353,7 +385,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     public void testMultiPercentileDiscOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_disc
                             1.0\t[3.0,5.0,8.0]
@@ -367,7 +399,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t[3.0,5.0,8.0]
                             10.0\t[3.0,5.0,8.0]
                             """,
-                    "select value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+                    "select value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -404,7 +440,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select 5.0 as value from long_sequence(10))");
             // All values are 5.0, so all percentiles should return 5.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_disc
                             5.0\t[5.0,5.0,5.0]
@@ -418,7 +454,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             5.0\t[5.0,5.0,5.0]
                             5.0\t[5.0,5.0,5.0]
                             """,
-                    "select value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+                    "select value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -430,7 +470,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             // Values will be 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 (in that order)
             // After sorting: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
             // Should give same results as ascending test
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_disc
                             10.0\t[3.0,5.0,8.0]
@@ -444,7 +484,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             2.0\t[3.0,5.0,8.0]
                             1.0\t[3.0,5.0,8.0]
                             """,
-                    "select value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+                    "select value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -457,7 +501,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             // 0th: max(0, ceil(10 * 0.0) - 1) = 0 → index 0 → 1.0
             // 50th: ceil(10 * 0.5) - 1 = 5 - 1 = 4 → index 4 → 5.0
             // 100th: ceil(10 * 1.0) - 1 = 10 - 1 = 9 → index 9 → 10.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_disc
                             1.0\t[1.0,5.0,10.0]
@@ -471,7 +515,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t[1.0,5.0,10.0]
                             10.0\t[1.0,5.0,10.0]
                             """,
-                    "select value, percentile_disc(value, ARRAY[0.0, 0.5, 1.0]) over () from test"
+                    "select value, percentile_disc(value, ARRAY[0.0, 0.5, 1.0]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -481,7 +529,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
             // Test with 10 different percentiles
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_disc
                             1.0\t[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0]
@@ -495,7 +543,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0]
                             10.0\t[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0]
                             """,
-                    "select value, percentile_disc(value, ARRAY[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]) over () from test"
+                    "select value, percentile_disc(value, ARRAY[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -512,7 +564,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             // 25th percentile: ceil(7 * 0.25) - 1 = 2 - 1 = 1 → index 1 → 2.0
             // 50th percentile: ceil(7 * 0.50) - 1 = 4 - 1 = 3 → index 3 → 5.0
             // 75th percentile: ceil(7 * 0.75) - 1 = 6 - 1 = 5 → index 5 → 8.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             x\tvalue\tpercentile_disc
                             1\t1.0\t[2.0,5.0,8.0]
@@ -526,7 +578,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9\tnull\t[2.0,5.0,8.0]
                             10\t10.0\t[2.0,5.0,8.0]
                             """,
-                    "select x, value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+                    "select x, value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -535,7 +591,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     public void testMultiPercentileDiscWithSingleValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_disc
                             1.0\t[5.0]
@@ -549,7 +605,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t[5.0]
                             10.0\t[5.0]
                             """,
-                    "select value, percentile_disc(value, ARRAY[0.5]) over () from test"
+                    "select value, percentile_disc(value, ARRAY[0.5]) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -560,7 +620,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             execute("create table test as (" +
                     "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
                     ")");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             category\tvalue\tpercentile_cont
                             1\t1.0\t5.0
@@ -574,7 +634,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             1\t9.0\t5.0
                             0\t10.0\t6.0
                             """,
-                    "select category, value, percentile_cont(value, 0.5) over (partition by category) from test"
+                    "select category, value, percentile_cont(value, 0.5) over (partition by category) from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -583,7 +647,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     public void testPercentileContOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_cont
                             1.0\t5.5
@@ -597,7 +661,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t5.5
                             10.0\t5.5
                             """,
-                    "select value, percentile_cont(value, 0.5) over () from test"
+                    "select value, percentile_cont(value, 0.5) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -630,7 +698,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     public void testPercentileContWith75thPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             percentile_cont
                             7.75
@@ -644,7 +712,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             7.75
                             7.75
                             """,
-                    "select percentile_cont(value, 0.75) over () from test"
+                    "select percentile_cont(value, 0.75) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -655,7 +727,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             execute("create table test as (select cast(x as double) value from long_sequence(5))");
             // For 5 values (1,2,3,4,5), 25th percentile at position 0.25*(5-1) = 1.0
             // This is exactly at index 1, so result should be the value at index 1 after sorting = 2.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             percentile_cont
                             2.0
@@ -664,7 +736,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             2.0
                             2.0
                             """,
-                    "select percentile_cont(value, 0.25) over () from test"
+                    "select percentile_cont(value, 0.25) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -673,7 +749,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     public void testPercentileDisc0thPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             percentile_disc
                             1.0
@@ -687,7 +763,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             1.0
                             1.0
                             """,
-                    "select percentile_disc(value, 0) over () from test"
+                    "select percentile_disc(value, 0) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -696,7 +776,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     public void testPercentileDisc100thPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             percentile_disc
                             10.0
@@ -710,7 +790,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             10.0
                             10.0
                             """,
-                    "select percentile_disc(value, 1.0) over () from test"
+                    "select percentile_disc(value, 1.0) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -724,7 +808,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                     ")");
             // cat1=0 (even): values 2, 4, 6, 8, 10 → 50th percentile index = ceil(5*0.5)-1 = 2 → value 6.0
             // cat1=1 (odd):  values 1, 3, 5, 7, 9  → 50th percentile index = ceil(5*0.5)-1 = 2 → value 5.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             cat1\tvalue\tpercentile_disc
                             1\t1.0\t5.0
@@ -738,7 +822,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             1\t9.0\t5.0
                             0\t10.0\t6.0
                             """,
-                    "select cat1, value, percentile_disc(value, 0.5) over (partition by cat1) from test"
+                    "select cat1, value, percentile_disc(value, 0.5) over (partition by cat1) from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -749,7 +837,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             execute("create table test as (" +
                     "select x % 2 as category, cast(x as double) as value from long_sequence(10)" +
                     ")");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             category\tvalue\tpercentile_disc
                             1\t1.0\t5.0
@@ -763,7 +851,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             1\t9.0\t5.0
                             0\t10.0\t6.0
                             """,
-                    "select category, value, percentile_disc(value, 0.5) over (partition by category) from test"
+                    "select category, value, percentile_disc(value, 0.5) over (partition by category) from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -772,7 +864,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     public void testPercentileDiscOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             value\tpercentile_disc
                             1.0\t5.0
@@ -786,7 +878,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t5.0
                             10.0\t5.0
                             """,
-                    "select value, percentile_disc(value, 0.5) over () from test"
+                    "select value, percentile_disc(value, 0.5) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -819,7 +915,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     public void testPercentileDiscWith75thPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             percentile_disc
                             8.0
@@ -833,7 +929,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             8.0
                             8.0
                             """,
-                    "select percentile_disc(value, 0.75) over () from test"
+                    "select percentile_disc(value, 0.75) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -845,7 +945,7 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
             execute("insert into test values (1.0), (2.0), (null), (4.0), (5.0)");
             // For 4 non-null values: [1.0, 2.0, 4.0, 5.0], 50th percentile index = ceil(4 * 0.5) - 1 = 1
             // After sorting: [1.0, 2.0, 4.0, 5.0], index 1 = 2.0
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             percentile_disc
                             2.0
@@ -854,7 +954,11 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             2.0
                             2.0
                             """,
-                    "select percentile_disc(value, 0.5) over () from test"
+                    "select percentile_disc(value, 0.5) over () from test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
