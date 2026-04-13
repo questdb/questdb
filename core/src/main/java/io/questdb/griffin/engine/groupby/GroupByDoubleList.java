@@ -289,35 +289,10 @@ public class GroupByDoubleList {
      */
     private void quickSelectImpl(int lo, int hi, int k) {
         while (lo < hi) {
-            // DNF three-way partition: [lo..lt-1] < pivot, [lt..gt] == pivot, [gt+1..hi] > pivot
-            int mid = lo + (hi - lo) / 2;
-            if (getQuick(mid) < getQuick(lo)) {
-                swap(lo, mid);
-            }
-            if (getQuick(hi) < getQuick(lo)) {
-                swap(lo, hi);
-            }
-            if (getQuick(mid) < getQuick(hi)) {
-                swap(mid, hi);
-            }
-            double pivot = getQuick(hi);
-            int lt = lo;
-            int gt = hi;
-            int i = lo;
-            while (i <= gt) {
-                double v = getQuick(i);
-                if (v < pivot) {
-                    swap(lt, i);
-                    lt++;
-                    i++;
-                } else if (v > pivot) {
-                    swap(i, gt);
-                    gt--;
-                } else {
-                    i++;
-                }
-            }
-            // Now: [lo..lt-1] < pivot, [lt..gt] == pivot, [gt+1..hi] > pivot
+            long packed = partition3Way(lo, hi);
+            int lt = (int) (packed >>> 32);
+            int gt = (int) packed;
+
             if (k < lt) {
                 hi = lt - 1;
             } else if (k > gt) {
