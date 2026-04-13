@@ -52,6 +52,6 @@ public class MultiApproxPercentileDoubleGroupByDefaultFunctionFactory implements
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new MultiApproxPercentileDoubleGroupByFunction(args.getQuick(0), args.getQuick(1), DEFAULT_PRECISION);
+        return new MultiApproxPercentileDoubleGroupByFunction(args.getQuick(0), args.getQuick(1), DEFAULT_PRECISION, argPositions.getQuick(1));
     }
 }

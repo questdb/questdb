@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Misc;
@@ -48,16 +49,18 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
     private final Function exprFunc;
     private final ObjList<PackedHistogram> histograms = new ObjList<>();
     private final Function percentileFunc;
+    private final int percentilesPos;
     private final int precision;
     private int histogramIndex;
     private DirectArray out;
     private int valueIndex;
 
-    public MultiApproxPercentileLongPackedGroupByFunction(Function exprFunc, Function percentileFunc, int precision) {
+    public MultiApproxPercentileLongPackedGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int percentilesPos) {
         assert precision >= 0 && precision <= 5;
         this.exprFunc = exprFunc;
         this.percentileFunc = percentileFunc;
         this.precision = precision;
+        this.percentilesPos = percentilesPos;
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
     }
 
@@ -141,7 +144,8 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
 
         for (int i = 0; i < viewLength; i++) {
             double p = view.getDoubleAtAbsIndex(i);
-            out.putDouble(i, histogram.getValueAtPercentile(p * 100));
+            double multiplier = SqlUtil.getPercentileMultiplier(p, percentilesPos);
+            out.putDouble(i, histogram.getValueAtPercentile(multiplier * 100));
         }
         return out;
     }

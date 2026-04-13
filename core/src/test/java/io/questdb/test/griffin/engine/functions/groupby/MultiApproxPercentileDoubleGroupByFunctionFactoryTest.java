@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -105,6 +106,38 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
                     result,
                     "SELECT category, approx_percentile(value, ARRAY[0.5, 1.0]) FROM test ORDER BY category"
             );
+        });
+    }
+
+    @Test
+    public void testInvalidPercentileInArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::double AS val FROM long_sequence(10))");
+            try {
+                assertSql(
+                        "",
+                        "SELECT approx_percentile(val, ARRAY[0.5, 1.5]::DOUBLE[]) FROM test"
+                );
+                Assert.fail("Expected CairoException for invalid percentile");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid percentile");
+            }
+        });
+    }
+
+    @Test
+    public void testNegativePercentileInArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::double AS val FROM long_sequence(10))");
+            try {
+                assertSql(
+                        "",
+                        "SELECT approx_percentile(val, ARRAY[0.5, -1.5]::DOUBLE[]) FROM test"
+                );
+                Assert.fail("Expected CairoException for invalid percentile");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid percentile");
+            }
         });
     }
 

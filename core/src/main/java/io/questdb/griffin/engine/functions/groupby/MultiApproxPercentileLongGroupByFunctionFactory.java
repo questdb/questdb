@@ -60,9 +60,10 @@ public class MultiApproxPercentileLongGroupByFunctionFactory implements Function
 
         final int precision = checkAndReturnPrecision(precisionFunc, argPositions.getQuick(2));
 
+        final int percentilesPos = argPositions.getQuick(1);
         if (precision > 2) {
-            return new MultiApproxPercentileLongPackedGroupByFunction(exprFunc, percentileFunc, precision);
+            return new MultiApproxPercentileLongPackedGroupByFunction(exprFunc, percentileFunc, precision, percentilesPos);
         }
-        return new MultiApproxPercentileLongGroupByFunction(exprFunc, percentileFunc, precision);
+        return new MultiApproxPercentileLongGroupByFunction(exprFunc, percentileFunc, precision, percentilesPos);
     }
 }

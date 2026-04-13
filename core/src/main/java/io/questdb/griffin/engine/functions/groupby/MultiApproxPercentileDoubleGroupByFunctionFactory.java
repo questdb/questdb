@@ -60,9 +60,10 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactory implements Functi
 
         final int precision = checkAndReturnPrecision(precisionFunc, argPositions.getQuick(2));
 
+        final int percentilesPos = argPositions.getQuick(1);
         if (precision > 2) {
-            return new MultiApproxPercentileDoublePackedGroupByFunction(exprFunc, percentileFunc, precision);
+            return new MultiApproxPercentileDoublePackedGroupByFunction(exprFunc, percentileFunc, precision, percentilesPos);
         }
-        return new MultiApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, precision);
+        return new MultiApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, precision, percentilesPos);
     }
 }
