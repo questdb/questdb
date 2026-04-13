@@ -143,7 +143,7 @@ fn bytes_segments_to_page<const N: usize>(
                 &mut buffer,
                 null_value,
                 &mut stats,
-                bloom_hashes.as_mut().map(|h| &mut **h),
+                bloom_hashes.as_deref_mut(),
             );
         }
     } else {
@@ -153,7 +153,7 @@ fn bytes_segments_to_page<const N: usize>(
                 &mut buffer,
                 null_value,
                 &mut stats,
-                bloom_hashes.as_mut().map(|h| &mut **h),
+                bloom_hashes.as_deref_mut(),
             );
         }
     }
