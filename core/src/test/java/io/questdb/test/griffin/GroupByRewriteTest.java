@@ -214,6 +214,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                     SelectedRecord
                                         Hash Join Light
                                           condition: t2.sym=t1.sym
+                                          symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: trades

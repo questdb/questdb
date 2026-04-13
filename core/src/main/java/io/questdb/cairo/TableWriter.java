@@ -1051,6 +1051,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             commit();
 
+            // ConvertOperatorImpl opens native .d files directly, so parquet
+            // partitions must be converted back to native before the column
+            // type change.
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                if (txWriter.isPartitionParquet(i)) {
+                    convertPartitionParquetToNative(txWriter.getPartitionTimestampByIndex(i));
+                }
+            }
+
             LOG.info().$("converting column [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
@@ -1466,6 +1475,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final int timestampIndex = metadata.getTimestampIndex();
                 partitionDescriptor.of(getTableToken().getTableName(), partitionRowCount, timestampIndex);
 
+                final boolean useMetadataBloomFilters = bloomFilterColumns == null || bloomFilterColumns.isEmpty();
                 final int columnCount = metadata.getColumnCount();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                     final int columnType = metadata.getColumnType(columnIndex);
@@ -1633,9 +1643,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 double fpp = Double.isNaN(bloomFilterFpp) ? config.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
                 try {
-                    if (bloomFilterColumns != null && !bloomFilterColumns.isEmpty()) {
-                        bloomFilterIndexes.reopen();
+                    bloomFilterIndexes.reopen();
+                    if (useMetadataBloomFilters) {
+                        // Derive bloom filter columns from per-column metadata flags
+                        int metaDescriptorIndex = 0;
+                        for (int i = 0; i < columnCount; i++) {
+                            final int colType = metadata.getColumnType(i);
+                            if (colType <= 0) {
+                                continue;
+                            }
+                            if (TableUtils.isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
+                                bloomFilterIndexes.add(metaDescriptorIndex);
+                            }
+                            metaDescriptorIndex++;
+                        }
+                    } else {
+                        // Explicit bloom_filter_columns override from CONVERT PARTITION WITH clause
                         parseBloomFilterColumnIndexes(bloomFilterColumns, bloomFilterIndexes);
+                    }
+                    if (bloomFilterIndexes.size() > 0) {
                         bloomFilterColumnIndexesPtr = bloomFilterIndexes.getAddress();
                         bloomFilterColumnCount = (int) bloomFilterIndexes.size();
                     }
@@ -5409,6 +5435,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         Misc.free(dedupColumnCommitAddresses);
+        Misc.free(bloomFilterIndexes);
         Misc.free(parquetDecoder);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);

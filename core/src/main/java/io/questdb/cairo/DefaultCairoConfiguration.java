@@ -1292,6 +1292,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCairoMetadataCacheSnapshotOrdered() {
+        return false;
+    }
+
+    @Override
     public long getTableRegistryAutoReloadFrequency() {
         return 500;
     }

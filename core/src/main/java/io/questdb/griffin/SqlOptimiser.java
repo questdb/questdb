@@ -54,7 +54,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStrin
 import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
-import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
@@ -86,10 +86,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -137,7 +139,7 @@ public class SqlOptimiser implements Mutable {
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
-    private static final int SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE = 4;
+
     private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 1;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     // list of join types that don't support all optimisations (e.g., pushing table-specific predicates to both left and right table)
@@ -209,6 +211,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
+    private final ObjHashSet<QueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
@@ -408,6 +411,16 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean columnNotExistsInJoinModels(QueryModel baseModel, CharSequence columnName) {
+        final ObjList<QueryModel> joinModels = baseModel.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            if (joinModels.getQuick(i).getAliasToColumnMap().contains(columnName)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static ExpressionNode concatFilters(
@@ -2148,6 +2161,33 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private boolean columnExistsInJoinTree(QueryModel model, CharSequence columnName) {
+        if (model == null) {
+            return false;
+        }
+        try {
+            return columnExistsInJoinTree0(model, columnName, tempJoinTreeColumnModels);
+        } finally {
+            tempJoinTreeColumnModels.clear();
+        }
+    }
+
+    private boolean columnExistsInJoinTree0(QueryModel model, CharSequence columnName, ObjHashSet<QueryModel> visited) {
+        if (model == null || !visited.add(model)) {
+            return false;
+        }
+        if (!model.getAliasToColumnMap().excludes(columnName)) {
+            return true;
+        }
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            if (columnExistsInJoinTree0(joinModels.getQuick(i), columnName, visited)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Compare two expression trees while accounting for table prefixes.
     // GROUP BY may have prefixes (e.g., "t.qty", "h.offset") that SELECT doesn't have ("qty", "offset").
     // Uses stack-based iteration to avoid deep recursion.
@@ -2661,6 +2701,17 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private ExpressionNode createToUtcCall(ExpressionNode value, ExpressionNode timezone) {
+        ExpressionNode call = expressionNodePool.next();
+        call.token = ToUTCTimestampFunctionFactory.NAME;
+        call.type = FUNCTION;
+        call.paramCount = 2;
+        call.position = value.position;
+        call.rhs = timezone;
+        call.lhs = value;
+        return call;
+    }
+
     @NotNull
     private QueryModel createWrapperModel(QueryModel model) {
         // these are early stages of model processing
@@ -3064,9 +3115,12 @@ public class SqlOptimiser implements Mutable {
             int index = columnNameToAliasMap.keyIndex(n.token);
             if (index > -1) {
                 // Column not yet referenced by inner model - validate and add it
-                validateWindowColumnReference(node, n.token, translatingModel, innerVirtualModel, baseModel);
+                ExpressionNode resolvedColumnAst = validateWindowColumnReference(node, n.token, translatingModel, innerVirtualModel, baseModel);
                 CharSequence alias = createColumnAlias(n.token, innerVirtualModel);
-                QueryColumn column = queryColumnPool.next().of(alias, n);
+                ExpressionNode columnAst = resolvedColumnAst != null
+                        ? ExpressionNode.deepClone(expressionNodePool, resolvedColumnAst)
+                        : n;
+                QueryColumn column = queryColumnPool.next().of(alias, columnAst);
                 innerVirtualModel.addBottomUpColumn(column);
                 if (alias != n.token) {
                     translatingModel.addBottomUpColumnIfNotExists(column);
@@ -3135,7 +3189,7 @@ public class SqlOptimiser implements Mutable {
 
             // also search the virtual model and do not register the literal with the
             // translating model if this is a projection only reference.
-            if (baseModel.getAliasToColumnMap().excludes(node.token) && innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(node.token)) {
+            if (columnNotExistsInJoinModels(baseModel, node.token) && innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(node.token)) {
                 return node;
             }
 
@@ -5460,7 +5514,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
                 case SHOW_TABLES:
-                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
+                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory(executionContext.getCairoEngine().getConfiguration());
                     break;
                 case SHOW_COLUMNS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
@@ -7863,8 +7917,6 @@ public class SqlOptimiser implements Mutable {
                             && timestamp != null
                             // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
                             && sampleByOffset != null
-                            // for now, time zone and offset are supported only when there is no FILL()
-                            && (sampleByFillSize == 0 || (sampleByTimezoneName == null && isZeroOffset(sampleByOffset.token)))
                             && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
@@ -7904,10 +7956,6 @@ public class SqlOptimiser implements Mutable {
                 // don't pollute the group-by keys.
 
                 int wrapAction = SAMPLE_BY_REWRITE_NO_WRAP;
-
-                if (sampleByTimezoneName != null && !isUTC(sampleByTimezoneName.token)) {
-                    wrapAction |= SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE;
-                }
 
                 // this may or may not be our guy, but may not be, depending on fill settings
 
@@ -8089,7 +8137,7 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 final ExpressionNode tsFloorFunc = expressionNodePool.next();
-                tsFloorFunc.token = TimestampFloorFunctionFactory.NAME;
+                tsFloorFunc.token = TimestampFloorFromOffsetUtcFunctionFactory.NAME;
                 tsFloorFunc.type = FUNCTION;
                 tsFloorFunc.paramCount = 5;
 
@@ -8108,7 +8156,15 @@ public class SqlOptimiser implements Mutable {
                 tsFloorTsParam.paramCount = 0;
                 tsFloorTsParam.type = LITERAL;
 
-                if (sampleByTimezoneName != null) {
+                boolean isSubDay = !sampleBy.token.isEmpty() && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
+
+                // Pass the timezone to timestamp_floor_utc so it can anchor buckets at local
+                // hour boundaries (important for non-hour-aligned timezones like Asia/Kolkata
+                // or Asia/Kathmandu). However, when both a sub-day interval and FROM are present,
+                // the timezone is redundant: to_utc(FROM, tz) already converts the user's local
+                // anchor to UTC, and sub-day bucketing from that anchor is purely uniform intervals
+                // in UTC space. Passing the timezone again would double-apply the offset.
+                if (sampleByTimezoneName != null && !(isSubDay && sampleByFrom != null)) {
                     tsFloorFunc.args.add(sampleByTimezoneName);
                 } else {
                     final ExpressionNode nullTimezone = expressionNodePool.next();
@@ -8122,7 +8178,11 @@ public class SqlOptimiser implements Mutable {
                 // This value is populated from the FROM clause and anchors the calendar-aligned buckets
                 // to an offset other than the unix epoch.
                 if (sampleByFrom != null) {
-                    tsFloorFunc.args.add(sampleByFrom);
+                    if (isSubDay && sampleByTimezoneName != null) {
+                        tsFloorFunc.args.add(createToUtcCall(sampleByFrom, sampleByTimezoneName));
+                    } else {
+                        tsFloorFunc.args.add(sampleByFrom);
+                    }
                 } else {
                     final ExpressionNode nullExpr = expressionNodePool.next();
                     nullExpr.type = CONSTANT;
@@ -8176,32 +8236,6 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 QueryModel orderByModel = nested;
-                CharSequence orderByTimestamp = timestamp.token;
-                // Inject an intermediate model with to_utc() function in place of the timestamp.
-                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0) {
-                    model = wrapWithSelectModel(model, model.getBottomUpColumns().size());
-                    model.setSelectModelType(SELECT_MODEL_CHOOSE);
-                    orderByModel = model.getNestedModel();
-                    orderByTimestamp = timestampAlias;
-
-                    final QueryColumn qc = model.getBottomUpColumns().getQuick(timestampPos);
-                    if (timestampAlias == null || qc.getAst().type != LITERAL && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)) {
-                        throw SqlException.$(qc.getAst().position, "unexpected non-timestamp column at position ").put(timestampPos);
-                    }
-
-                    final ExpressionNode toUtcFunc = expressionNodePool.next();
-                    toUtcFunc.token = ToUTCTimestampFunctionFactory.NAME;
-                    toUtcFunc.type = FUNCTION;
-                    toUtcFunc.paramCount = 2;
-                    final ExpressionNode toUtcParam = expressionNodePool.next();
-                    toUtcParam.token = timestampAlias;
-                    toUtcParam.position = timestamp.position;
-                    toUtcParam.paramCount = 0;
-                    toUtcParam.type = LITERAL;
-                    toUtcFunc.lhs = toUtcParam;
-                    toUtcFunc.rhs = sampleByTimezoneName;
-                    qc.of(timestampAlias, toUtcFunc);
-                }
 
                 if (nested.getOrderBy().size() == 0) {
                     // There is no explicit ORDER BY, so we need to add one.
@@ -8210,7 +8244,7 @@ public class SqlOptimiser implements Mutable {
                     orderBy.type = LITERAL;
                     orderByModel.getOrderBy().add(orderBy);
                     orderByModel.getOrderByDirection().add(0);
-                    orderByModel.setTimestamp(nextLiteral(orderByTimestamp));
+                    orderByModel.setTimestamp(nextLiteral(timestamp.token));
                 }
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0 && needRemoveColumns > 0) {
@@ -8232,15 +8266,10 @@ public class SqlOptimiser implements Mutable {
                     orderByModel = model.getNestedModel();
                 }
 
-                // We need to move explicit ORDER BY upper level in two cases:
-                // 1. If there is to_utc() conversion due to time zone, we need to place the ORDER BY
-                //    at the to_utc() level as to_utc() may change the order of rows.
-                // 2. If we removed functions with timestamp column as an argument, they could be
-                //    used in the ORDER BY clause, so we need to move it at the level where
-                //    the functions are restored.
-                final boolean orderByMoveRequired = (wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0
-                        || (wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0;
-                if (orderByMoveRequired && nested.getOrderBy().size() > 0) {
+                // If we removed functions with timestamp column as an argument, they could be
+                // used in the ORDER BY clause, so we need to move it at the level where
+                // the functions are restored.
+                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0 && nested.getOrderBy().size() > 0) {
                     final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
                     final IntList orderByDirection = nested.getOrderByDirection();
                     for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -8291,6 +8320,17 @@ public class SqlOptimiser implements Mutable {
 
         sampleFrom = fromToModel.getSampleByFrom();
         sampleTo = fromToModel.getSampleByTo();
+
+        // interpret FROM/TO as local time in the specified timezone
+        ExpressionNode timezoneName = fromToModel.getSampleByTimezoneName();
+        if (timezoneName != null && !isUTC(timezoneName.token)) {
+            if (sampleFrom != null) {
+                sampleFrom = createToUtcCall(sampleFrom, timezoneName);
+            }
+            if (sampleTo != null) {
+                sampleTo = createToUtcCall(sampleTo, timezoneName);
+            }
+        }
 
         // if from-to is present
         if (sampleFrom != null || sampleTo != null) {
@@ -9130,7 +9170,7 @@ public class SqlOptimiser implements Mutable {
                             //  the same model's columns, then introduce an innerValueModel to handle this case.
                             //  This would change the processing logic for all columns.
                             if (
-                                    (!forceNotUseInnerModel && baseModel.getAliasToColumnMap().excludes(qc.getAst().token) &&
+                                    (!forceNotUseInnerModel && columnNotExistsInJoinModels(baseModel, qc.getAst().token) &&
                                             innerVirtualModel.getAliasToColumnMap().contains(qc.getAst().token))
                             ) {
                                 // column is referencing another column or function on the same projection
@@ -10584,7 +10624,7 @@ public class SqlOptimiser implements Mutable {
      * @param innerVirtualModel Model containing projection aliases
      * @param baseModel         Base model with actual table columns
      */
-    private void validateWindowColumnReference(
+    private ExpressionNode validateWindowColumnReference(
             ExpressionNode node,
             CharSequence token,
             QueryModel translatingModel,
@@ -10592,8 +10632,8 @@ public class SqlOptimiser implements Mutable {
             QueryModel baseModel
     ) throws SqlException {
         // If the table has a column with this name, normal flow handles renaming (e.g., b -> b1)
-        if (!baseModel.getAliasToColumnMap().excludes(token)) {
-            return;
+        if (columnExistsInJoinTree(baseModel, token)) {
+            return null;
         }
 
         // Check if token exists as a projection alias
@@ -10601,7 +10641,7 @@ public class SqlOptimiser implements Mutable {
         int aliasIndex = aliasMap.keyIndex(token);
         if (aliasIndex >= 0) {
             // Not an alias - will be handled by normal flow
-            return;
+            return null;
         }
 
         // Token is a projection alias. Check what it references.
@@ -10610,18 +10650,20 @@ public class SqlOptimiser implements Mutable {
 
         // Only validate if alias references a column (LITERAL). Functions, constants, etc. are fine.
         if (aliasAst.type != ExpressionNode.LITERAL) {
-            return;
+            return null;
         }
 
         // The alias references another literal. Verify that literal resolves to a table column.
         CharSequence referencedToken = aliasAst.token;
         boolean inTranslatingModel = translatingModel.getAliasToColumnMap().get(token) != null;
-        boolean isTableColumn = !baseModel.getAliasToColumnMap().excludes(referencedToken);
+        boolean isTableColumn = columnExistsInJoinTree(baseModel, referencedToken);
 
         if (!inTranslatingModel && !isTableColumn) {
             // The alias references another alias that doesn't resolve to a table column
             throw SqlException.invalidColumn(node.position, node.token);
         }
+
+        return aliasAst;
     }
 
     private void validateWindowFunctions(
@@ -11148,6 +11190,7 @@ public class SqlOptimiser implements Mutable {
             rewriteSampleByFromTo(rewrittenModel);
             propagateHintsTo(rewrittenModel, rewrittenModel.getHints());
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
+
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
@@ -11158,6 +11201,7 @@ public class SqlOptimiser implements Mutable {
             lateralJoinRewriter.rewrite(rewrittenModel);
             rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);
