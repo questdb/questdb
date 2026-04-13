@@ -242,11 +242,6 @@ public class PartitionDecoder implements QuietCloseable {
         return metadata;
     }
 
-    public boolean rowGroupColumnHasEncoding(int rowGroupIndex, int columnIndex, int encoding) {
-        assert ptr != 0;
-        return rowGroupColumnHasEncoding(ptr, rowGroupIndex, columnIndex, encoding);
-    }
-
     public void of(long addr, long fileSize, int memoryTag) {
         assert addr != 0;
         assert fileSize > 0;
@@ -304,6 +299,11 @@ public class PartitionDecoder implements QuietCloseable {
                 (int) (columns.size() >>> 1),
                 rowGroupIndex
         );
+    }
+
+    public boolean rowGroupColumnHasEncoding(int rowGroupIndex, int columnIndex, int encoding) {
+        assert ptr != 0;
+        return rowGroupColumnHasEncoding(ptr, rowGroupIndex, columnIndex, encoding);
     }
 
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {
@@ -403,14 +403,14 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long rowCountOffset();
 
-    private static native long rowGroupCountOffset();
-
     private static native boolean rowGroupColumnHasEncoding(
             long decoderPtr,
             int rowGroupIndex,
             int columnIndex,
             int encoding
     );
+
+    private static native long rowGroupCountOffset();
 
     private static native long rowGroupMaxTimestamp(
             long decoderPtr,

@@ -1283,10 +1283,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     INSERT INTO dict_copy_src VALUES
                         (10, 1000, '2020-01-01T00:00:00.000000Z'),
                         (20, 2000, '2020-01-01T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-01T02:00:00.000000Z'),
                         (10, 1000, '2020-01-02T00:00:00.000000Z'),
                         (30, 3000, '2020-01-02T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-02T02:00:00.000000Z'),
                         (20, 2000, '2020-01-03T00:00:00.000000Z'),
-                        (40, 4000, '2020-01-03T01:00:00.000000Z')
+                        (40, 4000, '2020-01-03T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-03T02:00:00.000000Z')
                     """);
 
             final String parquetPath = exportRoot + File.separator + "dict_copy_output.parquet";
@@ -1412,10 +1415,13 @@ public class CopyExportTest extends AbstractCairoTest {
                     INSERT INTO dict_copy_cursor_src VALUES
                         (10, 1000, '2020-01-01T00:00:00.000000Z'),
                         (20, 2000, '2020-01-01T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-01T02:00:00.000000Z'),
                         (10, 1000, '2020-01-02T00:00:00.000000Z'),
                         (30, 3000, '2020-01-02T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-02T02:00:00.000000Z'),
                         (20, 2000, '2020-01-03T00:00:00.000000Z'),
-                        (40, 4000, '2020-01-03T01:00:00.000000Z')
+                        (40, 4000, '2020-01-03T01:00:00.000000Z'),
+                        (NULL, NULL, '2020-01-03T02:00:00.000000Z')
                     """);
 
             final String parquetPath = exportRoot + File.separator + "dict_copy_cursor_output.parquet";
