@@ -199,9 +199,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final int columnCount;
         private final short[] columnTypes;
         private final ObjList<Function> constantFills;
+        private final IntList fillModes;
         private final FillRecord fillRecord = new FillRecord();
         private final FillTimestampConstant fillTimestampFunc;
-        private final IntList fillModes;
         private final Function fromFunc;
         private final boolean hasPrevFill;
         private final IntList keyColIndices;
@@ -217,12 +217,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         private final TimestampSampler timestampSampler;
         private final Function toFunc;
         private RecordCursor baseCursor;
-        private boolean baseCursorExhausted;
         private Record baseRecord;
         private boolean hasDataForCurrentBucket;
         private boolean hasExplicitTo;
         private boolean hasPendingRow;
         private boolean hasSimplePrev;
+        private boolean isBaseCursorExhausted;
         private boolean isEmittingFills;
         private boolean isInitialized;
         private int keyCount;
@@ -329,17 +329,17 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 long dataTs;
                 if (hasPendingRow) {
                     dataTs = pendingTs;
-                } else if (!baseCursorExhausted && baseCursor.hasNext()) {
+                } else if (!isBaseCursorExhausted && baseCursor.hasNext()) {
                     dataTs = baseRecord.getTimestamp(timestampIndex);
                     hasPendingRow = true;
                     pendingTs = dataTs;
                 } else {
-                    baseCursorExhausted = true;
+                    isBaseCursorExhausted = true;
                     dataTs = Long.MAX_VALUE;
                 }
 
                 // Base cursor exhausted and no explicit TO bound
-                if (baseCursorExhausted && !hasExplicitTo) {
+                if (isBaseCursorExhausted && !hasExplicitTo) {
                     // Emit fills for remaining absent keys in current bucket
                     if (hasDataForCurrentBucket && keysMap != null) {
                         isEmittingFills = true;
@@ -454,7 +454,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             isInitialized = false;
             hasSimplePrev = false;
             hasPendingRow = false;
-            baseCursorExhausted = false;
+            isBaseCursorExhausted = false;
             hasExplicitTo = false;
             hasDataForCurrentBucket = false;
             isEmittingFills = false;
@@ -485,7 +485,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (hasPendingRow && pendingTs == nextBucketTimestamp) {
                     return false; // next bucket has data — let hasNext() handle it
                 }
-                if (baseCursorExhausted && !hasExplicitTo) {
+                if (isBaseCursorExhausted && !hasExplicitTo) {
                     return false;
                 }
                 // Next bucket is a gap — emit fills for all keys
@@ -521,7 +521,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     // No keys discovered — empty GROUP BY output.
                     // With FROM/TO, emit zero rows (no keys to fill).
                     // Without FROM/TO, also emit zero rows (no data).
-                    baseCursorExhausted = true;
+                    isBaseCursorExhausted = true;
                     maxTimestamp = Long.MIN_VALUE;
                     nextBucketTimestamp = Long.MAX_VALUE;
                     return;
@@ -576,7 +576,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     maxTimestamp = Long.MIN_VALUE;
                     nextBucketTimestamp = Long.MAX_VALUE;
                 }
-                baseCursorExhausted = true;
+                isBaseCursorExhausted = true;
             }
         }
 
@@ -834,7 +834,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal32(outputColToKeyPos[col]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return (int) prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal32(null);
-                return Numbers.INT_NULL;
+                return Decimals.DECIMAL32_NULL;
             }
 
             @Override
@@ -844,7 +844,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (mode == FILL_KEY) return keysMapRecord.getDecimal64(outputColToKeyPos[col]);
                 if ((mode == FILL_PREV_SELF || mode >= 0) && hasKeyPrev()) return prevValue(col);
                 if (mode == FILL_CONSTANT) return constantFills.getQuick(col).getDecimal64(null);
-                return Numbers.LONG_NULL;
+                return Decimals.DECIMAL64_NULL;
             }
 
             @Override
