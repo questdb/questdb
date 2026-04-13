@@ -646,7 +646,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.isFlatMode = false;
                 return;
             }
-            int idx = start;
 
             this.isFlatMode = false;
 
@@ -655,7 +654,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             if (coverCount > 0) {
                 // Prefix-sum gives us the sidecar base directly: sum of counts for keys before idx
                 int sidecarBase = 0;
-                for (int i = 0; i < idx; i++) {
+                for (int i = 0; i < start; i++) {
                     sidecarBase += Unsafe.getUnsafe().getInt(countsBase + (long) i * Integer.BYTES);
                 }
                 this.sidecarOrdinal = sidecarBase;
@@ -665,8 +664,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
-            this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
-            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
+            this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) start * Integer.BYTES);
+            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) start * Integer.BYTES);
             this.encodedAddr = genAddr + headerSize + dataOffset;
 
             readDeltaBlockMetadata();
@@ -703,38 +702,37 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 constantDeltaRemaining = 0;
                 return;
             }
-            int blockCount = firstWord;
             isEFMode = false;
-            if (blockCount < 0 || blockCount > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
+            if (firstWord < 0 || firstWord > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
                 throw CairoException.critical(0).put("corrupt posting index: invalid block count [blockCount=")
-                        .put(blockCount).put(", totalValues=").put(totalValueCount).put(']');
+                        .put(firstWord).put(", totalValues=").put(totalValueCount).put(']');
             }
             pos += 4;
 
             srcValueCountsAddr = pos;
-            pos += blockCount;
+            pos += firstWord;
 
             srcFirstValuesAddr = pos;
-            pos += (long) blockCount * Long.BYTES;
+            pos += (long) firstWord * Long.BYTES;
 
             srcMinDeltasAddr = pos;
-            pos += (long) blockCount * Long.BYTES;
+            pos += (long) firstWord * Long.BYTES;
 
             srcBitWidthsAddr = pos;
-            pos += blockCount;
+            pos += firstWord;
 
             // packedOffsets only present for multi-block keys
             long srcPackedOffsetsAddr = 0;
-            if (blockCount > 1) {
+            if (firstWord > 1) {
                 srcPackedOffsetsAddr = pos;
-                pos += (long) blockCount * Integer.BYTES;
+                pos += (long) firstWord * Integer.BYTES;
             }
 
             long packedDataStart = pos;
 
             int startBlock = 0;
-            if (minValue > 0 && blockCount > 1) {
-                int lo = 0, hi = blockCount - 1;
+            if (minValue > 0 && firstWord > 1) {
+                int lo = 0, hi = firstWord - 1;
                 while (lo < hi) {
                     int mid = (lo + hi + 1) >>> 1;
                     if (Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) mid * Long.BYTES) <= minValue) {
@@ -760,9 +758,9 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.sidecarOrdinal += skippedValueCount;
             }
 
-            int endBlock = blockCount;
-            if (maxValue < Long.MAX_VALUE && blockCount > 0) {
-                for (int b = startBlock; b < blockCount; b++) {
+            int endBlock = firstWord;
+            if (maxValue < Long.MAX_VALUE && firstWord > 0) {
+                for (int b = startBlock; b < firstWord; b++) {
                     if (Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) b * Long.BYTES) > maxValue) {
                         endBlock = b;
                         break;
