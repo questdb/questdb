@@ -4810,7 +4810,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             SelectedRecord
                                 AsOf Join
-                                  condition:
+                                  condition:\s
                                     Sample By Fill
                                       range: ('2017-12-20','2018-01-31')
                                       stride: '5d'
