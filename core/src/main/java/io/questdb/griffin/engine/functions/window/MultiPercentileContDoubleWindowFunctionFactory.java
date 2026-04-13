@@ -57,6 +57,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 
 public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -244,15 +245,14 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                     long capacity = listMemory.getLong(listPtr + CAPACITY_OFFSET);
 
                     if (size >= capacity) {
-                        // Grow: allocate 2x capacity, copy values, abandon old block
+                        // Grow: allocate 2x capacity, copy values via memcpy, abandon old block
                         long newCapacity = capacity * 2;
                         long bytes = DATA_OFFSET + newCapacity * 8L;
                         long newPtr = listMemory.appendAddressFor(bytes) - listMemory.getPageAddress(0);
                         listMemory.putLong(newPtr + CAPACITY_OFFSET, newCapacity);
                         listMemory.putLong(newPtr + SIZE_OFFSET_BLOCK, size + 1);
-                        for (long i = 0; i < size; i++) {
-                            listMemory.putDouble(newPtr + DATA_OFFSET + i * 8, listMemory.getDouble(listPtr + DATA_OFFSET + i * 8));
-                        }
+                        long baseAddr = listMemory.getPageAddress(0);
+                        Vect.memcpy(baseAddr + newPtr + DATA_OFFSET, baseAddr + listPtr + DATA_OFFSET, size * 8);
                         listMemory.putDouble(newPtr + DATA_OFFSET + size * 8, d);
                         listPtr = newPtr;
                     } else {
