@@ -144,6 +144,23 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     }
 
     @Test
+    public void testNullGroupBeforeNonNullGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (grp SYMBOL, val DOUBLE)");
+            execute("INSERT INTO test VALUES ('a', null), ('b', 1.0), ('b', 2.0), ('b', 3.0)");
+            assertQueryNoLeakCheck(
+                    "grp\tpercentile_disc\n" +
+                            "a\tnull\n" +
+                            "b\t[1.0,3.0]\n",
+                    "SELECT grp, percentile_disc(val, ARRAY[0.25, 0.75]::DOUBLE[]) FROM test GROUP BY grp ORDER BY grp",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMultiPercentileDiscGroupByWithAllNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (" +

@@ -134,10 +134,10 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
 
         if (out == null) {
             out = new DirectArray();
-            out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-            out.setDimLen(0, viewLength);
-            out.applyShape();
         }
+        out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        out.setDimLen(0, viewLength);
+        out.applyShape();
 
         for (int i = 0; i < viewLength; i++) {
             double p = view.getDoubleAtAbsIndex(i);

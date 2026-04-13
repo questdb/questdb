@@ -73,10 +73,10 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
 
         if (out == null) {
             out = new DirectArray();
-            out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-            out.setDimLen(0, viewLength);
-            out.applyShape();
         }
+        out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        out.setDimLen(0, viewLength);
+        out.applyShape();
 
         // Collect all unique indices needed for interpolation
         indexSet.clear();

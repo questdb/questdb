@@ -137,10 +137,10 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
 
         if (out == null) {
             out = new DirectArray();
-            out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-            out.setDimLen(0, viewLength);
-            out.applyShape();
         }
+        out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+        out.setDimLen(0, viewLength);
+        out.applyShape();
 
         // Calculate all required indices and validate percentiles
         if (indices.length < viewLength) {
