@@ -936,17 +936,10 @@ Payload:
 
 ## 18. Reference Implementation
 
-The authoritative implementation is in QuestDB's Java codebase:
-
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpConstants.java` - Protocol constants
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpMessageHeader.java` - Header parsing
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpTableHeader.java` - Table header parsing
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpVarint.java` - Varint encoding/decoding
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpNullBitmap.java` - Null bitmap utilities
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpSchema.java` - Schema parsing and encoding
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpSchemaRegistry.java` - Per-connection schema registry
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/QwpMessageCursor.java` - Message/table iteration
-- `core/src/main/java/io/questdb/cutlass/qwp/protocol/Qwp*ColumnCursor.java` - Type-specific decoders
+The authoritative implementation lives in QuestDB's Java codebase under
+`core/src/main/java/io/questdb/cutlass/qwp/protocol/`. That directory
+contains the header and varint parsers, the schema registry, the message
+and table-block cursors, and the type-specific column decoders.
 
 ---
 
