@@ -729,14 +729,18 @@ varints for per-table error details:
 | Limit                     | Default Value |
 |---------------------------|---------------|
 | Max batch size            | 16 MB         |
-| Max tables per batch      | 256           |
+| Max tables per connection | 10,000        |
 | Max rows per table        | 1,000,000     |
 | Max columns per table     | 2,048         |
 | Max table name length     | 127 bytes     |
 | Max column name length    | 127 bytes     |
-| Max string value length   | 1 MB          |
 | Max in-flight batches     | 4             |
 | Initial receive buffer    | 64 KB         |
+
+The header's `table_count` field is a uint16, so the protocol ceiling for
+tables per message is 65,535 regardless of the configured limit. Individual
+string values have no dedicated length limit; they are bounded only by the
+max batch size.
 
 ---
 
