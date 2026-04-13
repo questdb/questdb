@@ -100,6 +100,8 @@ impl<'a> FileHeader<'a> {
 
         // Parse fixed header fields individually (feature_flags at offset 4
         // is not 8-byte aligned, so we cannot use a repr(C) pointer cast).
+        // Unwraps: data.len() >= HEADER_FIXED_SIZE (24) checked above, so all
+        // fixed-width slices are exactly the right length.
         let raw = FileHeaderRaw {
             format_version: u32::from_le_bytes(data[0..4].try_into().unwrap()),
             feature_flags: HeaderFeatureFlags::from_le_bytes(data[4..12].try_into().unwrap()),
@@ -135,6 +137,14 @@ impl<'a> FileHeader<'a> {
         // Validate bit dependencies.
         raw.feature_flags.validate_bit_dependencies()?;
 
+        if raw.feature_flags.has_sorting_is_dts_asc() && raw.designated_timestamp < 0 {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "SORTING_IS_DTS_ASC requires designated_timestamp >= 0, got {}",
+                raw.designated_timestamp
+            ));
+        }
+
         // Validate that name strings are in bounds.
         let names_end = Self::compute_names_area_end(data, raw.column_count)?;
 
@@ -148,6 +158,7 @@ impl<'a> FileHeader<'a> {
                     "bloom filter header section: missing bloom_col_count"
                 ));
             }
+            // Unwrap: cursor + 4 <= data.len() checked above.
             let bloom_col_count = u32::from_le_bytes(data[cursor..cursor + 4].try_into().unwrap());
             cursor += 4;
 
@@ -179,6 +190,7 @@ impl<'a> FileHeader<'a> {
             let mut prev: Option<u32> = None;
             for i in 0..bloom_col_count as usize {
                 let off = i * 4;
+                // Unwrap: off + 4 <= indices_bytes, indices_slice length checked above.
                 let idx = u32::from_le_bytes(indices_slice[off..off + 4].try_into().unwrap());
                 if idx >= raw.column_count {
                     return Err(parquet_meta_err!(
@@ -412,6 +424,7 @@ impl<'a> FileHeader<'a> {
                 slice.len() / 4
             ));
         }
+        // Unwrap: off + 4 <= slice.len() checked above.
         Ok(u32::from_le_bytes(slice[off..off + 4].try_into().unwrap()))
     }
 
@@ -420,12 +433,19 @@ impl<'a> FileHeader<'a> {
     pub fn bloom_filter_position(&self, col_idx: u32) -> Option<usize> {
         let slice = self.bloom_filter_columns?;
         let count = slice.len() / 4;
-        let result = (0..count).collect::<Vec<_>>().binary_search_by(|&pos| {
-            let off = pos * 4;
-            let idx = u32::from_le_bytes(slice[off..off + 4].try_into().unwrap());
-            idx.cmp(&col_idx)
-        });
-        result.ok()
+        let mut lo = 0usize;
+        let mut hi = count;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let off = mid * 4;
+            let idx = u32::from_le_bytes(slice[off..off + 4].try_into().ok()?);
+            match idx.cmp(&col_idx) {
+                std::cmp::Ordering::Less => lo = mid + 1,
+                std::cmp::Ordering::Greater => hi = mid,
+                std::cmp::Ordering::Equal => return Some(mid),
+            }
+        }
+        None
     }
 }
 
@@ -1078,5 +1098,19 @@ mod tests {
         without_opt.write_to(&mut buf_without);
 
         assert_eq!(buf_with.len() + 4, buf_without.len());
+    }
+
+    #[test]
+    fn sorting_is_dts_asc_with_negative_dts_rejected() {
+        let mut builder = FileHeaderBuilder::new(-1);
+        builder.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut buf = Vec::new();
+        builder.write_to(&mut buf);
+
+        // Manually set SORTING_IS_DTS_ASC flag while designated_timestamp remains -1.
+        let flags = HeaderFeatureFlags::SORTING_IS_DTS_ASC_BIT;
+        buf[4..12].copy_from_slice(&flags.to_le_bytes());
+
+        assert!(FileHeader::new(&buf).is_err());
     }
 }

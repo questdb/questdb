@@ -153,8 +153,20 @@ pub fn convert_from_parquet(
             PhysicalType::FixedLenByteArray(len) => len as i32,
             _ => 0,
         };
-        let max_rep_level = col_desc.descriptor.max_rep_level as u8;
-        let max_def_level = col_desc.descriptor.max_def_level as u8;
+        let max_rep_level: u8 = col_desc.descriptor.max_rep_level.try_into().map_err(|_| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "max_rep_level {} does not fit in u8",
+                col_desc.descriptor.max_rep_level
+            )
+        })?;
+        let max_def_level: u8 = col_desc.descriptor.max_def_level.try_into().map_err(|_| {
+            parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "max_def_level {} does not fit in u8",
+                col_desc.descriptor.max_def_level
+            )
+        })?;
         writer.add_column(
             name,
             id,

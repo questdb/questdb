@@ -73,6 +73,8 @@ impl<'a> Footer<'a> {
             ));
         }
         // Read fields individually to avoid repr(C) padding issues.
+        // Unwraps: data.len() >= FOOTER_FIXED_SIZE (24) + FOOTER_CHECKSUM_SIZE
+        // checked above, so all fixed-width slices are exactly the right length.
         let raw = FooterRaw {
             parquet_footer_offset: u64::from_le_bytes(data[0..8].try_into().unwrap()),
             parquet_footer_length: u32::from_le_bytes(data[8..12].try_into().unwrap()),

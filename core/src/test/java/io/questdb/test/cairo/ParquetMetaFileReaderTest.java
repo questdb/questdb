@@ -462,6 +462,78 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnMetadataAccessors() throws Exception {
+        assertMemoryLeak(() -> {
+            // Build a multi-column file with varied types and explicit IDs.
+            long writerPtr = ParquetMetaFileWriter.create();
+            try {
+                ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, 2);
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("amount");
+                    // colType=10 (DOUBLE), id=100
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 100, 10, 0, 0, 0, 0, 0);
+                }
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("symbol");
+                    // colType=12 (SYMBOL), id=200
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 200, 12, 0, 0, 0, 0, 0);
+                }
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("ts");
+                    // colType=8 (TIMESTAMP), id=300
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), (int) name.size(), 300, 8, 0, 0, 0, 0, 0);
+                }
+                ParquetMetaFileWriter.addRowGroup(writerPtr, 500);
+                ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
+                long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+                try {
+                    long dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
+                    long dataLen = ParquetMetaFileWriter.resultDataLen(resultPtr);
+
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(dataPtr, dataLen);
+
+                    Assert.assertEquals(3, reader.getColumnCount());
+
+                    // Column names.
+                    Assert.assertEquals("amount", reader.getColumnName(0).toString());
+                    Assert.assertEquals("symbol", reader.getColumnName(1).toString());
+                    Assert.assertEquals("ts", reader.getColumnName(2).toString());
+
+                    // Column IDs.
+                    Assert.assertEquals(100, reader.getColumnId(0));
+                    Assert.assertEquals(200, reader.getColumnId(1));
+                    Assert.assertEquals(300, reader.getColumnId(2));
+
+                    // Column types.
+                    Assert.assertEquals(10, reader.getColumnType(0));
+                    Assert.assertEquals(12, reader.getColumnType(1));
+                    Assert.assertEquals(8, reader.getColumnType(2));
+
+                    // Lookup by name.
+                    Assert.assertEquals(0, reader.getColumnIndex("amount"));
+                    Assert.assertEquals(1, reader.getColumnIndex("symbol"));
+                    Assert.assertEquals(2, reader.getColumnIndex("ts"));
+                    Assert.assertEquals(-1, reader.getColumnIndex("nonexistent"));
+
+                    // Designated timestamp.
+                    Assert.assertEquals(2, reader.getDesignatedTimestampColumnIndex());
+
+                    // Chunk stat accessors (values are 0 for writer-built files,
+                    // but must not crash).
+                    Assert.assertEquals(0, reader.getChunkStatFlags(0, 0));
+                    Assert.assertEquals(0, reader.getChunkMinStat(0, 0));
+                    Assert.assertEquals(0, reader.getChunkMaxStat(0, 0));
+                } finally {
+                    ParquetMetaFileWriter.destroyResult(resultPtr);
+                }
+            } finally {
+                ParquetMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    @Test
     public void testLifecycleCloseWithoutOf() throws Exception {
         assertMemoryLeak(() -> {
             ParquetMetaFileReader reader = new ParquetMetaFileReader();

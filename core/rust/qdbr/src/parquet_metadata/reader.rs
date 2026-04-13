@@ -95,6 +95,7 @@ impl<'a> ParquetMetaReader<'a> {
                     file_size
                 )
             })?;
+        // Expect: .get() returned a FOOTER_TRAILER_SIZE (4) byte slice.
         let footer_length =
             u32::from_le_bytes(trailer.try_into().expect("slice is 4 bytes")) as u64;
         let footer_offset = file_size
@@ -145,6 +146,8 @@ impl<'a> ParquetMetaReader<'a> {
                 "footer region too small for trailer"
             ));
         }
+        // Expect: footer_data.len() >= FOOTER_TRAILER_SIZE checked above,
+        // so the slice is exactly FOOTER_TRAILER_SIZE (4) bytes.
         let trailer_start = footer_data.len() - FOOTER_TRAILER_SIZE;
         let footer_length = u32::from_le_bytes(
             footer_data[trailer_start..trailer_start + FOOTER_TRAILER_SIZE]
@@ -323,6 +326,7 @@ impl<'a> ParquetMetaReader<'a> {
     /// Returns an iterator over bloom filter column indices.
     pub fn bloom_filter_columns(&self) -> Vec<u32> {
         let count = self.header.bloom_filter_column_count();
+        // Unwrap: pos < count, so bloom_filter_column cannot fail.
         (0..count as usize)
             .map(|pos| self.header.bloom_filter_column(pos).unwrap())
             .collect()
@@ -352,6 +356,7 @@ impl<'a> ParquetMetaReader<'a> {
                 pos
             ));
         }
+        // Unwrap: off + 4 <= section.len() checked above.
         let stored = u32::from_le_bytes(section[off..off + 4].try_into().unwrap());
         Ok((stored as u64) << crate::parquet_metadata::types::BLOCK_ALIGNMENT_SHIFT)
     }
@@ -376,6 +381,7 @@ impl<'a> ParquetMetaReader<'a> {
                 pos
             ));
         }
+        // Unwraps: off + 16 <= section.len() checked above.
         let parquet_offset = u64::from_le_bytes(section[off..off + 8].try_into().unwrap());
         let parquet_length = u64::from_le_bytes(section[off + 8..off + 16].try_into().unwrap());
         Ok((parquet_offset, parquet_length))
@@ -495,12 +501,12 @@ impl<'a> ParquetMetaReader<'a> {
             let min_inline_size = if phys_size > 0 {
                 phys_size.min(8)
             } else {
-                min_stat_sz as usize
+                (min_stat_sz as usize).min(8)
             };
             let max_inline_size = if phys_size > 0 {
                 phys_size.min(8)
             } else {
-                max_stat_sz as usize
+                (max_stat_sz as usize).min(8)
             };
 
             // Decode an OOL stat reference: `(offset << 32) | length`.

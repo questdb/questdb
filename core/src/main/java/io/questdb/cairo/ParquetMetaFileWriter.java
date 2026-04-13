@@ -34,29 +34,29 @@ package io.questdb.cairo;
  */
 public class ParquetMetaFileWriter {
 
-    public static native long create();
-
-    public static native void destroyWriter(long writerPtr);
-
-    public static native void setDesignatedTimestamp(long writerPtr, int index);
+    public static native void addBloomFilter(long writerPtr, int colIndex, long bitsetPtr, int bitsetLen);
 
     public static native void addColumn(long writerPtr, long namePtr, int nameLen, int id, int colType, int flags, int fixedByteLen, int physicalType, int maxRepLevel, int maxDefLevel);
 
-    public static native void addBloomFilter(long writerPtr, int colIndex, long bitsetPtr, int bitsetLen);
+    public static native void addRowGroup(long writerPtr, long numRows) throws CairoException;
 
     public static native void addSortingColumn(long writerPtr, int index);
 
-    public static native void addRowGroup(long writerPtr, long numRows) throws CairoException;
+    public static native long create();
 
-    public static native void setParquetFooter(long writerPtr, long offset, int length);
+    public static native void destroyResult(long resultPtr);
+
+    public static native void destroyWriter(long writerPtr);
 
     public static native long finish(long writerPtr) throws CairoException;
 
-    public static native long resultDataPtr(long resultPtr);
-
     public static native long resultDataLen(long resultPtr);
+
+    public static native long resultDataPtr(long resultPtr);
 
     public static native long resultFooterOffset(long resultPtr);
 
-    public static native void destroyResult(long resultPtr);
+    public static native void setDesignatedTimestamp(long writerPtr, int index);
+
+    public static native void setParquetFooter(long writerPtr, long offset, int length);
 }

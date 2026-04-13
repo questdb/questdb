@@ -104,9 +104,9 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
     col_type: jint,
     flags: jint,
     fixed_byte_len: jint,
-    physical_type: u8,
-    max_rep_level: u8,
-    max_def_level: u8,
+    physical_type: jint,
+    max_rep_level: jint,
+    max_def_level: jint,
 ) {
     check_not_null!(env, ptr, "ParquetMetaFileWriter");
     if name_ptr.is_null() || name_len < 0 {
@@ -132,9 +132,9 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_addColumn(
         col_type,
         ColumnFlags(flags),
         fixed_byte_len,
-        physical_type,
-        max_rep_level,
-        max_def_level,
+        physical_type as u8,
+        max_rep_level as u8,
+        max_def_level as u8,
     );
     wrapper.column_count += 1;
 }
