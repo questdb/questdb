@@ -18,13 +18,12 @@ intended to enable alternative implementations to interoperate with QuestDB.
 10. [Column Types](#10-column-types)
 11. [Null Bitmap](#11-null-bitmap)
 12. [Column Data Encoding](#12-column-data-encoding)
-13. [Compression](#13-compression)
-14. [Response Format](#14-response-format)
-15. [Protocol Limits](#15-protocol-limits)
-16. [Client Operation](#16-client-operation)
-17. [Examples](#17-examples)
-18. [Reference Implementation](#18-reference-implementation)
-19. [Version History](#19-version-history)
+13. [Response Format](#13-response-format)
+14. [Protocol Limits](#14-protocol-limits)
+15. [Client Operation](#15-client-operation)
+16. [Examples](#16-examples)
+17. [Reference Implementation](#17-reference-implementation)
+18. [Version History](#18-version-history)
 
 ---
 
@@ -35,7 +34,6 @@ features:
 
 - **Column-oriented encoding**: All values for a column are stored contiguously
 - **Batch processing**: Multiple tables and rows per message
-- **Optional compression**: LZ4 or Zstd at the message level
 - **Gorilla timestamp compression**: Delta-of-delta encoding for timestamps
 - **Schema references**: Reference previously sent schemas by numeric ID
 
@@ -185,7 +183,7 @@ Offset  Size  Type    Field           Description
 ──────────────────────────────────────────────────────────
 0       4     int32   magic           "QWP1" (0x31505751)
 4       1     uint8   version         Protocol version (0x01)
-5       1     uint8   flags           Compression/encoding flags
+5       1     uint8   flags           Encoding flags
 6       2     uint16  table_count     Number of table blocks
 8       4     uint32  payload_length  Payload size in bytes
 ```
@@ -196,14 +194,10 @@ Offset  Size  Type    Field           Description
 
 | Bit | Mask   | Name                     | Description                                          |
 |-----|--------|--------------------------|------------------------------------------------------|
-| 0   | `0x01` | `FLAG_LZ4`               | LZ4 compression on payload                           |
-| 1   | `0x02` | `FLAG_ZSTD`              | Zstd compression on payload                          |
+| 0-1 |        |                          | Reserved (must be 0)                                 |
 | 2   | `0x04` | `FLAG_GORILLA`           | Gorilla delta-of-delta encoding for timestamp columns |
 | 3   | `0x08` | `FLAG_DELTA_SYMBOL_DICT` | Delta symbol dictionary mode enabled                 |
 | 4-7 |        |                          | Reserved (must be 0)                                 |
-
-**Constraint**: Bits 0 and 1 are mutually exclusive (cannot have both LZ4 and
-Zstd).
 
 ### Complete Message Layout
 
@@ -218,8 +212,6 @@ Zstd).
 │   └─ ... Table Block N-1               │
 └─────────────────────────────────────────┘
 ```
-
-If compression is enabled, the entire payload is compressed as one unit.
 
 ### Delta Symbol Dictionary (optional)
 
@@ -644,28 +636,7 @@ shared by all values in the column.
 
 ---
 
-## 13. Compression
-
-### LZ4 Compression (flag `0x01`)
-
-When the LZ4 flag is set:
-- The entire payload after the 12-byte header is LZ4 compressed
-- Use standard LZ4 frame format
-- Decompress before parsing table blocks
-
-### Zstd Compression (flag `0x02`)
-
-When the Zstd flag is set:
-- The entire payload after the 12-byte header is Zstd compressed
-- Use standard Zstd frame format
-- Decompress before parsing table blocks
-
-When `FLAG_GORILLA` is set, each TIMESTAMP/TIMESTAMP_NANOS column data section
-includes a 1-byte encoding tag (0x00 = uncompressed, 0x01 = Gorilla).
-
----
-
-## 14. Response Format
+## 13. Response Format
 
 Every response includes a 1-byte status code and an 8-byte sequence number
 that correlates the response with the original request.
@@ -724,7 +695,7 @@ varints for per-table error details:
 
 ---
 
-## 15. Protocol Limits
+## 14. Protocol Limits
 
 | Limit                     | Default Value |
 |---------------------------|---------------|
@@ -744,7 +715,7 @@ max batch size.
 
 ---
 
-## 16. Client Operation
+## 15. Client Operation
 
 ### Double-Buffered Async I/O
 
@@ -782,12 +753,12 @@ The client uses double-buffered microbatches:
 
 ---
 
-## 17. Examples
+## 16. Examples
 
 ### Example 1: Simple Message with One Table
 
 Table: `sensors`, 2 rows, 3 columns: `id` (LONG), `value` (DOUBLE), `ts`
-(TIMESTAMP). No compression, no nulls.
+(TIMESTAMP). No nulls.
 
 ```
 # Header (12 bytes)
@@ -934,7 +905,7 @@ Payload:
 
 ---
 
-## 18. Reference Implementation
+## 17. Reference Implementation
 
 The authoritative implementation lives in QuestDB's Java codebase under
 `core/src/main/java/io/questdb/cutlass/qwp/protocol/`. That directory
@@ -943,7 +914,7 @@ and table-block cursors, and the type-specific column decoders.
 
 ---
 
-## 19. Version History
+## 18. Version History
 
 | Version        | Description                        |
 |----------------|------------------------------------|
