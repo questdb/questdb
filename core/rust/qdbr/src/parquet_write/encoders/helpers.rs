@@ -28,9 +28,10 @@ mod validity;
 
 pub use bloom::lock_bloom_set;
 pub use chunking::{
-    collect_partition_chunk_views, column_chunk_row_count, page_row_windows, partition_chunk_slice,
-    partition_slice_range, slice_partition_chunk_views, ChunkSlice, PageRowWindow,
-    PartitionChunkView, PartitionPageSlices,
+    collect_partition_chunk_views, collect_varlen_segments, column_chunk_row_count,
+    page_row_windows, partition_chunk_slice, partition_slice_range,
+    slice_partition_chunk_views, slice_varlen_segments, ChunkSlice, PageRowWindow,
+    PartitionChunkView, PartitionPageSlices, VarlenChunkSegment,
 };
 pub use page_sizing::{rows_per_group_page, rows_per_primitive_page};
 pub use utf8::write_utf8_from_utf16_iter;

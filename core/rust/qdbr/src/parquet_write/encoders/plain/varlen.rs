@@ -11,7 +11,8 @@ use rapidhash::RapidHashMap;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
-    partition_chunk_slice, rows_per_primitive_page, FlatValidity, PageRowWindow,
+    collect_varlen_segments, rows_per_primitive_page, slice_varlen_segments, FlatValidity,
+    VarlenChunkSegment,
 };
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
@@ -22,245 +23,8 @@ use crate::parquet_write::util::{
 
 use super::encode_column_chunk;
 
-#[derive(Clone, Copy)]
-struct BinaryChunkSegment<'a> {
-    adjusted_column_top: usize,
-    offsets: &'a [i64],
-    data: &'a [u8],
-}
-
-impl BinaryChunkSegment<'_> {
-    #[inline]
-    fn num_rows(&self) -> usize {
-        self.adjusted_column_top + self.offsets.len()
-    }
-}
-
-#[derive(Clone, Copy)]
-struct StringChunkSegment<'a> {
-    adjusted_column_top: usize,
-    offsets: &'a [i64],
-    data: &'a [u8],
-}
-
-impl StringChunkSegment<'_> {
-    #[inline]
-    fn num_rows(&self) -> usize {
-        self.adjusted_column_top + self.offsets.len()
-    }
-}
-
-#[derive(Clone, Copy)]
-struct VarcharChunkSegment<'a> {
-    adjusted_column_top: usize,
-    aux: &'a [[u8; 16]],
-    data: &'a [u8],
-}
-
-impl VarcharChunkSegment<'_> {
-    #[inline]
-    fn num_rows(&self) -> usize {
-        self.adjusted_column_top + self.aux.len()
-    }
-}
-
-fn slice_binary_segments<'a>(
-    segments: &[BinaryChunkSegment<'a>],
-    window: PageRowWindow,
-) -> Vec<BinaryChunkSegment<'a>> {
-    let mut remaining_offset = window.row_offset;
-    let mut remaining_rows = window.row_count;
-    let mut page_segments = Vec::with_capacity(segments.len());
-
-    for segment in segments {
-        let segment_rows = segment.num_rows();
-        if remaining_offset >= segment_rows {
-            remaining_offset -= segment_rows;
-            continue;
-        }
-        if remaining_rows == 0 {
-            break;
-        }
-
-        let rows_in_segment = std::cmp::min(segment_rows - remaining_offset, remaining_rows);
-        let skip_data_rows = remaining_offset.saturating_sub(segment.adjusted_column_top);
-        let available_top_rows = segment.adjusted_column_top.saturating_sub(remaining_offset);
-        let top_rows = std::cmp::min(available_top_rows, rows_in_segment);
-        let data_rows = rows_in_segment - top_rows;
-
-        page_segments.push(BinaryChunkSegment {
-            adjusted_column_top: top_rows,
-            offsets: &segment.offsets[skip_data_rows..skip_data_rows + data_rows],
-            data: segment.data,
-        });
-
-        remaining_rows -= rows_in_segment;
-        remaining_offset = 0;
-    }
-
-    page_segments
-}
-
-fn slice_string_segments<'a>(
-    segments: &[StringChunkSegment<'a>],
-    window: PageRowWindow,
-) -> Vec<StringChunkSegment<'a>> {
-    let mut remaining_offset = window.row_offset;
-    let mut remaining_rows = window.row_count;
-    let mut page_segments = Vec::with_capacity(segments.len());
-
-    for segment in segments {
-        let segment_rows = segment.num_rows();
-        if remaining_offset >= segment_rows {
-            remaining_offset -= segment_rows;
-            continue;
-        }
-        if remaining_rows == 0 {
-            break;
-        }
-
-        let rows_in_segment = std::cmp::min(segment_rows - remaining_offset, remaining_rows);
-        let skip_data_rows = remaining_offset.saturating_sub(segment.adjusted_column_top);
-        let available_top_rows = segment.adjusted_column_top.saturating_sub(remaining_offset);
-        let top_rows = std::cmp::min(available_top_rows, rows_in_segment);
-        let data_rows = rows_in_segment - top_rows;
-
-        page_segments.push(StringChunkSegment {
-            adjusted_column_top: top_rows,
-            offsets: &segment.offsets[skip_data_rows..skip_data_rows + data_rows],
-            data: segment.data,
-        });
-
-        remaining_rows -= rows_in_segment;
-        remaining_offset = 0;
-    }
-
-    page_segments
-}
-
-fn slice_varchar_segments<'a>(
-    segments: &[VarcharChunkSegment<'a>],
-    window: PageRowWindow,
-) -> Vec<VarcharChunkSegment<'a>> {
-    let mut remaining_offset = window.row_offset;
-    let mut remaining_rows = window.row_count;
-    let mut page_segments = Vec::with_capacity(segments.len());
-
-    for segment in segments {
-        let segment_rows = segment.num_rows();
-        if remaining_offset >= segment_rows {
-            remaining_offset -= segment_rows;
-            continue;
-        }
-        if remaining_rows == 0 {
-            break;
-        }
-
-        let rows_in_segment = std::cmp::min(segment_rows - remaining_offset, remaining_rows);
-        let skip_data_rows = remaining_offset.saturating_sub(segment.adjusted_column_top);
-        let available_top_rows = segment.adjusted_column_top.saturating_sub(remaining_offset);
-        let top_rows = std::cmp::min(available_top_rows, rows_in_segment);
-        let data_rows = rows_in_segment - top_rows;
-
-        page_segments.push(VarcharChunkSegment {
-            adjusted_column_top: top_rows,
-            aux: &segment.aux[skip_data_rows..skip_data_rows + data_rows],
-            data: segment.data,
-        });
-
-        remaining_rows -= rows_in_segment;
-        remaining_offset = 0;
-    }
-
-    page_segments
-}
-
-fn collect_binary_segments<'a>(
-    columns: &'a [Column],
-    first_partition_start: usize,
-    last_partition_end: usize,
-) -> Vec<BinaryChunkSegment<'a>> {
-    let num_partitions = columns.len();
-    columns
-        .iter()
-        .enumerate()
-        .map(|(part_idx, column)| {
-            let chunk = partition_chunk_slice(
-                part_idx,
-                num_partitions,
-                column,
-                first_partition_start,
-                last_partition_end,
-            );
-            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
-            // page-aligned. The byte content represents valid `i64` offsets.
-            let aux: &[i64] = unsafe { transmute_slice(column.secondary_data) };
-            BinaryChunkSegment {
-                adjusted_column_top: chunk.adjusted_column_top,
-                offsets: &aux[chunk.lower_bound..chunk.upper_bound],
-                data: column.primary_data,
-            }
-        })
-        .collect()
-}
-
-fn collect_string_segments<'a>(
-    columns: &'a [Column],
-    first_partition_start: usize,
-    last_partition_end: usize,
-) -> Vec<StringChunkSegment<'a>> {
-    let num_partitions = columns.len();
-    columns
-        .iter()
-        .enumerate()
-        .map(|(part_idx, column)| {
-            let chunk = partition_chunk_slice(
-                part_idx,
-                num_partitions,
-                column,
-                first_partition_start,
-                last_partition_end,
-            );
-            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
-            // page-aligned. The byte content represents valid `i64` offsets.
-            let aux: &[i64] = unsafe { transmute_slice(column.secondary_data) };
-            StringChunkSegment {
-                adjusted_column_top: chunk.adjusted_column_top,
-                offsets: &aux[chunk.lower_bound..chunk.upper_bound],
-                data: column.primary_data,
-            }
-        })
-        .collect()
-}
-
-fn collect_varchar_segments<'a>(
-    columns: &'a [Column],
-    first_partition_start: usize,
-    last_partition_end: usize,
-) -> Vec<VarcharChunkSegment<'a>> {
-    let num_partitions = columns.len();
-    columns
-        .iter()
-        .enumerate()
-        .map(|(part_idx, column)| {
-            let chunk = partition_chunk_slice(
-                part_idx,
-                num_partitions,
-                column,
-                first_partition_start,
-                last_partition_end,
-            );
-            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
-            // page-aligned. The byte content represents valid `[u8; 16]` aux entries.
-            let aux: &[[u8; 16]] = unsafe { transmute_slice(column.secondary_data) };
-            VarcharChunkSegment {
-                adjusted_column_top: chunk.adjusted_column_top,
-                aux: &aux[chunk.lower_bound..chunk.upper_bound],
-                data: column.primary_data,
-            }
-        })
-        .collect()
-}
+type BinarySegment<'a> = VarlenChunkSegment<'a, i64>;
+type VarcharSegment<'a> = VarlenChunkSegment<'a, [u8; 16]>;
 
 /// Encode a String column (UTF-16 source) as Plain pages.
 pub fn encode_string(
@@ -272,7 +36,15 @@ pub fn encode_string(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
-    let segments = collect_string_segments(columns, first_partition_start, last_partition_end);
+    let segments = collect_varlen_segments(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
+        // page-aligned. The byte content represents valid `i64` offsets.
+        |column| unsafe { transmute_slice(column.secondary_data) },
+        |column| column.primary_data,
+    );
     encode_column_chunk(
         columns,
         first_partition_start,
@@ -280,7 +52,7 @@ pub fn encode_string(
         rows_per_page,
         bloom_set,
         |window, bloom| {
-            let page_segments = slice_string_segments(&segments, window);
+            let page_segments = slice_varlen_segments(&segments, window);
             string_segments_to_page(
                 &page_segments,
                 options,
@@ -302,7 +74,15 @@ pub fn encode_binary(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
-    let segments = collect_binary_segments(columns, first_partition_start, last_partition_end);
+    let segments = collect_varlen_segments(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
+        // page-aligned. The byte content represents valid `i64` offsets.
+        |column| unsafe { transmute_slice(column.secondary_data) },
+        |column| column.primary_data,
+    );
     encode_column_chunk(
         columns,
         first_partition_start,
@@ -310,7 +90,7 @@ pub fn encode_binary(
         rows_per_page,
         bloom_set,
         |window, bloom| {
-            let page_segments = slice_binary_segments(&segments, window);
+            let page_segments = slice_varlen_segments(&segments, window);
             binary_segments_to_page(
                 &page_segments,
                 options,
@@ -332,7 +112,15 @@ pub fn encode_varchar(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
-    let segments = collect_varchar_segments(columns, first_partition_start, last_partition_end);
+    let segments = collect_varlen_segments(
+        columns,
+        first_partition_start,
+        last_partition_end,
+        // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
+        // page-aligned. The byte content represents valid `[u8; 16]` aux entries.
+        |column| unsafe { transmute_slice(column.secondary_data) },
+        |column| column.primary_data,
+    );
     encode_column_chunk(
         columns,
         first_partition_start,
@@ -340,7 +128,7 @@ pub fn encode_varchar(
         rows_per_page,
         bloom_set,
         |window, bloom| {
-            let page_segments = slice_varchar_segments(&segments, window);
+            let page_segments = slice_varlen_segments(&segments, window);
             varchar_segments_to_page(
                 &page_segments,
                 options,
@@ -353,13 +141,13 @@ pub fn encode_varchar(
 }
 
 fn binary_segments_to_page(
-    segments: &[BinaryChunkSegment<'_>],
+    segments: &[BinarySegment<'_>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    let num_rows: usize = segments.iter().map(BinaryChunkSegment::num_rows).sum();
+    let num_rows: usize = segments.iter().map(BinarySegment::num_rows).sum();
     let mut buffer = vec![];
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
@@ -367,7 +155,7 @@ fn binary_segments_to_page(
         for _ in 0..segment.adjusted_column_top {
             validity.push_null();
         }
-        visit_binary_entries(segment.offsets, segment.data, |entry| {
+        visit_binary_entries(segment.index, segment.data, |entry| {
             if entry.is_some() {
                 validity.push_present();
             } else {
@@ -383,7 +171,7 @@ fn binary_segments_to_page(
     match encoding {
         Encoding::Plain => {
             for segment in segments {
-                for &offset in segment.offsets {
+                for &offset in segment.index {
                     if let Some(value) = binary_get_slice_validated(segment.data, offset) {
                         let len = value.len();
                         buffer.extend_from_slice(&(len as u32).to_le_bytes());
@@ -400,7 +188,7 @@ fn binary_segments_to_page(
             let non_null_count = num_rows - null_count;
             let lengths = segments.iter().flat_map(|segment| {
                 segment
-                    .offsets
+                    .index
                     .iter()
                     .filter_map(|&offset| binary_get_slice_validated(segment.data, offset))
                     .map(|value| value.len() as i64)
@@ -409,7 +197,7 @@ fn binary_segments_to_page(
             delta_bitpacked::encode(lengths, &mut buffer);
 
             for segment in segments {
-                for &offset in segment.offsets {
+                for &offset in segment.index {
                     if let Some(value) = binary_get_slice_validated(segment.data, offset) {
                         buffer.extend_from_slice(value);
                         stats.update(value);
@@ -447,13 +235,13 @@ fn binary_segments_to_page(
 }
 
 fn string_segments_to_page(
-    segments: &[StringChunkSegment<'_>],
+    segments: &[BinarySegment<'_>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    let num_rows: usize = segments.iter().map(StringChunkSegment::num_rows).sum();
+    let num_rows: usize = segments.iter().map(BinarySegment::num_rows).sum();
     let mut buffer = vec![];
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
@@ -461,7 +249,7 @@ fn string_segments_to_page(
         for _ in 0..segment.adjusted_column_top {
             validity.push_null();
         }
-        visit_string_entries(segment.offsets, segment.data, |entry| {
+        visit_string_entries(segment.index, segment.data, |entry| {
             if entry.is_some() {
                 validity.push_present();
             } else {
@@ -477,7 +265,7 @@ fn string_segments_to_page(
     match encoding {
         Encoding::Plain => {
             for segment in segments {
-                for &offset in segment.offsets {
+                for &offset in segment.index {
                     if let Some(utf16) = string_get_utf16_validated(segment.data, offset) {
                         let len_offset = buffer.len();
                         buffer.extend_from_slice(&[0; 4]);
@@ -498,7 +286,7 @@ fn string_segments_to_page(
             let non_null_count = num_rows - null_count;
             let lengths = segments.iter().flat_map(|segment| {
                 segment
-                    .offsets
+                    .index
                     .iter()
                     .filter_map(|&offset| string_get_utf16_validated(segment.data, offset))
                     .map(|utf16| compute_utf8_length(utf16) as i64)
@@ -507,7 +295,7 @@ fn string_segments_to_page(
             delta_bitpacked::encode(lengths, &mut buffer);
 
             for segment in segments {
-                for &offset in segment.offsets {
+                for &offset in segment.index {
                     if let Some(utf16) = string_get_utf16_validated(segment.data, offset) {
                         let utf8_start = buffer.len();
                         let utf8_len = append_utf8_from_utf16(&mut buffer, utf16)?;
@@ -547,13 +335,13 @@ fn string_segments_to_page(
 }
 
 fn varchar_segments_to_page(
-    segments: &[VarcharChunkSegment<'_>],
+    segments: &[VarcharSegment<'_>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    let num_rows: usize = segments.iter().map(VarcharChunkSegment::num_rows).sum();
+    let num_rows: usize = segments.iter().map(VarcharSegment::num_rows).sum();
     let mut buffer = vec![];
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
@@ -561,7 +349,7 @@ fn varchar_segments_to_page(
         for _ in 0..segment.adjusted_column_top {
             validity.push_null();
         }
-        visit_varchar_entries(segment.aux, segment.data, |entry| {
+        visit_varchar_entries(segment.index, segment.data, |entry| {
             if entry.is_some() {
                 validity.push_present();
             } else {
@@ -577,7 +365,7 @@ fn varchar_segments_to_page(
     match encoding {
         Encoding::Plain => {
             for segment in segments {
-                for entry in segment.aux {
+                for entry in segment.index {
                     if let Some(value) = varchar_get_slice_validated(entry, segment.data) {
                         let len = value.len();
                         buffer.extend_from_slice(&(len as u32).to_le_bytes());
@@ -594,7 +382,7 @@ fn varchar_segments_to_page(
             let non_null_count = num_rows - null_count;
             let lengths = segments.iter().flat_map(|segment| {
                 segment
-                    .aux
+                    .index
                     .iter()
                     .filter_map(|entry| varchar_get_slice_validated(entry, segment.data))
                     .map(|value| value.len() as i64)
@@ -603,7 +391,7 @@ fn varchar_segments_to_page(
             delta_bitpacked::encode(lengths, &mut buffer);
 
             for segment in segments {
-                for entry in segment.aux {
+                for entry in segment.index {
                     if let Some(value) = varchar_get_slice_validated(entry, segment.data) {
                         buffer.extend_from_slice(value);
                         stats.update(value);

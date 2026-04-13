@@ -243,6 +243,88 @@ pub fn slice_partition_chunk_views<'a, T>(
     page_views
 }
 
+/// Borrowed view of one partition's contribution to a variable-length column
+/// chunk. `I` is the per-row index type: `i64` for binary/string offsets,
+/// `[u8; 16]` for varchar aux entries.
+#[derive(Clone, Copy, Debug)]
+pub struct VarlenChunkSegment<'a, I> {
+    pub adjusted_column_top: usize,
+    pub index: &'a [I],
+    pub data: &'a [u8],
+}
+
+impl<I> VarlenChunkSegment<'_, I> {
+    #[inline]
+    pub fn num_rows(&self) -> usize {
+        self.adjusted_column_top + self.index.len()
+    }
+}
+
+/// Collect per-partition varlen segment views for the selected column chunk.
+pub fn collect_varlen_segments<'a, I>(
+    columns: &'a [Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    transmuter: impl Fn(&'a Column) -> &'a [I],
+    data_source: impl Fn(&'a Column) -> &'a [u8],
+) -> Vec<VarlenChunkSegment<'a, I>> {
+    columns
+        .iter()
+        .zip(column_chunk_slices(
+            columns,
+            first_partition_start,
+            last_partition_end,
+        ))
+        .map(|(column, chunk)| {
+            let index_data = transmuter(column);
+            VarlenChunkSegment {
+                adjusted_column_top: chunk.adjusted_column_top,
+                index: &index_data[chunk.lower_bound..chunk.upper_bound],
+                data: data_source(column),
+            }
+        })
+        .collect()
+}
+
+/// Slice varlen segments to a page window, analogous to
+/// `slice_partition_chunk_views` but for `VarlenChunkSegment`.
+pub fn slice_varlen_segments<'a, I>(
+    segments: &[VarlenChunkSegment<'a, I>],
+    window: PageRowWindow,
+) -> Vec<VarlenChunkSegment<'a, I>> {
+    let mut remaining_offset = window.row_offset;
+    let mut remaining_rows = window.row_count;
+    let mut page_segments = Vec::with_capacity(segments.len());
+
+    for segment in segments {
+        let segment_rows = segment.num_rows();
+        if remaining_offset >= segment_rows {
+            remaining_offset -= segment_rows;
+            continue;
+        }
+        if remaining_rows == 0 {
+            break;
+        }
+
+        let rows_in_segment = cmp::min(segment_rows - remaining_offset, remaining_rows);
+        let skip_data_rows = remaining_offset.saturating_sub(segment.adjusted_column_top);
+        let available_top_rows = segment.adjusted_column_top.saturating_sub(remaining_offset);
+        let top_rows = cmp::min(available_top_rows, rows_in_segment);
+        let data_rows = rows_in_segment - top_rows;
+
+        page_segments.push(VarlenChunkSegment {
+            adjusted_column_top: top_rows,
+            index: &segment.index[skip_data_rows..skip_data_rows + data_rows],
+            data: segment.data,
+        });
+
+        remaining_rows -= rows_in_segment;
+        remaining_offset = 0;
+    }
+
+    page_segments
+}
+
 /// Iterator over sub-chunks of a partition that respects `rows_per_page`.
 /// Each yielded `ChunkSlice` covers at most `rows_per_page` rows.
 #[derive(Clone)]
