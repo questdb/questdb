@@ -53,7 +53,10 @@ Plans:
   1. Partitioned window percentile on a table with 100K+ rows completes without O(N^2) memory growth (append-in-place with capacity tracking replaces copy-on-append)
   2. PercentileDiscLongGroupByFunction uses quickSelect (O(n) average) instead of full sort (O(n log n)) for single-percentile computation
   3. All existing percentile tests continue to pass after the structural refactoring (no data corruption from offset arithmetic changes)
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 03-01-PLAN.md — Port quickSelect to GroupByLongList and update PercentileDiscLongGroupByFunction caller
+- [ ] 03-02-PLAN.md — Replace O(N^2) copy-on-append with capacity-tracked append-in-place in 4 window factories
 
 ### Phase 4: Code Quality and Completeness
 **Goal**: Duplicated code is consolidated, all factories are registered, aliases exist for window functions, and test coverage uses correct assertion patterns
@@ -76,5 +79,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 |-------|----------------|--------|-----------|
 | 1. Correctness | 0/2 | Planning complete | - |
 | 2. Resource Safety | 0/1 | Planning complete | - |
-| 3. Performance | 0/0 | Not started | - |
+| 3. Performance | 0/2 | Planning complete | - |
 | 4. Code Quality and Completeness | 0/0 | Not started | - |
