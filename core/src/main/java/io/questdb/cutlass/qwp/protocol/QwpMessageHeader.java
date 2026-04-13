@@ -159,15 +159,6 @@ public class QwpMessageHeader {
     }
 
     /**
-     * Returns true if any compression is enabled.
-     *
-     * @return true if compressed
-     */
-    public boolean isCompressed() {
-        return (flags & FLAG_COMPRESSION_MASK) != 0;
-    }
-
-    /**
      * Returns true if delta symbol dictionary encoding is enabled.
      *
      * @return true if delta symbol dictionary mode
@@ -183,24 +174,6 @@ public class QwpMessageHeader {
      */
     public boolean isGorillaEnabled() {
         return (flags & FLAG_GORILLA) != 0;
-    }
-
-    /**
-     * Returns true if LZ4 compression is enabled.
-     *
-     * @return true if compressed with LZ4
-     */
-    public boolean isLZ4Compressed() {
-        return (flags & FLAG_LZ4) != 0;
-    }
-
-    /**
-     * Returns true if Zstd compression is enabled.
-     *
-     * @return true if compressed with Zstd
-     */
-    public boolean isZstdCompressed() {
-        return (flags & FLAG_ZSTD) != 0;
     }
 
     /**
@@ -287,12 +260,6 @@ public class QwpMessageHeader {
         sb.append("magic=").append(magicToString(magic));
         sb.append(", version=").append(version);
         sb.append(", flags=0x").append(Integer.toHexString(flags & 0xFF));
-        if (isLZ4Compressed()) {
-            sb.append("[LZ4]");
-        }
-        if (isZstdCompressed()) {
-            sb.append("[Zstd]");
-        }
         if (isGorillaEnabled()) {
             sb.append("[Gorilla]");
         }
@@ -336,14 +303,6 @@ public class QwpMessageHeader {
         // Validate payload length
         if (payloadLength > maxPayloadLength) {
             throw QwpParseException.payloadTooLarge();
-        }
-
-        // Validate compression flags (can't have both LZ4 and Zstd)
-        if ((flags & FLAG_LZ4) != 0 && (flags & FLAG_ZSTD) != 0) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_MAGIC,
-                    "invalid flags: both LZ4 and Zstd compression set"
-            );
         }
     }
 }

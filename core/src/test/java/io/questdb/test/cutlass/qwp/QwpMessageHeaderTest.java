@@ -55,64 +55,23 @@ public class QwpMessageHeaderTest {
     }
 
     @Test
-    public void testFlagCombinations() throws QwpParseException {
-        // LZ4 + Gorilla
-        byte[] header = createValidHeader(1, (byte) (FLAG_LZ4 | FLAG_GORILLA), 1, 100);
-        QwpMessageHeader h = new QwpMessageHeader();
-        h.parse(header, 0, header.length);
-
-        Assert.assertTrue(h.isLZ4Compressed());
-        Assert.assertFalse(h.isZstdCompressed());
-        Assert.assertTrue(h.isCompressed());
-        Assert.assertTrue(h.isGorillaEnabled());
-    }
-
-    @Test
     public void testFlagGorilla() throws QwpParseException {
         byte[] header = createValidHeader(1, FLAG_GORILLA, 1, 100);
         QwpMessageHeader h = new QwpMessageHeader();
         h.parse(header, 0, header.length);
 
-        Assert.assertFalse(h.isLZ4Compressed());
-        Assert.assertFalse(h.isZstdCompressed());
-        Assert.assertFalse(h.isCompressed());
         Assert.assertTrue(h.isGorillaEnabled());
     }
 
     @Test
-    public void testFlagLZ4() throws QwpParseException {
-        byte[] header = createValidHeader(1, FLAG_LZ4, 1, 100);
-        QwpMessageHeader h = new QwpMessageHeader();
-        h.parse(header, 0, header.length);
-
-        Assert.assertTrue(h.isLZ4Compressed());
-        Assert.assertFalse(h.isZstdCompressed());
-        Assert.assertTrue(h.isCompressed());
-        Assert.assertFalse(h.isGorillaEnabled());
-    }
-
-    @Test
-    public void testFlagZstd() throws QwpParseException {
-        byte[] header = createValidHeader(1, FLAG_ZSTD, 1, 100);
-        QwpMessageHeader h = new QwpMessageHeader();
-        h.parse(header, 0, header.length);
-
-        Assert.assertFalse(h.isLZ4Compressed());
-        Assert.assertTrue(h.isZstdCompressed());
-        Assert.assertTrue(h.isCompressed());
-        Assert.assertFalse(h.isGorillaEnabled());
-    }
-
-    @Test
     public void testHeaderToString() throws QwpParseException {
-        byte[] header = createValidHeader(1, (byte) (FLAG_LZ4 | FLAG_GORILLA), 5, 1234);
+        byte[] header = createValidHeader(1, FLAG_GORILLA, 5, 1234);
         QwpMessageHeader h = new QwpMessageHeader();
         h.parse(header, 0, header.length);
 
         String str = h.toString();
         Assert.assertTrue(str.contains("QWP1"));
         Assert.assertTrue(str.contains("version=1"));
-        Assert.assertTrue(str.contains("[LZ4]"));
         Assert.assertTrue(str.contains("[Gorilla]"));
         Assert.assertTrue(str.contains("tableCount=5"));
         Assert.assertTrue(str.contains("payloadLength=1234"));
@@ -131,19 +90,6 @@ public class QwpMessageHeaderTest {
             } catch (QwpParseException e) {
                 Assert.assertEquals(QwpParseException.ErrorCode.HEADER_TOO_SHORT, e.getErrorCode());
             }
-        }
-    }
-
-    @Test
-    public void testInvalidFlagsBothCompression() {
-        // Both LZ4 and Zstd set is invalid
-        byte[] header = createValidHeader(1, (byte) (FLAG_LZ4 | FLAG_ZSTD), 1, 100);
-        QwpMessageHeader h = new QwpMessageHeader();
-        try {
-            h.parse(header, 0, header.length);
-            Assert.fail("Expected exception for both compression flags");
-        } catch (QwpParseException e) {
-            // Expected
         }
     }
 
@@ -313,19 +259,21 @@ public class QwpMessageHeaderTest {
 
     @Test
     public void testReset() throws QwpParseException {
-        byte[] header1 = createValidHeader(1, FLAG_LZ4, 10, 5000);
-        byte[] header2 = createValidHeader(1, FLAG_ZSTD, 3, 100);
+        byte[] header1 = createValidHeader(1, FLAG_GORILLA, 10, 5000);
+        byte[] header2 = createValidHeader(1, FLAG_DELTA_SYMBOL_DICT, 3, 100);
 
         QwpMessageHeader h = new QwpMessageHeader();
 
         h.parse(header1, 0, header1.length);
-        Assert.assertTrue(h.isLZ4Compressed());
+        Assert.assertTrue(h.isGorillaEnabled());
+        Assert.assertFalse(h.isDeltaSymbolDictEnabled());
         Assert.assertEquals(10, h.getTableCount());
 
         h.reset();
 
         h.parse(header2, 0, header2.length);
-        Assert.assertTrue(h.isZstdCompressed());
+        Assert.assertFalse(h.isGorillaEnabled());
+        Assert.assertTrue(h.isDeltaSymbolDictEnabled());
         Assert.assertEquals(3, h.getTableCount());
     }
 
