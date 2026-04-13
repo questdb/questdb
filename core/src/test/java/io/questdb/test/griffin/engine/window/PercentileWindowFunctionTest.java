@@ -63,6 +63,35 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileContOverPartitionReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (" +
+                    "SELECT x % 2 AS category, CAST(x AS DOUBLE) AS value FROM long_sequence(10)" +
+                    ")");
+            assertQueryNoLeakCheck(
+                    """
+                            category\tvalue\tpercentile_cont
+                            1\t1.0\t[3.0,5.0,7.0]
+                            0\t2.0\t[4.0,6.0,8.0]
+                            1\t3.0\t[3.0,5.0,7.0]
+                            0\t4.0\t[4.0,6.0,8.0]
+                            1\t5.0\t[3.0,5.0,7.0]
+                            0\t6.0\t[4.0,6.0,8.0]
+                            1\t7.0\t[3.0,5.0,7.0]
+                            0\t8.0\t[4.0,6.0,8.0]
+                            1\t9.0\t[3.0,5.0,7.0]
+                            0\t10.0\t[4.0,6.0,8.0]
+                            """,
+                    "SELECT category, value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) OVER (PARTITION BY category) FROM test",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMultiPercentileContOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
@@ -81,6 +110,33 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             10.0\t[3.25,5.5,7.75]
                             """,
                     "select value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileContOverWholeResultSetReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) AS value FROM long_sequence(10))");
+            assertQueryNoLeakCheck(
+                    """
+                            value\tpercentile_cont
+                            1.0\t[3.25,5.5,7.75]
+                            2.0\t[3.25,5.5,7.75]
+                            3.0\t[3.25,5.5,7.75]
+                            4.0\t[3.25,5.5,7.75]
+                            5.0\t[3.25,5.5,7.75]
+                            6.0\t[3.25,5.5,7.75]
+                            7.0\t[3.25,5.5,7.75]
+                            8.0\t[3.25,5.5,7.75]
+                            9.0\t[3.25,5.5,7.75]
+                            10.0\t[3.25,5.5,7.75]
+                            """,
+                    "SELECT value, percentile_cont(value, ARRAY[0.25, 0.5, 0.75]) OVER () FROM test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -265,6 +321,35 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileDiscOverPartitionReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (" +
+                    "SELECT x % 2 AS category, CAST(x AS DOUBLE) AS value FROM long_sequence(10)" +
+                    ")");
+            assertQueryNoLeakCheck(
+                    """
+                            category\tvalue\tpercentile_disc
+                            1\t1.0\t[3.0,5.0,7.0]
+                            0\t2.0\t[4.0,6.0,8.0]
+                            1\t3.0\t[3.0,5.0,7.0]
+                            0\t4.0\t[4.0,6.0,8.0]
+                            1\t5.0\t[3.0,5.0,7.0]
+                            0\t6.0\t[4.0,6.0,8.0]
+                            1\t7.0\t[3.0,5.0,7.0]
+                            0\t8.0\t[4.0,6.0,8.0]
+                            1\t9.0\t[3.0,5.0,7.0]
+                            0\t10.0\t[4.0,6.0,8.0]
+                            """,
+                    "SELECT category, value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) OVER (PARTITION BY category) FROM test",
+                    null,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMultiPercentileDiscOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (select cast(x as double) value from long_sequence(10))");
@@ -283,6 +368,33 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             10.0\t[3.0,5.0,8.0]
                             """,
                     "select value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) over () from test"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscOverWholeResultSetReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) AS value FROM long_sequence(10))");
+            assertQueryNoLeakCheck(
+                    """
+                            value\tpercentile_disc
+                            1.0\t[3.0,5.0,8.0]
+                            2.0\t[3.0,5.0,8.0]
+                            3.0\t[3.0,5.0,8.0]
+                            4.0\t[3.0,5.0,8.0]
+                            5.0\t[3.0,5.0,8.0]
+                            6.0\t[3.0,5.0,8.0]
+                            7.0\t[3.0,5.0,8.0]
+                            8.0\t[3.0,5.0,8.0]
+                            9.0\t[3.0,5.0,8.0]
+                            10.0\t[3.0,5.0,8.0]
+                            """,
+                    "SELECT value, percentile_disc(value, ARRAY[0.25, 0.5, 0.75]) OVER () FROM test",
+                    null,
+                    null,
+                    true,
+                    true
             );
         });
     }
