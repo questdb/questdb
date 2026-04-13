@@ -88,7 +88,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -101,6 +101,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 7. PREV Type-Safe Fast Path | 1/1 | Complete | 2026-04-10 |
 | 8. Fix Remaining Test Regressions | 0/1 | In Progress | — |
 | 9. Fix Critical Review Findings | 0/1 | Not Started | — |
+| 10. Fix Offset-Aware Bucket Alignment | 0/1 | Not Started | — |
 
 ### Phase 6: Keyed Fill with FROM/TO Range
 **Goal**: Keyed FILL queries with FROM/TO range emit the cartesian product of all keys for every bucket in the range, including leading and trailing fill rows for all keys
@@ -160,3 +161,16 @@ Plans:
 **Plans:** 1 plan
 Plans:
 - [x] 09-01-PLAN.md -- Fix geo PREV null, findValue NPE guard, recursive hasNext stack overflow, Javadoc fix + regression tests
+
+### Phase 10: Fix Offset-Aware Bucket Alignment in Fill Cursor
+**Goal**: Fix infinite fill when ALIGN TO CALENDAR WITH OFFSET is used without TO — the sampler's setStart() ignores the offset, causing bucket boundaries to never match GROUP BY output
+**Depends on**: Phase 9
+**Requirements**: Correctness bug fix
+**Success Criteria** (what must be TRUE):
+  1. `SAMPLE BY 5d FROM '2017-12-20' FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '10:00'` produces finite output (stops after last data bucket)
+  2. Fill cursor's bucket sequence matches timestamp_floor_utc bucket boundaries for all offset values
+  3. Non-keyed and keyed queries with offset + FROM (no TO) produce correct, finite results
+  4. All existing tests still pass
+**Plans:** 1 plan
+Plans:
+- [ ] 10-01-PLAN.md -- Propagate calendar offset through optimizer/codegen/factory, fix bucket alignment in initialize(), add 5 offset+fill tests
