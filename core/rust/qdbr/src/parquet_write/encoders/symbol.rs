@@ -351,8 +351,12 @@ pub fn symbol_to_pages(
     _not_null_hint: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    let primary_data =
-        unsafe { std::slice::from_raw_parts(column_values.as_ptr() as *const u8, std::mem::size_of_val(column_values)) };
+    let primary_data = unsafe {
+        std::slice::from_raw_parts(
+            column_values.as_ptr() as *const u8,
+            std::mem::size_of_val(column_values),
+        )
+    };
     let column = Column::from_raw_data(
         0,
         "symbol",
