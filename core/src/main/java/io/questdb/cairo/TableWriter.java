@@ -9505,7 +9505,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void readPartitionMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, long parquetMetaFileSize, long partitionSize) {
         int partitionLen = path.size();
         try {
-            // Parquet partition with _pm file (data.paquet might be absent)
+            // Parquet partition with _pm file (data.parquet might be absent)
             LPSZ filePath = path.concat(PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(filePath)) {
                 // We can have a custom parquet meta file size to only read a specific footer and not the last one
@@ -9552,7 +9552,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long readPartitionSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
         int partitionLen = path.size();
         try {
-            // Parquet partition with _pm file (data.paquet might be absent)
+            // Parquet partition with _pm file (data.parquet might be absent)
             LPSZ filePath = path.concat(PARQUET_METADATA_FILE_NAME).$();
             if (ff.exists(filePath)) {
                 return readParquetMetaMinMaxTimestamps(path, ff.length(filePath));

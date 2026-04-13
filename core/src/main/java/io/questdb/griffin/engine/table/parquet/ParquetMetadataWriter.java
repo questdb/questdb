@@ -41,7 +41,8 @@ public class ParquetMetadataWriter {
      * @param parquetFd       file descriptor of the parquet file (read-only)
      * @param parquetFileSize size of the parquet file in bytes
      * @param parquetMetaFd   file descriptor of the parquet meta file (write)
-     * @return the parquet meta file size (to store in {@code _txn}), or -1 on error
+     * @return the parquet meta file size (to store in {@code _txn})
+     * @throws io.questdb.cairo.CairoException on error
      */
     public static native long generate(int parquetFd, long parquetFileSize, int parquetMetaFd);
 }

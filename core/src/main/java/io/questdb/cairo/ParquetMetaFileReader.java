@@ -83,17 +83,17 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
     // Row group block offsets are stored right-shifted by this amount
     private static final int BLOCK_ALIGNMENT_SHIFT = 3;
+    // Column descriptor layout (32B each, starting at header offset 24)
+    private static final int COL_DESC_COL_TYPE_OFF = 12;
+    private static final int COL_DESC_ID_OFF = 8;
+    private static final int COL_DESC_NAME_LENGTH_OFF = 24;
+    private static final int COL_DESC_NAME_OFFSET_OFF = 0;
     private static final int COLUMN_CHUNK_MAX_STAT_OFF = 56;
     private static final int COLUMN_CHUNK_MIN_STAT_OFF = 48;
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
-    // Column descriptor layout (32B each, starting at header offset 24)
     private static final int COLUMN_DESCRIPTOR_SIZE = 32;
-    private static final int COL_DESC_COL_TYPE_OFF = 12;
-    private static final int COL_DESC_ID_OFF = 8;
-    private static final int COL_DESC_NAME_LENGTH_OFF = 24;
-    private static final int COL_DESC_NAME_OFFSET_OFF = 0;
     private static final int EXPECTED_FORMAT_VERSION = 1;
     private static final int FOOTER_FIXED_SIZE = 24;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
@@ -111,8 +111,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int HEADER_FORMAT_VERSION_OFF = 0;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
-    private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private long addr;
+    private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private int columnCount;
     private long fileSize;
     private long footerAddr;
@@ -171,14 +171,20 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     public long getChunkMaxStat(int rowGroupIndex, int columnIndex) {
+        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
+        assert columnIndex >= 0 && columnIndex < columnCount;
         return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_MAX_STAT_OFF);
     }
 
     public long getChunkMinStat(int rowGroupIndex, int columnIndex) {
+        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
+        assert columnIndex >= 0 && columnIndex < columnCount;
         return Unsafe.getUnsafe().getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_MIN_STAT_OFF);
     }
 
     public int getChunkStatFlags(int rowGroupIndex, int columnIndex) {
+        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
+        assert columnIndex >= 0 && columnIndex < columnCount;
         return Unsafe.getUnsafe().getByte(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_STAT_FLAGS_OFF) & 0xFF;
     }
 
