@@ -3448,8 +3448,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         constantFillFuncs.add(NullConstant.NULL);
                     } else {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        Function f = fillIdx < fillValues.size() ? fillValues.getQuick(fillIdx) : NullConstant.NULL;
-                        constantFillFuncs.add(f);
+                        if (fillIdx < fillValues.size()) {
+                            constantFillFuncs.add(fillValues.getQuick(fillIdx));
+                            fillValues.setQuick(fillIdx, null); // transfer ownership
+                        } else {
+                            constantFillFuncs.add(NullConstant.NULL);
+                        }
                     }
                     fillIdx++;
                 }
@@ -3475,15 +3479,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // Safety-net type check: if a PREV source column has an unsupported type,
-            // it's likely a key column that isKeyColumn() missed (e.g., CTE/subquery
-            // context). Reclassify it as FILL_KEY and remove from prevSourceCols.
+            // it is likely a key column that isKeyColumn() missed (e.g., CTE/subquery
+            // context where the bottomUpColumns AST doesn't reflect the inner SELECT).
+            // Reclassify it as FILL_KEY. The optimizer gate hasPrevWithUnsupportedType()
+            // blocks genuine aggregates with unsupported PREV types, so this safety net
+            // only fires for misidentified key columns.
             for (int i = prevSourceCols.size() - 1; i >= 0; i--) {
                 int col = prevSourceCols.getQuick(i);
                 int mode = fillModes.getQuick(col);
                 int sourceCol = mode >= 0 ? mode : col;
                 short tag = ColumnType.tagOf(groupByMetadata.getColumnType(sourceCol));
                 if (!isFastPathPrevSupportedType(tag)) {
-                    // Reclassify as key column
                     fillModes.setQuick(col, SampleByFillRecordCursorFactory.FILL_KEY);
                     prevSourceCols.removeIndex(i);
                 }
@@ -10089,28 +10095,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(advice.getQuick(i).position, "cannot use table-prefixed names in order by");
             }
         }
-    }
-
-    private void guardAgainstFillWithKeyedGroupBy(QueryModel model, ArrayColumnTypes keyTypes) throws SqlException {
-        // locate fill
-        QueryModel curr = model;
-        while (curr != null && curr.getFillStride() == null) {
-            curr = curr.getNestedModel();
-        }
-
-        if (curr == null || curr.getFillStride() == null || curr.getFillValues() == null || curr.getFillValues().size() == 0) {
-            return;
-        }
-
-        if (curr.getFillValues().size() == 1 && isNoneKeyword(curr.getFillValues().getQuick(0).token)) {
-            return;
-        }
-
-        if (keyTypes.getColumnCount() == 1) {
-            return;
-        }
-
-        throw SqlException.$(0, "cannot use FILL with a keyed GROUP BY");
     }
 
     private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {
