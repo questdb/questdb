@@ -29,7 +29,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Multi-approx_percentile with an out-of-range percentile value (e.g., 1.5 or -0.1) throws a SqlException instead of silently clamping
   4. Window percentile with a non-constant expression as the percentile argument is rejected at compile time
   5. Disc group-by functions return correct empty-group values (0L sentinel) matching ApproxPercentile pattern
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 01-01-PLAN.md — Fix group-by correctness: setEmpty, DirectArray state, multi-approx validation
+- [ ] 01-02-PLAN.md — Fix window factory correctness: constness validation, sort algorithm replacement
 
 ### Phase 2: Resource Safety
 **Goal**: No native memory leaks under any execution path, and no heap allocations on the query data path
@@ -69,7 +72,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Correctness | 0/0 | Not started | - |
+| 1. Correctness | 0/2 | Planning complete | - |
 | 2. Resource Safety | 0/0 | Not started | - |
 | 3. Performance | 0/0 | Not started | - |
 | 4. Code Quality and Completeness | 0/0 | Not started | - |
