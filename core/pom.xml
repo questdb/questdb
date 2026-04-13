@@ -49,7 +49,7 @@
         <questdb.client.version>1.0.1</questdb.client.version>
     </properties>
 
-    <version>9.3.5-SNAPSHOT</version>
+    <version>9.3.5</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -73,7 +73,7 @@
     <scm>
         <url>scm:git:https://github.com/questdb/questdb.git</url>
         <connection>scm:git:https://github.com/questdb/questdb.git</connection>
-        <tag>9.3.1</tag>
+        <tag>9.3.5</tag>
     </scm>
 
 
