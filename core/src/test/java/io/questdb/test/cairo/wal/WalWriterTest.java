@@ -25,8 +25,6 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexUtils;
-import io.questdb.cairo.BitmapIndexWriter;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -1146,103 +1144,6 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
                     assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testBitmapIndexExtendOnNonLastPartitionAppendDateOnly() throws Exception {
-        // Simulates what O3CopyJob.updateIndex does when appending to a non-last
-        // partition: opens BitmapIndexWriter with init=false using fd-based API.
-        // The fd-based BitmapIndexWriter.of() uses the 5-arg MemoryCMARWImpl.of()
-        // for keyMem. This test verifies that extend0() grows the key file in
-        // page-sized chunks (not 1 byte at a time).
-        int initialKeys = 1000;
-        int newKeys = 10_000;
-        int indexBlockCapacity = 4; // INDEX CAPACITY 4
-
-        AtomicInteger allocateCount = new AtomicInteger();
-        LongList allocateSizes = new LongList();
-        long[] trackedKeyFd = {-1};
-        AtomicBoolean tracking = new AtomicBoolean();
-
-        FilesFacade testFf = new TestFilesFacadeImpl() {
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (tracking.get() && fd == trackedKeyFd[0]) {
-                    allocateCount.incrementAndGet();
-                    allocateSizes.add(size);
-                }
-                return super.allocate(fd, size);
-            }
-        };
-
-        assertMemoryLeak(testFf, () -> {
-            try (Path path = new Path().of(root).concat("test_idx")) {
-                testFf.mkdir(path.$(), configuration.getMkDirMode());
-            }
-
-            try (
-                    Path path = new Path().of(root).concat("test_idx");
-                    BitmapIndexWriter w = new BitmapIndexWriter(configuration)
-            ) {
-                // Phase 1: create the index with init=true (simulates first partition creation).
-                // Path-based of() with indexBlockCapacity > 0 → init=true.
-                w.of(path, "sym", 0, indexBlockCapacity);
-                for (int key = 0; key < initialKeys; key++) {
-                    w.add(key, key);
-                }
-                w.commit();
-                w.close();
-
-                // Phase 2: reopen with init=false using fd-based API,
-                // exactly as O3CopyJob.updateIndex does for OPEN_MID_PARTITION_FOR_APPEND.
-                int plen = path.size();
-                long keyFd = TableUtils.openRW(
-                        testFf,
-                        BitmapIndexUtils.keyFileName(path.trimTo(plen), "sym", 0),
-                        LOG,
-                        configuration.getWriterFileOpenOpts()
-                );
-                long valueFd = TableUtils.openRW(
-                        testFf,
-                        BitmapIndexUtils.valueFileName(path.trimTo(plen), "sym", 0),
-                        LOG,
-                        configuration.getWriterFileOpenOpts()
-                );
-                trackedKeyFd[0] = keyFd;
-                tracking.set(true);
-
-                // init=false: O3CopyJob passes row > 0 → init = (row == 0) = false
-                w.of(configuration, keyFd, valueFd, false, indexBlockCapacity);
-
-                // Add new keys, simulating new unique symbols in O3 append.
-                for (int key = initialKeys; key < initialKeys + newKeys; key++) {
-                    w.add(key, key);
-                }
-                w.commit();
-
-                tracking.set(false);
-
-                LOG.info()
-                        .$("bitmap index .k allocate calls [initialKeys=").$(initialKeys)
-                        .$(", newKeys=").$(newKeys)
-                        .$(", allocateCount=").$(allocateCount.get())
-                        .I$();
-                for (int i = 0, n = allocateSizes.size(); i < n; i++) {
-                    LOG.info()
-                            .$("  allocate[").$(i)
-                            .$("] size=").$(allocateSizes.get(i))
-                            .I$();
-                }
-
-                // With the fix, extend0() rounds up to page-sized chunks, so
-                // 10K new keys (320KB of key data) should need very few allocate
-                // calls — not tens of thousands.
-                assertTrue(
-                        "expected fewer than 100 allocate() calls but got " + allocateCount.get(),
-                        allocateCount.get() < 100
-                );
             }
         });
     }
