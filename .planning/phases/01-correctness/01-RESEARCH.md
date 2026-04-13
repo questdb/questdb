@@ -336,7 +336,7 @@ public void testThrowsOnNegativeValues() throws Exception {
 
 **All other claims are VERIFIED from direct source code inspection on the nw_percentile branch.**
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should constness check be added to group-by factories too?**
    - What we know: Group-by percentile arguments are evaluated per-group at computation time. Non-constant percentile is technically valid for group-by (different percentile per group). However, the current implementation uses `percentileFunc.getDouble(record)` which evaluates at result-retrieval time, not at accumulation time -- so a non-constant percentile actually works correctly for group-by.
