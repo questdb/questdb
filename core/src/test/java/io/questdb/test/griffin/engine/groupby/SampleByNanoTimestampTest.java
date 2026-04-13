@@ -602,10 +602,10 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                         s\tk\tfirst\tfirst1\tfirst2\tfirst3
                         TJW\t1970-01-03T00:00:00.000000000Z\t010\tc93\tfu3r7c\t5ewm40wx
                         PSWH\t1970-01-03T00:00:00.000000000Z\t000\t000\t000000\t00000000
-                        TJW\t1970-01-03T00:30:00.000000000Z\t000\t000\t000000\t00000000
+                        TJW\t1970-01-03T00:30:00.000000000Z\t010\tc93\tfu3r7c\t5ewm40wx
                         PSWH\t1970-01-03T00:30:00.000000000Z\t000\t000\t000000\t00000000
                         PSWH\t1970-01-03T01:00:00.000000000Z\t110\ttk5\txn8nmw\t0n2gm6r7
-                        TJW\t1970-01-03T01:00:00.000000000Z\t000\t000\t000000\t00000000
+                        TJW\t1970-01-03T01:00:00.000000000Z\t010\tc93\tfu3r7c\t5ewm40wx
                         """,
                 "select s, k, " +
                         "first(g1), " +

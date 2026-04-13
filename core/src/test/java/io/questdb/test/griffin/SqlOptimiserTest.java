@@ -4877,10 +4877,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String shouldFail2b = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
 
-            printSql(shouldFail1a);
-            printSql(shouldFail1b);
-            printSql(shouldFail2a);
-            printSql(shouldFail2b);
+            // These queries now succeed (keyed fill supported on both paths).
+            // They produce unbounded output without TO, so verify compilation
+            // succeeds without materializing results.
+            select(shouldFail1a).close();
+            select(shouldFail1b).close();
+            select(shouldFail2a).close();
+            select(shouldFail2b).close();
 
             final String shouldSucceedParallel = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
