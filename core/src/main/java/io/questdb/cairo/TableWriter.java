@@ -1051,6 +1051,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             commit();
 
+            // ConvertOperatorImpl opens native .d files directly, so parquet
+            // partitions must be converted back to native before the column
+            // type change.
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                if (txWriter.isPartitionParquet(i)) {
+                    convertPartitionParquetToNative(txWriter.getPartitionTimestampByIndex(i));
+                }
+            }
+
             LOG.info().$("converting column [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();

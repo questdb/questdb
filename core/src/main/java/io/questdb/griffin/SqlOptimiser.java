@@ -56,8 +56,6 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
-import io.questdb.std.datetime.CommonUtils;
-
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -88,10 +86,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -211,6 +211,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
+    private final ObjHashSet<QueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
@@ -412,6 +413,16 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private static boolean columnNotExistsInJoinModels(QueryModel baseModel, CharSequence columnName) {
+        final ObjList<QueryModel> joinModels = baseModel.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            if (joinModels.getQuick(i).getAliasToColumnMap().contains(columnName)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static ExpressionNode concatFilters(
             boolean cairoSqlLegacyOperatorPrecedence,
             ObjectPool<ExpressionNode> expressionNodePool,
@@ -465,7 +476,6 @@ public class SqlOptimiser implements Mutable {
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token) != null
                 && nested.getAliasToColumnMap().get(countDistinctExpr.rhs.token).getColumnType() == ColumnType.SYMBOL;
     }
-
 
     /**
      * Checks if the token is a time function that returns the current time.
@@ -2151,6 +2161,33 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private boolean columnExistsInJoinTree(QueryModel model, CharSequence columnName) {
+        if (model == null) {
+            return false;
+        }
+        try {
+            return columnExistsInJoinTree0(model, columnName, tempJoinTreeColumnModels);
+        } finally {
+            tempJoinTreeColumnModels.clear();
+        }
+    }
+
+    private boolean columnExistsInJoinTree0(QueryModel model, CharSequence columnName, ObjHashSet<QueryModel> visited) {
+        if (model == null || !visited.add(model)) {
+            return false;
+        }
+        if (!model.getAliasToColumnMap().excludes(columnName)) {
+            return true;
+        }
+        final ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 0, n = joinModels.size(); i < n; i++) {
+            if (columnExistsInJoinTree0(joinModels.getQuick(i), columnName, visited)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Compare two expression trees while accounting for table prefixes.
     // GROUP BY may have prefixes (e.g., "t.qty", "h.offset") that SELECT doesn't have ("qty", "offset").
     // Uses stack-based iteration to avoid deep recursion.
@@ -2354,17 +2391,6 @@ public class SqlOptimiser implements Mutable {
                 model.getAliasSequenceMap(),
                 false
         );
-    }
-
-    private ExpressionNode createToUtcCall(ExpressionNode value, ExpressionNode timezone) {
-        ExpressionNode call = expressionNodePool.next();
-        call.token = ToUTCTimestampFunctionFactory.NAME;
-        call.type = FUNCTION;
-        call.paramCount = 2;
-        call.position = value.position;
-        call.rhs = timezone;
-        call.lhs = value;
-        return call;
     }
 
     // use only if input is a column literal!
@@ -2673,6 +2699,17 @@ public class SqlOptimiser implements Mutable {
                 );
             }
         }
+    }
+
+    private ExpressionNode createToUtcCall(ExpressionNode value, ExpressionNode timezone) {
+        ExpressionNode call = expressionNodePool.next();
+        call.token = ToUTCTimestampFunctionFactory.NAME;
+        call.type = FUNCTION;
+        call.paramCount = 2;
+        call.position = value.position;
+        call.rhs = timezone;
+        call.lhs = value;
+        return call;
     }
 
     @NotNull
@@ -3078,9 +3115,12 @@ public class SqlOptimiser implements Mutable {
             int index = columnNameToAliasMap.keyIndex(n.token);
             if (index > -1) {
                 // Column not yet referenced by inner model - validate and add it
-                validateWindowColumnReference(node, n.token, translatingModel, innerVirtualModel, baseModel);
+                ExpressionNode resolvedColumnAst = validateWindowColumnReference(node, n.token, translatingModel, innerVirtualModel, baseModel);
                 CharSequence alias = createColumnAlias(n.token, innerVirtualModel);
-                QueryColumn column = queryColumnPool.next().of(alias, n);
+                ExpressionNode columnAst = resolvedColumnAst != null
+                        ? ExpressionNode.deepClone(expressionNodePool, resolvedColumnAst)
+                        : n;
+                QueryColumn column = queryColumnPool.next().of(alias, columnAst);
                 innerVirtualModel.addBottomUpColumn(column);
                 if (alias != n.token) {
                     translatingModel.addBottomUpColumnIfNotExists(column);
@@ -3149,7 +3189,7 @@ public class SqlOptimiser implements Mutable {
 
             // also search the virtual model and do not register the literal with the
             // translating model if this is a projection only reference.
-            if (baseModel.getAliasToColumnMap().excludes(node.token) && innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(node.token)) {
+            if (columnNotExistsInJoinModels(baseModel, node.token) && innerVirtualModel != null && innerVirtualModel.getAliasToColumnMap().contains(node.token)) {
                 return node;
             }
 
@@ -9130,7 +9170,7 @@ public class SqlOptimiser implements Mutable {
                             //  the same model's columns, then introduce an innerValueModel to handle this case.
                             //  This would change the processing logic for all columns.
                             if (
-                                    (!forceNotUseInnerModel && baseModel.getAliasToColumnMap().excludes(qc.getAst().token) &&
+                                    (!forceNotUseInnerModel && columnNotExistsInJoinModels(baseModel, qc.getAst().token) &&
                                             innerVirtualModel.getAliasToColumnMap().contains(qc.getAst().token))
                             ) {
                                 // column is referencing another column or function on the same projection
@@ -10584,7 +10624,7 @@ public class SqlOptimiser implements Mutable {
      * @param innerVirtualModel Model containing projection aliases
      * @param baseModel         Base model with actual table columns
      */
-    private void validateWindowColumnReference(
+    private ExpressionNode validateWindowColumnReference(
             ExpressionNode node,
             CharSequence token,
             QueryModel translatingModel,
@@ -10592,8 +10632,8 @@ public class SqlOptimiser implements Mutable {
             QueryModel baseModel
     ) throws SqlException {
         // If the table has a column with this name, normal flow handles renaming (e.g., b -> b1)
-        if (!baseModel.getAliasToColumnMap().excludes(token)) {
-            return;
+        if (columnExistsInJoinTree(baseModel, token)) {
+            return null;
         }
 
         // Check if token exists as a projection alias
@@ -10601,7 +10641,7 @@ public class SqlOptimiser implements Mutable {
         int aliasIndex = aliasMap.keyIndex(token);
         if (aliasIndex >= 0) {
             // Not an alias - will be handled by normal flow
-            return;
+            return null;
         }
 
         // Token is a projection alias. Check what it references.
@@ -10610,18 +10650,20 @@ public class SqlOptimiser implements Mutable {
 
         // Only validate if alias references a column (LITERAL). Functions, constants, etc. are fine.
         if (aliasAst.type != ExpressionNode.LITERAL) {
-            return;
+            return null;
         }
 
         // The alias references another literal. Verify that literal resolves to a table column.
         CharSequence referencedToken = aliasAst.token;
         boolean inTranslatingModel = translatingModel.getAliasToColumnMap().get(token) != null;
-        boolean isTableColumn = !baseModel.getAliasToColumnMap().excludes(referencedToken);
+        boolean isTableColumn = columnExistsInJoinTree(baseModel, referencedToken);
 
         if (!inTranslatingModel && !isTableColumn) {
             // The alias references another alias that doesn't resolve to a table column
             throw SqlException.invalidColumn(node.position, node.token);
         }
+
+        return aliasAst;
     }
 
     private void validateWindowFunctions(
