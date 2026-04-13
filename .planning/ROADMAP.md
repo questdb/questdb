@@ -68,7 +68,11 @@ Plans:
   3. quantile_disc() and quantile_cont() work as window functions (not just group-by aggregates)
   4. All 10 previously unregistered group-by factories appear in function_list.txt and are callable from SQL
   5. Percentile window tests cover PARTITION BY paths, ORDER BY error rejection, and use assertQueryNoLeakCheck instead of assertSql
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 04-01-PLAN.md — Extract DoubleSort utility and replace 9 duplicate sort implementations
+- [ ] 04-02-PLAN.md — Fix toPlan output, register 10 group-by factories, create 4 window alias factories
+- [ ] 04-03-PLAN.md — Migrate assertSql to assertQueryNoLeakCheck, add alias/error/partition tests
 
 ## Progress
 
@@ -80,4 +84,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | 1. Correctness | 0/2 | Planning complete | - |
 | 2. Resource Safety | 0/1 | Planning complete | - |
 | 3. Performance | 0/2 | Planning complete | - |
-| 4. Code Quality and Completeness | 0/0 | Not started | - |
+| 4. Code Quality and Completeness | 0/3 | Planning complete | - |
