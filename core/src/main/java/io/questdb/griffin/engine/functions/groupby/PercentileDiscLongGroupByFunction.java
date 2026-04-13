@@ -112,11 +112,10 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
             return LONG_NULL;
         }
 
-        listA.sort();
-
         double percentile = percentileFunc.getDouble(record);
         double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
         int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
+        listA.quickSelect(0, size - 1, N);
         return listA.getQuick(N);
     }
 

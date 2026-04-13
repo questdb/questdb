@@ -295,6 +295,28 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     }
 
     @Test
+    public void testQuickSelectGroupByCorrectness() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE grouped (grp SYMBOL, val LONG)");
+            execute("""
+                    INSERT INTO grouped (grp, val) VALUES
+                    ('A', 10), ('A', 20), ('A', 30), ('A', 40), ('A', 50),
+                    ('B', 100), ('B', 200), ('B', 300), ('B', 400), ('B', 500),
+                    ('C', 1), ('C', 1), ('C', 1), ('C', 1), ('C', 1)
+                    """);
+            assertSql(
+                    """
+                            grp\tpercentile_disc
+                            A\t30
+                            B\t300
+                            C\t1
+                            """,
+                    "SELECT grp, percentile_disc(val, 0.5) FROM grouped ORDER BY grp"
+            );
+        });
+    }
+
+    @Test
     public void testWithKnownData() throws Exception {
         assertMemoryLeak(() -> {
             execute(txDdl);
