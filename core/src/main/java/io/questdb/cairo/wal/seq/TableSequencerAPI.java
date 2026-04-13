@@ -28,229 +28,100 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ErrorTag;
-import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.pool.ex.PoolClosedException;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.Iterator;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 
 import static io.questdb.cairo.wal.ApplyWal2TableJob.WAL_2_TABLE_RESUME_REASON;
-import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
-import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 
-public class TableSequencerAPI implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
-    final CairoConfiguration configuration;
-    final ConcurrentHashMap<TableSequencerImpl> seqRegistry = new ConcurrentHashMap<>(false);
+/**
+ * Facade for WAL table sequencer operations. Delegates remote-capable operations
+ * to a pluggable {@link SequencerService} and manages local-only concerns such as
+ * suspend/resume state, transaction tracking, and WAL listener notifications.
+ */
+public class TableSequencerAPI implements QuietCloseable, SequencerServiceListener {
     private final Function<CharSequence, SeqTxnTracker> createTxnTracker;
     private final CairoEngine engine;
-    private final long inactiveTtlUs;
-    private final int recreateDistressedSequencerAttempts;
     private final ConcurrentHashMap<SeqTxnTracker> seqTxnTrackers = new ConcurrentHashMap<>(false);
-    private final BiFunction<CharSequence, Object, TableSequencerImpl> openSequencerInstanceLambda = this::openSequencerInstance;
-    volatile boolean closed;
+    private final SequencerService sequencerService;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
-        this.configuration = configuration;
         this.engine = engine;
-        this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
-        this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
         this.createTxnTracker = dir -> new SeqTxnTracker(configuration);
+        SequencerServiceFactory factory = configuration.getSequencerServiceFactory();
+        if (factory != null) {
+            this.sequencerService = factory.create(engine, configuration);
+        } else {
+            this.sequencerService = new LocalSequencerService(engine, configuration, seqTxnTrackers, createTxnTracker);
+        }
+        this.sequencerService.setListener(this);
     }
 
     public void applyRename(TableToken tableToken) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.notifyRename(tableToken);
-            } finally {
-                sequencer.unlockWrite();
-            }
-        }
+        sequencerService.applyRename(tableToken);
     }
 
     @Override
     public void close() {
-        closed = true;
-        releaseAll();
+        seqTxnTrackers.clear();
+        sequencerService.close();
     }
 
     @TestOnly
     public void closeSequencer(TableToken tableToken) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.close();
-            } finally {
-                sequencer.unlockWrite();
-            }
+        if (sequencerService instanceof LocalSequencerService) {
+            ((LocalSequencerService) sequencerService).closeSequencer(tableToken);
         }
     }
 
-    public void dropTable(TableToken tableToken, boolean failedCreate) {
-        LOG.info().$("dropping wal table [table=").$(tableToken).I$();
-        try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                seq.dropTable();
-            } finally {
-                seq.unlockWrite();
-            }
-            getSeqTxnTracker(tableToken).notifyOnDrop();
-        } catch (CairoException e) {
-            LOG.info().$("failed to drop wal table [table=").$(tableToken).I$();
-            if (!failedCreate) {
-                throw e;
-            }
-        }
-    }
+    // ---- SequencerServiceListener callbacks ----
+    // These handle local state (SeqTxnTracker) setup in response to sequencer events.
+    // In multi-primary mode, these fire for both locally-initiated and remote events.
 
-    public void forAllWalTables(ObjHashSet<TableToken> tableTokenBucket, boolean includeDropped, TableSequencerCallback callback) {
-        final CharSequence root = configuration.getDbRoot();
-        final FilesFacade ff = configuration.getFilesFacade();
-        Path path = Path.PATH.get();
-
-        engine.getTableTokens(tableTokenBucket, includeDropped);
-        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-            TableToken tableToken = tableTokenBucket.get(i);
-
-            // Exclude locked entries.
-            // Use includeDropped argument to decide whether to include dropped tables.
-            boolean isDropped = includeDropped && engine.isTableDropped(tableToken);
-            if (engine.isWalTable(tableToken) && !isDropped) {
-                long lastTxn;
-                int tableId = tableToken.getTableId();
-
-                try {
-                    if (!seqRegistry.containsKey(tableToken.getDirName())) {
-                        // Fast path.
-                        // The following calls are racy, i.e. there might be a sequencer modifying both
-                        // metadata and log concurrently as we read the values. It's ok since we iterate
-                        // through the WAL tables periodically, so eventually we should see the updates.
-                        path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
-                        long fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
-                        lastTxn = ff.readNonNegativeLong(fdTxn, TableTransactionLogFile.MAX_TXN_OFFSET_64); // does not throw
-                        ff.close(fdTxn);
-                    } else {
-                        // Slow path.
-                        try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
-                            lastTxn = tableSequencer.lastTxn();
-                        }
-                    }
-                } catch (CairoException ex) {
-                    if (ex.isFileCannotRead() || ex.isTableDropped()) {
-                        // Table is partially dropped, but not fully.
-                        lastTxn = -1;
-                    } else {
-                        LOG.critical().$("could not read WAL table transaction file [table=").$(tableToken)
-                                .$(", errno=").$(ex.getErrno())
-                                .$(", error=").$((Throwable) ex).I$();
-                        continue;
-                    }
-                }
-
-                try {
-                    if (includeDropped || lastTxn > -1) {
-                        callback.onTable(tableId, tableToken, lastTxn);
-                    }
-                } catch (CairoException ex) {
-                    LOG.critical().$("could not process table sequencer [table=").$(tableToken)
-                            .$(", errno=").$(ex.getErrno())
-                            .$(", error=").$((Throwable) ex).I$();
-                }
-            } else if (isDropped) {
-                try {
-                    callback.onTable(tableToken.getTableId(), tableToken, -1);
-                } catch (CairoException ex) {
-                    LOG.critical().$("could not process table sequencer [table=").$(tableToken)
-                            .$(", errno=").$(ex.getErrno())
-                            .$(", error=").$((Throwable) ex).I$();
-                }
-            }
-        }
+    public void forAllWalTables(ObjHashSet<TableToken> tableTokenBucket, boolean includeDropped, SequencerService.TableSequencerCallback callback) {
+        sequencerService.forAllWalTables(tableTokenBucket, includeDropped, callback);
     }
 
     public int getCurrentWalId(final TableToken tableToken) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            try {
-                return tableSequencer.getCurrentWalId();
-            } finally {
-                tableSequencer.unlockRead();
-            }
+        if (sequencerService instanceof LocalSequencerService) {
+            return ((LocalSequencerService) sequencerService).getCurrentWalId(tableToken);
         }
+        throw new UnsupportedOperationException("getCurrentWalId is only supported with LocalSequencerService");
     }
 
     public @NotNull TransactionLogCursor getCursor(final TableToken tableToken, long seqTxn) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            TransactionLogCursor cursor;
-            try {
-                cursor = tableSequencer.getTransactionLogCursor(seqTxn);
-            } finally {
-                tableSequencer.unlockRead();
-            }
-            return cursor;
-        }
+        return sequencerService.getCursor(tableToken, seqTxn);
     }
 
     public @NotNull TableMetadataChangeLog getMetadataChangeLog(final TableToken tableToken, long structureVersionLo) {
-        try (TableSequencerImpl tableSequencer = getOrOpenSequencer(tableToken, this.openSequencerInstanceLambda)) {
-            if (tableSequencer.metadataMatches(structureVersionLo)) {
-                return EmptyOperationCursor.INSTANCE;
-            }
-        }
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            try {
-                return tableSequencer.getMetadataChangeLog(structureVersionLo);
-            } finally {
-                tableSequencer.unlockRead();
-            }
-        }
+        return sequencerService.getMetadataChangeLog(tableToken, structureVersionLo);
     }
 
     public TableMetadataChangeLog getMetadataChangeLogSlow(final TableToken tableToken, long structureVersionLo) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            TableMetadataChangeLog metadataChangeLog;
-            try {
-                metadataChangeLog = tableSequencer.getMetadataChangeLogSlow(structureVersionLo);
-            } finally {
-                tableSequencer.unlockRead();
-            }
-            return metadataChangeLog;
+        if (sequencerService instanceof LocalSequencerService) {
+            return ((LocalSequencerService) sequencerService).getMetadataChangeLogSlow(tableToken, structureVersionLo);
         }
+        // For remote implementations, getMetadataChangeLog is always authoritative
+        return sequencerService.getMetadataChangeLog(tableToken, structureVersionLo);
     }
 
     public int getNextWalId(final TableToken tableToken) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            int walId;
-            try {
-                walId = tableSequencer.getNextWalId();
-            } finally {
-                tableSequencer.unlockRead();
-            }
-            return walId;
-        }
+        return sequencerService.getNextWalId(tableToken);
+    }
+
+    public SequencerService getSequencerService() {
+        return sequencerService;
     }
 
     public long getTableMetadata(final TableToken tableToken, final TableRecordMetadataSink sink) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            try {
-                return tableSequencer.getTableMetadata(sink);
-            } finally {
-                tableSequencer.unlockRead();
-            }
-        }
+        return sequencerService.getTableMetadata(tableToken, sink);
     }
 
     @NotNull
@@ -273,47 +144,18 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public long lastTxn(final TableToken tableToken) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            long lastTxn;
-            try {
-                lastTxn = sequencer.lastTxn();
-            } finally {
-                sequencer.unlockRead();
-            }
-            return lastTxn;
-        }
+        return sequencerService.lastTxn(tableToken);
     }
 
     public long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            long txn;
-            try {
-                txn = tableSequencer.nextStructureTxn(structureVersion, alterOp);
-            } finally {
-                tableSequencer.unlockWrite();
-            }
-            return txn;
-        }
+        return sequencerService.nextStructureTxn(tableToken, structureVersion, alterOp);
     }
 
     public long nextTxn(final TableToken tableToken, int walId, long expectedSchemaVersion, int segmentId, int segmentTxn, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            long txn;
-            try {
-                if (!tableSequencer.getTableToken().equals(tableToken)) {
-                    throw TableReferenceOutOfDateException.of(tableToken);
-                }
-                txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
-            } finally {
-                tableSequencer.unlockWrite();
-            }
-            return txn;
-        }
+        return sequencerService.nextTxn(tableToken, walId, expectedSchemaVersion, segmentId, segmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
     }
 
     public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
-        // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
-        // to run ApplyWal2TableJob for the table
         return getSeqTxnTracker(tableToken).notifyOnCheck(seqTxn);
     }
 
@@ -325,74 +167,56 @@ public class TableSequencerAPI implements QuietCloseable {
         engine.getWalListener().walClosed(tableToken, txn, walId);
     }
 
+    @Override
+    public void onTableDropped(TableToken tableToken, long databaseVersion) {
+        getSeqTxnTracker(tableToken).notifyOnDrop();
+    }
+
+    @Override
+    public void onTableRegistered(TableToken tableToken, long databaseVersion) {
+        getSeqTxnTracker(tableToken).initTxns(0, 0, false);
+    }
+
+    @Override
+    public void onTableRenamed(TableToken oldToken, TableToken newToken, long databaseVersion) {
+        // SeqTxnTracker is keyed by dirName, which doesn't change on rename
+    }
+
+    @Override
+    public void onTransactionsAvailable(TableToken tableToken, long seqTxn) {
+        // Transaction tracking is handled by TableSequencerImpl.notifyTxnCommitted()
+        // in the local case. For remote, this would trigger ApplyWal2TableJob.
+    }
+
     @TestOnly
     public void openSequencer(TableToken tableToken) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            sequencer.unlockWrite();
+        if (sequencerService instanceof LocalSequencerService) {
+            ((LocalSequencerService) sequencerService).openSequencer(tableToken);
         }
     }
 
     public boolean prepareToConvertToNonWal(final TableToken tableToken) {
-        boolean isDropped;
-        try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            isDropped = seq.isDropped();
-            seq.unlockWrite();
-        } catch (CairoException e) {
-            LOG.info().$("cannot open sequencer files, assumed table converted to non-wal [table=")
-                    .$(tableToken).I$();
-            return true;
+        if (sequencerService instanceof LocalSequencerService) {
+            return ((LocalSequencerService) sequencerService).prepareToConvertToNonWal(tableToken);
         }
-
-        final TableSequencerImpl tableSequencer = seqRegistry.get(tableToken.getDirName());
-        if (tableSequencer != null && tableSequencer.checkClose()) {
-            LOG.info().$("table is converted to non-WAL, closed table sequencer [table=").$(tableToken).I$();
-            seqRegistry.remove(tableToken.getDirName(), tableSequencer);
-        }
-        return !isDropped;
+        throw new UnsupportedOperationException("prepareToConvertToNonWal is only supported with LocalSequencerService");
     }
 
     public void purgeTxnTracker(String dirName) {
         seqTxnTrackers.remove(dirName);
     }
 
-    public void registerTable(int tableId, final TableStructure tableDescriptor, final TableToken tableToken) {
-        try (
-                TableSequencerImpl tableSequencer = getTableSequencerEntry(
-                        tableToken,
-                        SequencerLockType.WRITE,
-                        (key, tt) -> new TableSequencerImpl(
-                                this,
-                                engine,
-                                tableToken,
-                                getSeqTxnTracker((TableToken) tt),
-                                tableId,
-                                tableDescriptor
-                        )
-                )
-        ) {
-            SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
-            seqTxnTracker.initTxns(0, 0, false);
-            tableSequencer.unlockWrite();
-        }
-    }
-
     public boolean releaseAll() {
         seqTxnTrackers.clear();
-        return releaseAll(Long.MAX_VALUE);
+        return sequencerService.releaseAll();
     }
 
     public boolean releaseInactive() {
-        return releaseAll(configuration.getMicrosecondClock().getTicks() - inactiveTtlUs);
+        return sequencerService.releaseInactive();
     }
 
     public TableToken reload(TableToken tableToken) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                return tableSequencer.reload();
-            } finally {
-                tableSequencer.unlockWrite();
-            }
-        }
+        return sequencerService.reload(tableToken);
     }
 
     public void reloadMetadataConditionally(
@@ -400,55 +224,44 @@ public class TableSequencerAPI implements QuietCloseable {
             long expectedStructureVersion,
             TableRecordMetadataSink sink
     ) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            try {
-                if (tableSequencer.getStructureVersion() != expectedStructureVersion) {
-                    tableSequencer.getTableMetadata(sink);
-                }
-            } finally {
-                tableSequencer.unlockRead();
-            }
+        if (sequencerService instanceof LocalSequencerService) {
+            ((LocalSequencerService) sequencerService).reloadMetadataConditionally(tableToken, expectedStructureVersion, sink);
+        } else {
+            // For remote: always reload
+            sequencerService.getTableMetadata(tableToken, sink);
         }
     }
 
     public void resumeTable(TableToken tableToken, long resumeFromTxn) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                if (!isSuspended(tableToken)) {
-                    // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
-                    // as a way to resume table which is not moving even if it's marked as not suspended.
-                    sequencer.resumeTable();
-                    return;
+        if (!isSuspended(tableToken)) {
+            // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
+            // as a way to resume table which is not moving even if it's marked as not suspended.
+            engine.notifyWalTxnCommitted(tableToken);
+            getSeqTxnTracker(tableToken).setUnsuspended();
+            return;
+        }
+        final long nextTxn = sequencerService.lastTxn(tableToken) + 1;
+        if (resumeFromTxn > nextTxn) {
+            throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
+        }
+        // resume from the latest on negative value
+        if (resumeFromTxn > 0) {
+            try (TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
+                long seqTxn = tableWriter.getAppliedSeqTxn();
+                if (resumeFromTxn - 1 > seqTxn) {
+                    // including resumeFromTxn
+                    tableWriter.commitSeqTxn(resumeFromTxn - 1);
                 }
-                final long nextTxn = sequencer.lastTxn() + 1;
-                if (resumeFromTxn > nextTxn) {
-                    throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
-                }
-                // resume from the latest on negative value
-                if (resumeFromTxn > 0) {
-                    try (TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
-                        long seqTxn = tableWriter.getAppliedSeqTxn();
-                        if (resumeFromTxn - 1 > seqTxn) {
-                            // including resumeFromTxn
-                            tableWriter.commitSeqTxn(resumeFromTxn - 1);
-                        }
-                    }
-                }
-                sequencer.resumeTable();
-            } finally {
-                sequencer.unlockWrite();
             }
         }
+        engine.notifyWalTxnCommitted(tableToken);
+        getSeqTxnTracker(tableToken).setUnsuspended();
     }
 
     @TestOnly
     public void setDistressed(TableToken tableToken) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.setDistressed();
-            } finally {
-                sequencer.unlockWrite();
-            }
+        if (sequencerService instanceof LocalSequencerService) {
+            ((LocalSequencerService) sequencerService).setDistressed(tableToken);
         }
     }
 
@@ -456,32 +269,8 @@ public class TableSequencerAPI implements QuietCloseable {
         getSeqTxnTracker(tableToken).setSuspended(errorTag, errorMessage);
     }
 
-    /**
-     * @see SeqTxnTracker#updateWriterTxns(long, long)
-     */
     public boolean updateWriterTxns(final TableToken tableToken, long writerTxn, long dirtyWriterTxn) {
         return getSeqTxnTracker(tableToken).updateWriterTxns(writerTxn, dirtyWriterTxn);
-    }
-
-    private @NotNull TableSequencerImpl getOrOpenSequencer(
-            TableToken tableToken,
-            BiFunction<CharSequence, Object, TableSequencerImpl> lambda
-    ) {
-        int attempt = 0;
-        while (attempt < recreateDistressedSequencerAttempts) {
-            throwIfClosed();
-            TableSequencerImpl entry = seqRegistry.computeIfAbsent(tableToken.getDirName(), tableToken, lambda);
-            boolean isDistressed = entry.isDistressed();
-            if (!isDistressed && !entry.isClosed()) {
-                return entry;
-            }
-
-            if (isDistressed) {
-                attempt++;
-            }
-        }
-
-        throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
     }
 
     @NotNull
@@ -489,94 +278,7 @@ public class TableSequencerAPI implements QuietCloseable {
         return seqTxnTrackers.computeIfAbsent(tt.getDirName(), createTxnTracker);
     }
 
-    @NotNull
-    private TableSequencerImpl getTableSequencerEntry(
-            TableToken tableToken,
-            SequencerLockType lock,
-            BiFunction<CharSequence, Object, TableSequencerImpl> getSequencerLambda
-    ) {
-        TableSequencerImpl entry;
-        int attempt = 0;
-        while (attempt < recreateDistressedSequencerAttempts) {
-            throwIfClosed();
-            entry = seqRegistry.computeIfAbsent(tableToken.getDirName(), tableToken, getSequencerLambda);
-            if (lock == SequencerLockType.READ) {
-                entry.readLock();
-            } else if (lock == SequencerLockType.WRITE) {
-                entry.writeLock();
-            }
-            boolean isDistressed = entry.isDistressed();
-            if (!isDistressed && !entry.isClosed()) {
-                return entry;
-            } else if (lock == SequencerLockType.READ) {
-                entry.unlockRead();
-            } else if (lock == SequencerLockType.WRITE) {
-                entry.unlockWrite();
-            }
-            if (isDistressed) {
-                attempt++;
-            }
-        }
-        throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
-    }
-
-    private TableSequencerImpl openSequencerInstance(CharSequence tableDir, Object tableToken) {
-        return new TableSequencerImpl(
-                this,
-                this.engine,
-                (TableToken) tableToken,
-                getSeqTxnTracker((TableToken) tableToken),
-                0,
-                null
-        );
-    }
-
-    @NotNull
-    private TableSequencerImpl openSequencerLocked(TableToken tableToken, SequencerLockType lock) {
-        return getTableSequencerEntry(tableToken, lock, this.openSequencerInstanceLambda);
-    }
-
-    private boolean releaseEntries(long deadline) {
-        if (seqRegistry.isEmpty()) {
-            // nothing to release
-            return true;
-        }
-        boolean removed = false;
-        final Iterator<CharSequence> iterator = seqRegistry.keySet().iterator();
-        while (iterator.hasNext()) {
-            final CharSequence tableDir = iterator.next();
-            final TableSequencerImpl sequencer = seqRegistry.get(tableDir);
-            if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
-                // Remove from registry only if this thread closed the instance
-                if (sequencer.checkClose()) {
-                    LOG.debug().$("releasing idle table sequencer [tableDir=").$safe(tableDir).I$();
-                    iterator.remove();
-                    removed = true;
-                }
-            }
-        }
-        return removed;
-    }
-
-    private void throwIfClosed() {
-        if (closed) {
-            LOG.info().$("is closed").$();
-            throw PoolClosedException.INSTANCE;
-        }
-    }
-
-    protected boolean releaseAll(long deadline) {
-        return releaseEntries(deadline);
-    }
-
-    enum SequencerLockType {
-        WRITE,
-        READ,
-        NONE
-    }
-
     @FunctionalInterface
-    public interface TableSequencerCallback {
-        void onTable(int tableId, final TableToken tableName, long lastTxn);
+    public interface TableSequencerCallback extends SequencerService.TableSequencerCallback {
     }
 }

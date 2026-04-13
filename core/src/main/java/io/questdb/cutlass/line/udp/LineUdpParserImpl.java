@@ -287,15 +287,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void createTableAndAppendRow(CharSequenceCache cache) {
-        tableToken = engine.createTable(
-                AllowAllSecurityContext.INSTANCE,
-                ddlMem,
-                path,
-                true,
-                tableStructureAdapter.of(cache),
-                false,
-                TableUtils.TABLE_KIND_REGULAR_TABLE
-        );
+        TableStructure struct = tableStructureAdapter.of(cache);
+        tableToken = engine.createTable(AllowAllSecurityContext.INSTANCE, ddlMem, path, true, struct, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         appendFirstRowAndCacheWriter(cache);
     }
 

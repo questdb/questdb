@@ -181,7 +181,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     Path path = new Path()
             ) {
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
-                    engine.createTable(securityContext, mem, path, false, model, false);
+                    engine.createTable(securityContext, mem, path, false, model, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
                     fail("duplicated tables should not be permitted!");
                 }
             } catch (CairoException e) {
@@ -311,7 +311,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 createX(engine);
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
-                    TableToken y = engine.rename(securityContext, path, mem, "x", otherPath, "y");
+                    TableToken y = engine.renameTable(securityContext, path, mem, "x", otherPath, "y");
                     assertWriter(engine, y);
                     assertReader(engine, y);
                 }
@@ -414,7 +414,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
 
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
-                    TableToken y = engine.rename(securityContext, path, mem, "x", otherPath, "y");
+                    TableToken y = engine.renameTable(securityContext, path, mem, "x", otherPath, "y");
 
                     assertWriter(engine, y);
                     assertReader(engine, y);
@@ -439,7 +439,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     }
 
                     try (MemoryMARW mem = Vm.getCMARWInstance()) {
-                        engine.rename(securityContext, path, mem, "x", otherPath, "y");
+                        engine.renameTable(securityContext, path, mem, "x", otherPath, "y");
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=missing or owned by other process]");
@@ -478,7 +478,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, x);
 
                 try {
-                    engine.rename(securityContext, path, mem, "x", otherPath, "y");
+                    engine.renameTable(securityContext, path, mem, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "could not rename");
@@ -486,7 +486,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                 assertReader(engine, x);
                 assertWriter(engine, x);
-                TableToken y = engine.rename(securityContext, path, mem, "x", otherPath, "y");
+                TableToken y = engine.renameTable(securityContext, path, mem, "x", otherPath, "y");
                 assertReader(engine, y);
                 assertWriter(engine, y);
             }
@@ -505,7 +505,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     CairoEngine engine = new CairoEngine(configuration);
                     MemoryMARW mem = Vm.getCMARWInstance()
             ) {
-                engine.rename(securityContext, path, mem, "x", otherPath, "y");
+                engine.renameTable(securityContext, path, mem, "x", otherPath, "y");
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "does not exist");
@@ -524,7 +524,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 assertWriter(engine, x);
                 assertReader(engine, x);
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
-                    engine.rename(securityContext, path, mem, "x", otherPath, "y");
+                    engine.renameTable(securityContext, path, mem, "x", otherPath, "y");
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "exists");

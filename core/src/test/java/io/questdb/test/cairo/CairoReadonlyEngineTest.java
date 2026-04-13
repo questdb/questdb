@@ -134,7 +134,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
 
                 roEngine.reloadTableNames();
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
-                    roEngine.rename(
+                    roEngine.renameTable(
                             AllowAllSecurityContext.INSTANCE,
                             Path.getThreadLocal(root),
                             mem,

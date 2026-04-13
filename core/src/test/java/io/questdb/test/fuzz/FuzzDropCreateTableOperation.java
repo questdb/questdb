@@ -29,7 +29,9 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -76,21 +78,15 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
                 }
             }
 
-            engine.createTable(
-                    AllowAllSecurityContext.INSTANCE,
-                    vm,
-                    path,
-                    false,
-                    new TableStructMetadataAdapter(
-                            tableName,
-                            isWal,
-                            recreateTableMetadata,
-                            engine.getConfiguration(),
-                            PartitionBy.DAY,
-                            recreateTableMetadata.getTimestampIndex()
-                    ),
-                    false
+            TableStructure struct = new TableStructMetadataAdapter(
+                    tableName,
+                    isWal,
+                    recreateTableMetadata,
+                    engine.getConfiguration(),
+                    PartitionBy.DAY,
+                    recreateTableMetadata.getTimestampIndex()
             );
+            engine.createTable(AllowAllSecurityContext.INSTANCE, vm, path, false, struct, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         }
         return true;
     }
@@ -99,21 +95,15 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
         // Retry the table create part of apply() method in case it failed.
         if (recreateTableMetadata != null) {
             try (MemoryMARW vm = Vm.getCMARWInstance(); Path path = new Path()) {
-                engine.createTable(
-                        AllowAllSecurityContext.INSTANCE,
-                        vm,
-                        path,
-                        false,
-                        new TableStructMetadataAdapter(
-                                tableName,
-                                isWal,
-                                recreateTableMetadata,
-                                engine.getConfiguration(),
-                                PartitionBy.DAY,
-                                recreateTableMetadata.getTimestampIndex()
-                        ),
-                        false
+                TableStructure struct = new TableStructMetadataAdapter(
+                        tableName,
+                        isWal,
+                        recreateTableMetadata,
+                        engine.getConfiguration(),
+                        PartitionBy.DAY,
+                        recreateTableMetadata.getTimestampIndex()
                 );
+                engine.createTable(AllowAllSecurityContext.INSTANCE, vm, path, false, struct, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
             }
             return true;
         }

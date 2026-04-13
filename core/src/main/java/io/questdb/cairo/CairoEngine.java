@@ -91,6 +91,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.wal.seq.SequencerService;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
@@ -643,29 +644,6 @@ public class CairoEngine implements Closeable, WriterSource {
             Path path,
             boolean ifNotExists,
             TableStructure struct,
-            boolean keepLock
-    ) {
-        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
-    }
-
-    public @NotNull TableToken createTable(
-            SecurityContext securityContext,
-            MemoryMARW mem,
-            Path path,
-            boolean ifNotExists,
-            TableStructure struct,
-            boolean keepLock,
-            int tableKind
-    ) {
-        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false, tableKind);
-    }
-
-    public @NotNull TableToken createTable(
-            SecurityContext securityContext,
-            MemoryMARW mem,
-            Path path,
-            boolean ifNotExists,
-            TableStructure struct,
             boolean keepLock,
             boolean inVolume,
             int tableKind
@@ -715,7 +693,7 @@ public class CairoEngine implements Closeable, WriterSource {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
-                tableSequencerAPI.dropTable(tableToken, false);
+                getSequencerService().dropTable(tableToken);
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 matViewGraph.removeView(tableToken);
@@ -1006,6 +984,10 @@ public class CairoEngine implements Closeable, WriterSource {
         final TableRecordMetadata metadata = sequencerMetadataPool.get(tableToken);
         validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
         return metadata;
+    }
+
+    public SequencerService getSequencerService() {
+        return tableSequencerAPI.getSequencerService();
     }
 
     public @NotNull SettingsStore getSettingsStore() {
@@ -1619,7 +1601,7 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.removeThreadLocalPoolSupervisor();
     }
 
-    public TableToken rename(
+    public TableToken renameTable(
             SecurityContext securityContext,
             Path fromPath,
             MemoryMARW memory,
@@ -2057,20 +2039,40 @@ public class CairoEngine implements Closeable, WriterSource {
             while (!lockTableCreate(tableToken)) {
                 Os.pause();
             }
+            boolean registeredWithSequencer = false;
             try {
+                // For WAL tables, register with sequencer service BEFORE physical creation.
+                // The service coordinates table creation across nodes in multi-primary mode.
+                if (struct.isWalEnabled()) {
+                    long result = getSequencerService().registerTable(
+                            tableToken.getTableId(), struct, tableToken,
+                            getSequencerService().getDatabaseVersion()
+                    );
+                    if (result < 0) {
+                        // Service refused — our database version is stale.
+                        // Reconcile locally: check if a table with the same name already exists.
+                        TableToken existingToken = getTableTokenIfExists(tableName);
+                        if (existingToken != null) {
+                            if (ifNotExists) {
+                                struct.init(existingToken);
+                                return existingToken;
+                            }
+                            throw EntryUnavailableException.instance("table exists");
+                        }
+                        throw CairoException.nonCritical()
+                                .put("table registration refused, database version mismatch [table=").put(tableName)
+                                .put(", serviceVersion=").put(Math.abs(result))
+                                .put(']');
+                    }
+                    registeredWithSequencer = true;
+                }
+
+                // Physical creation: create table files on disk
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 boolean locked = true;
                 if (lockedReason == null) {
                     try {
-                        if (inVolume) {
-                            createTableOrMatViewInVolumeUnsafe(mem, blockFileWriter, path, struct, tableToken);
-                        } else {
-                            createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
-                        }
-
-                        if (struct.isWalEnabled()) {
-                            tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
-                        }
+                        createTableFilesOnDisk(mem, blockFileWriter, path, struct, tableToken, inVolume);
 
                         if (!keepLock) {
                             // Unlock pools before registering the name
@@ -2097,9 +2099,13 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
             } catch (Throwable th) {
-                if (struct.isWalEnabled()) {
-                    // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
-                    tableSequencerAPI.dropTable(tableToken, true);
+                if (registeredWithSequencer) {
+                    // Roll back sequencer registration on failure
+                    try {
+                        getSequencerService().dropTable(tableToken);
+                    } catch (CairoException e) {
+                        LOG.info().$("failed to drop wal table during cleanup [table=").$(tableToken).I$();
+                    }
                 }
                 throw th;
             } finally {
@@ -2109,6 +2115,31 @@ public class CairoEngine implements Closeable, WriterSource {
 
             enqueueCompileView(tableToken);
             return tableToken;
+        }
+    }
+
+    /**
+     * Create table files on disk. This method is called both from the local creation
+     * path (after sequencer ACK) and can be called from the onTableRegistered callback
+     * when a table is created on a remote node.
+     * <p>
+     * For WAL tables, also initializes the sequencer files (transaction log, metadata).
+     */
+    private void createTableFilesOnDisk(
+            MemoryMARW mem,
+            @Nullable BlockFileWriter blockFileWriter,
+            Path path,
+            TableStructure struct,
+            TableToken tableToken,
+            boolean inVolume
+    ) {
+        if (inVolume) {
+            createTableOrMatViewInVolumeUnsafe(mem, blockFileWriter, path, struct, tableToken);
+        } else {
+            createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
+        }
+        if (struct.isWalEnabled()) {
+            getSequencerService().initSequencerFiles(tableToken.getTableId(), struct, tableToken);
         }
     }
 

@@ -32,6 +32,7 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cairo.wal.seq.SequencerServiceFactory;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IOURingFacade;
@@ -531,6 +532,15 @@ public interface CairoConfiguration {
     int getSampleByIndexSearchPageSize();
 
     long getSequencerCheckInterval();
+
+    /**
+     * Returns a factory for creating the {@link io.questdb.cairo.wal.seq.SequencerService}.
+     * When {@code null} (default), a local file-based sequencer is used.
+     * Override this to provide a remote sequencer implementation for multi-primary mode.
+     */
+    default SequencerServiceFactory getSequencerServiceFactory() {
+        return null;
+    }
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:

@@ -1466,7 +1466,9 @@ public final class TestUtils {
         TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
         if (structure.isWalEnabled()) {
-            engine.getTableSequencerAPI().registerTable(tableId, structure, token);
+            io.questdb.cairo.wal.seq.SequencerService svc = engine.getSequencerService();
+            svc.registerTable(tableId, structure, token, svc.getDatabaseVersion());
+            svc.initSequencerFiles(tableId, structure, token);
         }
         return token;
     }

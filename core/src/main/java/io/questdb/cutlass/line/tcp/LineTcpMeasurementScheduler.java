@@ -454,7 +454,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                         .put(']');
                             }
                         }
-                        engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+                        engine.createTable(securityContext, ddlMem, path, true, tsa, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
                     }
                     // by the time we get here, the table should exist on disk
                     // check the global idle cache - TUD can be there

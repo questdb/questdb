@@ -253,15 +253,8 @@ public class CairoTextWriter implements Closeable, Mutable {
             SecurityContext securityContext,
             Path path
     ) throws TextException {
-        TableToken tableToken = engine.createTable(
-                securityContext,
-                ddlMem,
-                path,
-                false,
-                tableStructureAdapter.of(names, detectedTypes),
-                false,
-                TableUtils.TABLE_KIND_REGULAR_TABLE
-        );
+        TableStructure struct = tableStructureAdapter.of(names, detectedTypes);
+        TableToken tableToken = engine.createTable(securityContext, ddlMem, path, false, struct, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         this.types = detectedTypes;
         return tableToken;
     }

@@ -28,6 +28,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.SequencerService;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -118,7 +119,9 @@ public class TableConverter {
                                 if (walEnabled) {
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token)) {
                                         metadata.reload(metaPath, metaMem);
-                                        tableSequencerAPI.registerTable(tableId, metadata, token);
+                                        SequencerService svc = engine.getSequencerService();
+                                        svc.registerTable(tableId, metadata, token, svc.getDatabaseVersion());
+                                        svc.initSequencerFiles(tableId, metadata, token);
                                     }
 
                                     // Reset structure version in _meta and _txn files

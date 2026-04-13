@@ -59,7 +59,7 @@ public class TableSequencerImpl implements TableSequencer {
     private final SequencerMetadataService metadataSvc;
     private final MicrosecondClock microClock;
     private final Path path;
-    private final TableSequencerAPI pool;
+    private final LocalSequencerService owner;
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final SeqTxnTracker seqTxnTracker;
@@ -72,14 +72,14 @@ public class TableSequencerImpl implements TableSequencer {
     private TableToken tableToken;
 
     TableSequencerImpl(
-            TableSequencerAPI pool,
+            LocalSequencerService owner,
             CairoEngine engine,
             TableToken tableToken,
             SeqTxnTracker txnTracker,
             int tableId,
             @Nullable TableStructure tableStruct
     ) {
-        this.pool = pool;
+        this.owner = owner;
         this.engine = engine;
         this.tableToken = tableToken;
         this.seqTxnTracker = txnTracker;
@@ -166,10 +166,10 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public void close() {
-        if (pool.closed) {
+        if (owner.isClosed()) {
             checkClose();
         } else if (!isDistressed() && !isDropped()) {
-            releaseTime = pool.configuration.getMicrosecondClock().getTicks();
+            releaseTime = owner.getConfiguration().getMicrosecondClock().getTicks();
         } else if (checkClose()) {
             LOG.info()
                     .$("closed table sequencer [table=").$(getTableToken())
@@ -177,7 +177,7 @@ public class TableSequencerImpl implements TableSequencer {
                     .$(", dropped=").$(isDropped())
                     .I$();
             // Remove from registry only if this thread closed the instance.
-            pool.seqRegistry.remove(getTableToken().getDirName(), this);
+            owner.getSeqRegistry().remove(getTableToken().getDirName(), this);
         }
     }
 
@@ -208,7 +208,6 @@ public class TableSequencerImpl implements TableSequencer {
         return tableTransactionLog.getTableMetadataChangeLog(structureVersionLo, alterCommandWalFormatter);
     }
 
-    @Override
     public TableMetadataChangeLog getMetadataChangeLogSlow(long structureVersionLo) {
         checkDropped();
         // Do not check cached metadata version.
@@ -428,12 +427,6 @@ public class TableSequencerImpl implements TableSequencer {
                 .I$();
         seqTxnTracker.notifyOnCommit(lastTxn);
         return tableToken = metadata.getTableToken();
-    }
-
-    @Override
-    public void resumeTable() {
-        notifyTxnCommitted(Long.MAX_VALUE);
-        seqTxnTracker.setUnsuspended();
     }
 
     @TestOnly

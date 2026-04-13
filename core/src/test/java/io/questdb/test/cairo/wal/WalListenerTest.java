@@ -116,7 +116,7 @@ public class WalListenerTest extends AbstractCairoTest {
 
                 final String newTableName = tableToken1.get().getTableName() + "_new";
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
-                    tableToken2.set(engine.rename(
+                    tableToken2.set(engine.renameTable(
                             securityContext,
                             Path.getThreadLocal(""),
                             mem,

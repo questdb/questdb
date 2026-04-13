@@ -2186,7 +2186,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private void renameTable(CharSequence from, CharSequence to) {
         try (MemoryMARW mem = Vm.getCMARWInstance(); Path otherPath = new Path()) {
-            engine.rename(securityContext, path, mem, from, otherPath, to);
+            engine.renameTable(securityContext, path, mem, from, otherPath, to);
         }
     }
 

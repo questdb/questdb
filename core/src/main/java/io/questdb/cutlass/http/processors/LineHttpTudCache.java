@@ -237,7 +237,7 @@ public class LineHttpTudCache implements QuietCloseable {
                     throw parseException.of("decimal columns must be created manually", columnName);
                 }
             }
-            tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+            tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         }
         if (tableToken != null && tableToken.isView()) {
             throw parseException.of("cannot modify view", tableToken.getTableName());

@@ -36,9 +36,6 @@ public interface TableSequencer extends QuietCloseable {
     // equals to the sequencer metadata structure version.
     TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo);
 
-    // This method will always read files to get the metadata change cursor.
-    TableMetadataChangeLog getMetadataChangeLogSlow(long structureVersionLo);
-
     int getNextWalId();
 
     long getStructureVersion();
@@ -64,6 +61,4 @@ public interface TableSequencer extends QuietCloseable {
     long nextTxn(long expectedStructureVersion, int walId, int segmentId, int segmentTxn, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount);
 
     TableToken reload();
-
-    void resumeTable();
 }
