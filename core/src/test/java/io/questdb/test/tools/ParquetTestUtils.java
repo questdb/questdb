@@ -74,7 +74,7 @@ public final class ParquetTestUtils {
             if (addr != 0) {
                 ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
-            if (fd > 0) {
+            if (fd != -1) {
                 ff.close(fd);
             }
         }
@@ -114,7 +114,7 @@ public final class ParquetTestUtils {
             if (addr != 0) {
                 ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
-            if (fd > 0) {
+            if (fd != -1) {
                 ff.close(fd);
             }
         }

@@ -444,7 +444,7 @@ impl TestAllocatorState {
 mod tests {
     use crate::allocator::{take_last_alloc_error, AllocFailure, TestAllocatorState};
     use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use std::alloc::Allocator;
     use std::ptr::NonNull;
     use std::sync::{Arc, Barrier};

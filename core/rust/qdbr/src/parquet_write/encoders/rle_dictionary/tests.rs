@@ -876,3 +876,72 @@ fn encode_primitive_required_with_column_top_no_default_errors() {
         "got: {err}"
     );
 }
+
+#[test]
+fn dict_global_uniqueness_string() {
+    // Two partitions with overlapping UTF-16 string values.
+    // Partition 0: ["aa", "bb", "cc"]
+    // Partition 1: ["bb", "cc", "dd"]
+    // Global dictionary should contain 4 unique entries: aa, bb, cc, dd.
+    fn build_string_data(values: &[&str]) -> (Vec<u8>, Vec<i64>) {
+        let mut data = Vec::new();
+        let mut offsets = Vec::new();
+        for s in values {
+            offsets.push(data.len() as i64);
+            let utf16: Vec<u16> = s.encode_utf16().collect();
+            data.extend_from_slice(&(utf16.len() as i32).to_le_bytes());
+            let bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    utf16.as_ptr() as *const u8,
+                    utf16.len() * std::mem::size_of::<u16>(),
+                )
+            };
+            data.extend_from_slice(bytes);
+        }
+        (data, offsets)
+    }
+
+    let (data0, offsets0) = build_string_data(&["aa", "bb", "cc"]);
+    let (data1, offsets1) = build_string_data(&["bb", "cc", "dd"]);
+
+    let col0 = build_string_column_raw(&data0, &offsets0);
+    let col1 = build_string_column_raw(&data1, &offsets1);
+
+    let pt = primitive_type_for(ColumnTypeTag::String);
+    let pages = encode_string(&[col0, col1], 0, 3, &pt, write_options(), None).expect("encode");
+
+    let dicts = dict_pages(&pages);
+    assert_eq!(dicts.len(), 1);
+    assert_eq!(dicts[0].num_values, 4);
+}
+
+#[test]
+fn dict_global_uniqueness_binary() {
+    // Two partitions with overlapping binary values.
+    // Partition 0: [b"abc", b"def"]
+    // Partition 1: [b"def", b"ghi"]
+    // Global dictionary should contain 3 unique entries.
+    fn build_binary_data(values: &[&[u8]]) -> (Vec<u8>, Vec<i64>) {
+        let mut data = Vec::new();
+        let mut offsets = Vec::new();
+        for s in values {
+            offsets.push(data.len() as i64);
+            data.extend_from_slice(&(s.len() as i64).to_le_bytes());
+            data.extend_from_slice(s);
+        }
+        (data, offsets)
+    }
+
+    let (data0, offsets0) = build_binary_data(&[b"abc", b"def"]);
+    let (data1, offsets1) = build_binary_data(&[b"def", b"ghi"]);
+
+    let col0 = build_binary_column_raw(&data0, &offsets0);
+    let col1 = build_binary_column_raw(&data1, &offsets1);
+
+    let pt = primitive_type_for(ColumnTypeTag::Binary);
+    let pages = encode_binary(&[col0, col1], 0, 2, &pt, write_options(), None).expect("encode");
+
+    let dicts = dict_pages(&pages);
+    assert_eq!(dicts.len(), 1);
+    assert_eq!(dicts[0].num_values, 3);
+}

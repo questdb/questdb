@@ -2436,7 +2436,7 @@ mod tests {
     use parquet2::schema::Repetition;
     use parquet2::write::Version;
     use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
-    use rand::Rng;
+    use rand::RngExt;
     use std::io::Cursor;
     use std::mem::size_of;
     use std::ptr::null;
@@ -3898,6 +3898,93 @@ mod tests {
                 )
             })
             .collect();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_decode_row_group_filtered_symbol_column_top_with_row_range() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let column_top = 8usize;
+        let symbol_count = 4usize;
+        let data_row_count = 20usize;
+        let total_row_count = column_top + data_row_count;
+        let row_group_size = total_row_count;
+        let data_page_size = 10;
+        let version = Version::V2;
+
+        let data_values: Vec<i32> = (0..data_row_count)
+            .map(|i| (i % symbol_count) as i32)
+            .collect();
+        let symbol_values: Vec<String> = (0..symbol_count).map(|i| format!("s{i}")).collect();
+        let (symbol_chars, symbol_offsets) = serialize_as_symbols(&symbol_values);
+
+        let column = Column::from_raw_data(
+            0,
+            "symbol_col",
+            ColumnTypeTag::Symbol.into_type().code(),
+            column_top as i64,
+            total_row_count,
+            data_values.as_ptr() as *const u8,
+            std::mem::size_of_val(data_values.as_slice()),
+            symbol_chars.as_ptr(),
+            symbol_chars.len(),
+            symbol_offsets.as_ptr(),
+            symbol_offsets.len(),
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+
+        let file =
+            write_cols_to_parquet_file(row_group_size, data_page_size, version, vec![column]);
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        let columns = vec![(0i32, ColumnTypeTag::Symbol.into_type())];
+
+        let row_group_lo = 5u32;
+        let row_group_hi = 23u32;
+        let rows_filter: Vec<i64> = vec![0, 1, 2, 3, 5, 8, 10, 14, 17];
+
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                row_group_lo,
+                row_group_hi,
+                &rows_filter,
+            )
+            .unwrap();
+
+        assert_eq!(count, rows_filter.len());
+        let result: Vec<i32> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(std::mem::size_of::<i32>())
+            .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let expected: Vec<i32> = rows_filter
+            .iter()
+            .map(|&row| {
+                let abs_row = row_group_lo as usize + row as usize;
+                if abs_row < column_top {
+                    i32::MIN
+                } else {
+                    data_values[abs_row - column_top]
+                }
+            })
+            .collect();
+        assert_eq!(
+            rgb.column_bufs[0].data_vec.len(),
+            rows_filter.len() * std::mem::size_of::<i32>(),
+            "result={result:?}, expected={expected:?}"
+        );
         assert_eq!(result, expected);
     }
 
