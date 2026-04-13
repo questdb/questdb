@@ -412,5 +412,20 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
         });
     }
 
+    @Test
+    public void testSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE AS val, timestamp_sequence('2024-01-01T00:00:00', 3600000000L) ts FROM long_sequence(5)) TIMESTAMP(ts)");
+            assertSql(
+                    "ts\tpercentile_cont\n" +
+                            "2024-01-01T00:00:00.000000Z\t1.0\n" +
+                            "2024-01-01T01:00:00.000000Z\t2.0\n" +
+                            "2024-01-01T02:00:00.000000Z\t3.0\n" +
+                            "2024-01-01T03:00:00.000000Z\t4.0\n" +
+                            "2024-01-01T04:00:00.000000Z\t5.0\n",
+                    "SELECT ts, percentile_cont(val, 0.5) FROM test SAMPLE BY 1h"
+            );
+        });
+    }
 
 }
