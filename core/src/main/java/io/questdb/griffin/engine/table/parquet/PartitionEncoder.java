@@ -162,9 +162,10 @@ public class PartitionEncoder {
     public static native long finishStreamingParquetWrite(long writerPtr) throws CairoException;
 
     public static void populateEmptyPartition(TableReader tableReader, PartitionDescriptor descriptor) throws CairoException {
-        final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
-        descriptor.of(tableReader.getTableToken().getTableName(), 0, timestampIndex);
         final TableReaderMetadata metadata = tableReader.getMetadata();
+        final int readerTimestampIndex = metadata.getTimestampIndex();
+        final int timestampIndex = readerTimestampIndex >= 0 ? metadata.getWriterIndex(readerTimestampIndex) : -1;
+        descriptor.of(tableReader.getTableToken().getTableName(), 0, timestampIndex);
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final int columnType = metadata.getColumnType(i);
             if (columnType > 0) {
@@ -189,10 +190,10 @@ public class PartitionEncoder {
     public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) throws CairoException {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
-        final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
-        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex);
-
         final TableReaderMetadata metadata = tableReader.getMetadata();
+        final int readerTimestampIndex = metadata.getTimestampIndex();
+        final int timestampIndex = readerTimestampIndex >= 0 ? metadata.getWriterIndex(readerTimestampIndex) : -1;
+        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex);
         final int columnCount = metadata.getColumnCount();
         final int columnBase = tableReader.getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
