@@ -479,13 +479,14 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             let total_rg = self.entries.len();
             let mut section = vec![0u8; total_rg * bloom_col_count * entry_size];
 
-            let mut existing_idx = 0usize;
             for (rg_idx, entry) in self.entries.iter().enumerate() {
                 match entry {
                     RowGroupEntry::Existing(_) => {
                         // Copy through existing bloom filter entries.
+                        // Index by rg_idx (original position), not a running counter,
+                        // because existing_bloom_* is indexed by original row group position.
                         if self.is_bloom_external {
-                            if let Some(ext) = self.existing_bloom_external.get(existing_idx) {
+                            if let Some(ext) = self.existing_bloom_external.get(rg_idx) {
                                 for (pos, &(off, len)) in ext.iter().enumerate() {
                                     let idx = rg_idx * bloom_col_count + pos;
                                     let o = idx * 16;
@@ -493,14 +494,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
                                     section[o + 8..o + 16].copy_from_slice(&len.to_le_bytes());
                                 }
                             }
-                        } else if let Some(inl) = self.existing_bloom_inlined.get(existing_idx) {
+                        } else if let Some(inl) = self.existing_bloom_inlined.get(rg_idx) {
                             for (pos, &shifted) in inl.iter().enumerate() {
                                 let idx = rg_idx * bloom_col_count + pos;
                                 let o = idx * 4;
                                 section[o..o + 4].copy_from_slice(&shifted.to_le_bytes());
                             }
                         }
-                        existing_idx += 1;
                     }
                     RowGroupEntry::New(builder) => {
                         let block_offset = final_offsets[rg_idx] as usize;
@@ -725,6 +725,72 @@ mod tests {
         let rg = RowGroupBlockBuilder::new(2);
         // Only 1 row group exists (index 0), so index 5 is out of range.
         assert!(updater.replace_row_group(5, rg).is_err());
+    }
+
+    #[test]
+    fn update_replace_row_group_with_bloom_filters() {
+        // Build a file with 3 row groups, each with a distinct bloom filter on column 0.
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("a", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+
+        let bf0 = vec![0xAA_u8; 64];
+        let bf1 = vec![0xBB_u8; 64];
+        let bf2 = vec![0xCC_u8; 64];
+
+        let mut rg0 = RowGroupBlockBuilder::new(1);
+        rg0.set_num_rows(100);
+        rg0.add_bloom_filter(0, &bf0).unwrap();
+        w.add_row_group(rg0);
+
+        let mut rg1 = RowGroupBlockBuilder::new(1);
+        rg1.set_num_rows(200);
+        rg1.add_bloom_filter(0, &bf1).unwrap();
+        w.add_row_group(rg1);
+
+        let mut rg2 = RowGroupBlockBuilder::new(1);
+        rg2.set_num_rows(300);
+        rg2.add_bloom_filter(0, &bf2).unwrap();
+        w.add_row_group(rg2);
+
+        let (original, footer_offset) = w.finish().unwrap();
+
+        // Replace row group 1 with a new bloom filter.
+        let bf_new = vec![0xDD_u8; 64];
+        let mut updater = ParquetMetaUpdateWriter::new(&original, footer_offset).unwrap();
+        let mut new_rg1 = RowGroupBlockBuilder::new(1);
+        new_rg1.set_num_rows(999);
+        new_rg1.add_bloom_filter(0, &bf_new).unwrap();
+        updater.replace_row_group(1, new_rg1).unwrap();
+
+        let (append_bytes, new_footer_offset) = updater.finish().unwrap();
+
+        let mut full = original.to_vec();
+        full.extend_from_slice(&append_bytes);
+
+        let reader = ParquetMetaReader::new(&full, new_footer_offset).unwrap();
+        reader.verify_checksum().unwrap();
+        assert_eq!(reader.row_group_count(), 3);
+
+        // Verify bloom filter data for each row group.
+        for rg_idx in 0..3 {
+            let off = reader.bloom_filter_offset_in_pm(rg_idx, 0).unwrap();
+            assert_ne!(off, 0, "RG{rg_idx} bloom offset should not be absent");
+            let bf_data = &full[off as usize..];
+            let bf_len = i32::from_le_bytes(bf_data[..4].try_into().unwrap()) as usize;
+            assert_eq!(bf_len, 64);
+
+            let expected = match rg_idx {
+                0 => &bf0,
+                1 => &bf_new,
+                2 => &bf2,
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                &bf_data[4..4 + bf_len],
+                expected.as_slice(),
+                "RG{rg_idx} bloom filter data mismatch"
+            );
+        }
     }
 
     #[test]
