@@ -359,7 +359,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 if (isParquet && parquetMetaReader != null && parquetMetaReader.isOpen()) {
                     int tsIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();
                     int rowGroupCount = parquetMetaReader.getRowGroupCount();
-                    if (rowGroupCount > 0) {
+                    if (tsIndex >= 0 && rowGroupCount > 0) {
                         minTimestamp = parquetMetaReader.getRowGroupMinTimestamp(0, tsIndex);
                         maxTimestamp = parquetMetaReader.getRowGroupMaxTimestamp(rowGroupCount - 1, tsIndex);
                     }

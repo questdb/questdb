@@ -9512,22 +9512,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (parquetMetaFileSize == -1) {
                     parquetMetaFileSize = ff.length(filePath);
                 }
-
                 readParquetMetaMinMaxTimestamps(path, parquetMetaFileSize);
-                return;
+            } else {
+                // Parquet partition without _pm file
+                path.trimTo(partitionLen);
+                filePath = path.trimTo(partitionLen).concat(PARQUET_PARTITION_NAME).$();
+                if (ff.exists(filePath)) {
+                    readParquetMinMaxTimestamps(path, ff.length(filePath));
+                } else {
+                    // Native partition
+                    path.trimTo(partitionLen);
+                    readNativeMinMaxTimestamps(path, columnName, partitionSize);
+                }
             }
-
-            // Parquet partition without _pm file
-            path.trimTo(partitionLen);
-            filePath = path.trimTo(partitionLen).concat(PARQUET_PARTITION_NAME).$();
-            if (ff.exists(filePath)) {
-                readParquetMinMaxTimestamps(path, ff.length(filePath));
-                return;
-            }
-
-            // Native partition
-            path.trimTo(partitionLen);
-            readNativeMinMaxTimestamps(path, columnName, partitionSize);
         } finally {
             path.trimTo(partitionLen);
         }

@@ -198,8 +198,8 @@ public class Mig940Test extends AbstractCairoTest {
             try {
                 runMig940(token);
                 Assert.fail("Expected exception from corrupt parquet file");
-            } catch (Exception e) {
-                // ParquetMetadataWriter.generate() throws on corrupt input.
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "parquet");
             }
         });
     }

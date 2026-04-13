@@ -432,6 +432,41 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowPartitionsWithParquetPartition() throws Exception {
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE " + tableName + " AS (" +
+                            "    SELECT x::INT id," +
+                            "        timestamp_sequence('2023-01-01', 24 * 3600 * 1_000_000L) ts" +
+                            "    FROM long_sequence(3)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : "")
+            );
+            if (isWal) {
+                drainWalQueue();
+            }
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2023-01-01'");
+            if (isWal) {
+                drainWalQueue();
+            }
+            // Verify parquet partition has correct timestamps and isParquet flag.
+            // This exercises the ShowPartitionsRecordCursorFactory code path that
+            // reads min/max timestamps from the _pm sidecar file.
+            assertQueryNoLeakCheck(
+                    "name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet\n" +
+                            "2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T00:00:00.000000Z\t1\ttrue\n" +
+                            "2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse\n" +
+                            "2023-01-03\t2023-01-03T00:00:00.000000Z\t2023-01-03T00:00:00.000000Z\t1\tfalse\n",
+                    "SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
+                            " FROM table_partitions('" + tableName + "')" +
+                            " WHERE attached" +
+                            " ORDER BY name",
+                    null, true, true, true
+            );
+        });
+    }
+
+    @Test
     public void testShowPartitionsWhenThereAreNoDetachedNorAttachableMissingTimestampColumn() throws Exception {
         String tableName = testTableName(testName.getMethodName());
         createTable(tableName);
