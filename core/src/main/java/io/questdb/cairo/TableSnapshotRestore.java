@@ -34,6 +34,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -293,6 +294,11 @@ public class TableSnapshotRestore implements QuietCloseable {
             tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
             columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
             columnVersionReader.readUnsafe();
+
+            // Generate _pm sidecar files for parquet partitions restored from
+            // old backups that predate the _pm format. This must run before
+            // rebuildBitmapIndexes, which mmaps _pm to rebuild bitmap indexes.
+            generateMissingParquetMetaFiles(tablePath.trimTo(pathTableLen));
 
             // Symbols are not append-only data structures, they can be corrupt
             // when symbol files are copied while written to. We need to rebuild them.
@@ -672,6 +678,65 @@ public class TableSnapshotRestore implements QuietCloseable {
                 ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
+    }
+
+    private void generateMissingParquetMetaFiles(Path tablePath) {
+        int partitionBy = tableMetadata.getPartitionBy();
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return;
+        }
+        int timestampType = tableMetadata.getTimestampType();
+        int plen = tablePath.size();
+        int partitionCount = txWriter.getPartitionCount();
+
+        for (int i = 0; i < partitionCount; i++) {
+            if (!txWriter.isPartitionParquet(i)) {
+                continue;
+            }
+            long partitionTs = txWriter.getPartitionTimestampByIndex(i);
+            long nameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTs);
+
+            TableUtils.setPathForNativePartition(
+                    tablePath.trimTo(plen), timestampType, partitionBy, partitionTs, nameTxn
+            );
+            int partitionDirLen = tablePath.size();
+
+            tablePath.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            if (ff.exists(tablePath.$())) {
+                tablePath.trimTo(plen);
+                continue;
+            }
+
+            // Open data.parquet to generate _pm from it.
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            long parquetFileSize = ff.length(tablePath.$());
+            long parquetFd = ff.openRO(tablePath.$());
+            if (parquetFd < 0) {
+                int errno = ff.errno();
+                tablePath.trimTo(plen);
+                throw CairoException.critical(errno).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
+            }
+
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            long pmFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
+            if (pmFd < 0) {
+                int errno = ff.errno();
+                ff.close(parquetFd);
+                tablePath.trimTo(plen);
+                throw CairoException.critical(errno).put("cannot create _pm file [path=").put(tablePath).put(']');
+            }
+
+            try {
+                long pmFileSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
+                txWriter.setPartitionParquetFormat(partitionTs, pmFileSize);
+                LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", pmSize=").$(pmFileSize).I$();
+            } finally {
+                ff.close(parquetFd);
+                ff.close(pmFd);
+            }
+            tablePath.trimTo(plen);
+        }
+        tablePath.trimTo(plen);
     }
 
     private void rebuildBitmapIndexes(Path tablePath, int pathTableLen) {
