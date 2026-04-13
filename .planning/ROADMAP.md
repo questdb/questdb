@@ -41,7 +41,9 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Running a Multi* window percentile query twice within assertMemoryLeak (triggering reopen/toTop cycles) reports zero leaked bytes
   2. Multi* window preparePass2 executes without allocating on the Java heap (pre-allocated double[] reused across calls)
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 02-01-PLAN.md — Fix DirectArray lifecycle leak and double[] zero-GC compliance in Multi* window functions
 
 ### Phase 3: Performance
 **Goal**: Window percentile accumulation is O(N) memory and single-percentile group-by selection is O(n) average time
@@ -73,6 +75,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Correctness | 0/2 | Planning complete | - |
-| 2. Resource Safety | 0/0 | Not started | - |
+| 2. Resource Safety | 0/1 | Planning complete | - |
 | 3. Performance | 0/0 | Not started | - |
 | 4. Code Quality and Completeness | 0/0 | Not started | - |
