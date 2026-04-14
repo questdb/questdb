@@ -39,18 +39,14 @@ features:
 
 ### Magic Bytes
 
-Some magic values retain the `ILP` prefix for historical reasons: QuestDB's
-ingestion protocol versions 1 through 3 were extensions of InfluxDB's Line
-Protocol (ILP). Version 4 is a clean-sheet binary protocol renamed to QWP,
-but the capability-negotiation magics kept the old prefix for backward
-compatibility with older clients.
+Every QWP message begins with a 4-byte magic value identifying the protocol.
 
-| Magic  | Hex Value      | Description                          |
-|--------|----------------|--------------------------------------|
-| `QWP1` | `0x31505751`   | Standard data message                |
-| `ILP?` | `0x3F504C49`   | Capability request (8 bytes total)   |
-| `ILP!` | `0x21504C49`   | Capability response (8 bytes total)  |
-| `ILP0` | `0x30504C49`   | Fallback (server doesn't support QWP)|
+| Magic  | Hex Value      | Description           |
+|--------|----------------|-----------------------|
+| `QWP1` | `0x31505751`   | Standard data message |
+
+Version negotiation is handled entirely via HTTP upgrade headers (see §3),
+not via binary magics.
 
 ---
 
@@ -461,7 +457,7 @@ Byte layout for values [true, false, true, true, false, false, false, true]:
 
 Dictionary-encoded strings for low-cardinality columns.
 
-#### Per-Table Dictionary Mode (default)
+#### Per-Table Dictionary Mode (UDP)
 
 ```
 ┌─────────────────────────────────────────┐
@@ -483,12 +479,18 @@ Dictionary-encoded strings for low-cardinality columns.
 - Dictionary indices are 0-based
 - When a null bitmap is present, only non-null rows have indices written
 
-#### Global Delta Dictionary Mode (`FLAG_DELTA_SYMBOL_DICT`)
+Per-Table Dictionary Mode is used by UDP because datagrams cannot rely on a
+connection-scoped dictionary persisting across messages.
+
+#### Global Delta Dictionary Mode (WebSocket, `FLAG_DELTA_SYMBOL_DICT`)
 
 When the delta symbol dictionary flag is set, symbol columns use global integer
 IDs instead of per-table dictionaries. The dictionary entries are sent in the
 message-level delta dictionary section (see [§7](#7-message-structure)). Column
 data consists of varint-encoded global IDs only.
+
+WebSocket clients set `FLAG_DELTA_SYMBOL_DICT` on every message and use this
+mode exclusively.
 
 ```
 ┌───────────────────────────────────────────┐
@@ -676,21 +678,25 @@ that correlates the response with the original request.
 
 ## 14. Protocol Limits
 
-| Limit                     | Default Value |
-|---------------------------|---------------|
-| Max batch size            | 16 MB         |
-| Max tables per connection | 10,000        |
-| Max rows per table        | 1,000,000     |
-| Max columns per table     | 2,048         |
-| Max table name length     | 127 bytes     |
-| Max column name length    | 127 bytes     |
-| Max in-flight batches     | 128           |
-| Initial receive buffer    | 64 KB         |
+| Limit                         | Default Value |
+|-------------------------------|---------------|
+| Max batch size                | 16 MB         |
+| Max tables per connection     | 10,000        |
+| Max rows per table            | 1,000,000     |
+| Max columns per table         | 2,048         |
+| Max table name length         | 127 bytes     |
+| Max column name length        | 127 bytes     |
+| Max in-flight batches         | 128           |
+| Max symbol dictionary entries | 1,000,000     |
 
 The header's `table_count` field is a uint16, so the protocol ceiling for
 tables per message is 65,535 regardless of the configured limit. Individual
 string values have no dedicated length limit; they are bounded only by the
 max batch size.
+
+The symbol dictionary limit applies per column in Per-Table Dictionary Mode
+and per connection in Global Delta Dictionary Mode (see §12). Exceeding it
+causes the server to reject the message with `PARSE_ERROR`.
 
 ---
 
