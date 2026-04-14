@@ -661,36 +661,16 @@ that correlates the response with the original request.
 └──────────────────────────────────────────────────────┘
 ```
 
-### Partial Failure Response (status `0x01`)
-
-At the WAL appender layer, partial failures use a different encoding with
-varints for per-table error details:
-
-```
-┌───────────────────────────────────────────────────────┐
-│ status:        uint8   (0x01)                         │
-│ failed_count:  varint  Number of failed tables         │
-│ For each failed table:                                │
-│   table_index: varint  0-based index in batch          │
-│   error_code:  uint8   Per-table error code            │
-│   msg_len:     varint  Error message length             │
-│   msg_bytes:   bytes   UTF-8 error message             │
-└───────────────────────────────────────────────────────┘
-```
-
 ### Status Codes
 
-| Code | Hex    | Name            | Retriable | Description                                          |
-|------|--------|-----------------|-----------|------------------------------------------------------|
-| 0    | `0x00` | OK              | -         | Batch accepted                                       |
-| 1    | `0x01` | PARTIAL         | No        | Some rows failed; error payload has per-table details |
-| 3    | `0x03` | SCHEMA_MISMATCH | No        | Column type incompatible with existing table          |
-| 4    | `0x04` | TABLE_NOT_FOUND | No        | Table does not exist (auto-create disabled)           |
-| 5    | `0x05` | PARSE_ERROR     | No        | Malformed message                                    |
-| 6    | `0x06` | INTERNAL_ERROR  | No        | Server-side error                                    |
-| 7    | `0x07` | OVERLOADED      | Yes       | Back-pressure; client should retry with backoff       |
-| 8    | `0x08` | SECURITY_ERROR  | No        | Authorization failure                                |
-| 9    | `0x09` | WRITE_ERROR     | No        | Write failure (e.g., table not accepting writes)     |
+| Code | Hex    | Name            | Description                                          |
+|------|--------|-----------------|------------------------------------------------------|
+| 0    | `0x00` | OK              | Batch accepted                                       |
+| 3    | `0x03` | SCHEMA_MISMATCH | Column type incompatible with existing table         |
+| 5    | `0x05` | PARSE_ERROR     | Malformed message                                    |
+| 6    | `0x06` | INTERNAL_ERROR  | Server-side error                                    |
+| 8    | `0x08` | SECURITY_ERROR  | Authorization failure                                |
+| 9    | `0x09` | WRITE_ERROR     | Write failure (e.g., table not accepting writes)     |
 
 ---
 
