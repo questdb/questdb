@@ -1354,6 +1354,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         try {
+            path.trimTo(rootLen);
             final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
 
             if (txFile.isPartitionParquet(partitionIndex)) {
@@ -1573,7 +1574,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             } else {
                                 // reload Parquet file
                                 final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
-                                if (reloadParquetFile(partitionIndex, parquetFileSize)) {
+                                if (reloadParquetFile(partitionIndex, txPartitionNameTxn, parquetFileSize)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated parquet partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
@@ -1652,7 +1653,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             } else {
                                 // reload Parquet file
                                 final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
-                                if (reloadParquetFile(partitionIndex, parquetFileSize)) {
+                                if (reloadParquetFile(partitionIndex, txPartitionNameTxn, parquetFileSize)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated parquet partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
@@ -1946,14 +1947,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         return parquetMetaReader.getParquetFileSize();
     }
 
-    private boolean reloadParquetFile(int partitionIndex, long parquetFileSize) {
+    private boolean reloadParquetFile(int partitionIndex, long partitionNameTxn, long parquetFileSize) {
         MemoryCMR parquetMetaMem = parquetMetadataPartitions.getQuick(partitionIndex);
         if (parquetMetaMem == null || parquetMetaMem == NullMemoryCMR.INSTANCE) {
             return false;
         }
-        // stat() the _pm file to get its actual size (field 3 is now parquet file size).
+        // stat() the _pm file by path to get its actual size.
+        path.trimTo(rootLen);
+        pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
+        long parquetMetaFileSize = ff.length(path.$());
         MemoryCMRDetachedImpl pmMem = (MemoryCMRDetachedImpl) parquetMetaMem;
-        long parquetMetaFileSize = ff.length(pmMem.getFd());
         if (parquetMetaFileSize <= 0) {
             return false;
         }

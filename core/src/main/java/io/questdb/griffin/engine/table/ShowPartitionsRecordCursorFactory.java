@@ -391,6 +391,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
          * Call {@link #closeParquetMeta()} to release the mmap.
          */
         private void openParquetMeta(Path partitionDirPath, long parquetFileSize) {
+            this.parquetFileSize = parquetFileSize;
             if (parquetFileSize <= 0) {
                 return;
             }

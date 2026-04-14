@@ -553,7 +553,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
         // Generate _pm from the in-memory thrift row groups.
         if parquet_meta_fd < 0 {
-            return Ok(-1);
+            return Ok(parquet_file_size as i64);
         }
 
         let footer_offset = chunked.parquet_footer_offset();
@@ -601,8 +601,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             )
             .context("generate_parquet_metadata failed")?;
 
-        let parquet_meta_size = parquet_meta_bytes.len() as i64;
-
         // Write to the parquet metadata fd. ManuallyDrop ensures Rust never
         // closes the fd — Java owns it.
         let mut parquet_meta_file: std::mem::ManuallyDrop<File> =
@@ -614,7 +612,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .map_err(crate::parquet::error::ParquetError::from)
             .context("could not write _pm file")?;
 
-        Ok(parquet_meta_size)
+        Ok(parquet_file_size as i64)
     };
 
     match encode() {

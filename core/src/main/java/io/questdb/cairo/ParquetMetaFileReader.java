@@ -110,6 +110,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int HEADER_COLUMN_COUNT_OFF = 24;
     private static final int HEADER_FIXED_SIZE = 32;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
+    private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
     private long addr;
     private final DirectUtf8String flyweightColName = new DirectUtf8String();
@@ -361,22 +362,41 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         }
 
         // Walk the prev_footer_offset chain to find the footer matching parquetFileSize.
+        // Long.MAX_VALUE is a sentinel: use the latest footer (at footerOffset) without MVCC matching.
         long currentOffset = footerOffset;
-        while (true) {
-            long currentAddr = addr + currentOffset;
-            long pqFooterOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
-            int pqFooterLength = Unsafe.getUnsafe().getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
-            long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + 8;
-            if (derivedPqSize == parquetFileSize) {
-                break;
+        if (parquetFileSize != Long.MAX_VALUE) {
+            while (true) {
+                long currentAddr = addr + currentOffset;
+                long pqFooterOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
+                int pqFooterLength = Unsafe.getUnsafe().getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
+                long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + 8;
+                if (derivedPqSize == parquetFileSize) {
+                    break;
+                }
+                long prevOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PREV_FOOTER_OFFSET_OFF);
+                if (prevOffset == 0 || prevOffset < 0 || prevOffset >= fileSize) {
+                    throw CairoException.critical(0)
+                            .put("no _pm footer found for parquet size [parquetFileSize=").put(parquetFileSize)
+                            .put(']');
+                }
+                currentOffset = prevOffset;
             }
-            long prevOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PREV_FOOTER_OFFSET_OFF);
-            if (prevOffset == 0) {
+        }
+
+        // Cross-validate the trailer for the latest footer only. The trailer
+        // (last 4 bytes) stores the footer length through CRC. Reject clearly
+        // invalid values (derived offset outside the file) early; subtle
+        // mismatches (extra bytes) are caught after reading rowGroupCount.
+        if (currentOffset == footerOffset) {
+            int trailerFooterLength = Unsafe.getUnsafe().getInt(addr + fileSize - FOOTER_TRAILER_SIZE);
+            long trailerDerivedOffset = fileSize - FOOTER_TRAILER_SIZE - Integer.toUnsignedLong(trailerFooterLength);
+            if (trailerDerivedOffset < HEADER_FIXED_SIZE || trailerDerivedOffset >= fileSize) {
                 throw CairoException.critical(0)
-                        .put("no _pm footer found for parquet size [parquetFileSize=").put(parquetFileSize)
+                        .put("invalid _pm footer offset [trailerFooterLength=").put(Integer.toUnsignedLong(trailerFooterLength))
+                        .put(", footerOffset=").put(footerOffset)
+                        .put(", fileSize=").put(fileSize)
                         .put(']');
             }
-            currentOffset = prevOffset;
         }
 
         // Use local variables for all validation. Fields are only assigned
@@ -392,22 +412,14 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(']');
         }
         int rowGroupCount = Unsafe.getUnsafe().getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
-
-        // Read footer_length from the trailer following this footer.
-        // The trailer is at: footerAddr + footer_length_through_crc.
-        // We find footer_length by reading it from the end of the footer region.
-        // For a footer at currentOffset, its trailer is right after CRC.
-        // We need to compute the end of this footer. Read the trailer: at
-        // the end of this footer's data region.
-        // Since the footer might not be at the end of the file (chain-walk),
-        // we validate using the base footer size.
         final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
-        // Read the actual footer_length_through_crc from the trailer.
-        long trailerAddr = footerAddr + baseFooterLength;
-        // For footers with feature sections, the trailer is after the feature sections + CRC.
-        // We use the approach of reading footer_length from the 4 bytes after the CRC.
-        // But we don't know the CRC position without footer_length. Instead, for the
-        // chain-walk case we must use the base footer check.
+        if (currentOffset + baseFooterLength > fileSize) {
+            throw CairoException.critical(0)
+                    .put("invalid _pm footer length [rowGroupCount=").put(rowGroupCount)
+                    .put(", footerOffset=").put(currentOffset)
+                    .put(", fileSize=").put(fileSize)
+                    .put(']');
+        }
         long featureFlags = Unsafe.getUnsafe().getLong(addr + HEADER_FEATURE_FLAGS_OFF);
         long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK;
         if (unknownRequired != 0) {
@@ -415,6 +427,23 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put("unsupported required _pm feature flags [flags=0x")
                     .put(Long.toHexString(unknownRequired))
                     .put(']');
+        }
+
+        // For the latest footer, cross-validate actual footer size from the
+        // trailer against the expected base size. Extra bytes without feature
+        // flags to justify them indicate corruption.
+        if (currentOffset == footerOffset) {
+            int trailerFooterLength = Unsafe.getUnsafe().getInt(addr + fileSize - FOOTER_TRAILER_SIZE);
+            long actualFooterLength = Integer.toUnsignedLong(trailerFooterLength);
+            // baseFooterLength already includes CRC (Integer.BYTES at the end).
+            // The trailer's footer_length covers from footer start through CRC.
+            long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
+            if (knownOptionalFeatureFlags == 0 && actualFooterLength != baseFooterLength) {
+                throw CairoException.critical(0)
+                        .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength)
+                        .put(", actual=").put(actualFooterLength)
+                        .put(']');
+            }
         }
 
         long rowCount = 0;

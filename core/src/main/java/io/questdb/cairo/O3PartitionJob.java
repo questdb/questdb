@@ -263,7 +263,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetMetaFd = TableUtils.openRW(ff, path.$(), LOG, opts);
                         parquetMetaFdOs = Files.detach(parquetMetaFd);
                         parquetMetaFd = -1;
-                        updaterParquetMetaFileSize = parquetFileSize;
+                        updaterParquetMetaFileSize = parquetMetaFileSize;
                         // Restore path to parquet file.
                         path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
                     }
