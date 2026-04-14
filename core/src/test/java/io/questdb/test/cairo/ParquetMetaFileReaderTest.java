@@ -239,7 +239,7 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             try (PmTestFile file = buildFile(1, 100)) {
                 // Corrupt columnCount to a huge value. Without the bounds check,
                 // accessing column descriptors would read past the mmap (SIGSEGV).
-                Unsafe.getUnsafe().putInt(file.dataPtr + 20, 1_000_000_000);
+                Unsafe.getUnsafe().putInt(file.dataPtr + 24, 1_000_000_000);
 
                 ParquetMetaFileReader reader = new ParquetMetaFileReader();
                 try {
