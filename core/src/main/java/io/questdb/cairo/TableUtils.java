@@ -1773,8 +1773,8 @@ public final class TableUtils {
 
                             final long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
                             final long columnAddr = mapRONoCache(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
-                            ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setColumnAddr(columnAddr, columnSize);
+                            ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
 
                             // root symbol files use separate txn
                             final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnId);
@@ -1794,14 +1794,14 @@ public final class TableUtils {
                             final int symbolCount = symbolTableProvider.getSymbolCount(columnIndex);
                             final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
                             final long symbolOffsetsAddr = mapRONoCache(ff, path.$(), LOG, offsetsMemSize, memoryTag);
-                            ff.madvise(symbolOffsetsAddr, offsetsMemSize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + SymbolMapWriter.HEADER_SIZE, symbolCount);
+                            ff.madvise(symbolOffsetsAddr, offsetsMemSize, Files.POSIX_MADV_SEQUENTIAL);
 
                             final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
                             final long columnSecondarySize = ff.length(charFileName);
                             final long columnSecondaryAddr = mapRONoCache(ff, charFileName, LOG, columnSecondarySize, memoryTag);
-                            ff.madvise(columnSecondaryAddr, columnSecondarySize, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.setSecondaryColumnAddr(columnSecondaryAddr, columnSecondarySize);
+                            ff.madvise(columnSecondaryAddr, columnSecondarySize, Files.POSIX_MADV_SEQUENTIAL);
 
                             // recover the partition path
                             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);

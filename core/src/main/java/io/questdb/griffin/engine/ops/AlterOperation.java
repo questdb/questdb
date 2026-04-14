@@ -305,6 +305,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         };
     }
 
+    public AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
+        return new AlterOperation(extraInfo, extraStrInfo);
+    }
+
     public AlterOperation of(
             int cmdType,
             short command,
@@ -389,10 +393,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     @Override
     public void startAsync() {
-    }
-
-    protected AlterOperation newInstance(LongList extraInfo, ObjList<CharSequence> extraStrInfo) {
-        return new AlterOperation(extraInfo, extraStrInfo);
     }
 
     private void applyAddColumn(MetadataService svc) {
