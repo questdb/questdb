@@ -152,13 +152,17 @@ public final class Micros {
         }
 
         int y = getYear(micros);
-        int m;
         boolean leap1 = CommonUtils.isLeapYear(y);
         boolean leap2 = CommonUtils.isLeapYear(y + years);
-
+        int m = getMonthOfYear(micros, y, leap1);
+        int d = getDayOfMonth(micros, y, m, leap1);
+        int maxDay = CommonUtils.getDaysPerMonth(m, leap2);
+        if (d > maxDay) {
+            d = maxDay;
+        }
         return yearMicros(y + years, leap2)
-                + monthOfYearMicros(m = getMonthOfYear(micros, y, leap1), leap2)
-                + (getDayOfMonth(micros, y, m, leap1) - 1) * DAY_MICROS
+                + monthOfYearMicros(m, leap2)
+                + (d - 1) * DAY_MICROS
                 + getTimeMicros(micros);
     }
 
