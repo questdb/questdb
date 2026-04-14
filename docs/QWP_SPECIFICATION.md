@@ -684,7 +684,7 @@ that correlates the response with the original request.
 | Max columns per table     | 2,048         |
 | Max table name length     | 127 bytes     |
 | Max column name length    | 127 bytes     |
-| Max in-flight batches     | 4             |
+| Max in-flight batches     | 128           |
 | Initial receive buffer    | 64 KB         |
 
 The header's `table_count` field is a uint16, so the protocol ceiling for
@@ -710,8 +710,8 @@ The client uses double-buffered microbatches:
 
 | Trigger              | Default    |
 |----------------------|------------|
-| Row count            | 500 rows   |
-| Byte size            | 1 MB       |
+| Row count            | 1,000 rows |
+| Byte size            | disabled   |
 | Time since first row | 100 ms     |
 
 ### Schema Registry
