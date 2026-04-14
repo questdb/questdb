@@ -41,6 +41,7 @@ The file has a header with column descriptors, row group blocks in the middle, a
                  |  designated_timestamp  |         +------->|  dict page  | data pages |
                  |  sorting_column_count  |         |        |                          |
                  |  column_count          |         |        +==========================+
+                 |  footer_offset --------+--> FOOTER
                  |                        |         |
                  | COLUMN DESCRIPTORS     |         |
                  |  col 0: name, type, .. |         |
@@ -79,6 +80,7 @@ The file has a header with column descriptors, row group blocks in the middle, a
                  |  parquet_footer_length |
                  |  row_group_count       |
                  |  unused_bytes          |
+                 |  prev_footer_offset    |  (0 if first version)
                  |  entry 0: offset ------+--> ROW GROUP BLOCK 0
                  |  entry 1: offset ------+--> ROW GROUP BLOCK 1
                  |  ...                   |
@@ -86,9 +88,9 @@ The file has a header with column descriptors, row group blocks in the middle, a
                  |  bloom filter offsets  |
                  |  (if BLOOM_FILTERS set)|
                  |  CRC32                 |
-                 |  FOOTER_LENGTH (4B)  --+--> footer start = file_size - 4 - FOOTER_LENGTH
+                 |  FOOTER_LENGTH (4B)    |
   _txn field 3:  +========================+
-  pm file size = total file size
+  parquet file size
 
 ```
 
@@ -97,25 +99,27 @@ The file has a header with column descriptors, row group blocks in the middle, a
 ```
                  +========================+
                  | HEADER                 |
+                 |  footer_offset --------+--> FOOTER (new)
                  +------------------------+
                  | ROW GROUP BLOCK 0      |  <-- unchanged, kept in place
                  +------------------------+
                  | ROW GROUP BLOCK 1      |  <-- was merged, old data now dead
                  +------------------------+
-                 | (old footer)           |  <-- dead, superseded
+                 | (old footer)           |  <-- prev version, still readable via chain
                  +------------------------+
                  | ROW GROUP BLOCK 1'     |  <-- new version of block 1
                  +------------------------+
                  | ROW GROUP BLOCK 2      |  <-- newly appended
                  +------------------------+
                  | FOOTER (new)           |
+                 |  prev_footer_offset ---+--> (old footer)
                  |  entry 0: offset ------+--> BLOCK 0  (old, reused)
                  |  entry 1: offset ------+--> BLOCK 1' (new)
                  |  entry 2: offset ------+--> BLOCK 2  (new)
                  |  CRC32                 |
                  |  FOOTER_LENGTH (4B)    |
   _txn field 3:  +========================+
-  pm file size = total file size (new)
+  parquet file size (new)
 
 ```
 
@@ -144,12 +148,13 @@ QuestDB-managed parquet snapshots represented by `_pm` always normalize `column_
 
 | offset | size | field                   | type | description                                                             |
 | ------ | ---- | ----------------------- | ---- | ----------------------------------------------------------------------- |
-| 0      | 4    | FILE_FORMAT_VERSION     | u32  |                                                                         |
-| 4      | 8    | FEATURE_FLAGS           | u64  | reserved for future format extensions; currently always 0               |
-| 12     | 4    | DESIGNATED_TIMESTAMP    | i32  | index of the designated timestamp in descriptors (or -1)                |
-| 16     | 4    | SORTING_COLUMN_COUNT    | u32  |                                                                         |
-| 20     | 4    | COLUMN_COUNT            | u32  |                                                                         |
-| 24     | ..   | COLUMN_DESCRIPTORS      |      | COLUMN_COUNT * Column descriptor (32B each)                             |
+| 0      | 8    | FOOTER_OFFSET           | u64  | byte offset of the latest footer within this file (not covered by CRC)  |
+| 8      | 8    | FEATURE_FLAGS           | u64  | reserved for future format extensions; currently always 0               |
+| 16     | 4    | DESIGNATED_TIMESTAMP    | i32  | index of the designated timestamp in descriptors (or -1)                |
+| 20     | 4    | SORTING_COLUMN_COUNT    | u32  |                                                                         |
+| 24     | 4    | COLUMN_COUNT            | u32  |                                                                         |
+| 28     | 4    | RESERVED                | u32  | must be 0 (alignment padding)                                           |
+| 32     | ..   | COLUMN_DESCRIPTORS      |      | COLUMN_COUNT * Column descriptor (32B each)                             |
 | ..     | ..   | SORTING_COLUMNS         |      | SORTING_COLUMN_COUNT * Sorting column (4B each)                         |
 | ..     | ..   | NAME_STRINGS            |      | Column names, each `[utf8 bytes]`; length from descriptor's NAME_LENGTH |
 | ..     | ..   | HEADER FEATURE SECTIONS |      | Feature-flag-gated sections, in bit order. See "Bloom filters" below.   |
@@ -282,9 +287,9 @@ All indices must satisfy `index < COLUMN_COUNT`. The reader rejects the file oth
 
 ### Footer
 
-The `_pm` file size is stored in `_txn` field 3. The reader locates the footer by reading the 4-byte FOOTER_LENGTH trailer at the end of the file: `footer_offset = file_size - 4 - FOOTER_LENGTH`. This mirrors how parquet files store `footer_length + PAR1` at the end.
+The parquet file size is stored in `_txn` field 3. The reader locates the latest footer via `FOOTER_OFFSET` in the file header. For MVCC, the reader walks the `PREV_FOOTER_OFFSET` chain to find the footer matching the parquet file size from its `_txn` snapshot.
 
-The CRC is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENGTH - 4`.
+The CRC covers all bytes after `FOOTER_OFFSET`: `[8, CRC_field)`. This protects feature flags, column descriptors, row group blocks, and footer content, while excluding the mutable `FOOTER_OFFSET` field at offset 0. It is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENGTH - 4`.
 
 | offset | size | field                 | type | description                                                                         |
 | ------ | ---- | --------------------- | ---- | ----------------------------------------------------------------------------------- |
@@ -292,8 +297,9 @@ The CRC is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENG
 | 8      | 4    | PARQUET_FOOTER_LENGTH | u32  | length of the parquet footer in bytes                                               |
 | 12     | 4    | ROW_GROUP_COUNT       | u32  |                                                                                     |
 | 16     | 8    | UNUSED_BYTES          | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)  |
-| 24     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
-| ..     | 4    | CHECKSUM              | u32  | CRC32 from the start of the file to this field (exclusive)                          |
+| 24     | 8    | PREV_FOOTER_OFFSET    | u64  | byte offset of the previous footer in the chain (0 if first version)                |
+| 32     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
+| ..     | 4    | CHECKSUM              | u32  | CRC32 over bytes `[8, this field)` — all content after `FOOTER_OFFSET`                  |
 | ..     | 4    | FOOTER_LENGTH         | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM |
 
 The parquet file size is derived from the footer metadata: `parquet_file_size = PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8` (4B parquet footer length field + 4B PAR1 magic). This eliminates the need to store the parquet file size separately.
@@ -306,24 +312,25 @@ The parquet file size is derived from the footer metadata: `parquet_file_size = 
 
 ## Concurrent Writing/Reading
 
-Atomicity is provided by the `_txn` file. The `_pm` file size is stored in `_txn` field 3 for each partition, enabling readers to memory-map the correct range and locate the footer via the trailer.
+Atomicity is provided by the `_txn` file. The parquet file size is stored in `_txn` field 3 for each partition, serving as the MVCC version token.
 
 **Writer flow:**
 1. Write/update `data.parquet`.
-2. Write the `_pm` metadata file. On update, append new/changed row group blocks after the old footer, then write a new footer (with CRC + trailer) at the end.
-3. Commit `_txn` (A/B buffered), updating the partition name txn and `_pm` file size.
+2. Write the `_pm` metadata file. On update, append new/changed row group blocks after the old footer, then write a new footer (with CRC + trailer) at the end. Patch `FOOTER_OFFSET` in the header as the last write.
+3. Commit `_txn` (A/B buffered), updating the partition name txn and parquet file size.
 
 **Reader flow:**
-1. Read `_txn` via `safeReadTxn()` (spin-lock with version check).
-2. Memory-map the `_pm` file using the file size from `_txn` field 3.
-3. Read the 4-byte FOOTER_LENGTH trailer at the end of the file to locate the footer.
-4. Read the footer: PARQUET_FOOTER_OFFSET, PARQUET_FOOTER_LENGTH, ROW_GROUP_COUNT, UNUSED_BYTES, and row group entries.
-5. For metadata-only operations (timestamp stats), read directly from the `_pm` file.
-6. For data operations, derive the parquet file size from the footer (`PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8`) and memory-map `data.parquet`.
+1. Read `_txn` via `safeReadTxn()` (spin-lock with version check). Obtain parquet file size from field 3.
+2. stat() the `_pm` file to get its actual size; memory-map the `_pm` file.
+3. Read `FOOTER_OFFSET` from the header to locate the latest footer.
+4. Walk the `PREV_FOOTER_OFFSET` chain: for each footer, derive the parquet file size (`PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8`). Use the first footer whose derived parquet size is <= the parquet file size from `_txn`.
+5. Read the footer: PARQUET_FOOTER_OFFSET, PARQUET_FOOTER_LENGTH, ROW_GROUP_COUNT, UNUSED_BYTES, and row group entries.
+6. For metadata-only operations (timestamp stats), read directly from the `_pm` file.
+7. For data operations, memory-map `data.parquet` using the parquet file size from `_txn`.
 
 **Rewrite mode** (new partition directory with new name txn): new metadata file created. No concurrent access until `_txn` flips.
 
-**Update mode** (same partition directory): new row group blocks appended after old footer, new footer written at the end. Unchanged row groups keep their old offsets. Readers use the file size from the previous `_txn` commit to see only committed data.
+**Update mode** (same partition directory): new row group blocks appended after old footer, new footer written at the end. Unchanged row groups keep their old offsets. The header's `FOOTER_OFFSET` is patched last for atomicity. Readers pinned to an older `_txn` snapshot walk the `PREV_FOOTER_OFFSET` chain to find their matching footer.
 
 ## Access patterns
 
@@ -362,11 +369,9 @@ We rely on QuestDB's existing migration system to run the migration passes.
 We pass over every partitions for each table and rely on the existing parquet files to generate the new metadata files at their last version.
 As cold-storage depends on this feature, no object-storage access is required for this migration.
 
-### Version change
+### Evolution
 
-The `FILE_FORMAT_VERSION` field in the header allows for future evolution. Incompatible changes (e.g. changing the header structure) would increment the version number.
-
-Feature flags are reserved for future additive extensions. Required features (bits 32-63) allow the reader to reject files that it cannot correctly interpret.
+Feature flags are reserved for future extensions. Required features (bits 32-63) allow the reader to reject files that it cannot correctly interpret.
 
 Migration from an older to a newer version mustn't require having access to the parquet file (in order to avoid cold-storage access). This is easily feasible as we control the partitions files, thus we can safely fill in the new metadata fields with default values that indicate the absence of the new feature (e.g. no encryption, already used bitmap filter algorithm).
 
@@ -376,11 +381,11 @@ External parquet files needs to see their metadata file invalidated.
 
 In QuestDB, the `_txn` file is responsible to tell the reader which partitions exists and where they are stored. Concurrent access between the TxWriter and TxReader relies on A/B double-buffering to remove needs for locks.
 
-When adding a new row-group to a parquet partition, instead of rewriting the whole file, the row-group is appended to the file (after the existing footer) and a new footer is written afterwards.
-Once the new footer is written, the new `_pm` file size is written to the partition in `_txn` field 3 so that new readers will memory-map the correct range and see the new footer/row-groups.
-This lets existing readers continue to process the file without disruption from the writer, since they use the file size from their own `_txn` snapshot.
+When adding a new row-group to a parquet partition, instead of rewriting the whole file, the row-group is appended to the file (after the existing footer) and a new footer is written afterwards. The header's `FOOTER_OFFSET` is patched last to point to the new footer. The new parquet file size is written to `_txn` field 3 so that readers can identify which footer matches their snapshot.
 
-As this file's purpose is to reflect the underlying parquet file, the same behavior is used to update the file. Whenever a new row-group is added to the original parquet file, it's also added to this file. A new footer (with CRC + trailer) is appended, and the `_pm` file size is updated in `_txn`.
+Existing readers continue to see their committed data by walking the `PREV_FOOTER_OFFSET` chain: each footer links to the previous one, and the reader selects the footer whose derived parquet file size matches the parquet file size from its `_txn` snapshot.
+
+As this file's purpose is to reflect the underlying parquet file, the same behavior is used to update the file. Whenever a new row-group is added to the original parquet file, it's also added to this file. A new footer (with CRC + trailer) is appended, the header's `FOOTER_OFFSET` is patched, and the parquet file size is updated in `_txn`.
 
 ## Compaction
 
