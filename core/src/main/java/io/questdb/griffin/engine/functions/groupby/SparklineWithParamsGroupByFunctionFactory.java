@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -51,19 +50,14 @@ public class SparklineWithParamsGroupByFunctionFactory implements FunctionFactor
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        final Function widthFunc = args.getQuick(3);
-        final int width = widthFunc.getInt(null);
-        if (width < 1) {
-            throw SqlException.$(argPositions.getQuick(3), "width must be a positive integer");
-        }
+    ) {
         return new TextChartGroupByFunction(
                 "sparkline",
                 TextChartGroupByFunction.SPARK_CHARS,
                 args.getQuick(0),
                 args.getQuick(1),
                 args.getQuick(2),
-                widthFunc,
+                args.getQuick(3),
                 argPositions.getQuick(0),
                 configuration.getStrFunctionMaxBufferLength()
         );

@@ -406,9 +406,10 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testWidthInvalidZero() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
             assertException(
                     "SELECT sparkline(val, 0.0, 100.0, 0) FROM t",
-                    34,
+                    17,
                     "width must be a positive integer"
             );
         });

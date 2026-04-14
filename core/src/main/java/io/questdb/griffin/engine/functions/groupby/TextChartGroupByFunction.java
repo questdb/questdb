@@ -294,7 +294,11 @@ class TextChartGroupByFunction extends VarcharFunction implements UnaryFunction,
     private int effectiveWidth(int valueCount) {
         if (widthFunc != null) {
             int w = widthFunc.getInt(null);
-            return Math.max(1, w);
+            if (w < 1) {
+                throw CairoException.nonCritical().position(functionPosition)
+                        .put("width must be a positive integer");
+            }
+            return w;
         }
         return valueCount;
     }
