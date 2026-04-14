@@ -351,6 +351,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             final long batchEnd = Math.min(batchStart + subBatchSize, frameRowCount);
             final long batchRows = batchEnd - batchStart;
 
+            // Must reserve capacity before probeBatch: probeBatch packs entry offsets relative to the
+            // current memStart, so a mid-batch rehash would break the offsets for unordered maps.
             map.reserveCapacity(batchRows);
 
             // Ensure the batch buffer has enough capacity for raw writes.
