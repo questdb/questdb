@@ -5,10 +5,7 @@ use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
-use parquet2::write::DynIter;
-use rapidhash::RapidHashMap;
-
-use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet::error::ParquetResult;
 use crate::parquet_write::encoders::helpers::{
     collect_partition_chunk_views, rows_per_primitive_page, slice_partition_chunk_views,
     FlatValidity, PartitionChunkView,
@@ -16,7 +13,7 @@ use crate::parquet_write::encoders::helpers::{
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
-    build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, transmute_slice,
+    build_plain_page, encode_primitive_def_levels, transmute_slice,
     BinaryMaxMinStats,
 };
 
@@ -231,88 +228,3 @@ pub fn bytes_to_page<const N: usize>(
     .map(Page::Data)
 }
 
-/// Single-partition fixed-length-bytes dict encoder. Production code goes
-/// through `encoders::rle_dictionary::encode_fixed_len_bytes`; this function
-/// remains for the bench module's micro-benchmarks.
-pub fn bytes_to_dict_pages<const N: usize>(
-    data: &[[u8; N]],
-    reverse: bool,
-    column_top: usize,
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    let num_rows = column_top + data.len();
-    let null_value = fixed_null_value::<N>();
-    let mut null_count = 0;
-
-    let mut dict_map: RapidHashMap<[u8; N], u32> = RapidHashMap::default();
-    let mut dict_entries: Vec<[u8; N]> = Vec::new();
-    let mut keys: Vec<u32> = Vec::with_capacity(data.len());
-    let mut stats = BinaryMaxMinStats::new(&primitive_type);
-
-    for &value in data {
-        if value == null_value {
-            null_count += 1;
-        } else {
-            let stored = if reverse {
-                let mut r = value;
-                r.reverse();
-                r
-            } else {
-                value
-            };
-            let next_id = u32::try_from(dict_entries.len())
-                .map_err(|_| fmt_err!(Layout, "dictionary exceeds u32::MAX entries"))?;
-            let key = *dict_map.entry(stored).or_insert_with(|| {
-                dict_entries.push(stored);
-                next_id
-            });
-            keys.push(key);
-            stats.update(&stored);
-        }
-    }
-
-    let mut dict_buffer = Vec::with_capacity(dict_entries.len() * N);
-    for entry in &dict_entries {
-        dict_buffer.extend_from_slice(entry);
-        if let Some(ref mut h) = bloom_hashes {
-            h.insert(hash_byte(entry));
-        }
-    }
-
-    let total_null_count = column_top + null_count;
-    let mut data_buffer = Vec::new();
-
-    let def_levels = (0..num_rows).map(|i| {
-        if i < column_top {
-            false
-        } else {
-            data[i - column_top] != null_value
-        }
-    });
-    encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-    let definition_levels_byte_length = data_buffer.len();
-
-    let non_null_len = data.len() - null_count;
-    let statistics = if options.write_statistics {
-        Some(stats.into_parquet_stats(total_null_count))
-    } else {
-        None
-    };
-
-    encode_dict_rle_pages(
-        dict_buffer,
-        dict_entries.len(),
-        keys,
-        non_null_len,
-        data_buffer,
-        definition_levels_byte_length,
-        num_rows,
-        total_null_count,
-        statistics,
-        primitive_type,
-        options,
-        false,
-    )
-}

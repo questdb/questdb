@@ -9,11 +9,11 @@ use parquet2::schema::Repetition;
 use parquet2::write::Version;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::bench::{
-    array_to_raw_page, binary_to_dict_pages, binary_to_page, boolean_to_page, bytes_to_dict_pages,
-    bytes_to_page, decimal_slice_to_dict_pages, encode_column_chunk,
-    int_slice_to_dict_pages_notnull, int_slice_to_dict_pages_nullable, int_slice_to_page_notnull,
-    int_slice_to_page_nullable, slice_to_dict_pages_simd, slice_to_page_simd, string_to_dict_pages,
-    string_to_page, symbol_to_pages, varchar_to_dict_pages, varchar_to_page, Column, WriteOptions,
+    array_to_raw_page, binary_to_page, boolean_to_page, bytes_to_page,
+    decimal_slice_to_dict_pages, encode_column_chunk, int_slice_to_dict_pages_notnull,
+    int_slice_to_dict_pages_nullable, int_slice_to_page_notnull, int_slice_to_page_nullable,
+    slice_to_dict_pages_simd, slice_to_page_simd, string_to_page, symbol_to_pages,
+    varchar_to_page, Column, WriteOptions,
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
@@ -794,65 +794,6 @@ fn make_dict_char_data(row_count: usize, cardinality: usize) -> Vec<u16> {
     data
 }
 
-fn make_dict_string_data(row_count: usize, null_pct: u8, cardinality: usize) -> StringData {
-    let values: Vec<String> = (0..cardinality).map(|i| format!("str{i}")).collect();
-    let mut data = Vec::new();
-    let mut offsets = Vec::with_capacity(row_count);
-    for i in 0..row_count {
-        offsets.push(data.len() as i64);
-        if is_null_at(i, null_pct) {
-            data.extend_from_slice(&(-1i32).to_le_bytes());
-        } else {
-            let value = &values[i % values.len()];
-            let utf16: Vec<u16> = value.encode_utf16().collect();
-            data.extend_from_slice(&(utf16.len() as i32).to_le_bytes());
-            for u in utf16 {
-                data.extend_from_slice(&u.to_le_bytes());
-            }
-        }
-    }
-    StringData { data, offsets }
-}
-
-fn make_dict_binary_data(row_count: usize, null_pct: u8, cardinality: usize) -> BinaryData {
-    let values: Vec<Vec<u8>> = (0..cardinality)
-        .map(|i| vec![i as u8; 8 + (i % 5)])
-        .collect();
-    let mut data = Vec::new();
-    let mut offsets = Vec::with_capacity(row_count);
-    for i in 0..row_count {
-        offsets.push(data.len() as i64);
-        if is_null_at(i, null_pct) {
-            data.extend_from_slice(&(-1i64).to_le_bytes());
-        } else {
-            let value = &values[i % values.len()];
-            data.extend_from_slice(&(value.len() as i64).to_le_bytes());
-            data.extend_from_slice(value);
-        }
-    }
-    BinaryData { data, offsets }
-}
-
-fn make_dict_long128_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<[u8; 16]> {
-    let mut null_value = [0u8; 16];
-    let null_bytes = i64::MIN.to_le_bytes();
-    for i in 0..16 {
-        null_value[i] = null_bytes[i % null_bytes.len()];
-    }
-    let unique_values: Vec<[u8; 16]> = (0..cardinality)
-        .map(|i| (i as u128).to_le_bytes())
-        .collect();
-    let mut data = Vec::with_capacity(row_count);
-    for i in 0..row_count {
-        if is_null_at(i, null_pct) {
-            data.push(null_value);
-        } else {
-            data.push(unique_values[i % cardinality]);
-        }
-    }
-    data
-}
-
 fn make_partitioned_dict_long128_data(
     row_count: usize,
     null_pct: u8,
@@ -868,31 +809,6 @@ fn make_partitioned_dict_long128_data(
     let offset = partition_idx * shift;
     let unique_values: Vec<[u8; 16]> = (0..cardinality)
         .map(|i| ((i + offset) as u128).to_le_bytes())
-        .collect();
-    let mut data = Vec::with_capacity(row_count);
-    for i in 0..row_count {
-        if is_null_at(i, null_pct) {
-            data.push(null_value);
-        } else {
-            data.push(unique_values[i % cardinality]);
-        }
-    }
-    data
-}
-
-fn make_dict_long256_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<[u8; 32]> {
-    let mut null_value = [0u8; 32];
-    let null_bytes = i64::MIN.to_le_bytes();
-    for i in 0..32 {
-        null_value[i] = null_bytes[i % null_bytes.len()];
-    }
-    let unique_values: Vec<[u8; 32]> = (0..cardinality)
-        .map(|i| {
-            let mut value = [0u8; 32];
-            let bytes = (i as u128).to_le_bytes();
-            value[..16].copy_from_slice(&bytes);
-            value
-        })
         .collect();
     let mut data = Vec::with_capacity(row_count);
     for i in 0..row_count {
@@ -954,33 +870,6 @@ fn make_dict_decimal_i64_data(row_count: usize, null_pct: u8, cardinality: usize
             ((i % cardinality) as i64).wrapping_mul(1_003)
         };
         data.push(v);
-    }
-    data
-}
-
-fn make_dict_decimal_flba_data<const N: usize>(
-    row_count: usize,
-    null_pct: u8,
-    cardinality: usize,
-) -> Vec<[u8; N]> {
-    let null_value = decimal_flba_null_value::<N>();
-    let unique_values: Vec<[u8; N]> = (0..cardinality)
-        .map(|i| {
-            let value = (i as i64).wrapping_mul(7);
-            let mut be: [u8; N] = be_from_i64(value, N).try_into().expect("fixed length");
-            if be == null_value {
-                be[0] ^= 1;
-            }
-            be
-        })
-        .collect();
-    let mut data = Vec::with_capacity(row_count);
-    for i in 0..row_count {
-        if is_null_at(i, null_pct) {
-            data.push(null_value);
-        } else {
-            data.push(unique_values[i % cardinality]);
-        }
     }
     data
 }
@@ -1230,67 +1119,6 @@ macro_rules! encode_int_nullable_dict_cases {
     };
 }
 
-macro_rules! encode_bytes_dict_cases {
-    ($cases:ident, $opts:ident, $name:literal, $tag:ident,
-     $swap:expr, |$np:ident, $card:ident| $data:expr) => {
-        for &$card in &DICT_CARDINALITIES {
-            for &$np in null_pcts(true) {
-                let data = $data;
-                let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
-                let pt = primitive_type_for(ct);
-                let opts = $opts;
-                $cases.push(EncodeBenchCase {
-                    name: format!(
-                        concat!($name, "_dict_c{card}_n{np}"),
-                        card = $card,
-                        np = $np
-                    ),
-                    row_count: ROW_COUNT,
-                    encode_fn: Box::new(move || {
-                        let iter = bytes_to_dict_pages(&data, $swap, 0, opts, pt.clone(), None)
-                            .expect("encode");
-                        for page in iter {
-                            black_box(page.expect("page"));
-                        }
-                    }),
-                });
-            }
-        }
-    };
-}
-
-macro_rules! encode_decimal_flba_dict_cases {
-    ($cases:ident, $opts:ident, $src_len:expr, $precision:expr, $scale:expr, $label:literal) => {{
-        let primitive_type = decimal_primitive_type(
-            PhysicalType::FixedLenByteArray($src_len),
-            $precision,
-            $scale,
-        );
-        for &card in &DICT_CARDINALITIES {
-            for &null_pct in null_pcts(true) {
-                let data = make_dict_decimal_flba_data::<$src_len>(ROW_COUNT, null_pct, card);
-                let pt = primitive_type.clone();
-                let opts = $opts;
-                $cases.push(EncodeBenchCase {
-                    name: format!(
-                        concat!($label, "_dict_c{card}_n{np}"),
-                        card = card,
-                        np = null_pct
-                    ),
-                    row_count: ROW_COUNT,
-                    encode_fn: Box::new(move || {
-                        let iter = bytes_to_dict_pages(&data, false, 0, opts, pt.clone(), None)
-                            .expect("encode");
-                        for page in iter {
-                            black_box(page.expect("page"));
-                        }
-                    }),
-                });
-            }
-        }
-    }};
-}
-
 fn build_cases() -> Vec<EncodeBenchCase> {
     let mut cases = Vec::new();
     let options = write_options();
@@ -1485,35 +1313,6 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                             )
                             .expect("encode"),
                         );
-                    }),
-                });
-            }
-        }
-    }
-
-    // Varchar — RLE dictionary encoded
-    for &str_len in &[2usize, 200] {
-        for &card in &DICT_CARDINALITIES {
-            for &null_pct in null_pcts(true) {
-                let data = make_varchar_data_sized(ROW_COUNT, null_pct, str_len, card);
-                let column_type = ColumnType::new(ColumnTypeTag::Varchar, 0);
-                let primitive_type = primitive_type_for(column_type);
-                cases.push(EncodeBenchCase {
-                    name: format!("varchar_dict_s{str_len}_c{card}_n{null_pct}"),
-                    row_count: ROW_COUNT,
-                    encode_fn: Box::new(move || {
-                        let iter = varchar_to_dict_pages(
-                            &data.aux,
-                            &data.data,
-                            0,
-                            options,
-                            primitive_type.clone(),
-                            None,
-                        )
-                        .expect("encode");
-                        for page in iter {
-                            black_box(page.expect("page"));
-                        }
                     }),
                 });
             }
@@ -1752,71 +1551,6 @@ fn build_cases() -> Vec<EncodeBenchCase> {
         |np, card| { make_dict_geobyte_data(ROW_COUNT, np, card) }
     );
 
-    // Fixed-size byte arrays — dict
-    encode_bytes_dict_cases!(cases, options, "long128", Long128, false, |np, card| {
-        make_dict_long128_data(ROW_COUNT, np, card)
-    });
-    encode_bytes_dict_cases!(cases, options, "uuid", Uuid, true, |np, card| {
-        make_dict_long128_data(ROW_COUNT, np, card)
-    });
-    encode_bytes_dict_cases!(cases, options, "long256", Long256, false, |np, card| {
-        make_dict_long256_data(ROW_COUNT, np, card)
-    });
-
-    // String — dict
-    for &card in &DICT_CARDINALITIES {
-        for &null_pct in null_pcts(true) {
-            let data = make_dict_string_data(ROW_COUNT, null_pct, card);
-            let column_type = ColumnType::new(ColumnTypeTag::String, 0);
-            let primitive_type = primitive_type_for(column_type);
-            cases.push(EncodeBenchCase {
-                name: format!("string_dict_c{card}_n{null_pct}"),
-                row_count: ROW_COUNT,
-                encode_fn: Box::new(move || {
-                    let iter = string_to_dict_pages(
-                        &data.offsets,
-                        &data.data,
-                        0,
-                        options,
-                        primitive_type.clone(),
-                        None,
-                    )
-                    .expect("encode");
-                    for page in iter {
-                        black_box(page.expect("page"));
-                    }
-                }),
-            });
-        }
-    }
-
-    // Binary — dict
-    for &card in &DICT_CARDINALITIES {
-        for &null_pct in null_pcts(true) {
-            let data = make_dict_binary_data(ROW_COUNT, null_pct, card);
-            let column_type = ColumnType::new(ColumnTypeTag::Binary, 0);
-            let primitive_type = primitive_type_for(column_type);
-            cases.push(EncodeBenchCase {
-                name: format!("binary_dict_c{card}_n{null_pct}"),
-                row_count: ROW_COUNT,
-                encode_fn: Box::new(move || {
-                    let iter = binary_to_dict_pages(
-                        &data.offsets,
-                        &data.data,
-                        0,
-                        options,
-                        primitive_type.clone(),
-                        None,
-                    )
-                    .expect("encode");
-                    for page in iter {
-                        black_box(page.expect("page"));
-                    }
-                }),
-            });
-        }
-    }
-
     // Decimal Int32 — dict
     {
         let precision = 9usize;
@@ -1864,10 +1598,6 @@ fn build_cases() -> Vec<EncodeBenchCase> {
             }
         }
     }
-
-    // Decimal FLBA — dict (representative sizes)
-    encode_decimal_flba_dict_cases!(cases, options, 16, 30usize, 4usize, "decimal_flba16_dec128");
-    encode_decimal_flba_dict_cases!(cases, options, 32, 60usize, 6usize, "decimal_flba32_dec256");
 
     // === Multi-partition RLE-dictionary cases ===
     //

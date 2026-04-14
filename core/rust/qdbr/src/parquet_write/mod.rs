@@ -24,10 +24,7 @@ pub mod bench {
         slice_to_dict_pages_simd, slice_to_page_simd,
     };
     pub use super::encoders::plain::boolean_to_page;
-    pub use super::encoders::plain::{binary_to_dict_pages, binary_to_page};
-    pub use super::encoders::plain::{bytes_to_dict_pages, bytes_to_page};
-    pub use super::encoders::plain::{string_to_dict_pages, string_to_page};
-    pub use super::encoders::plain::{varchar_to_dict_pages, varchar_to_page};
+    pub use super::encoders::plain::{binary_to_page, bytes_to_page, string_to_page, varchar_to_page};
     pub use super::encoders::symbol::symbol_to_pages;
     pub use super::file::WriteOptions;
 
