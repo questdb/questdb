@@ -694,12 +694,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     }
 
     /**
-     * Verifies that putServerAssignedTimestampColumnar assigns the same server
-     * timestamp to all rows in a batch, so the caller's pre-captured min/max
-     * (passed to endColumnarWrite) matches the actual data written to the WAL.
-     * <p>
-     * An auto-incrementing clock is used to detect whether getTicks() is called
-     * once (correct) or per-row (would produce a stale min/max mismatch).
+     * Verifies that putServerAssignedTimestampColumnar writes the caller-provided
+     * timestamp to all rows, so the WAL event metadata (min/max) is consistent
+     * with the actual data.
      */
     @Test
     public void testColumnarWrite_ServerAssignedTimestamp_ConsistentMinMax() throws Exception {
@@ -712,25 +709,11 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
 
             int rowCount = 5;
             long valuesAddr = Unsafe.malloc((long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
-            // Auto-incrementing clock: each getTicks() call returns baseTs + (callCount * step).
-            // If putServerAssignedTimestampColumnar calls getTicks() once, all rows get the
-            // same timestamp. If it called per-row, rows would get different timestamps and
-            // the event maxTimestamp (set from the pre-captured now) would be stale.
-            long baseTs = 100_000_000L;
-            long tsStep = 1_000_000L;
-            long[] callCount = {0};
-            io.questdb.cairo.MicrosTimestampDriver driver =
-                    (io.questdb.cairo.MicrosTimestampDriver) io.questdb.cairo.MicrosTimestampDriver.INSTANCE;
-            io.questdb.std.datetime.Clock originalClock = testMicrosClock;
-            driver.setTicker(() -> baseTs + callCount[0]++ * tsStep);
+            long now = 100_000_000L;
             try {
                 for (int i = 0; i < rowCount; i++) {
                     Unsafe.getUnsafe().putInt(valuesAddr + (long) i * Integer.BYTES, i);
                 }
-
-                // Simulate what QwpWalAppender does: capture now before writing columns.
-                // Call 0 => baseTs
-                long now = driver.getTicks();
 
                 String walName;
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -740,11 +723,10 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                     appender.beginColumnarWrite(rowCount);
                     appender.putFixedColumn(0, valuesAddr, rowCount, Integer.BYTES, 0, rowCount);
 
-                    // putServerAssignedTimestampColumnar calls getTicks() once.
-                    // Call 1 => baseTs + tsStep. All 5 rows get this value.
-                    walWriter.putServerAssignedTimestampColumnar(rowCount);
-
-                    // QwpWalAppender passes the pre-captured now as min/max.
+                    // The caller captures the timestamp and passes it to both
+                    // putServerAssignedTimestampColumnar and endColumnarWrite,
+                    // ensuring metadata and data are consistent.
+                    walWriter.putServerAssignedTimestampColumnar(rowCount, now);
                     appender.endColumnarWrite(now, now, false);
                     walWriter.commit();
                 }
@@ -752,24 +734,18 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 try (WalReader reader = engine.getWalReader(
                         sqlExecutionContext.getSecurityContext(), tableToken, walName, 0, rowCount)) {
 
-                    // Verify all rows have the same timestamp
+                    // Verify all rows have the same timestamp matching the caller-provided value
                     RecordCursor cursor = reader.getDataCursor();
                     Record record = cursor.getRecord();
-                    long firstTs = Long.MIN_VALUE;
                     int row = 0;
                     while (cursor.hasNext()) {
                         long ts = record.getTimestamp(1);
-                        if (row == 0) {
-                            firstTs = ts;
-                        } else {
-                            assertEquals("All rows should have the same server-assigned timestamp",
-                                    firstTs, ts);
-                        }
+                        assertEquals("All rows should have the caller-provided timestamp", now, ts);
                         row++;
                     }
                     assertEquals(rowCount, row);
 
-                    // Verify WAL event maxTimestamp matches the pre-captured now
+                    // Verify WAL event maxTimestamp matches the same value
                     io.questdb.cairo.wal.WalEventCursor eventCursor = reader.getWalEventCursor();
                     assertTrue(eventCursor.hasNext());
                     assertEquals(io.questdb.cairo.wal.WalTxnType.DATA, eventCursor.getType());
@@ -777,13 +753,9 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                     io.questdb.cairo.wal.WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                     long eventMaxTimestamp = dataInfo.getMaxTimestamp();
                     assertEquals(now, eventMaxTimestamp);
-
-                    // All data timestamps are the same (single getTicks inside the method)
-                    assertEquals(baseTs + tsStep, firstTs);
                 }
             } finally {
                 Unsafe.free(valuesAddr, (long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
-                driver.setTicker(originalClock);
             }
         });
     }

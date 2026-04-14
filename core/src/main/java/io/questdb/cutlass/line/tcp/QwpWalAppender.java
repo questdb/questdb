@@ -443,10 +443,10 @@ public class QwpWalAppender implements QuietCloseable {
                     }
                 }
             } else {
-                // No designated timestamp in block - use current time for min/max estimation.
-                // Actual timestamps are assigned per-row in putServerAssignedTimestamp().
+                // No designated timestamp in block - all rows get the same server-assigned timestamp.
                 long now = tud.getTimestampDriver().getTicks();
                 minTimestamp = maxTimestamp = now;
+                serverTimestamp = now;
             }
 
             // Write each column
@@ -765,7 +765,7 @@ public class QwpWalAppender implements QuietCloseable {
             if (timestampColumnInBlock < 0) {
                 int timestampIndex = walWriter.getMetadata().getTimestampIndex();
                 if (timestampIndex >= 0) {
-                    walWriter.putServerAssignedTimestampColumnar(rowCount);
+                    walWriter.putServerAssignedTimestampColumnar(rowCount, serverTimestamp);
                 }
             }
 

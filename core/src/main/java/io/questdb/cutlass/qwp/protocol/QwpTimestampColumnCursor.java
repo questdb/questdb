@@ -50,7 +50,8 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
     private int currentValueIndex;
     // Gorilla state
     private long firstTimestamp;
-    private long[] gorillaDecodedValues;  // Cached decoded values (index 2+)
+    private static final int INITIAL_GORILLA_CAPACITY = 1024;
+    private long[] gorillaDecodedValues = new long[INITIAL_GORILLA_CAPACITY];  // Cached decoded values (index 2+)
     private boolean gorillaEnabled;
     // Wire pointers
     private long nullBitmapAddress;
@@ -268,7 +269,7 @@ public final class QwpTimestampColumnCursor implements QwpColumnCursor {
 
                         // Decode all remaining values and cache them to avoid double decoding.
                         // This also computes the byte count of the compressed data.
-                        if (gorillaDecodedValues == null || gorillaDecodedValues.length < remainingValues) {
+                        if (gorillaDecodedValues.length < remainingValues) {
                             gorillaDecodedValues = new long[remainingValues];
                         }
                         for (int i = 0; i < remainingValues; i++) {

@@ -560,7 +560,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * All rows in the batch receive the same server timestamp so that the
      * caller's pre-captured min/max stays consistent with the written data.
      */
-    public void putServerAssignedTimestampColumnar(int rowCount) {
+    public void putServerAssignedTimestampColumnar(int rowCount, long timestamp) {
         checkDistressed();
         assert isInColumnarWrite() : "putServerAssignedTimestampColumnar called outside columnar write";
         if (rowCount <= 0) {
@@ -568,7 +568,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
         MemoryMA dataMem = getDataColumn(timestampIndex);
         long startRowId = getSegmentRowCount();
-        long timestamp = timestampDriver.getTicks();
         for (int row = 0; row < rowCount; row++) {
             dataMem.putLong128(timestamp, startRowId + row);
         }
