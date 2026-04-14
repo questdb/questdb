@@ -181,7 +181,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.8,
                 0.00,
                 0,
-                0.01
+                0.01,
+                0.1
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
         runFuzz(rnd);

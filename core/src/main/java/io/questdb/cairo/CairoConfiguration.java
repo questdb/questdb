@@ -325,6 +325,8 @@ public interface CairoConfiguration {
     @NotNull
     String getInstallRoot();
 
+    int getJsonUnnestMaxValueSize();
+
     int getLatestByQueueCapacity();
 
     @NotNull
@@ -461,6 +463,8 @@ public interface CairoConfiguration {
     int getParquetExportVersion();
 
     double getPartitionEncoderParquetBloomFilterFpp();
+
+    double getPartitionEncoderParquetMinCompressionRatio();
 
     int getPartitionEncoderParquetCompressionCodec();
 
@@ -720,6 +724,8 @@ public interface CairoConfiguration {
     long getSystemWalDataAppendPageSize();
 
     long getSystemWalEventAppendPageSize();
+
+    boolean isCairoMetadataCacheSnapshotOrdered();
 
     long getTableRegistryAutoReloadFrequency();
 

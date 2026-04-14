@@ -113,12 +113,6 @@ impl ColumnChunkStats {
     }
 }
 
-const LONG256_NULL: [u8; 32] = [
-    0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0,
-    0, 128,
-];
-const DOUBLE_NULL: [u8; 8] = [0, 0, 0, 0, 0, 0, 248, 127];
-
 #[derive(Clone, Copy)]
 struct FilterDecodeContext<'a> {
     page_row_start: usize,
@@ -1325,6 +1319,29 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 )?;
                 Ok(true)
             }
+            (Encoding::RleDictionary | Encoding::PlainDictionary, ColumnTypeTag::Uuid) => {
+                let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                    Int128ToUuidConverter::new(),
+                )?;
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        mode.source_row_count(),
+                        nulls::UUID,
+                        bufs,
+                    )?,
+                )?;
+                Ok(true)
+            }
             _ => Ok(false),
         },
         (src_len, Some(PrimitiveLogicalType::Decimal(_, _)), _)
@@ -1372,6 +1389,28 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 )?;
                 Ok(true)
             }
+            (Encoding::RleDictionary | Encoding::PlainDictionary, 16, ColumnTypeTag::Long128) => {
+                let dict_decoder = BasePrimitiveDictDecoder::<Long128, Long128>::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                )?;
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        mode.source_row_count(),
+                        Long128::NULL,
+                        bufs,
+                    )?,
+                )?;
+                Ok(true)
+            }
             (Encoding::Plain, 32, ColumnTypeTag::Long256) => {
                 decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                     page,
@@ -1381,6 +1420,28 @@ fn decode_fixed_len_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                         bufs,
                         Long256::NULL,
                     ),
+                )?;
+                Ok(true)
+            }
+            (Encoding::RleDictionary | Encoding::PlainDictionary, 32, ColumnTypeTag::Long256) => {
+                let dict_decoder = BasePrimitiveDictDecoder::<Long256, Long256>::try_new(
+                    dict.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?,
+                )?;
+                decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                    page,
+                    mode,
+                    &mut RleDictionaryDecoder::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        mode.source_row_count(),
+                        Long256::NULL,
+                        bufs,
+                    )?,
                 )?;
                 Ok(true)
             }
@@ -1483,18 +1544,42 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Varchar,
                 ) => {
-                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, true)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
                         row_hi,
                         row_count,
-                        &LONG256_NULL,
                     )?;
                     decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
                         mode,
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
+                    )?;
+                    Ok(true)
+                }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    dict_page,
+                    ColumnTypeTag::String,
+                ) => {
+                    let dict_page = dict_page.ok_or_else(|| {
+                        fmt_err!(
+                            Unsupported,
+                            "dictionary page required for dictionary encoding"
+                        )
+                    })?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_hi,
+                        row_count,
+                    )?;
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(true)
                 }
@@ -1670,13 +1755,12 @@ fn decode_byte_array_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     Some(dict_page),
                     ColumnTypeTag::Binary,
                 ) => {
-                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page, false)?;
+                    let dict_decoder = BaseVarDictDecoder::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
                         row_hi,
                         row_count,
-                        &[],
                     )?;
                     decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
@@ -1817,13 +1901,8 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             ColumnTypeTag::Array,
         ) => {
             let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
-            let mut slicer = RleDictionarySlicer::try_new(
-                values_buffer,
-                dict_decoder,
-                row_hi,
-                row_count,
-                &DOUBLE_NULL,
-            )?;
+            let mut slicer =
+                RleDictionarySlicer::try_new(values_buffer, dict_decoder, row_hi, row_count)?;
             decode_array_page_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut slicer, bufs)?;
             Ok(true)
         }
@@ -2307,7 +2386,7 @@ pub(super) fn decode_page0<T: Pushable>(
         sink.skip(row_lo)?;
         sink.push_slice(row_hi - row_lo)?;
     }
-    sink.result()
+    Ok(())
 }
 
 /// Process bitmap runs using word-at-a-time approach with trailing_ones/trailing_zeros.
@@ -2484,7 +2563,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
 
         if rows_filter.is_empty() {
             sink.push_nulls(output_count)?;
-            return sink.result();
+            return Ok(());
         }
     } else {
         if rows_filter.is_empty() {
@@ -2519,7 +2598,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                     } else {
                         if filter_idx >= filter_len {
-                            return sink.result();
+                            return Ok(());
                         }
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
@@ -2586,7 +2665,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
 
                         if filter_idx >= filter_len {
-                            return sink.result();
+                            return Ok(());
                         }
                     }
 
@@ -2617,7 +2696,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
                     } else {
                         if filter_idx >= filter_len {
-                            return sink.result();
+                            return Ok(());
                         }
                         let run_end_pos = run_start_pos + length;
                         if (rows_filter[filter_idx] as usize + row_group_lo) >= run_end_pos {
@@ -2685,7 +2764,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
                         }
 
                         if filter_idx >= filter_len {
-                            return sink.result();
+                            return Ok(());
                         }
                     }
 
@@ -2757,8 +2836,7 @@ pub(super) fn decode_page0_filtered<T: Pushable, const FILL_NULLS: bool>(
             }
         }
     }
-
-    sink.result()
+    Ok(())
 }
 
 #[inline]
@@ -4015,6 +4093,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -4041,6 +4120,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -4068,6 +4148,7 @@ mod tests {
             offsets.len(),
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -5292,9 +5373,6 @@ mod tests {
             &mut self,
             _count: usize,
         ) -> super::super::super::parquet::error::ParquetResult<()> {
-            Ok(())
-        }
-        fn result(&self) -> super::super::super::parquet::error::ParquetResult<()> {
             Ok(())
         }
     }

@@ -179,6 +179,7 @@ fn write_options() -> WriteOptions {
         data_page_size: None,
         raw_array_encoding: true,
         bloom_filter_fpp: 0.01,
+        min_compression_ratio: 0.0,
     }
 }
 
@@ -1783,6 +1784,7 @@ fn build_cases() -> Vec<BenchCase> {
 
     // Decimal256 target (precision 60): odd len close to 32 to exercise multi-word sign-extension.
     decimal_flba_cases!(cases, options, 31, 60usize, 6usize, "decimal_flba31_dec256");
+    decimal_flba_cases!(cases, options, 32, 60usize, 6usize, "decimal_flba32_dec256");
 
     // Variable-length types — each uses a different page function with different args
     for &encoding in &LEN_ENCODINGS {
@@ -1807,6 +1809,25 @@ fn build_cases() -> Vec<BenchCase> {
                 format!("string_{enc}_n{null_pct}"),
                 page,
                 None,
+                column_type,
+                None,
+                ROW_COUNT,
+            ));
+        }
+    }
+
+    // String — RLE dictionary
+    for &card in &DICT_CARDINALITIES {
+        for &null_pct in null_pcts(true) {
+            let values: Vec<Vec<u8>> = (0..card).map(|i| format!("str{i}").into_bytes()).collect();
+            let column_type = ColumnType::new(ColumnTypeTag::String, 0);
+            let primitive_type = primitive_type_for(column_type);
+            let (page, dict) =
+                build_var_rle_dict_pages(&values, null_pct, ROW_COUNT, primitive_type);
+            cases.push(build_case(
+                format!("string_dict_c{card}_n{null_pct}"),
+                page,
+                Some(dict),
                 column_type,
                 None,
                 ROW_COUNT,

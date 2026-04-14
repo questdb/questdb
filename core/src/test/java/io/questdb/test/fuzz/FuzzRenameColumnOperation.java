@@ -26,6 +26,8 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.LongList;
@@ -50,7 +52,10 @@ public class FuzzRenameColumnOperation implements FuzzTransactionOperation {
         );
         builder.ofRenameColumn(columName, newColName);
         AlterOperation alterOp = builder.build();
-        wApi.apply(alterOp, true);
+        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+            alterOp.withContext(context);
+            wApi.apply(alterOp, true);
+        }
         return true;
     }
 }

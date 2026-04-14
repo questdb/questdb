@@ -104,6 +104,7 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -126,6 +127,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -199,6 +201,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
     private final ObjList<CharSequence> views = new ObjList<>();
+    private final ObjectPool<WindowExpression> windowExpressionPool;
     protected CharSequence sqlText;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
@@ -221,6 +224,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
             this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
+            this.windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
             this.compiledQuery = new CompiledQueryImpl(engine);
             this.characterStore = new CharacterStore(
                     configuration.getSqlCharacterStoreCapacity(),
@@ -245,6 +249,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     configuration,
                     characterStore,
                     sqlNodePool,
+                    windowExpressionPool,
                     queryColumnPool,
                     queryModelPool,
                     postOrderTreeTraversalAlgo,
@@ -257,6 +262,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     configuration,
                     characterStore,
                     sqlNodePool,
+                    windowExpressionPool,
                     queryColumnPool,
                     queryModelPool,
                     postOrderTreeTraversalAlgo
@@ -1591,6 +1597,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void alterTableSetParquetEncoding(
+            SecurityContext securityContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            CharSequence columnName,
+            TableRecordMetadata tableMetadata,
+            int columnIndex
+    ) throws SqlException {
+        int columnType = tableMetadata.getColumnType(columnIndex);
+        int parquetEncodingConfig = SqlUtil.parseParquetConfig(lexer, columnType);
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put(']');
+        }
+
+        alterOperationBuilder.ofSetParquetEncoding(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                columnName,
+                parquetEncodingConfig
+        );
+        securityContext.authorizeAlterTableSetParquetSettings(tableToken);
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
     private void alterTableSetType(
             SqlExecutionContext executionContext,
             int pos,
@@ -2123,8 +2156,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final int action;
                 if (isParquetKeyword(tok)) {
                     action = PartitionAction.CONVERT_TO_PARQUET;
+                    securityContext.authorizeAlterTableConvertPartitionToParquet(tableToken);
                 } else if (isNativeKeyword(tok)) {
                     action = PartitionAction.CONVERT_TO_NATIVE;
+                    securityContext.authorizeAlterTableConvertPartitionToNative(tableToken);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
                 }
@@ -2224,20 +2259,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 indexValueCapacity
                         );
                     } else if (isDropKeyword(tok)) {
-                        // alter table <table name> alter column drop index
-                        expectKeyword(lexer, "index");
-                        tok = SqlUtil.fetchNext(lexer);
-                        if (tok != null && !isSemicolon(tok)) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
+                        tok = expectToken(lexer, "'index'");
+                        if (isIndexKeyword(tok)) {
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && !isSemicolon(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
+                            }
+                            alterTableColumnDropIndex(
+                                    securityContext,
+                                    tableNamePosition,
+                                    tableToken,
+                                    columnNamePosition,
+                                    columnName,
+                                    tableMetadata
+                            );
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'index' expected");
                         }
-                        alterTableColumnDropIndex(
-                                securityContext,
-                                tableNamePosition,
-                                tableToken,
-                                columnNamePosition,
-                                columnName,
-                                tableMetadata
-                        );
                     } else if (isCacheKeyword(tok)) {
                         alterTableColumnCacheFlag(
                                 securityContext,
@@ -2278,8 +2316,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 tableMetadata,
                                 columnIndex
                         );
+                    } else if (isSetKeyword(tok)) {
+                        tok = expectToken(lexer, "'parquet'");
+                        if (isParquetKeyword(tok)) {
+                            alterTableSetParquetEncoding(
+                                    securityContext,
+                                    tableNamePosition,
+                                    tableToken,
+                                    columnName,
+                                    tableMetadata,
+                                    columnIndex
+                            );
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+                        }
                     } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'symbol', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
+                        throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'set', 'symbol', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                     }
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
@@ -4302,7 +4354,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final CairoException ex = CairoException.nonCritical().put("Failures while dropping tables, views and materialized views [");
             CharSequence tableName;
             String message;
-            final ObjList<CharSequence> keys = dropAllTablesFailures.keys();
+            final ReadOnlyObjList<CharSequence> keys = dropAllTablesFailures.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 tableName = keys.get(i);
                 message = dropAllTablesFailures.get(tableName);
@@ -4519,6 +4571,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 updateQueryModel,
                 executionContext
         );
+        final RecordMetadata updateMetadata = recordCursorFactory.getMetadata();
+        final int updateColumnCount = updateMetadata.getColumnCount();
+        final ObjList<CharSequence> updateColumnNames = new ObjList<>(updateColumnCount);
+        for (int i = 0; i < updateColumnCount; i++) {
+            updateColumnNames.add(updateMetadata.getColumnName(i));
+        }
 
         if (!metadata.isWalEnabled() || executionContext.isWalApplication()) {
             return new UpdateOperation(
@@ -4526,7 +4584,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     selectQueryModel.getTableId(),
                     selectQueryModel.getMetadataVersion(),
                     lexer.getPosition(),
-                    recordCursorFactory
+                    recordCursorFactory,
+                    updateColumnNames
             );
         } else {
             recordCursorFactory.close();
@@ -4539,7 +4598,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     updateTableToken,
                     metadata.getTableId(),
                     metadata.getMetadataVersion(),
-                    lexer.getPosition()
+                    lexer.getPosition(),
+                    updateColumnNames
             );
         }
     }
@@ -5021,6 +5081,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CairoConfiguration configuration,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> sqlNodePool,
+            ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
             PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
@@ -5031,6 +5092,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 configuration,
                 characterStore,
                 sqlNodePool,
+                windowExpressionPool,
                 queryColumnPool,
                 queryModelPool,
                 postOrderTreeTraversalAlgo,
@@ -5127,6 +5189,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             addSupportedConversion(ColumnType.SHORT, i);
             addSupportedConversion(ColumnType.INT, i);
             addSupportedConversion(ColumnType.LONG, i);
+            addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
+            addSupportedConversion(ColumnType.STRING, i);
+            addSupportedConversion(ColumnType.VARCHAR, i);
         }
         //endregion
 

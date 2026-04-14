@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -245,6 +246,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                 column.setSymbolTableStaticFlag(true);
                 column.setDedupKeyFlag(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                column.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(metaMem, writerIndex));
                 column.setWriterIndex(writerIndex);
 
                 boolean isDesignated = writerIndex == timestampWriterIndex;
@@ -454,7 +456,7 @@ public class MetadataCache implements QuietCloseable {
          * @return the current version of the snapshot
          */
         @Override
-        public long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion) {
+        public long snapshot(CharSequenceObjMap<CairoTable> localCache, long priorVersion) {
             if (priorVersion >= getVersion()) {
                 return priorVersion;
             }
@@ -602,6 +604,7 @@ public class MetadataCache implements QuietCloseable {
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setSymbolTableStaticFlag(columnMetadata.isSymbolTableStatic());
                 column.setDedupKeyFlag(columnMetadata.isDedupKeyFlag());
+                column.setParquetEncodingConfig(columnMetadata.getParquetEncodingConfig());
 
                 int writerIndex = columnMetadata.getWriterIndex();
                 column.setWriterIndex(writerIndex);

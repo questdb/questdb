@@ -48,17 +48,19 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalDataRecord;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -66,6 +68,7 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
@@ -371,7 +374,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     row.putVarchar(0, longVarchar);
                     row.append();
                 }
-                writer.addColumn("newColumn", ColumnType.DOUBLE);
+                writer.addColumn("newColumn", ColumnType.DOUBLE, AllowAllSecurityContext.INSTANCE);
                 writer.commit();
             } finally {
                 Path.clearThreadLocals();
@@ -451,9 +454,11 @@ public class WalWriterTest extends AbstractCairoTest {
                             if (rnd.nextInt(20) == 0) {
                                 String columnName = rnd.nextBoolean() ? "d" : "D" + (1 + rnd.nextInt(columnNum));
                                 try {
-                                    AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
-                                    removeColumnOperation.ofDropColumn(columnName);
-                                    writer.apply(removeColumnOperation.build(), true);
+                                    AlterOperationBuilder removeColumnBuilder = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
+                                    removeColumnBuilder.ofDropColumn(columnName);
+                                    AlterOperation alterOp = removeColumnBuilder.build();
+                                    alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                                    writer.apply(alterOp, true);
                                 } catch (CairoException ex) {
                                     if (ex.getMessage().contains("column does not exist")) {
                                         // all good, someone removed the column concurrently
@@ -1140,6 +1145,122 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testBitmapIndexExtendOnNonLastPartitionWal() throws Exception {
+        // End-to-end WAL test: inserts batches of rows with unique symbols into
+        // a non-last partition, verifying the bitmap index .k file extends in
+        // page-sized chunks rather than per-putLong.
+        // Scaled down from the customer scenario (19 × 1M) to run in seconds.
+        int batchSize = 10_000;
+        int batches = 5;
+
+        AtomicInteger allocateCount = new AtomicInteger();
+        LongList allocateSizes = new LongList();
+        ConcurrentHashMap<Long, Boolean> indexKeyFds = new ConcurrentHashMap<>();
+        AtomicBoolean tracking = new AtomicBoolean();
+
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (tracking.get() && indexKeyFds.containsKey(fd)) {
+                    allocateCount.incrementAndGet();
+                    synchronized (allocateSizes) {
+                        allocateSizes.add(size);
+                    }
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                indexKeyFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > 0 && Utf8s.containsAscii(name, "2022-01-01") && Utf8s.endsWithAscii(name, ".k")) {
+                    indexKeyFds.put(fd, Boolean.TRUE);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (" +
+                    "sym SYMBOL NOCACHE INDEX CAPACITY 4," +
+                    "val INT," +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Seed: insert initial batch into day1 + 1 row for day2
+            execute("INSERT INTO " + tableName +
+                    " SELECT 'sym_' || x, x::INT, '2022-01-01T00:00:00.000000Z'" +
+                    " FROM long_sequence(" + batchSize + ")");
+            execute("INSERT INTO " + tableName +
+                    " VALUES ('sym_day2', 0, '2022-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // Insert batches into the non-last partition (day1).
+            // Each batch goes through O3 OPEN_MID_PARTITION_FOR_APPEND.
+            int totalAllocates = 0;
+            for (int batch = 1; batch < batches; batch++) {
+                long offset = (long) batch * batchSize;
+
+                allocateCount.set(0);
+                synchronized (allocateSizes) {
+                    allocateSizes.clear();
+                }
+                tracking.set(true);
+
+                execute("INSERT INTO " + tableName +
+                        " SELECT 'sym_' || (x + " + offset + "), (x + " + offset + ")::INT," +
+                        " '2022-01-01T00:00:00.000000Z'" +
+                        " FROM long_sequence(" + batchSize + ")");
+                drainWalQueue();
+
+                tracking.set(false);
+
+                int count = allocateCount.get();
+                totalAllocates += count;
+                long firstSize = 0;
+                long lastSize = 0;
+                synchronized (allocateSizes) {
+                    if (allocateSizes.size() > 0) {
+                        firstSize = allocateSizes.get(0);
+                        lastSize = allocateSizes.get(allocateSizes.size() - 1);
+                    }
+                }
+                LOG.info()
+                        .$("batch ").$(batch)
+                        .$(": allocate() calls=").$(count)
+                        .$(", firstSize=").$(firstSize)
+                        .$(", lastSize=").$(lastSize)
+                        .I$();
+            }
+
+            // Verify total row count
+            long expectedRows = (long) batches * batchSize + 1;
+            assertSql(
+                    "count\n" + expectedRows + "\n",
+                    "SELECT count() FROM " + tableName
+            );
+
+            // With the fix, each batch should need very few allocate calls
+            // (page-sized extends). Without the fix, each batch would produce
+            // ~40K allocate calls (one per putLong on new key entries).
+            LOG.info()
+                    .$("total allocate() calls across all batches: ").$(totalAllocates)
+                    .I$();
+            assertTrue(
+                    "expected fewer than 100 total allocate() calls but got " + totalAllocates,
+                    totalAllocates < 100
+            );
         });
     }
 
@@ -1848,6 +1969,46 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsDroppedV1() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl();
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("v1_drop");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
+
+                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
+                v1.create(path.of(root).concat("v1_drop"), 65897);
+                v1.open(path);
+
+                assertIsDropped(v1, path, "v1_drop");
+
+                v1.close();
+            }
+        });
+    }
+
+    @Test
+    public void testIsDroppedV2() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl();
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("v2_drop");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
+
+                TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, 128, DefaultWalDirectoryPolicy.INSTANCE);
+                v2.create(path.of(root).concat("v2_drop"), 65897);
+                v2.open(path);
+
+                assertIsDropped(v2, path, "v2_drop");
+
+                v2.close();
+            }
+        });
+    }
+
+    @Test
     public void testLargeSegmentRollover() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -1918,46 +2079,6 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 // Segment 0 was purged since writer moved to segment 1
                 assertSegmentExistence(false, tableName, 1, 0);
-            }
-        });
-    }
-
-    @Test
-    public void testIsDroppedV1() throws Exception {
-        FilesFacade ff = new TestFilesFacadeImpl();
-
-        assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                path.of(root).concat("v1_drop");
-                ff.mkdir(path.$(), configuration.getMkDirMode());
-
-                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
-                v1.create(path.of(root).concat("v1_drop"), 65897);
-                v1.open(path);
-
-                assertIsDropped(v1, path, "v1_drop");
-
-                v1.close();
-            }
-        });
-    }
-
-    @Test
-    public void testIsDroppedV2() throws Exception {
-        FilesFacade ff = new TestFilesFacadeImpl();
-
-        assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                path.of(root).concat("v2_drop");
-                ff.mkdir(path.$(), configuration.getMkDirMode());
-
-                TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, 128, DefaultWalDirectoryPolicy.INSTANCE);
-                v2.create(path.of(root).concat("v2_drop"), 65897);
-                v2.open(path);
-
-                assertIsDropped(v2, path, "v2_drop");
-
-                v2.close();
             }
         });
     }
@@ -3899,6 +4020,88 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateFollowedByTwoInserts() throws Exception {
+        // Reproduces a block-sizing bug: after TRUNCATE, two INSERT WAL transactions
+        // are visible to the applier, but the second INSERT gets LAST_ROW_COMMIT
+        // (mapped to FORCE_FULL_COMMIT) because it's the last loaded transaction.
+        // calculateInsertTransactionBlock() breaks before including the second INSERT,
+        // so the first INSERT is processed alone with block size 1.
+        // With few rows and an empty table (post-TRUNCATE), processWalCommit() sends
+        // the data to LAG instead of committing fully, creating an artificial 0-row
+        // partition that can race with backup.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            // Insert initial data and apply so the table has committed data.
+            execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // Now add TRUNCATE + 2 INSERTs without draining.
+            // This ensures all 3 sequencer txns are visible when the applier loads them.
+            execute("TRUNCATE TABLE " + tableName);
+            execute("INSERT INTO " + tableName + " VALUES " +
+                    "(2, '2022-02-26T20:00:00.000000Z')," +
+                    "(3, '2022-02-26T21:00:00.000000Z')");
+            execute("INSERT INTO " + tableName + " VALUES " +
+                    "(4, '2022-02-27T06:00:00.000000Z')," +
+                    "(5, '2022-02-27T07:00:00.000000Z')");
+
+            // Load WalTxnDetails and check block calculation directly.
+            try (TableWriter writer = getWriter(tableToken)) {
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(
+                        tableToken, writer.getAppliedSeqTxn())) {
+                    writer.readWalTxnDetails(cursor);
+                }
+
+                WalTxnDetails walTxnDetails = writer.getWalTnxDetails();
+                long startTxn = writer.getAppliedSeqTxn();
+                // seqTxn layout (startTxn = last applied seqTxn):
+                //   startTxn+1 = TRUNCATE   → FORCE_FULL_COMMIT
+                //   startTxn+2 = INSERT_A   → commitToTimestamp = minTs(INSERT_B)
+                //   startTxn+3 = INSERT_B   → LAST_ROW_COMMIT → mapped to FORCE_FULL_COMMIT
+
+                // TRUNCATE must have FORCE_FULL_COMMIT
+                assertEquals(WalTxnDetails.FORCE_FULL_COMMIT, walTxnDetails.getCommitToTimestamp(startTxn + 1));
+
+                // INSERT_A should have a real timestamp (minTs of INSERT_B), NOT FORCE_FULL_COMMIT
+                long insertACommitTo = walTxnDetails.getCommitToTimestamp(startTxn + 2);
+                Assert.assertNotEquals(WalTxnDetails.FORCE_FULL_COMMIT, insertACommitTo);
+
+                // INSERT_B is the last loaded transaction → LAST_ROW_COMMIT → mapped to FORCE_FULL_COMMIT
+                assertEquals(WalTxnDetails.FORCE_FULL_COMMIT, walTxnDetails.getCommitToTimestamp(startTxn + 3));
+
+                // INSERT_A and INSERT_B should form a block of 2.
+                // Previously, INSERT_B's LAST_ROW_COMMIT (mapped to FORCE_FULL_COMMIT)
+                // caused a break before including it, leaving INSERT_A alone (block=1).
+                int blockSize = walTxnDetails.calculateInsertTransactionBlock(
+                        startTxn + 2,
+                        TableWriterPressureControl.EMPTY,
+                        Long.MAX_VALUE,
+                        Long.MIN_VALUE
+                );
+
+                assertEquals(2, blockSize);
+            }
+
+            // Drain and verify data correctness.
+            drainWalQueue();
+            assertSql(
+                    """
+                            val\tts
+                            2\t2022-02-26T20:00:00.000000Z
+                            3\t2022-02-26T21:00:00.000000Z
+                            4\t2022-02-27T06:00:00.000000Z
+                            5\t2022-02-27T07:00:00.000000Z
+                            """,
+                    tableName
+            );
+        });
+    }
+
+    @Test
     public void testTruncateWithoutKeepingSymbolTablesThrows() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
@@ -4428,9 +4631,20 @@ public class WalWriterTest extends AbstractCairoTest {
         assertNull(symbolMapDiff.nextEntry());
     }
 
-    @SuppressWarnings("SameParameterValue")
-    private void assertWalFileExist(Path path, TableToken tableName, String walName, String fileName) {
-        assertWalFileExist(path, tableName, walName, -1, fileName);
+    private void assertIsDropped(TableTransactionLogFile log, Path path, String dir) {
+        log.addEntry(0, 1, 1, 1, 100, 0, 0, 0);
+        assertFalse("should not be dropped after normal entry", log.isDropped());
+
+        log.addEntry(0, DROP_TABLE_WAL_ID, 0, 0, 200, 0, 0, 0);
+        assertTrue("should be dropped after drop entry", log.isDropped());
+
+        try (TransactionLogCursor cursor = log.getCursor(0, path.of(root).concat(dir))) {
+            assertTrue(cursor.hasNext());
+            assertEquals(1, cursor.getWalId());
+
+            assertTrue(cursor.hasNext());
+            assertEquals(DROP_TABLE_WAL_ID, cursor.getWalId());
+        }
     }
 
     private void assertWalFileExist(Path path, TableToken tableName, String walName, int segment, String fileName) {
@@ -4443,6 +4657,11 @@ public class WalWriterTest extends AbstractCairoTest {
         } finally {
             path.trimTo(pathLen);
         }
+    }
+
+    @SuppressWarnings("SameParameterValue")
+    private void assertWalFileExist(Path path, TableToken tableName, String walName, String fileName) {
+        assertWalFileExist(path, tableName, walName, -1, fileName);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -4654,23 +4873,7 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     static void addColumn(WalWriter writer, String columnName, int columnType) {
-        writer.addColumn(columnName, columnType);
-    }
-
-    private void assertIsDropped(TableTransactionLogFile log, Path path, String dir) {
-        log.addEntry(0, 1, 1, 1, 100, 0, 0, 0);
-        assertFalse("should not be dropped after normal entry", log.isDropped());
-
-        log.addEntry(0, DROP_TABLE_WAL_ID, 0, 0, 200, 0, 0, 0);
-        assertTrue("should be dropped after drop entry", log.isDropped());
-
-        try (TransactionLogCursor cursor = log.getCursor(0, path.of(root).concat(dir))) {
-            assertTrue(cursor.hasNext());
-            assertEquals(1, cursor.getWalId());
-
-            assertTrue(cursor.hasNext());
-            assertEquals(DROP_TABLE_WAL_ID, cursor.getWalId());
-        }
+        writer.addColumn(columnName, columnType, AllowAllSecurityContext.INSTANCE);
     }
 
     static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
@@ -4703,15 +4906,19 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     static void removeColumn(TableWriterAPI writer, String columnName) {
-        AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
-        removeColumnOperation.ofDropColumn(columnName);
-        writer.apply(removeColumnOperation.build(), true);
+        AlterOperationBuilder removeColumnBuilder = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
+        removeColumnBuilder.ofDropColumn(columnName);
+        AlterOperation alterOp = removeColumnBuilder.build();
+        alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+        writer.apply(alterOp, true);
     }
 
     static void renameColumn(TableWriterAPI writer) {
-        AlterOperationBuilder renameColumnC = new AlterOperationBuilder().ofRenameColumn(0, writer.getTableToken(), 0);
-        renameColumnC.ofRenameColumn("b", "c");
-        writer.apply(renameColumnC.build(), true);
+        AlterOperationBuilder renameColumnBuilder = new AlterOperationBuilder().ofRenameColumn(0, writer.getTableToken(), 0);
+        renameColumnBuilder.ofRenameColumn("b", "c");
+        AlterOperation alterOp = renameColumnBuilder.build();
+        alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+        writer.apply(alterOp, true);
     }
 
 

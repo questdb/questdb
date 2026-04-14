@@ -37,7 +37,7 @@ import java.util.Arrays;
 
 /**
  * A record wrapper that translates master symbol IDs to slave symbol IDs
- * for efficient integer-based key comparison in HORIZON JOIN.
+ * for efficient integer-based key comparison in HORIZON and ASOF JOINs.
  * <p>
  * Instead of resolving symbol IDs to strings for comparison, this record
  * intercepts {@link #getInt(int)} calls for symbol join key columns and
@@ -61,8 +61,22 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     // Slave column indices for symbol key columns, used for symbol table source lookups.
     private final int[] slaveColumnIndices;
     private final StaticSymbolTable[] slaveSymbolTableCache;
+    private boolean hadNonExistentKey;
     private SymbolTableSource masterSource;
     private SymbolTableSource slaveSource;
+
+    public SymbolTranslatingRecord(int maxColumnCount, int joinKeyCount) {
+        this.caches = new IntIntHashMap[joinKeyCount];
+        this.masterSymbolTableCache = new SymbolTable[joinKeyCount];
+        this.slaveSymbolTableCache = new StaticSymbolTable[joinKeyCount];
+        this.masterColumnIndices = new int[joinKeyCount];
+        this.slaveColumnIndices = new int[joinKeyCount];
+        for (int i = 0; i < joinKeyCount; i++) {
+            caches[i] = new IntIntHashMap(16, 0.5);
+        }
+        this.columnToKeyIndex = new int[maxColumnCount];
+        Arrays.fill(this.columnToKeyIndex, -1);
+    }
 
     /**
      * @param masterColumnCount            total number of columns in the master record metadata
@@ -77,7 +91,7 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         this.masterColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveColumnIndices = slaveSymbolKeyColumnIndices;
         for (int i = 0; i < joinColumnCount; i++) {
-            caches[i] = new IntIntHashMap();
+            caches[i] = new IntIntHashMap(16, 0.5);
         }
 
         columnToKeyIndex = new int[masterColumnCount];
@@ -104,9 +118,23 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
     public int getInt(int col) {
         int idx = columnToKeyIndex[col];
         if (idx >= 0) {
-            return translate(idx, base.getInt(col));
+            int result = translate(idx, base.getInt(col));
+            if (result == SymbolTable.VALUE_NOT_FOUND) {
+                hadNonExistentKey = true;
+            }
+            return result;
         }
         return base.getInt(col);
+    }
+
+    /**
+     * Returns true if any {@link #getInt(int)} call since the last
+     * {@link #resetNonExistentKeyFlag()} returned {@link SymbolTable#VALUE_NOT_FOUND}.
+     * Use this after a {@link io.questdb.cairo.RecordSink#copy} pass to detect
+     * non-existent keys without a separate pre-scan.
+     */
+    public boolean hadNonExistentKey() {
+        return hadNonExistentKey;
     }
 
     /**
@@ -135,6 +163,33 @@ public class SymbolTranslatingRecord extends DelegatingRecord implements QuietCl
         Misc.freeIfCloseable(slaveSymbolTableCache);
         this.masterSource = masterSource;
         this.slaveSource = slaveSource;
+    }
+
+    /**
+     * Set symbol table sources and reconfigure column index mappings.
+     * Used by hash joins where the build/probe direction may change at runtime due to swap.
+     */
+    public void initSources(SymbolTableSource masterSource, SymbolTableSource slaveSource,
+                            int[] masterCols, int[] slaveCols) {
+        clear();
+        Misc.freeIfCloseable(masterSymbolTableCache);
+        Misc.freeIfCloseable(slaveSymbolTableCache);
+        this.masterSource = masterSource;
+        this.slaveSource = slaveSource;
+        Arrays.fill(columnToKeyIndex, -1);
+        System.arraycopy(masterCols, 0, this.masterColumnIndices, 0, masterCols.length);
+        System.arraycopy(slaveCols, 0, this.slaveColumnIndices, 0, slaveCols.length);
+        for (int i = 0; i < masterCols.length; i++) {
+            columnToKeyIndex[masterCols[i]] = i;
+        }
+    }
+
+    /**
+     * Resets the non-existent key flag. Call before a
+     * {@link io.questdb.cairo.RecordSink#copy} pass.
+     */
+    public void resetNonExistentKeyFlag() {
+        hadNonExistentKey = false;
     }
 
     private SymbolTable getMasterSymbolTable(int idx) {

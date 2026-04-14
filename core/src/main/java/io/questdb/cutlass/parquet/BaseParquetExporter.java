@@ -54,7 +54,7 @@ public abstract class BaseParquetExporter {
     public void of(CopyExportRequestTask task) {
         this.task = task;
         this.circuitBreaker = task.getCircuitBreaker();
-        sqlExecutionContext.with(task.getSecurityContext(), null, null, -1, circuitBreaker);
+        sqlExecutionContext.with(task.getSecurityContext(), task.getBindVariableService(), null, -1, circuitBreaker);
     }
 
     protected void drainHybridFrames(

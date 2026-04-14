@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -57,6 +58,7 @@ import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.*;
 
 public class CopyExportRequestTask implements Mutable, QuietCloseable {
     private final StreamPartitionParquetExporter streamPartitionParquetExporter = new StreamPartitionParquetExporter();
+    private @Nullable BindVariableService bindVariableService;
     private @Nullable CharSequence bloomFilterColumns;
     private int bloomFilterColumnsPosition = -1;
     private double bloomFilterFpp = Double.NaN;
@@ -113,6 +115,7 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     @Override
     public void clear() {
+        this.bindVariableService = null;
         this.selectFactory = Misc.free(selectFactory);
         this.entry = null;
         this.exportMode = null;
@@ -155,6 +158,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             pageFrameCursor = Misc.free(pageFrameCursor);
         }
         Misc.free(streamPartitionParquetExporter);
+    }
+
+    public @Nullable BindVariableService getBindVariableService() {
+        return bindVariableService;
     }
 
     public @Nullable CharSequence getBloomFilterColumns() {
@@ -287,8 +294,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
             @Nullable String selectText,
             @Nullable CharSequence bloomFilterColumns,
             int bloomFilterColumnsPosition,
-            double bloomFilterFpp
+            double bloomFilterFpp,
+            @Nullable BindVariableService bindVariableService
     ) {
+        this.bindVariableService = bindVariableService;
         this.entry = entry;
         this.tableName = tableName;
         this.fileName = fileName;
@@ -622,7 +631,8 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                     bloomFilterIndexesPtr,
                     bloomFilterCount,
                     fpp,
-                    -1
+                    -1,
+                    0.0
             );
         }
 
@@ -650,9 +660,18 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                     final int columnType = metadata.getColumnType(i);
                     final long pageAddress = frame.getPageAddress(i);
+                    // Var-size columns may have an empty .d file when all values are inlined
+                    // into the aux vector (see FwdTableReaderPageFrameCursor for the producer
+                    // contract); use the aux address as the column-top detector to avoid
+                    // materialising live rows as NULL.
+                    final long localColTop;
+                    if (ColumnType.isVarSize(columnType)) {
+                        localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
+                    } else {
+                        localColTop = pageAddress > 0 ? 0 : frameRowCount;
+                    }
 
                     // Assert alignment for SIMD operations in Rust parquet encoder
                     assert pageAddress == 0 || isAlignedForColumnType(pageAddress, columnType)

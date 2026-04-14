@@ -719,7 +719,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     testHttpClient.assertGetParquet("/exp", 128290, params, "SELECT * FROM bloom_multi_test");
                     params.put("bloom_filter_columns", "id,name,value");
                     params.put("bloom_filter_fpp", "0.05");
-                    testHttpClient.assertGetParquet("/exp", 177517, params, "SELECT * FROM bloom_multi_test");
+                    testHttpClient.assertGetParquet("/exp", 177541, params, "SELECT * FROM bloom_multi_test");
                 });
     }
 
@@ -758,7 +758,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     testHttpClient.assertGetParquet("/exp", 81711, params, "SELECT * FROM bloom_single_test");
                     params.put("bloom_filter_columns", "id");
-                    testHttpClient.assertGetParquet("/exp", 98120, params, "SELECT * FROM bloom_single_test");
+                    testHttpClient.assertGetParquet("/exp", 98128, params, "SELECT * FROM bloom_single_test");
                 });
     }
 
@@ -773,9 +773,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.clear();
                     params.put("fmt", "parquet");
                     params.put("bloom_filter_columns", " id , name , value ");
-                    testHttpClient.assertGetParquet("/exp", 19899, params, "bloom_spaces_test");
+                    testHttpClient.assertGetParquet("/exp", 19917, params, "bloom_spaces_test");
                     params.put("bloom_filter_columns", "id ,name,value");
-                    testHttpClient.assertGetParquet("/exp", 19899, params, "bloom_spaces_test");
+                    testHttpClient.assertGetParquet("/exp", 19917, params, "bloom_spaces_test");
                 });
     }
 
@@ -865,13 +865,13 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("bloom_filter_columns", "id");
                     params.put("bloom_filter_fpp", "0.01");
-                    testHttpClient.assertGetParquet("/exp", 56796, params, "SELECT * FROM bloom_fpp_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 56804, params, "SELECT * FROM bloom_fpp_valid_test");
 
                     params.put("bloom_filter_fpp", "0.1");
-                    testHttpClient.assertGetParquet("/exp", 48604, params, "SELECT * FROM bloom_fpp_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 48612, params, "SELECT * FROM bloom_fpp_valid_test");
 
                     params.put("bloom_filter_fpp", "0.99");
-                    testHttpClient.assertGetParquet("/exp", 42459, params, "SELECT * FROM bloom_fpp_valid_test");
+                    testHttpClient.assertGetParquet("/exp", 42465, params, "SELECT * FROM bloom_fpp_valid_test");
                 });
     }
 
@@ -1257,6 +1257,22 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("fmt", "parquet");
                     params.put("compression_codec", "invalid_codec");
                     String expectedError = "{\"query\":\"SELECT * FROM codec_invalid_test\",\"error\":\"invalid compression codec[invalid_codec], expected one of: uncompressed, snappy, gzip, brotli, zstd, lz4_raw\",\"position\":0}";
+                    testHttpClient.assertGet("/exp", expectedError, params, null, null);
+                });
+    }
+
+    @Test
+    public void testParquetExportInvalidCompressionLevel() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE level_invalid_test AS (SELECT x FROM long_sequence(5))", sqlExecutionContext);
+
+                    params.clear();
+                    params.put("query", "SELECT * FROM level_invalid_test");
+                    params.put("fmt", "parquet");
+                    params.put("compression_codec", "gzip");
+                    params.put("compression_level", "-1");
+                    String expectedError = "{\"query\":\"SELECT * FROM level_invalid_test\",\"error\":\"GZIP compression level must be between 0 and 9\",\"position\":0}";
                     testHttpClient.assertGet("/exp", expectedError, params, null, null);
                 });
     }

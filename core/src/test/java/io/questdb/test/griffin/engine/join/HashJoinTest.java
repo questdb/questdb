@@ -123,6 +123,173 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinSymbolKeysSwap() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym1 SYMBOL, sym2 SYMBOL, v INT)");
+            execute("CREATE TABLE s (sym1 SYMBOL, sym2 SYMBOL, v INT)");
+            // Master has 2 rows, slave has 6 rows -> swap fires.
+            execute("""
+                    INSERT INTO m VALUES
+                        ('A', 'X', 1),
+                        ('B', 'Y', 2)""");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('A', 'X', 10),
+                        ('A', 'Y', 11),
+                        ('B', 'X', 12),
+                        ('B', 'Y', 13),
+                        ('C', 'X', 14),
+                        ('C', 'Y', 15)""");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym1\tsym2\tv\tv1
+                            A\tX\t1\t10
+                            B\tY\t2\t13
+                            """,
+                    "SELECT m.sym1, m.sym2, m.v, s.v FROM m JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testHashJoinSymbolKeysSwapWithCrossColumnIndices() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym1 SYMBOL, sym2 SYMBOL, v INT)");
+            execute("CREATE TABLE s (sym2 SYMBOL, sym1 SYMBOL, v INT)");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('A', 'X', 1),
+                        ('B', 'Y', 2)""");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('X', 'A', 10),
+                        ('Y', 'A', 11),
+                        ('X', 'B', 12),
+                        ('Y', 'B', 13),
+                        ('X', 'C', 14),
+                        ('Y', 'C', 15)""");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym1\tsym2\tv\tv1
+                            A\tX\t1\t10
+                            B\tY\t2\t13
+                            """,
+                    "SELECT m.sym1, m.sym2, m.v, s.v FROM m JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testHashJoinSymbolKeysSymbolMissingFromOtherSide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, v INT)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT)");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('A', 1),
+                        ('B', 2),
+                        ('C', 3)""");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('A', 10),
+                        ('B', 20),
+                        ('D', 40)""");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tv\tsym1\tv1
+                            A\t1\tA\t10
+                            B\t2\tB\t20
+                            """,
+                    "SELECT * FROM m JOIN s ON m.sym = s.sym ORDER BY m.v",
+                    null,
+                    true,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tv\tsym1\tv1
+                            A\t1\tA\t10
+                            B\t2\tB\t20
+                            C\t3\t\tnull
+                            """,
+                    "SELECT * FROM m LEFT JOIN s ON m.sym = s.sym ORDER BY m.v",
+                    null,
+                    true,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tv\tsym1\tv1
+                            A\t1\tA\t10
+                            B\t2\tB\t20
+                            \tnull\tD\t40
+                            """,
+                    "SELECT * FROM m RIGHT JOIN s ON m.sym = s.sym ORDER BY s.v",
+                    null,
+                    true,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            sym	v	sym1	v1
+                            	null	D	40
+                            A	1	A	10
+                            B	2	B	20
+                            C	3		null
+                            """,
+                    "SELECT * FROM m FULL JOIN s ON m.sym = s.sym ORDER BY m.v, s.v",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testHashOuterJoinSymbolKeysSwapFullOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym1 SYMBOL, sym2 SYMBOL, v INT)");
+            execute("CREATE TABLE s (sym1 SYMBOL, sym2 SYMBOL, v INT)");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('A', 'X', 1),
+                        ('C', 'Z', 3)""");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('A', 'X', 10),
+                        ('B', 'Y', 20),
+                        ('D', 'W', 30),
+                        ('E', 'V', 40),
+                        ('F', 'U', 50)""");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym1	sym2	v	sym11	sym21	v1
+                            		null	B	Y	20
+                            		null	D	W	30
+                            		null	E	V	40
+                            		null	F	U	50
+                            A	X	1	A	X	10
+                            C	Z	3			null
+                            """,
+                    "SELECT * FROM m FULL JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v, s.v",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testHashOuterJoinWithFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table taba (i long, locale_name symbol )");

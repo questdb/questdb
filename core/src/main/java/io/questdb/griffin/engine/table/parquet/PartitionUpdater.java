@@ -103,7 +103,8 @@ public class PartitionUpdater implements QuietCloseable {
             boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            double bloomFilterFpp
+            double bloomFilterFpp,
+            double minCompressionRatio
     ) {
         final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
@@ -121,7 +122,32 @@ public class PartitionUpdater implements QuietCloseable {
                 rawArrayEncoding,
                 rowGroupSize,
                 dataPageSize,
-                bloomFilterFpp
+                bloomFilterFpp,
+                minCompressionRatio
+        );
+    }
+
+    /**
+     * Sets the target schema for the output file. Call this after {@link #of}
+     * when the table schema differs from the source parquet file schema
+     * (e.g., after ADD COLUMN or DROP COLUMN).
+     *
+     * @param descriptor a PartitionDescriptor containing the full target
+     *                   schema (column names, IDs, types). Data pointers are
+     *                   not required — only schema metadata is used.
+     */
+    public void setTargetSchema(PartitionDescriptor descriptor) {
+        assert ptr != 0;
+        setTargetSchema(
+                ptr,
+                descriptor.tableName.ptr(),
+                descriptor.tableName.size(),
+                descriptor.getColumnCount(),
+                descriptor.getColumnNamesPtr(),
+                descriptor.getColumnNamesLen(),
+                descriptor.getColumnDataPtr(),
+                descriptor.getColumnDataLen(),
+                descriptor.getTimestampIndex()
         );
     }
 
@@ -207,7 +233,8 @@ public class PartitionUpdater implements QuietCloseable {
             boolean rawArrayEncoding,
             long rowGroupSize,
             long dataPageSize,
-            double bloomFilterFpp
+            double bloomFilterFpp,
+            double minCompressionRatio
     ) throws CairoException;
 
     private static native void destroy(long impl);

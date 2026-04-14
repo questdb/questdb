@@ -345,22 +345,22 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
             if (columnType > -1) {
                 String colName = Chars.toString(name);
-                columnMetadata.add(
-                        new TableReaderMetadataColumn(
-                                colName,
-                                columnType,
-                                TableUtils.isColumnIndexed(mem, writerIndex),
-                                TableUtils.getIndexBlockCapacity(mem, writerIndex),
-                                true,
-                                null,
-                                writerIndex,
-                                TableUtils.isColumnDedupKey(mem, writerIndex),
-                                denseSymbolIndex,
-                                stableIndex,
-                                TableUtils.isSymbolCached(mem, writerIndex),
-                                TableUtils.getSymbolCapacity(mem, writerIndex)
-                        )
+                TableReaderMetadataColumn colMeta = new TableReaderMetadataColumn(
+                        colName,
+                        columnType,
+                        TableUtils.isColumnIndexed(mem, writerIndex),
+                        TableUtils.getIndexBlockCapacity(mem, writerIndex),
+                        true,
+                        null,
+                        writerIndex,
+                        TableUtils.isColumnDedupKey(mem, writerIndex),
+                        denseSymbolIndex,
+                        stableIndex,
+                        TableUtils.isSymbolCached(mem, writerIndex),
+                        TableUtils.getSymbolCapacity(mem, writerIndex)
                 );
+                colMeta.setParquetEncodingConfig(TableUtils.getParquetEncodingConfig(mem, writerIndex));
+                columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;
                 writerIndexToDenseIndex.put(writerIndex, denseIndex);
                 if (!columnNameIndexMap.put(colName, denseIndex)) {

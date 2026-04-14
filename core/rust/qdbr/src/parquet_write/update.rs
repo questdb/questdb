@@ -21,7 +21,9 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+use rapidhash::RapidHashMap;
 use std::fs::File;
 use std::io::{Read as _, Seek, SeekFrom};
 
@@ -47,7 +49,7 @@ use crate::parquet::error::{
 };
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
-use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Partition};
+use crate::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Partition};
 
 /// Computes the contiguous byte range [start, end) of a row group's column
 /// data, including the last column's bloom filter when present.  Non-last
@@ -109,6 +111,7 @@ pub struct ParquetUpdater {
     data_page_size: Option<usize>,
     raw_array_encoding: bool,
     bloom_filter_columns: HashSet<usize>,
+    min_compression_ratio: f64,
     copy_buffer: Vec<u8>,
     file_metadata: FileMetaData,
     accumulated_unused_bytes: u64,
@@ -118,6 +121,7 @@ pub struct ParquetUpdater {
     result_file_size: u64,
     result_unused_bytes: u64,
     target_qdb_meta: Option<QdbMeta>,
+    target_col_id_to_pos: Option<RapidHashMap<i32, usize>>,
 }
 
 impl ParquetUpdater {
@@ -135,6 +139,7 @@ impl ParquetUpdater {
         row_group_size: Option<usize>,
         data_page_size: Option<usize>,
         bloom_filter_fpp: f64,
+        min_compression_ratio: f64,
     ) -> ParquetResult<Self> {
         fn version_from(value: i32) -> ParquetResult<Version> {
             match value {
@@ -275,6 +280,7 @@ impl ParquetUpdater {
             row_group_size,
             data_page_size,
             bloom_filter_columns,
+            min_compression_ratio,
             copy_buffer: Vec::new(),
             file_metadata,
             accumulated_unused_bytes,
@@ -284,6 +290,7 @@ impl ParquetUpdater {
             result_file_size: 0,
             result_unused_bytes: 0,
             target_qdb_meta: None,
+            target_col_id_to_pos: None,
         })
     }
 
@@ -292,7 +299,7 @@ impl ParquetUpdater {
         partition: &Partition,
         row_group_id: i32,
     ) -> ParquetResult<()> {
-        self.ensure_schema_matches_columns(partition);
+        self.ensure_schema_matches_columns(partition)?;
         let row_count = partition
             .columns
             .first()
@@ -306,6 +313,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &to_compressions(partition),
             &self.bloom_filter_columns,
             false,
         )?;
@@ -358,7 +366,7 @@ impl ParquetUpdater {
     }
 
     pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
-        self.ensure_schema_matches_columns(partition);
+        self.ensure_schema_matches_columns(partition)?;
         let row_count = partition
             .columns
             .first()
@@ -372,6 +380,7 @@ impl ParquetUpdater {
             self.parquet_file.schema().fields(),
             &to_encodings(partition),
             options,
+            &to_compressions(partition),
             &self.bloom_filter_columns,
             false,
         )?;
@@ -390,6 +399,13 @@ impl ParquetUpdater {
     }
 
     pub fn copy_row_group(&mut self, rg_index: i32) -> ParquetResult<()> {
+        if rg_index < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "copy_row_group: negative rg_index: {}",
+                rg_index
+            ));
+        }
         let rg_idx = rg_index as usize;
         if rg_idx >= self.file_metadata.row_groups.len() {
             return Err(fmt_err!(
@@ -401,6 +417,7 @@ impl ParquetUpdater {
         }
 
         let old_rg = &self.file_metadata.row_groups[rg_idx];
+        let row_count = old_rg.num_rows();
 
         let (rg_start, rg_end) = old_rg.data_byte_range(&mut self.reader).with_context(|_| {
             format!(
@@ -434,35 +451,20 @@ impl ParquetUpdater {
             )
         })?;
 
-        // Build adjusted thrift metadata with offsets shifted to the new file position.
         let new_offset = self.parquet_file.current_offset();
         let offset_delta = new_offset as i64 - rg_start as i64;
 
-        // Clone the row group metadata and convert to thrift, then adjust offsets.
-        let mut thrift_rg = old_rg.clone().into_thrift();
-        for col_chunk in &mut thrift_rg.columns {
-            if let Some(ref mut meta) = col_chunk.meta_data {
-                meta.data_page_offset += offset_delta;
-                if let Some(ref mut dict_offset) = meta.dictionary_page_offset {
-                    *dict_offset += offset_delta;
-                }
-                if let Some(ref mut idx_offset) = meta.index_page_offset {
-                    *idx_offset += offset_delta;
-                }
-                if let Some(ref mut bf_offset) = meta.bloom_filter_offset {
-                    *bf_offset += offset_delta;
-                }
-            }
-            // Column/offset indexes are not copied with the row group data,
-            // so clear their references to avoid dangling pointers into the old file.
-            col_chunk.column_index_offset = None;
-            col_chunk.column_index_length = None;
-            col_chunk.offset_index_offset = None;
-            col_chunk.offset_index_length = None;
+        // Take ownership of columns — each row group is processed exactly once.
+        let mut columns: Vec<ColumnChunk> = self.file_metadata.row_groups[rg_idx]
+            .take_columns()
+            .into_iter()
+            .map(|c| c.into_thrift())
+            .collect();
+        for col in &mut columns {
+            adjust_column_chunk_offsets(col, offset_delta);
         }
-        if let Some(ref mut fo) = thrift_rg.file_offset {
-            *fo += offset_delta;
-        }
+
+        let thrift_rg = build_raw_row_group(columns, row_count);
 
         self.parquet_file
             .write_raw_row_group(&self.copy_buffer, thrift_rg)
@@ -488,7 +490,7 @@ impl ParquetUpdater {
 
         // Build column_id → old schema index from the old file's parquet field_ids.
         let old_fields = self.file_metadata.schema_descr.fields();
-        let old_col_id_to_idx: HashMap<i32, usize> = old_fields
+        let old_col_id_to_idx: RapidHashMap<i32, usize> = old_fields
             .iter()
             .enumerate()
             .filter_map(|(i, f)| f.get_field_info().id.map(|id| (id, i)))
@@ -537,6 +539,19 @@ impl ParquetUpdater {
                 .push(QdbMetaCol { column_type, column_top: 0, format, ascii: None });
         }
 
+        // Cache column_id → target schema position map for use during
+        // copy_row_group_with_null_columns(). The target schema is invariant
+        // across all row group copies, so building this once avoids a HashMap
+        // allocation per row group.
+        let target_fields = self.parquet_file.schema().fields();
+        self.target_col_id_to_pos = Some(
+            target_fields
+                .iter()
+                .enumerate()
+                .filter_map(|(i, f)| f.get_field_info().id.map(|id| (id, i)))
+                .collect(),
+        );
+
         self.target_qdb_meta = Some(qdb_meta);
         Ok(())
     }
@@ -550,6 +565,13 @@ impl ParquetUpdater {
         rg_index: i32,
         null_columns: &[(usize, ColumnType)],
     ) -> ParquetResult<()> {
+        if rg_index < 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "copy_row_group_with_null_columns: negative rg_index: {}",
+                rg_index
+            ));
+        }
         let rg_idx = rg_index as usize;
         if rg_idx >= self.file_metadata.row_groups.len() {
             return Err(fmt_err!(
@@ -562,16 +584,15 @@ impl ParquetUpdater {
 
         let old_rg = &self.file_metadata.row_groups[rg_idx];
         let row_count = old_rg.num_rows();
-        let old_columns_meta = old_rg.columns();
 
-        // Determine byte range of existing column chunk data.
-        let mut rg_start = u64::MAX;
-        let mut rg_end = 0u64;
-        for col in old_columns_meta {
-            let (start, len) = col.byte_range();
-            rg_start = rg_start.min(start);
-            rg_end = rg_end.max(start + len);
-        }
+        // Determine byte range of existing column chunk data, including
+        // the last column's bloom filter when present.
+        let (rg_start, rg_end) = old_rg.data_byte_range(&mut self.reader).with_context(|_| {
+            format!(
+                "copy_row_group_with_null_columns: failed to compute byte range for rg {}",
+                rg_idx
+            )
+        })?;
         if rg_start >= rg_end {
             return Err(fmt_err!(
                 InvalidLayout,
@@ -580,11 +601,11 @@ impl ParquetUpdater {
             ));
         }
 
-        // Read existing raw bytes.
+        // Read existing raw bytes, reusing the buffer across copies.
         let raw_len = (rg_end - rg_start) as usize;
-        let mut raw_bytes = vec![0u8; raw_len];
+        self.copy_buffer.resize(raw_len, 0);
         self.reader.seek(SeekFrom::Start(rg_start))?;
-        self.reader.read_exact(&mut raw_bytes)?;
+        self.reader.read_exact(&mut self.copy_buffer)?;
 
         self.parquet_file.ensure_started().map_err(|s| {
             ParquetError::with_descr(
@@ -596,31 +617,41 @@ impl ParquetUpdater {
         let new_offset = self.parquet_file.current_offset();
         let offset_delta = new_offset as i64 - rg_start as i64;
 
-        // Build adjusted thrift metadata for existing columns.
-        let mut existing_thrift_cols: Vec<ColumnChunk> = old_rg.clone().into_thrift().columns;
-        for col_chunk in &mut existing_thrift_cols {
-            if let Some(ref mut meta) = col_chunk.meta_data {
-                meta.data_page_offset += offset_delta;
-                if let Some(ref mut dict_offset) = meta.dictionary_page_offset {
-                    *dict_offset += offset_delta;
-                }
-                if let Some(ref mut idx_offset) = meta.index_page_offset {
-                    *idx_offset += offset_delta;
-                }
+        // Use the cached column_id → target schema position map built in
+        // set_target_schema(). This avoids a HashMap allocation per row group.
+        let target_fields = self.parquet_file.schema().fields();
+        let old_fields = self.file_metadata.schema_descr.fields();
+        let target_col_id_to_pos = self.target_col_id_to_pos.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "copy_row_group_with_null_columns: target schema not set"
+            )
+        })?;
+
+        // Merge existing and null column chunks in target schema order.
+        let target_col_count = target_fields.len();
+        let mut merged_cols: Vec<Option<ColumnChunk>> = vec![None; target_col_count];
+
+        // Take ownership of existing columns — each row group is processed exactly once.
+        // NLL allows mutable access here because `old_rg` is no longer used.
+        let existing_cols = self.file_metadata.row_groups[rg_idx].take_columns();
+        for (old_pos, col_meta) in existing_cols.into_iter().enumerate() {
+            let id = old_fields
+                .get(old_pos)
+                .and_then(|f: &ParquetType| f.get_field_info().id);
+            if let Some(&target_pos) = id.and_then(|id| target_col_id_to_pos.get(&id)) {
+                let mut col_chunk = col_meta.into_thrift();
+                adjust_column_chunk_offsets(&mut col_chunk, offset_delta);
+                merged_cols[target_pos] = Some(col_chunk);
             }
-            col_chunk.column_index_offset = None;
-            col_chunk.column_index_length = None;
-            col_chunk.offset_index_offset = None;
-            col_chunk.offset_index_length = None;
+            // else: dropped column — skip (dead bytes in raw copy)
         }
 
         // Generate null column chunk bytes for missing columns.
         // Null column bytes are appended after the existing raw data.
-        let null_chunk_offset_base = new_offset + raw_bytes.len() as u64;
+        let null_chunk_offset_base = new_offset + raw_len as u64;
         let mut null_bytes_buf: Vec<u8> = Vec::new();
-        let mut null_thrift_cols: Vec<(usize, ColumnChunk)> = Vec::new();
 
-        let target_fields = self.parquet_file.schema().fields();
         for &(target_pos, col_type) in null_columns {
             let field = target_fields.get(target_pos).ok_or_else(|| {
                 fmt_err!(
@@ -635,75 +666,33 @@ impl ParquetUpdater {
             let (chunk_bytes, thrift_col) =
                 generate_null_column_chunk_bytes(field, col_type, row_count, col_offset)?;
             null_bytes_buf.extend_from_slice(&chunk_bytes);
-            null_thrift_cols.push((target_pos, thrift_col));
-        }
-
-        // Build column_id → target schema position map.
-        let old_fields = self.file_metadata.schema_descr.fields();
-        let target_col_id_to_target_pos: HashMap<i32, usize> = target_fields
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f): (usize, &ParquetType)| f.get_field_info().id.map(|id| (id, i)))
-            .collect();
-
-        // Merge existing and null column chunks in target schema order.
-        let target_col_count = target_fields.len();
-        let mut merged_cols: Vec<Option<ColumnChunk>> = vec![None; target_col_count];
-
-        // Place existing columns at their target positions.
-        for (old_pos, thrift_col) in existing_thrift_cols.into_iter().enumerate() {
-            if let Some(id) = old_fields
-                .get(old_pos)
-                .and_then(|f: &ParquetType| f.get_field_info().id)
-            {
-                if let Some(&target_pos) = target_col_id_to_target_pos.get(&id) {
-                    merged_cols[target_pos] = Some(thrift_col);
-                }
-                // else: dropped column — skip (dead bytes in raw copy)
-            }
-        }
-
-        // Place null columns.
-        for (target_pos, thrift_col) in null_thrift_cols {
             merged_cols[target_pos] = Some(thrift_col);
         }
 
-        // Collect into final column list, skipping any gaps (shouldn't happen
-        // if the caller provided correct null_columns).
-        let all_columns: Vec<ColumnChunk> = merged_cols.into_iter().flatten().collect();
+        // Collect into final column list; every slot must be filled.
+        let columns: Vec<ColumnChunk> = merged_cols
+            .into_iter()
+            .enumerate()
+            .map(|(i, slot)| {
+                slot.ok_or_else(|| {
+                    fmt_err!(
+                        InvalidLayout,
+                        "copy_row_group_with_null_columns: merged column slot {} is empty \
+                         (target schema has {} columns)",
+                        i,
+                        target_col_count
+                    )
+                })
+            })
+            .collect::<ParquetResult<Vec<_>>>()?;
 
-        let total_byte_size: i64 = all_columns
-            .iter()
-            .filter_map(|c| c.meta_data.as_ref())
-            .map(|m| m.total_uncompressed_size)
-            .sum();
-        let total_compressed_size: i64 = all_columns
-            .iter()
-            .filter_map(|c| c.meta_data.as_ref())
-            .map(|m| m.total_compressed_size)
-            .sum();
-
-        let file_offset = all_columns
-            .first()
-            .and_then(|c| c.meta_data.as_ref())
-            .map(|m| m.data_page_offset);
-
-        let thrift_rg = RowGroup {
-            columns: all_columns,
-            total_byte_size,
-            num_rows: row_count as i64,
-            sorting_columns: None,
-            file_offset,
-            total_compressed_size: Some(total_compressed_size),
-            ordinal: None,
-        };
+        let thrift_rg = build_raw_row_group(columns, row_count);
 
         // Concatenate existing + null bytes and write as one raw row group.
-        let mut combined_bytes = raw_bytes;
-        combined_bytes.extend_from_slice(&null_bytes_buf);
+        self.copy_buffer.extend_from_slice(&null_bytes_buf);
 
         self.parquet_file
-            .write_raw_row_group(&combined_bytes, thrift_rg)
+            .write_raw_row_group(&self.copy_buffer, thrift_rg)
             .map_err(|s| {
                 ParquetError::with_descr(
                     ParquetErrorReason::Parquet2(s),
@@ -800,19 +789,20 @@ impl ParquetUpdater {
     /// New files always write symbols as Optional (see `column_type_to_parquet_type`
     /// in schema.rs). The `Column::not_null_hint` flag is only a write-time hint for
     /// the encoder to emit a fast all-ones RLE run for definition levels.
-    fn ensure_schema_matches_columns(&mut self, partition: &Partition) {
+    fn ensure_schema_matches_columns(&mut self, partition: &Partition) -> ParquetResult<()> {
         if self.symbol_schema_checked || !self.is_rewrite {
-            return;
+            return Ok(());
         }
         self.symbol_schema_checked = true;
         let fields = self.parquet_file.schema().fields();
-        debug_assert_eq!(
-            partition.columns.len(),
-            fields.len(),
-            "column count ({}) != schema field count ({})",
-            partition.columns.len(),
-            fields.len()
-        );
+        if partition.columns.len() != fields.len() {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "ensure_schema_matches_columns: column count ({}) != schema field count ({})",
+                partition.columns.len(),
+                fields.len()
+            ));
+        }
         let needs_update = partition
             .columns
             .iter()
@@ -823,7 +813,7 @@ impl ParquetUpdater {
                     && field.get_field_info().repetition == Repetition::Required
             });
         if !needs_update {
-            return;
+            return Ok(());
         }
         let mut new_fields: Vec<ParquetType> = fields.to_vec();
         for (col, field) in partition.columns.iter().zip(new_fields.iter_mut()) {
@@ -836,6 +826,7 @@ impl ParquetUpdater {
         let schema =
             SchemaDescriptor::new(self.parquet_file.schema().name().to_string(), new_fields);
         self.parquet_file.set_schema(schema);
+        Ok(())
     }
 
     fn row_group_options(&self) -> WriteOptions {
@@ -847,7 +838,59 @@ impl ParquetUpdater {
             data_page_size: self.data_page_size,
             raw_array_encoding: self.raw_array_encoding,
             bloom_filter_fpp: self.parquet_file.options().bloom_filter_fpp,
+            min_compression_ratio: self.min_compression_ratio,
         }
+    }
+}
+
+/// Shifts all offset fields in a `ColumnChunk` by `offset_delta` and clears
+/// column/offset index references (they are not copied with raw row group data).
+fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
+    if let Some(ref mut meta) = col.meta_data {
+        meta.data_page_offset += offset_delta;
+        if let Some(ref mut v) = meta.dictionary_page_offset {
+            *v += offset_delta;
+        }
+        if let Some(ref mut v) = meta.index_page_offset {
+            *v += offset_delta;
+        }
+        if let Some(ref mut v) = meta.bloom_filter_offset {
+            *v += offset_delta;
+        }
+    }
+    col.column_index_offset = None;
+    col.column_index_length = None;
+    col.offset_index_offset = None;
+    col.offset_index_length = None;
+}
+
+/// Builds a thrift `RowGroup` from a list of `ColumnChunk`s, computing
+/// `file_offset`, `total_byte_size`, and `total_compressed_size` from the
+/// column metadata.
+fn build_raw_row_group(columns: Vec<ColumnChunk>, num_rows: usize) -> RowGroup {
+    let total_byte_size: i64 = columns
+        .iter()
+        .filter_map(|c| c.meta_data.as_ref())
+        .map(|m| m.total_uncompressed_size)
+        .sum();
+    let total_compressed_size: i64 = columns
+        .iter()
+        .filter_map(|c| c.meta_data.as_ref())
+        .map(|m| m.total_compressed_size)
+        .sum();
+    let file_offset = columns
+        .first()
+        .and_then(|c| c.meta_data.as_ref())
+        .map(|m| m.data_page_offset);
+
+    RowGroup {
+        columns,
+        total_byte_size,
+        num_rows: num_rows as i64,
+        sorting_columns: None,
+        file_offset,
+        total_compressed_size: Some(total_compressed_size),
+        ordinal: None,
     }
 }
 
@@ -870,16 +913,21 @@ fn generate_null_column_chunk_bytes(
     file_offset: u64,
 ) -> ParquetResult<(Vec<u8>, ColumnChunk)> {
     let field_info = parquet_field.get_field_info();
-    let is_required = field_info.repetition == parquet2::schema::Repetition::Required;
+    let is_required = field_info.repetition == Repetition::Required;
     let is_symbol = column_type.tag() == ColumnTypeTag::Symbol;
+
+    // Walk the type tree to collect the full root-to-leaf path, the
+    // maximum repetition/definition levels, and the leaf physical type.
+    let (path, max_rep_level, _max_def_level, (thrift_type, _type_length)) =
+        collect_leaf_info(parquet_field);
 
     // Build page data.
     let mut page_data = if is_required {
         // Required column: no definition levels, all-zero values.
         generate_required_zero_page(parquet_field, column_type, row_count)?
     } else {
-        // Optional column: RLE def levels = all zeros, no values.
-        generate_optional_null_page(row_count)
+        // Optional/nested column: RLE rep+def levels = all zeros, no values.
+        generate_optional_null_page(row_count, max_rep_level)
     };
 
     // Symbol columns use RleDictionary encoding. The decoder does not
@@ -889,18 +937,6 @@ fn generate_null_column_chunk_bytes(
     if is_symbol {
         page_data.push(0x00); // bit_width = 0 (empty dictionary)
     }
-
-    // Build column path_in_schema.
-    let path = vec![field_info.name.clone()];
-
-    // Determine the parquet physical type.
-    let (thrift_type, _type_length) = match parquet_field {
-        ParquetType::PrimitiveType(pt) => pt.physical_type.into(),
-        ParquetType::GroupType { .. } => {
-            // Group types (arrays) use BYTE_ARRAY as the leaf physical type.
-            (Type::BYTE_ARRAY, None)
-        }
-    };
 
     let mut chunk_bytes = Vec::new();
 
@@ -998,6 +1034,7 @@ fn generate_null_column_chunk_bytes(
         statistics: None,
         encoding_stats: None,
         bloom_filter_offset: None,
+        bloom_filter_length: None,
     };
 
     let column_chunk = ColumnChunk {
@@ -1015,22 +1052,81 @@ fn generate_null_column_chunk_bytes(
     Ok((chunk_bytes, column_chunk))
 }
 
-/// Generates page data for an Optional column where all rows are NULL.
-/// Format: 4-byte LE length prefix + RLE-encoded def levels (all zeros).
-fn generate_optional_null_page(row_count: usize) -> Vec<u8> {
-    // RLE encoding of `row_count` zeros with bit_width=1:
-    // header = (count << 1) as varint, value = 0x00
-    let mut rle_data = Vec::with_capacity(8);
-    let mut varint_buf = [0u8; 10];
-    let varint_len = uleb128::encode((row_count << 1) as u64, &mut varint_buf);
-    rle_data.extend_from_slice(&varint_buf[..varint_len]);
-    rle_data.push(0x00); // value byte: all zeros
+/// Collects the full root-to-leaf path for `path_in_schema` and computes
+/// the leaf's max repetition/definition levels and physical type.
+///
+/// For primitive types the path is `["col_name"]` with levels derived from
+/// the single node's repetition.  For nested LIST groups (arrays) this
+/// walks down to the leaf, e.g. `["col_name", "list", "element"]`,
+/// accumulating levels at each nesting step.
+fn collect_leaf_info(parquet_type: &ParquetType) -> (Vec<String>, i16, i16, (Type, Option<i32>)) {
+    let mut path = Vec::new();
+    let mut max_rep_level: i16 = 0;
+    let mut max_def_level: i16 = 0;
+    let mut current = parquet_type;
+    loop {
+        let info = current.get_field_info();
+        match info.repetition {
+            Repetition::Optional => {
+                max_def_level += 1;
+            }
+            Repetition::Repeated => {
+                max_def_level += 1;
+                max_rep_level += 1;
+            }
+            Repetition::Required => {}
+        }
+        path.push(info.name.clone());
+        match current {
+            ParquetType::PrimitiveType(pt) => {
+                let thrift_type = pt.physical_type.into();
+                return (path, max_rep_level, max_def_level, thrift_type);
+            }
+            ParquetType::GroupType { fields, .. } => {
+                if let Some(child) = fields.first() {
+                    current = child;
+                } else {
+                    // Empty group — should not happen for valid schemas.
+                    return (path, max_rep_level, max_def_level, (Type::BYTE_ARRAY, None));
+                }
+            }
+        }
+    }
+}
 
-    // DataPageV1 def level encoding: 4-byte LE length prefix + RLE data.
-    let rle_len = rle_data.len() as u32;
-    let mut page_data = Vec::with_capacity(4 + rle_data.len());
-    page_data.extend_from_slice(&rle_len.to_le_bytes());
-    page_data.extend_from_slice(&rle_data);
+/// Generates page data for an Optional (or nested) column where all rows
+/// are NULL.  For flat Optional columns `max_rep_level` is 0 and only
+/// definition levels are emitted.  For nested types (e.g. LIST arrays)
+/// `max_rep_level > 0` and the page contains repetition levels first,
+/// then definition levels, matching the DataPageV1 wire format expected
+/// by `split_buffer_v1`.
+fn generate_optional_null_page(row_count: usize, max_rep_level: i16) -> Vec<u8> {
+    // RLE encoding of `row_count` zeros: header = (count << 1) as varint,
+    // followed by ceil(bit_width / 8) zero bytes for the value.  Since the
+    // value is 0 regardless of bit_width, one 0x00 byte suffices for any
+    // bit_width in [1, 8].
+    let rle_all_zeros = {
+        let mut buf = Vec::with_capacity(8);
+        let mut varint_buf = [0u8; 10];
+        let varint_len = uleb128::encode((row_count << 1) as u64, &mut varint_buf);
+        buf.extend_from_slice(&varint_buf[..varint_len]);
+        buf.push(0x00); // value byte: all zeros
+        buf
+    };
+
+    let rle_section_len = rle_all_zeros.len() as u32;
+    // Estimate: optional rep + def sections.
+    let mut page_data = Vec::with_capacity(2 * (4 + rle_all_zeros.len()));
+
+    // Repetition levels (only for nested types with max_rep_level > 0).
+    if max_rep_level > 0 {
+        page_data.extend_from_slice(&rle_section_len.to_le_bytes());
+        page_data.extend_from_slice(&rle_all_zeros);
+    }
+
+    // Definition levels.
+    page_data.extend_from_slice(&rle_section_len.to_le_bytes());
+    page_data.extend_from_slice(&rle_all_zeros);
     page_data
 }
 
@@ -1076,16 +1172,20 @@ mod tests {
     use std::io::Write;
     use std::ptr::null;
 
-    use crate::parquet_write::file::{
-        create_row_group, ParquetWriter, WriteOptions, DEFAULT_BLOOM_FILTER_FPP,
+    use super::adjust_column_chunk_offsets;
+    use crate::parquet_write::file::DEFAULT_BLOOM_FILTER_FPP;
+    use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
+    use crate::parquet_write::schema::{
+        to_compressions, to_encodings, to_parquet_schema, Column, Partition,
     };
-    use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;
+    use parquet2::compression::Compression;
     use parquet2::read::read_metadata_with_size;
     use parquet2::write;
     use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+    use tempfile::NamedTempFile;
 
     fn save_to_file(bytes: &Bytes) {
         if let Ok(path) = env::var("OUT_PARQUET_FILE") {
@@ -1110,6 +1210,7 @@ mod tests {
             0,
             false,
             false,
+            0,
         )
         .unwrap()
     }
@@ -1162,6 +1263,7 @@ mod tests {
             data_page_size: None,
             raw_array_encoding: false,
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            min_compression_ratio: 0.0,
         };
         let bloom_filter_columns = HashSet::new();
 
@@ -1178,6 +1280,7 @@ mod tests {
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
             foptions,
+            &to_compressions(&new_partition),
             &bloom_filter_columns,
             false,
         )?;
@@ -1189,6 +1292,7 @@ mod tests {
             metadata.schema_descr.fields(),
             &to_encodings(&new_partition),
             foptions,
+            &to_compressions(&new_partition),
             &bloom_filter_columns,
             false,
         )?;
@@ -1253,6 +1357,146 @@ mod tests {
         Ok(())
     }
 
+    /// Write an initial compressed parquet file to a temp file and return it.
+    fn write_initial_zstd_file() -> Result<(NamedTempFile, Partition), Box<dyn Error>> {
+        let col1 = [1i32, 2, i32::MIN, 3];
+        let col2 = [0.5f32, 0.001, f32::nan(), 3.15];
+        let col1_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1);
+        let col2_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2);
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: [col1_w, col2_w].to_vec(),
+        };
+
+        let tmp = NamedTempFile::new()?;
+        let file = tmp.reopen()?;
+        ParquetWriter::new(file)
+            .with_compression(CompressionOptions::Zstd(None))
+            .finish(partition)?;
+
+        // Build the partition for appending (same schema, fresh data).
+        let col1_extra = [4, 5, i32::MIN];
+        let col2_extra = [f32::nan(), 3.13, std::f32::consts::PI];
+        let col1_extra_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1_extra);
+        let col2_extra_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2_extra);
+        let new_partition = Partition {
+            table: "test_table".to_string(),
+            columns: [col1_extra_w, col2_extra_w].to_vec(),
+        };
+
+        Ok((tmp, new_partition))
+    }
+
+    #[test]
+    fn test_updater_with_min_compression_ratio() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+
+        // --- Case 1: very high min_compression_ratio forces fallback to uncompressed ---
+        {
+            let (tmp, new_partition) = write_initial_zstd_file()?;
+            let file_len = tmp.as_file().metadata()?.len();
+            let reader = tmp.reopen()?;
+            let alloc_state = TestAllocatorState::new();
+
+            let writer = tmp.reopen()?;
+            let mut updater = super::ParquetUpdater::new(
+                alloc_state.allocator(),
+                reader,
+                file_len,
+                writer,
+                file_len,                       // write_file_size: update (append) mode
+                None,                           // sorting_columns
+                true,                           // write_statistics
+                false,                          // raw_array_encoding
+                CompressionOptions::Zstd(None), // compression
+                None,                           // row_group_size
+                None,                           // data_page_size
+                DEFAULT_BLOOM_FILTER_FPP,       // bloom_filter_fpp
+                100.0,                          // min_compression_ratio (impossibly high)
+            )?;
+
+            updater.insert_row_group(&new_partition, 1)?;
+            updater.end(None)?;
+
+            // Read back metadata and check the appended row group (index 1).
+            let verify_file = tmp.reopen()?;
+            let verify_len = verify_file.metadata()?.len();
+            let metadata = read_metadata_with_size(&mut &verify_file, verify_len)?;
+            assert_eq!(metadata.row_groups.len(), 2, "expected 2 row groups");
+
+            // The appended row group should have fallen back to Uncompressed
+            // because the ratio threshold (100.0) is impossibly high.
+            let appended_rg = &metadata.row_groups[1];
+            for col in appended_rg.columns() {
+                assert_eq!(
+                    col.compression(),
+                    Compression::Uncompressed,
+                    "expected uncompressed fallback for column {:?}",
+                    col.descriptor().path_in_schema,
+                );
+            }
+
+            // Original row group should still be Zstd (it was written before
+            // the updater applied its ratio check).
+            let original_rg = &metadata.row_groups[0];
+            for col in original_rg.columns() {
+                assert_eq!(
+                    col.compression(),
+                    Compression::Zstd,
+                    "original row group column should remain Zstd",
+                );
+            }
+        }
+
+        // --- Case 2: low min_compression_ratio keeps compressed output ---
+        {
+            let (tmp, new_partition) = write_initial_zstd_file()?;
+            let file_len = tmp.as_file().metadata()?.len();
+            let reader = tmp.reopen()?;
+            let alloc_state = TestAllocatorState::new();
+
+            let writer = tmp.reopen()?;
+            let mut updater = super::ParquetUpdater::new(
+                alloc_state.allocator(),
+                reader,
+                file_len,
+                writer,
+                file_len, // write_file_size: update (append) mode
+                None,
+                true,
+                false,
+                CompressionOptions::Zstd(None),
+                None,
+                None,
+                DEFAULT_BLOOM_FILTER_FPP,
+                0.5, // min_compression_ratio: ratio check active but easily met
+            )?;
+
+            updater.insert_row_group(&new_partition, 1)?;
+            updater.end(None)?;
+
+            let verify_file = tmp.reopen()?;
+            let verify_len = verify_file.metadata()?.len();
+            let metadata = read_metadata_with_size(&mut &verify_file, verify_len)?;
+            assert_eq!(metadata.row_groups.len(), 2);
+
+            // The appended row group should keep Zstd because the ratio
+            // threshold (0.5) is trivially satisfied — it only requires
+            // uncompressed/compressed >= 0.5.
+            let appended_rg = &metadata.row_groups[1];
+            for col in appended_rg.columns() {
+                assert_eq!(
+                    col.compression(),
+                    Compression::Zstd,
+                    "expected Zstd compression to be kept for column {:?}",
+                    col.descriptor().path_in_schema,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     /// After copy_row_group with a non-zero offset shift, the bloom filter
     /// on the last column must still be readable and contain the original
     /// values. This requires either copying the bloom bytes into the new
@@ -1299,6 +1543,7 @@ mod tests {
             data_page_size: None,
             raw_array_encoding: false,
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            min_compression_ratio: 0.0,
         };
 
         let options = write::WriteOptions {
@@ -1307,6 +1552,7 @@ mod tests {
             bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
         };
 
+        let compressions_rg0 = to_compressions(&partition_rg0);
         let (rg0, bloom0) = create_row_group(
             &partition_rg0,
             0,
@@ -1314,9 +1560,11 @@ mod tests {
             schema.fields(),
             &encodings,
             foptions,
+            &compressions_rg0,
             &bloom_cols,
             false,
         )?;
+        let compressions_rg1 = to_compressions(&partition_rg1);
         let (rg1, bloom1) = create_row_group(
             &partition_rg1,
             0,
@@ -1324,6 +1572,7 @@ mod tests {
             schema.fields(),
             &encodings,
             foptions,
+            &compressions_rg1,
             &bloom_cols,
             false,
         )?;
@@ -1414,6 +1663,7 @@ mod tests {
             ],
             column_structure_version: -1,
         };
+        let compressions_new = to_compressions(&partition_new);
         let (rg_new, bloom_new) = create_row_group(
             &partition_new,
             0,
@@ -1421,6 +1671,7 @@ mod tests {
             schema.fields(),
             &to_encodings(&partition_new),
             foptions,
+            &compressions_new,
             &bloom_cols,
             false,
         )?;
@@ -1487,22 +1738,7 @@ mod tests {
         // Apply the SAME offset adjustments as the production code.
         let mut thrift_rg = old_rg1.clone().into_thrift();
         for col_chunk in &mut thrift_rg.columns {
-            if let Some(ref mut meta) = col_chunk.meta_data {
-                meta.data_page_offset += offset_delta;
-                if let Some(ref mut dict_offset) = meta.dictionary_page_offset {
-                    *dict_offset += offset_delta;
-                }
-                if let Some(ref mut idx_offset) = meta.index_page_offset {
-                    *idx_offset += offset_delta;
-                }
-                if let Some(ref mut bf_offset) = meta.bloom_filter_offset {
-                    *bf_offset += offset_delta;
-                }
-            }
-            col_chunk.column_index_offset = None;
-            col_chunk.column_index_length = None;
-            col_chunk.offset_index_offset = None;
-            col_chunk.offset_index_length = None;
+            adjust_column_chunk_offsets(col_chunk, offset_delta);
         }
 
         new_pf.write_raw_row_group(&raw_bytes, thrift_rg)?;

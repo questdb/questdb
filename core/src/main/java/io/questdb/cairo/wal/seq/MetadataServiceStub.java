@@ -109,6 +109,11 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig) {
+        throw CairoException.critical(0).put("set parquet encoding does not update sequencer metadata");
+    }
+
+    @Override
     default void setMatViewRefresh(
             int refreshType,
             int timerInterval,

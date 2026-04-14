@@ -46,6 +46,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -114,7 +115,7 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(count);
 
         if (count > 0) {
-            final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
+            final ReadOnlyObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
             for (int i = 0; i < count; i++) {
                 final CharSequence name = namedVariables.get(i);
                 eventMem.putStr(name);
@@ -515,6 +516,9 @@ class WalEventWriter implements Closeable {
     ) {
         // Jump back to the start of the last event and write the -1 sentinel
         // so that appendData finds it at the expected position.
+        // NB: if appendData() throws, the event file is left in a partially
+        // rewritten state. This is acceptable because the exception will
+        // close the WalWriter and the segment will not be used for writing anymore
         eventMem.jumpTo(startOffset);
         eventMem.putInt(-1);
 

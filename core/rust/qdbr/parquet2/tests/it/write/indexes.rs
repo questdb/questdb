@@ -45,6 +45,7 @@ fn write_file() -> Result<Vec<u8>> {
         DynIter::new(pages.into_iter()),
         CompressionOptions::Uncompressed,
         vec![],
+        0.0,
     ));
     let columns = std::iter::once(Ok(pages));
 

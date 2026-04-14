@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -11388,6 +11389,101 @@ create table tab as (
     }
 
     @Test
+    public void testUnnamedPortalCursorWithFlush() throws Exception {
+        // Regression test for https://github.com/questdb/questdb/issues/6737
+        // postgres.js cursor iteration uses unnamed portals with Flush between batches.
+        // Previously, QuestDB freed the cursor and released the pipeline entry after the
+        // first Flush, causing the second Execute to fail with "spurious execute message".
+        //
+        // Protocol flow (exact postgres.js cursor pattern):
+        //   Parse + Describe(S) + Bind('') + Execute('', maxRows=2) + Flush
+        //   Execute('', maxRows=2) + Flush
+        //   Execute('', maxRows=2) + Flush  (1 row left + CommandComplete)
+        //   Sync
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000024800000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b000100000001327300000004
+                >450000000900000000024800000004
+                <440000000b00010000000133440000000b000100000001347300000004
+                >450000000900000000024800000004
+                <440000000b00010000000135430000000d53454c454354203100
+                >5300000004
+                <5a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedPortalCursorWithSync() throws Exception {
+        // Same as testUnnamedPortalCursorWithFlush but uses Sync instead of Flush
+        // between cursor batches. This is an alternative protocol flow that some
+        // drivers may use.
+        //
+        // Protocol flow:
+        //   Parse + Describe(S) + Bind('') + Execute('', maxRows=2) + Sync
+        //   Execute('', maxRows=2) + Sync
+        //   Execute('', maxRows=2) + Sync  (1 row left + CommandComplete)
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000025300000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b0001000000013273000000045a0000000549
+                >450000000900000000025300000004
+                <440000000b00010000000133440000000b0001000000013473000000045a0000000549
+                >450000000900000000025300000004
+                <440000000b00010000000135430000000d53454c4543542031005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedPortalCursorAbandon() throws Exception {
+        // Tests that abandoning a suspended unnamed portal cursor by starting a new
+        // query properly frees resources without leaking.
+        //
+        // Protocol flow:
+        //   Parse + Describe(S) + Bind('') + Execute('', maxRows=2) + Flush  <- suspend
+        //   Parse(new query) + Describe(S) + Bind('') + Execute('', maxRows=0) + Sync  <- new query
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000024800000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b000100000001327300000004
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528322900000044000000065300420000000c0000000000000000450000000900000000005300000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b00010000000132430000000d53454c4543542032005a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
+    public void testUnnamedPortalCursorClose() throws Exception {
+        // Tests that closing a suspended unnamed portal cursor works correctly.
+        //
+        // Protocol flow:
+        //   Parse + Describe(S) + Bind('') + Execute('', maxRows=2) + Flush  <- suspend
+        //   Close(portal '') + Sync  <- close the suspended portal
+        assertHexScript("""
+                >0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000
+                <520000000800000003
+                >700000000a717565737400
+                <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                >50000000260053454c45435420782046524f4d206c6f6e675f73657175656e636528352900000044000000065300420000000c0000000000000000450000000900000000024800000004
+                <3100000004320000000474000000060000540000001a00017800000000000001000000140008ffffffff0000440000000b00010000000131440000000b000100000001327300000004
+                >430000000650005300000004
+                <33000000045a0000000549
+                >5800000004
+                """);
+    }
+
+    @Test
     public void testUnsupportedParameterType() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("select x, ? y from long_sequence(5)")) {
@@ -11488,7 +11584,7 @@ create table tab as (
                             // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
                             // thrown from UpdateOperator as this changes table structure
                             // recompile should be successful so the UPDATE completes
-                            writer.addColumn("newCol", ColumnType.INT);
+                            writer.addColumn("newCol", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
                             first = false;
                         }
                     }
