@@ -24,9 +24,11 @@
 
 package io.questdb.griffin.engine.lv;
 
+import io.questdb.cairo.BinaryTypeDriver;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.StringTypeDriver;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.lv.InMemoryTable;
@@ -36,8 +38,8 @@ import io.questdb.std.DirectByteSequenceView;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 
 /**
  * Record implementation that reads column values from the InMemoryTable's
@@ -50,8 +52,8 @@ public class LiveViewRecord implements Record {
     private final DirectString csViewA = new DirectString();
     private final DirectString csViewB = new DirectString();
     private final InMemoryTable table;
-    private final DirectUtf8String utf8ViewA = new DirectUtf8String();
-    private final DirectUtf8String utf8ViewB = new DirectUtf8String();
+    private final Utf8SplitString utf8ViewA = new Utf8SplitString();
+    private final Utf8SplitString utf8ViewB = new Utf8SplitString();
     private long row;
 
     public LiveViewRecord(InMemoryTable table) {
@@ -72,7 +74,7 @@ public class LiveViewRecord implements Record {
     public BinarySequence getBin(int col) {
         long auxAddr = table.getAuxColumnAddress(col);
         long dataAddr = table.getColumnAddress(col);
-        long offset = Unsafe.getUnsafe().getLong(auxAddr + row * Long.BYTES);
+        long offset = BinaryTypeDriver.INSTANCE.getDataVectorOffset(auxAddr, row);
         long len = Unsafe.getUnsafe().getLong(dataAddr + offset);
         if (len == TableUtils.NULL_LEN) {
             return null;
@@ -84,7 +86,7 @@ public class LiveViewRecord implements Record {
     public long getBinLen(int col) {
         long auxAddr = table.getAuxColumnAddress(col);
         long dataAddr = table.getColumnAddress(col);
-        long offset = Unsafe.getUnsafe().getLong(auxAddr + row * Long.BYTES);
+        long offset = BinaryTypeDriver.INSTANCE.getDataVectorOffset(auxAddr, row);
         return Unsafe.getUnsafe().getLong(dataAddr + offset);
     }
 
@@ -147,7 +149,7 @@ public class LiveViewRecord implements Record {
     public int getStrLen(int col) {
         long auxAddr = table.getAuxColumnAddress(col);
         long dataAddr = table.getColumnAddress(col);
-        long offset = Unsafe.getUnsafe().getLong(auxAddr + row * Long.BYTES);
+        long offset = StringTypeDriver.INSTANCE.getDataVectorOffset(auxAddr, row);
         return Unsafe.getUnsafe().getInt(dataAddr + offset);
     }
 
@@ -183,10 +185,7 @@ public class LiveViewRecord implements Record {
 
     @Override
     public int getVarcharSize(int col) {
-        long auxAddr = table.getAuxColumnAddress(col);
-        long dataAddr = table.getColumnAddress(col);
-        long offset = Unsafe.getUnsafe().getLong(auxAddr + row * Long.BYTES);
-        return Unsafe.getUnsafe().getInt(dataAddr + offset);
+        return VarcharTypeDriver.getValueSize(table.getAuxColumnAddress(col), row);
     }
 
     @Override
@@ -201,7 +200,7 @@ public class LiveViewRecord implements Record {
     private CharSequence getStr0(int col, DirectString view) {
         long auxAddr = table.getAuxColumnAddress(col);
         long dataAddr = table.getColumnAddress(col);
-        long offset = Unsafe.getUnsafe().getLong(auxAddr + row * Long.BYTES);
+        long offset = StringTypeDriver.INSTANCE.getDataVectorOffset(auxAddr, row);
         int len = Unsafe.getUnsafe().getInt(dataAddr + offset);
         if (len == TableUtils.NULL_LEN) {
             return null;
@@ -209,14 +208,11 @@ public class LiveViewRecord implements Record {
         return view.of(dataAddr + offset + Integer.BYTES, len);
     }
 
-    private Utf8Sequence getVarchar0(int col, DirectUtf8String view) {
+    private Utf8Sequence getVarchar0(int col, Utf8SplitString view) {
         long auxAddr = table.getAuxColumnAddress(col);
         long dataAddr = table.getColumnAddress(col);
-        long offset = Unsafe.getUnsafe().getLong(auxAddr + row * Long.BYTES);
-        int size = Unsafe.getUnsafe().getInt(dataAddr + offset);
-        if (size == TableUtils.NULL_LEN) {
-            return null;
-        }
-        return view.of(dataAddr + offset + Integer.BYTES, dataAddr + offset + Integer.BYTES + size);
+        long auxLim = auxAddr + VarcharTypeDriver.INSTANCE.getAuxVectorSize(table.getRowCount());
+        long dataLim = dataAddr + table.getDataSize(col);
+        return VarcharTypeDriver.getSplitValue(auxAddr, auxLim, dataAddr, dataLim, row, view);
     }
 }

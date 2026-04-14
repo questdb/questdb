@@ -25,13 +25,15 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.StringTypeDriver;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.std.BinarySequence;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -44,8 +46,16 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Columnar in-memory store for live view results. Each column is a contiguous
- * native memory region ({@link MemoryCARW}). Variable-length columns (STRING,
- * VARCHAR) use a data+aux pair: aux stores per-row offsets into the data region.
+ * native memory region ({@link MemoryCARW}). Variable-length columns use a data+aux pair
+ * whose layout matches the on-disk format of the corresponding {@link ColumnTypeDriver},
+ * so reads and writes can go through the driver APIs:
+ * <ul>
+ *     <li>STRING and BINARY use the N+1 aux layout: 8-byte start offsets with a leading
+ *     sentinel at aux[0] = 0 and a trailing sentinel at aux[N] = total data size.</li>
+ *     <li>VARCHAR uses {@link VarcharTypeDriver}'s 16-byte descriptor (4-byte header,
+ *     6-byte inlined prefix, 48-bit data offset packed into bytes 10-15).</li>
+ *     <li>ARRAY uses {@link ArrayTypeDriver}'s 16-byte descriptor.</li>
+ * </ul>
  */
 public class InMemoryTable implements QuietCloseable {
     private static final long PAGE_SIZE = 64 * 1024;
@@ -96,6 +106,8 @@ public class InMemoryTable implements QuietCloseable {
             MemoryCARW aux = auxColumns.getQuick(i);
             if (aux != null) {
                 aux.jumpTo(0);
+                // re-prime the leading aux[0] = 0 sentinel for STRING/BINARY
+                ColumnType.getDriver(columnTypes[i]).configureAuxMemO3RSS(aux);
             }
         }
         rowCount = 0;
@@ -197,6 +209,8 @@ public class InMemoryTable implements QuietCloseable {
 
             if (varLen) {
                 MemoryCARW auxMem = Vm.getCARWInstance(PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                // writes the leading aux[0] = 0 sentinel for STRING/BINARY; no-op for VARCHAR/ARRAY
+                ColumnType.getDriver(type).configureAuxMemO3RSS(auxMem);
                 auxColumns.extendAndSet(i, auxMem);
             } else {
                 auxColumns.extendAndSet(i, null);
@@ -254,54 +268,30 @@ public class InMemoryTable implements QuietCloseable {
     }
 
     /**
-     * Appends a BINARY value. Writes the blob to the data column and
-     * records the data offset in the aux column.
+     * Appends a BINARY value. Matches {@link io.questdb.cairo.BinaryTypeDriver}'s
+     * on-disk format: writes the blob via {@link MemoryCARW#putBin} and appends
+     * the post-write data offset (end of the new row = start of the next row) to aux.
      */
     public void putBin(int col, BinarySequence value) {
         MemoryCARW data = columns.getQuick(col);
         MemoryCARW aux = auxColumns.getQuick(col);
-        long dataOffset = data.getAppendOffset();
-        long auxAddr = aux.appendAddressFor(Long.BYTES);
-        Unsafe.getUnsafe().putLong(auxAddr, dataOffset);
-        data.putBin(value);
+        aux.putLong(data.putBin(value));
     }
 
     /**
-     * Appends a STRING value. Writes the string to the data column and
-     * records the data offset in the aux column.
+     * Appends a STRING value, delegating to {@link StringTypeDriver#appendValue} so
+     * the aux vector keeps the N+1 offset layout used by the on-disk format.
      */
     public void putStr(int col, CharSequence value) {
-        MemoryCARW data = columns.getQuick(col);
-        MemoryCARW aux = auxColumns.getQuick(col);
-        long dataOffset = data.getAppendOffset();
-        // write offset to aux
-        long auxAddr = aux.appendAddressFor(Long.BYTES);
-        Unsafe.getUnsafe().putLong(auxAddr, dataOffset);
-        // write string to data
-        data.putStr(value);
+        StringTypeDriver.appendValue(auxColumns.getQuick(col), columns.getQuick(col), value);
     }
 
     /**
-     * Appends a VARCHAR value. Uses the same data+aux layout as STRING.
+     * Appends a VARCHAR value using {@link VarcharTypeDriver}'s 16-byte aux descriptor,
+     * which inlines up to 9 bytes into the aux entry and stores longer values in the data region.
      */
     public void putVarchar(int col, Utf8Sequence value) {
-        MemoryCARW data = columns.getQuick(col);
-        MemoryCARW aux = auxColumns.getQuick(col);
-        long dataOffset = data.getAppendOffset();
-        long auxAddr = aux.appendAddressFor(Long.BYTES);
-        Unsafe.getUnsafe().putLong(auxAddr, dataOffset);
-        // store as length-prefixed UTF-8
-        if (value != null) {
-            int size = value.size();
-            long addr = data.appendAddressFor(Integer.BYTES + size);
-            Unsafe.getUnsafe().putInt(addr, size);
-            for (int i = 0; i < size; i++) {
-                Unsafe.getUnsafe().putByte(addr + Integer.BYTES + i, value.byteAt(i));
-            }
-        } else {
-            long addr = data.appendAddressFor(Integer.BYTES);
-            Unsafe.getUnsafe().putInt(addr, TableUtils.NULL_LEN);
-        }
+        VarcharTypeDriver.appendValue(auxColumns.getQuick(col), columns.getQuick(col), value);
     }
 
     // TODO(live-view): zero-GC — allocates a new String per non-null symbol (value.toString()) on the refresh hot path,
@@ -359,17 +349,16 @@ public class InMemoryTable implements QuietCloseable {
         long remaining = rowCount - rowsToEvict;
         boolean hasVarLen = false;
 
-        // evict fixed-size and aux columns
         for (int i = 0; i < columnCount; i++) {
             if (isVarLen[i]) {
                 hasVarLen = true;
-                // shift aux entries
-                long auxEntrySize = ColumnType.getDriver(columnTypes[i]).auxRowsToBytes(1);
+                ColumnTypeDriver driver = ColumnType.getDriver(columnTypes[i]);
                 MemoryCARW aux = auxColumns.getQuick(i);
                 long auxAddr = aux.getPageAddress(0);
-                long srcOffset = rowsToEvict * auxEntrySize;
-                long bytesToMove = remaining * auxEntrySize;
-                if (bytesToMove > 0) {
+                long srcOffset = driver.getAuxVectorOffset(rowsToEvict);
+                // getAuxVectorSize accounts for the trailing N+1 sentinel on STRING/BINARY
+                long bytesToMove = driver.getAuxVectorSize(remaining);
+                if (bytesToMove > 0 && srcOffset > 0) {
                     Vect.memmove(auxAddr, auxAddr + srcOffset, bytesToMove);
                 }
                 aux.jumpTo(bytesToMove);
@@ -387,7 +376,6 @@ public class InMemoryTable implements QuietCloseable {
             }
         }
 
-        // for var-length columns, compact the data region and adjust offsets
         if (hasVarLen) {
             for (int i = 0; i < columnCount; i++) {
                 if (!isVarLen[i]) {
@@ -401,25 +389,27 @@ public class InMemoryTable implements QuietCloseable {
     }
 
     /**
-     * Compacts a var-length column's data region after aux entries have been
-     * shifted. Uses the column's type driver to determine data boundaries,
-     * then memcpy's the surviving data range to position 0 and adjusts
-     * all aux offsets by the same delta.
+     * Compacts a var-length column's data region after {@link #evictRows} shifted its
+     * aux entries. Uses the column type driver to locate the surviving data range,
+     * memmoves it to position 0, then rewrites the surviving offsets via
+     * {@link ColumnTypeDriver#shiftCopyAuxVector} so each driver handles its own
+     * descriptor format (simple long for STRING/BINARY, 48-bit packed for VARCHAR,
+     * 16-byte descriptor for ARRAY).
      */
     private void compactVarLenColumn(int col, long remaining) {
-        if (remaining == 0) {
-            columns.getQuick(col).jumpTo(0);
-            return;
-        }
+        ColumnTypeDriver driver = ColumnType.getDriver(columnTypes[col]);
         MemoryCARW data = columns.getQuick(col);
         MemoryCARW aux = auxColumns.getQuick(col);
+        if (remaining == 0) {
+            data.jumpTo(0);
+            aux.jumpTo(0);
+            driver.configureAuxMemO3RSS(aux);
+            return;
+        }
+
         long dataAddr = data.getPageAddress(0);
         long auxAddr = aux.getPageAddress(0);
-
-        var driver = ColumnType.getDriver(columnTypes[col]);
-        // first surviving row's data offset = start of data to keep
         long dataStart = driver.getDataVectorOffset(auxAddr, 0);
-        // last surviving row's data end
         long dataEnd = driver.getDataVectorSizeAt(auxAddr, remaining - 1);
         long dataBytes = dataEnd - dataStart;
 
@@ -428,14 +418,8 @@ public class InMemoryTable implements QuietCloseable {
         }
         data.jumpTo(dataBytes);
 
-        // adjust all aux offsets by -dataStart
         if (dataStart > 0) {
-            long auxEntrySize = driver.auxRowsToBytes(1);
-            for (long row = 0; row < remaining; row++) {
-                long auxEntryAddr = auxAddr + row * auxEntrySize;
-                long oldOffset = Unsafe.getUnsafe().getLong(auxEntryAddr);
-                Unsafe.getUnsafe().putLong(auxEntryAddr, oldOffset - dataStart);
-            }
+            driver.shiftCopyAuxVector(-dataStart, auxAddr, 0, remaining - 1, auxAddr, aux.size());
         }
     }
 }
