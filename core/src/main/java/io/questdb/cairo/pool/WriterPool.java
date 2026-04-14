@@ -310,9 +310,15 @@ public class WriterPool extends AbstractPool {
         unlock(tableToken, null, false);
     }
 
-    private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
+    private void addCommandToWriterQueue(TableToken tableToken, Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
         TableWriter writer;
         while ((writer = e.writer) == null && e.owner != UNALLOCATED) {
+            // If the entry has been removed from the pool (e.g. distressed close),
+            // our reference is orphaned and the spin condition will never be satisfied.
+            // Bail out and let the caller retry.
+            if (entries.get(tableToken.getDirName()) != e) {
+                throw EntryUnavailableException.instance("please retry");
+            }
             Os.pause();
         }
         if (writer == null) {
@@ -481,7 +487,7 @@ public class WriterPool extends AbstractPool {
                     }
                 }
                 if (asyncWriterCommand != null) {
-                    addCommandToWriterQueue(e, asyncWriterCommand, thread);
+                    addCommandToWriterQueue(tableToken, e, asyncWriterCommand, thread);
                     return null;
                 }
 
@@ -561,11 +567,6 @@ public class WriterPool extends AbstractPool {
         if (isDistressed) {
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
             entries.remove(tableToken.getDirName());
-            // Release any thread spinning in addCommandToWriterQueue on a stale reference
-            // to this entry. closeWriter cleared e.writer, so without also clearing e.owner
-            // the spin condition (writer == null && owner != UNALLOCATED) stays true forever.
-            Unsafe.getUnsafe().storeFence();
-            Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             notifyListener(thread, tableToken, PoolListener.EV_RETURN);
             return true;
         }
