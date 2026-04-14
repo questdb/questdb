@@ -30,11 +30,13 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -111,6 +113,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     private final UnorderedVarcharMapValue value;
     private final UnorderedVarcharMapValue value2;
     private final UnorderedVarcharMapValue value3;
+    private final long valueSize;
+    private long batchEmptyValueStart;
     private int free;
     private int initialKeyCapacity;
     private int keyCapacity;
@@ -184,6 +188,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                     valueSize += size;
                 }
             }
+            this.valueSize = valueSize;
 
             this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
             final long sizeBytes = entrySize * this.keyCapacity;
@@ -238,6 +243,9 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             free = 0;
             size = 0;
         }
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
+        }
         Misc.free(keySink);
         Misc.free(allocator);
     }
@@ -245,6 +253,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public MapRecordCursor getCursor() {
         return cursor.init(memStart, memLimit, size);
+    }
+
+    @Override
+    public long getEntryBase() {
+        return memStart;
     }
 
     @Override
@@ -338,6 +351,33 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     }
 
     @Override
+    public long probeBatch(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        final int directColumnIndex = mapSink.getDirectColumnIndex();
+        if (directColumnIndex >= 0) {
+            return probeBatchUnsafe(record, directColumnIndex, batchStart, batchEnd, batchAddr);
+        }
+
+        for (long r = batchStart; r < batchEnd; r++) {
+            record.setRowIndex(r);
+            mapSink.copy(record, key);
+            final UnorderedVarcharMapValue v = (UnorderedVarcharMapValue) key.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() - memStart, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return memStart;
+    }
+
+    @Override
     public void reopen(int keyCapacity, long heapSize) {
         if (memStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
@@ -354,6 +394,14 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             restoreInitialCapacity();
         }
         allocator.reopen();
+    }
+
+    @Override
+    public void reserveCapacity(long additionalKeys) {
+        if (free < additionalKeys) {
+            long required = keyCapacity + (long) Math.ceil((additionalKeys - free) / loadFactor);
+            rehash(Numbers.ceilPow2(required));
+        }
     }
 
     @Override
@@ -375,6 +423,37 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         clear();
+    }
+
+    @Override
+    public void setBatchEmptyValue(GroupByFunctionsUpdater updater) {
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
+        }
+        if (updater == null || valueSize == 0) {
+            return;
+        }
+        final long buf = Unsafe.malloc(valueSize, memoryTag);
+        Vect.memset(buf, valueSize, 0);
+        // Populate the empty value into the scratch buffer using value as a flyweight.
+        // updateEmpty() only writes to value addresses (valueAddress + offset), so it never
+        // touches the key region — passing buf - KEY_SIZE as the entry start is safe.
+        value.of(buf - KEY_SIZE, buf + valueSize, false);
+        updater.updateEmpty(value);
+        // If the resulting value region is all zeros, we don't need a per-entry memcpy
+        // since fresh slots are already zeroed by clear().
+        boolean allZero = true;
+        for (long p = buf, end = buf + valueSize; p < end; p++) {
+            if (Unsafe.getUnsafe().getByte(p) != 0) {
+                allZero = false;
+                break;
+            }
+        }
+        if (allZero) {
+            Unsafe.free(buf, valueSize, memoryTag);
+        } else {
+            batchEmptyValueStart = buf;
+        }
     }
 
     @Override
@@ -493,6 +572,27 @@ public class UnorderedVarcharMap implements Map, Reopenable {
      */
     private static long makePackComparable(long packedHashSizeFlags) {
         return packedHashSizeFlags & 0x7fffffffffffffffL;
+    }
+
+    private long probeBatchUnsafe(
+            PageFrameMemoryRecord record,
+            int columnIndex,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        for (long r = batchStart; r < batchEnd; r++) {
+            record.setRowIndex(r);
+            key.putVarchar(record.getVarcharA(columnIndex));
+            final UnorderedVarcharMapValue v = (UnorderedVarcharMapValue) key.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() - memStart, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return memStart;
     }
 
     private UnorderedVarcharMapValue probeReadOnly(long startAddress, long ptr, long size, long packedHashSizeFlagsToFind, UnorderedVarcharMapValue value) {

@@ -27,8 +27,8 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.Mutable;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -123,31 +123,16 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * Probes rows {@code batchStart..batchEnd-1} and writes packed longs into
      * {@code batchAddr}. Each packed long has the layout:
      * {@code [isNew:1][rowIndex:24][offset:39]}.
-     * <p>
-     * The default implementation delegates to {@link #withKey()},
-     * {@link MapKey#createValue()}, etc. Map implementations may override
-     * with an inlined probe loop that avoids MapKey/MapValue abstractions.
      *
      * @return the entryBase address valid for the written batch
      */
-    default long probeBatch(
+    long probeBatch(
             PageFrameMemoryRecord record,
             RecordSink mapSink,
             long batchStart,
             long batchEnd,
             long batchAddr
-    ) {
-        for (long r = batchStart; r < batchEnd; r++) {
-            record.setRowIndex(r);
-            final MapKey key = withKey();
-            mapSink.copy(record, key);
-            final MapValue value = key.createValue();
-            long encoded = encodeBatchEntry(r, value.getStartAddress() - getEntryBase(), value.isNew());
-            Unsafe.getUnsafe().putLong(batchAddr, encoded);
-            batchAddr += Long.BYTES;
-        }
-        return getEntryBase();
-    }
+    );
 
     /**
      * Reopens previously closed map with given key capacity and initial heap size.
@@ -164,6 +149,25 @@ public interface Map extends Mutable, Closeable, Reopenable {
     }
 
     void restoreInitialCapacity();
+
+    /**
+     * Initializes the empty value pattern used by {@link #probeBatch} to pre-populate
+     * the value region of newly inserted entries. The map allocates an internal scratch
+     * buffer the size of one entry's value region, invokes
+     * {@link GroupByFunctionsUpdater#updateEmpty(MapValue)} against that buffer, then
+     * memcpy's the value region into every new entry created by subsequent
+     * {@link #probeBatch} calls.
+     * <p>
+     * Maps may detect that the resulting empty value is all zeros and skip the per-entry
+     * memcpy entirely (since fresh slots are already zeroed by {@link #clear()}).
+     * <p>
+     * The default implementation is a no-op and is appropriate for maps that do not
+     * implement an inlined {@link #probeBatch}; for those maps the per-function loop
+     * still calls {@code setEmpty}/{@code computeFirst} on new entries directly.
+     */
+    default void setBatchEmptyValue(GroupByFunctionsUpdater updater) {
+        // no-op
+    }
 
     void setKeyCapacity(int keyCapacity);
 

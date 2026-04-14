@@ -30,9 +30,11 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -96,6 +98,8 @@ public class Unordered8Map implements Map, Reopenable {
     private final Unordered8MapValue value;
     private final Unordered8MapValue value2;
     private final Unordered8MapValue value3;
+    private final long valueSize;
+    private long batchEmptyValueStart;
     private int free;
     private boolean hasZero;
     private int initialKeyCapacity;
@@ -159,6 +163,7 @@ public class Unordered8Map implements Map, Reopenable {
                     valueSize += size;
                 }
             }
+            this.valueSize = valueSize;
 
             this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
 
@@ -204,6 +209,9 @@ public class Unordered8Map implements Map, Reopenable {
             size = 0;
             hasZero = false;
         }
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
+        }
     }
 
     @Override
@@ -212,6 +220,11 @@ public class Unordered8Map implements Map, Reopenable {
             return cursor.init(memStart, memLimit, zeroMemStart, size + 1);
         }
         return cursor.init(memStart, memLimit, 0, size);
+    }
+
+    @Override
+    public long getEntryBase() {
+        return memStart;
     }
 
     @Override
@@ -293,6 +306,78 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     @Override
+    public long probeBatch(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        final int directColumnIndex = mapSink.getDirectColumnIndex();
+        if (directColumnIndex >= 0) {
+            return probeBatchUnsafe(record.getPageAddress(directColumnIndex), batchStart, batchEnd, batchAddr);
+        }
+
+        for (long r = batchStart; r < batchEnd; r++) {
+            record.setRowIndex(r);
+            mapSink.copy(record, key);
+            final long k = key.key;
+
+            long startAddress;
+            boolean isNew;
+            if (k != 0) {
+                long hashCode = Hash.hashLong64(k);
+                startAddress = getStartAddress(hashCode & mask);
+                for (; ; ) {
+                    long existing = Unsafe.getUnsafe().getLong(startAddress);
+                    if (existing == 0) {
+                        // New entry — write the key and handle bookkeeping.
+                        Unsafe.getUnsafe().putLong(startAddress, k);
+                        if (--free == 0) {
+                            try {
+                                rehash();
+                            } catch (CairoException e) {
+                                free = 1;
+                                throw e;
+                            }
+                            // Re-locate after rehash.
+                            startAddress = getStartAddress(hashCode & mask);
+                            while (Unsafe.getUnsafe().getLong(startAddress) != k) {
+                                startAddress = getNextAddress(startAddress);
+                            }
+                        }
+                        size++;
+                        if (batchEmptyValueStart != 0) {
+                            Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                        }
+                        isNew = true;
+                        break;
+                    } else if (existing == k) {
+                        isNew = false;
+                        break;
+                    }
+                    startAddress = getNextAddress(startAddress);
+                }
+            } else {
+                // Zero key — stored in the dedicated slot at the end of the buffer.
+                startAddress = zeroMemStart;
+                isNew = !hasZero;
+                if (isNew) {
+                    hasZero = true;
+                    if (batchEmptyValueStart != 0) {
+                        Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                    }
+                }
+            }
+
+            long encoded = Map.encodeBatchEntry(r, startAddress - memStart, isNew);
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return memStart;
+    }
+
+    @Override
     public void reopen(int keyCapacity, long heapSize) {
         if (memStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
@@ -328,6 +413,37 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         clear();
+    }
+
+    @Override
+    public void setBatchEmptyValue(GroupByFunctionsUpdater updater) {
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
+        }
+        if (updater == null || valueSize == 0) {
+            return;
+        }
+        final long buf = Unsafe.malloc(valueSize, memoryTag);
+        Vect.memset(buf, valueSize, 0);
+        // Populate the empty value into the scratch buffer using value as a flyweight.
+        // updateEmpty() only writes to value addresses (valueAddress + offset), so it never
+        // touches the key region — passing buf - KEY_SIZE as the entry start is safe.
+        value.of(buf - KEY_SIZE, buf + valueSize, false);
+        updater.updateEmpty(value);
+        // If the resulting value region is all zeros, we don't need a per-entry memcpy
+        // since fresh slots are already zeroed by clear().
+        boolean allZero = true;
+        for (long p = buf, end = buf + valueSize; p < end; p++) {
+            if (Unsafe.getUnsafe().getByte(p) != 0) {
+                allZero = false;
+                break;
+            }
+        }
+        if (allZero) {
+            Unsafe.free(buf, valueSize, memoryTag);
+        } else {
+            batchEmptyValueStart = buf;
+        }
     }
 
     @Override
@@ -393,6 +509,61 @@ public class Unordered8Map implements Map, Reopenable {
 
     private long getStartAddress(long index) {
         return memStart + entrySize * index;
+    }
+
+    private long probeBatchUnsafe(long columnAddr, long batchStart, long batchEnd, long batchAddr) {
+        for (long r = batchStart; r < batchEnd; r++) {
+            final long k = Unsafe.getUnsafe().getLong(columnAddr + r * Long.BYTES);
+
+            long startAddress;
+            boolean isNew;
+            if (k != 0) {
+                long hashCode = Hash.hashLong64(k);
+                startAddress = getStartAddress(hashCode & mask);
+                for (; ; ) {
+                    long existing = Unsafe.getUnsafe().getLong(startAddress);
+                    if (existing == 0) {
+                        Unsafe.getUnsafe().putLong(startAddress, k);
+                        if (--free == 0) {
+                            try {
+                                rehash();
+                            } catch (CairoException e) {
+                                free = 1;
+                                throw e;
+                            }
+                            startAddress = getStartAddress(hashCode & mask);
+                            while (Unsafe.getUnsafe().getLong(startAddress) != k) {
+                                startAddress = getNextAddress(startAddress);
+                            }
+                        }
+                        size++;
+                        if (batchEmptyValueStart != 0) {
+                            Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                        }
+                        isNew = true;
+                        break;
+                    } else if (existing == k) {
+                        isNew = false;
+                        break;
+                    }
+                    startAddress = getNextAddress(startAddress);
+                }
+            } else {
+                startAddress = zeroMemStart;
+                isNew = !hasZero;
+                if (isNew) {
+                    hasZero = true;
+                    if (batchEmptyValueStart != 0) {
+                        Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                    }
+                }
+            }
+
+            long encoded = Map.encodeBatchEntry(r, startAddress - memStart, isNew);
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return memStart;
     }
 
     private void rehash() {

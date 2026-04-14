@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -97,6 +98,8 @@ public class Unordered4Map implements Map, Reopenable {
     private final Unordered4MapValue value;
     private final Unordered4MapValue value2;
     private final Unordered4MapValue value3;
+    private final long valueSize;
+    private long batchEmptyValueStart;
     private int free;
     private boolean hasZero;
     private int initialKeyCapacity;
@@ -160,6 +163,7 @@ public class Unordered4Map implements Map, Reopenable {
                     valueSize += size;
                 }
             }
+            this.valueSize = valueSize;
 
             this.entrySize = Bytes.align4b(KEY_SIZE + valueSize);
             // Allocate one extra slot at the end for the zero key entry.
@@ -203,6 +207,9 @@ public class Unordered4Map implements Map, Reopenable {
             free = 0;
             size = 0;
             hasZero = false;
+        }
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
         }
     }
 
@@ -307,7 +314,7 @@ public class Unordered4Map implements Map, Reopenable {
     ) {
         final int directColumnIndex = mapSink.getDirectColumnIndex();
         if (directColumnIndex >= 0) {
-            return probeBatchDirect(record.getPageAddress(directColumnIndex), batchStart, batchEnd, batchAddr);
+            return probeBatchUnsafe(record.getPageAddress(directColumnIndex), batchStart, batchEnd, batchAddr);
         }
 
         for (long r = batchStart; r < batchEnd; r++) {
@@ -339,6 +346,9 @@ public class Unordered4Map implements Map, Reopenable {
                             }
                         }
                         size++;
+                        if (batchEmptyValueStart != 0) {
+                            Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                        }
                         isNew = true;
                         break;
                     } else if (existing == k) {
@@ -353,6 +363,9 @@ public class Unordered4Map implements Map, Reopenable {
                 isNew = !hasZero;
                 if (isNew) {
                     hasZero = true;
+                    if (batchEmptyValueStart != 0) {
+                        Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                    }
                 }
             }
 
@@ -408,6 +421,37 @@ public class Unordered4Map implements Map, Reopenable {
         }
 
         clear();
+    }
+
+    @Override
+    public void setBatchEmptyValue(GroupByFunctionsUpdater updater) {
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
+        }
+        if (updater == null || valueSize == 0) {
+            return;
+        }
+        final long buf = Unsafe.malloc(valueSize, memoryTag);
+        Vect.memset(buf, valueSize, 0);
+        // Populate the empty value into the scratch buffer using value as a flyweight.
+        // updateEmpty() only writes to value addresses (valueAddress + offset), so it never
+        // touches the key region — passing buf - KEY_SIZE as the entry start is safe.
+        value.of(buf - KEY_SIZE, buf + valueSize, false);
+        updater.updateEmpty(value);
+        // If the resulting value region is all zeros, we don't need a per-entry memcpy
+        // since fresh slots are already zeroed by clear().
+        boolean allZero = true;
+        for (long p = buf, end = buf + valueSize; p < end; p++) {
+            if (Unsafe.getUnsafe().getByte(p) != 0) {
+                allZero = false;
+                break;
+            }
+        }
+        if (allZero) {
+            Unsafe.free(buf, valueSize, memoryTag);
+        } else {
+            batchEmptyValueStart = buf;
+        }
     }
 
     @Override
@@ -475,7 +519,7 @@ public class Unordered4Map implements Map, Reopenable {
         return getStartAddress(memStart, index);
     }
 
-    private long probeBatchDirect(long columnAddr, long batchStart, long batchEnd, long batchAddr) {
+    private long probeBatchUnsafe(long columnAddr, long batchStart, long batchEnd, long batchAddr) {
         for (long r = batchStart; r < batchEnd; r++) {
             final int k = Unsafe.getUnsafe().getInt(columnAddr + r * Integer.BYTES);
 
@@ -501,6 +545,9 @@ public class Unordered4Map implements Map, Reopenable {
                             }
                         }
                         size++;
+                        if (batchEmptyValueStart != 0) {
+                            Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                        }
                         isNew = true;
                         break;
                     } else if (existing == k) {
@@ -514,6 +561,9 @@ public class Unordered4Map implements Map, Reopenable {
                 isNew = !hasZero;
                 if (isNew) {
                     hasZero = true;
+                    if (batchEmptyValueStart != 0) {
+                        Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
+                    }
                 }
             }
 

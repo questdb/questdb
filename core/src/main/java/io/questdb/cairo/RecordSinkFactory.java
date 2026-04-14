@@ -604,7 +604,8 @@ public class RecordSinkFactory {
                 || columnType == ColumnType.SYMBOL
                 || columnType == ColumnType.LONG
                 || columnType == ColumnType.DATE
-                || columnType == ColumnType.TIMESTAMP;
+                || columnType == ColumnType.TIMESTAMP
+                || columnType == ColumnType.VARCHAR;
     }
 
     private static class DirectColumnRecordSink implements RecordSink {

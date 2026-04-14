@@ -33,9 +33,11 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -113,6 +115,7 @@ public class OrderedMap implements Map, Reopenable {
     private final OrderedMapValue value3;
     private final int valueColumnCount;
     private final long valueSize;
+    private long batchEmptyValueStart;
     private int free;
     private long heapAddr; // Heap memory start pointer.
     private long heapLimit; // Heap memory limit pointer.
@@ -285,6 +288,9 @@ public class OrderedMap implements Map, Reopenable {
             heapSize = 0;
             nResizes = 0;
         }
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, heapMemoryTag);
+        }
     }
 
     public long getAppendOffset() {
@@ -294,6 +300,11 @@ public class OrderedMap implements Map, Reopenable {
     @Override
     public MapRecordCursor getCursor() {
         return cursor.init(heapAddr, heapLimit, size);
+    }
+
+    @Override
+    public long getEntryBase() {
+        return heapAddr;
     }
 
     @Override
@@ -335,6 +346,20 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public long probeBatch(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        if (keySize != -1) {
+            return probeBatchFixedSize(record, mapSink, batchStart, batchEnd, batchAddr);
+        }
+        return probeBatchVarSize(record, mapSink, batchStart, batchEnd, batchAddr);
+    }
+
+    @Override
     public void reopen(int keyCapacity, long heapSize) {
         if (heapAddr == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
@@ -367,6 +392,27 @@ public class OrderedMap implements Map, Reopenable {
                 throw t;
             }
         }
+    }
+
+    @Override
+    public void setBatchEmptyValue(GroupByFunctionsUpdater updater) {
+        if (batchEmptyValueStart != 0) {
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, heapMemoryTag);
+        }
+        if (updater == null || valueSize == 0) {
+            return;
+        }
+        // OrderedMap.clear() only resets kPos and the offsets array — it does NOT zero
+        // the heap. probeBatch therefore cannot rely on fresh slots being zeroed, so
+        // we always keep the scratch buffer and memcpy it into every new entry.
+        final long buf = Unsafe.malloc(valueSize, heapMemoryTag);
+        Vect.memset(buf, valueSize, 0);
+        // Populate the empty value into the scratch buffer using value as a flyweight.
+        // updateEmpty() only writes through valueAddress, so passing buf for both
+        // startAddress and valueAddress is safe.
+        value.of(buf, buf, buf + valueSize, false);
+        updater.updateEmpty(value);
+        batchEmptyValueStart = buf;
     }
 
     @Override
@@ -554,6 +600,66 @@ public class OrderedMap implements Map, Reopenable {
             rawOffset = Numbers.decodeLowInt(slotValue);
         }
         return asNew(keyWriter, index, hashCodeLo, value);
+    }
+
+    private long probeBatchFixedSize(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        // Reserve enough heap for the worst case (every row is a new entry) in a single
+        // shot so the hot loop below can skip the per-row checkCapacity inside Key.init().
+        // Entries are padded to 8 bytes by asNew(); mirror that here.
+        final long alignedEntrySize = Bytes.align8b(keySize + valueSize);
+        final long requiredBytes = (batchEnd - batchStart) * alignedEntrySize;
+        if (kPos + requiredBytes > heapLimit) {
+            resize(requiredBytes, kPos);
+        }
+
+        final Key k = key;
+        for (long r = batchStart; r < batchEnd; r++) {
+            record.setRowIndex(r);
+            // Inline Key.init(): reset startAddr/appendAddr, skip checkCapacity (pre-reserved above).
+            // keyOffset is 0 for fixed-size keys.
+            k.startAddr = kPos;
+            k.appendAddr = kPos;
+            mapSink.copy(record, k);
+            final OrderedMapValue v = (OrderedMapValue) k.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() - heapAddr, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return heapAddr;
+    }
+
+    private long probeBatchVarSize(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        for (long r = batchStart; r < batchEnd; r++) {
+            record.setRowIndex(r);
+            final MapKey k = withKey();
+            mapSink.copy(record, k);
+            final OrderedMapValue v = (OrderedMapValue) k.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            // Heap may have been reallocated mid-loop; offsets are invariant under realloc
+            // because Unsafe.realloc preserves the relative layout, so we encode against
+            // the latest heapAddr and return it as entryBase at the end.
+            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() - heapAddr, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return heapAddr;
     }
 
     private OrderedMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
