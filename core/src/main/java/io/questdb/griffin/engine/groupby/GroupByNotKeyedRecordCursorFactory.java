@@ -143,7 +143,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public boolean supportsSharedCursors() {
-        return true;
+        return sharedRecordFunctions != null;
     }
 
     @Override

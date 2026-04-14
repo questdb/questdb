@@ -300,7 +300,7 @@ public class GroupByUtils {
                         outerProjectionFunctions.set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
                         if (extraOuterProjectionFunctions != null) {
                             for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
-                                extraOuterProjectionFunctions.getQuick(d).set(index, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
+                                extraOuterProjectionFunctions.getQuick(d).set(i, createColumnFunction(baseMetadata, keyColumnIndex, type, index));
                             }
                         }
                     }
@@ -327,7 +327,7 @@ public class GroupByUtils {
                             if (func.getType() == ColumnType.SYMBOL && extraRef.getType() == ColumnType.STRING) {
                                 extraRef = new CastStrToSymbolFunctionFactory.Func(extraRef);
                             }
-                            extraOuterProjectionFunctions.getQuick(d).set(index, extraRef);
+                            extraOuterProjectionFunctions.getQuick(d).set(i, extraRef);
                         }
                     }
                     inferredKeyColumnCount++;

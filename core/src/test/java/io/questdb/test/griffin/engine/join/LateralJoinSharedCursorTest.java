@@ -316,6 +316,43 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedGroupByOuterAggregateBeforeKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO orders VALUES
+                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 20.0, '2024-01-01T01:00:00.000000Z'),
+                    ('B',  5.0, '2024-01-01T02:00:00.000000Z'),
+                    ('B',  3.0, '2024-01-01T03:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (25.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            total\tcategory\trate
+                            30.0\tA\t0.1
+                            30.0\tA\t0.2
+                            """,
+                    """
+                            SELECT o.total, o.category, sub.rate
+                            FROM (SELECT sum(amount) AS total, category FROM orders GROUP BY category) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_amount <= o.total
+                            ) sub
+                            ORDER BY o.category, sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testKeyedGroupByOuterEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -945,6 +982,47 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedStringDistinctAgg() throws Exception {
+        Assume.assumeFalse(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (name STRING, vname VARCHAR, sname SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    ('a', 'x', 'p', '2024-01-01T00:00:00.000000Z'),
+                    ('b', 'y', 'q', '2024-01-01T01:00:00.000000Z'),
+                    ('a', 'x', 'p', '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (1, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (3, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            sd_str\tsd_var\tsd_sym\trate
+                            a,b\tx,y\tp,q\t0.1
+                            a,b\tx,y\tp,q\t0.2
+                            """,
+                    """
+                            SELECT o.sd_str, o.sd_var, o.sd_sym, sub.rate
+                            FROM (
+                                SELECT string_distinct_agg(name, ',') AS sd_str,
+                                       string_distinct_agg(vname, ',') AS sd_var,
+                                       string_distinct_agg(sname, ',') AS sd_sym
+                                FROM items
+                            ) o
+                            JOIN LATERAL (
+                                SELECT rate FROM rates WHERE min_len <= length(o.sd_str)
+                            ) sub
+                            ORDER BY sub.rate
+                            """,
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testVectorizedKeyedGroupByOuter() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
@@ -1010,47 +1088,6 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             FROM (SELECT sum(qty) AS total FROM orders) o
                             JOIN LATERAL (
                                 SELECT rate FROM rates WHERE min_qty <= o.total
-                            ) sub
-                            ORDER BY sub.rate
-                            """,
-                    null, true, true
-            );
-        });
-    }
-
-    @Test
-    public void testSharedStringDistinctAgg() throws Exception {
-        Assume.assumeFalse(enableParallelGroupBy);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE items (name STRING, vname VARCHAR, sname SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO items VALUES
-                    ('a', 'x', 'p', '2024-01-01T00:00:00.000000Z'),
-                    ('b', 'y', 'q', '2024-01-01T01:00:00.000000Z'),
-                    ('a', 'x', 'p', '2024-01-01T02:00:00.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO rates VALUES
-                    (1, 0.1, '2024-01-01T00:00:00.000000Z'),
-                    (3, 0.2, '2024-01-01T00:00:01.000000Z')
-                    """);
-            assertQueryNoLeakCheck(
-                    """
-                            sd_str\tsd_var\tsd_sym\trate
-                            a,b\tx,y\tp,q\t0.1
-                            a,b\tx,y\tp,q\t0.2
-                            """,
-                    """
-                            SELECT o.sd_str, o.sd_var, o.sd_sym, sub.rate
-                            FROM (
-                                SELECT string_distinct_agg(name, ',') AS sd_str,
-                                       string_distinct_agg(vname, ',') AS sd_var,
-                                       string_distinct_agg(sname, ',') AS sd_sym
-                                FROM items
-                            ) o
-                            JOIN LATERAL (
-                                SELECT rate FROM rates WHERE min_len <= length(o.sd_str)
                             ) sub
                             ORDER BY sub.rate
                             """,

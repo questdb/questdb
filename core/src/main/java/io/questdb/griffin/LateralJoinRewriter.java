@@ -2664,7 +2664,7 @@ class LateralJoinRewriter implements Mutable {
     }
 
     // Rewrites outer-ref aliases inside subquery expressions (e.g., IN (SELECT ...)).
-    // Defensive programing
+    // Defensive programming
     private void rewriteOuterRefsInSubquery(
             IQueryModel subquery,
             LowerCaseCharSequenceObjHashMap<CharSequence> outerToInnerAlias,
