@@ -229,30 +229,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .I$();
                 }
 
-                // Decide whether to rewrite the file or update in-place.
-                // A single-row-group file always triggers a rewrite: any O3 merge
-                // replaces its only row group, leaving 100% of the original payload
-                // as dead bytes.
-                // Schema mismatch (hasSchemaChange) also forces rewrite: in update
-                // mode, untouched row groups would retain the old column layout while
-                // the footer schema uses the new target schema, producing a malformed
-                // Parquet file.
-                final long unusedBytes = partitionDecoder.metadata().getUnusedBytes();
-                isRewrite = hasSchemaChange
-                        || rowGroupCount == 1
-                        || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
-                        || unusedBytes > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes();
-
-                if (isRewrite) {
-                    LOG.info().$("parquet o3 partition rewrite [table=").$(tableWriter.getTableToken())
-                            .$(", partition=").$ts(partitionTimestamp)
-                            .$(", fileSize=").$size(parquetSize)
-                            .$(", unusedBytes=").$size(unusedBytes)
-                            .$(", unusedPct=").$(parquetSize > 0 ? (100.0 * unusedBytes / parquetSize) : 0)
-                            .$(", hasSchemaChange=").$(hasSchemaChange)
-                            .I$();
-                }
-
                 final int opts = cairoConfiguration.getWriterFileOpenOpts();
                 // Two separate file descriptors are required: one for reading (metadata,
                 // row group slicing) and one for writing (appending new row groups).
@@ -3807,6 +3783,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int decodeIdx = activeToDecodeIdx[ai];
                 final String columnName = tableWriterMetadata.getColumnName(columnIndex);
                 final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
                 if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
@@ -3900,7 +3877,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             columnAuxPtr,
                             columnAuxSize,
                             0,
-                            0
+                            0,
+                            parquetEncodingConfig
                     );
                 } else {
                     long columnDataPtr = decodeIdx >= 0 ? rowGroupBuffers.getChunkDataPtr(decodeIdx) : 0;
@@ -3974,7 +3952,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 valuesMem.addressOf(0),
                                 valuesMemSize,
                                 offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
-                                symbolCount
+                                symbolCount,
+                                parquetEncodingConfig
                         );
                     } else {
                         partitionDescriptor.addColumn(
@@ -3987,7 +3966,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 0,
                                 0,
                                 0,
-                                0
+                                0,
+                                parquetEncodingConfig
                         );
                     }
                 }

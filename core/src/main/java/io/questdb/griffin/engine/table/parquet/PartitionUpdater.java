@@ -151,30 +151,6 @@ public class PartitionUpdater implements QuietCloseable {
         );
     }
 
-    /**
-     * Sets the target schema for the output file. Call this after {@link #of}
-     * when the table schema differs from the source parquet file schema
-     * (e.g., after ADD COLUMN or DROP COLUMN).
-     *
-     * @param descriptor a PartitionDescriptor containing the full target
-     *                   schema (column names, IDs, types). Data pointers are
-     *                   not required — only schema metadata is used.
-     */
-    public void setTargetSchema(PartitionDescriptor descriptor) {
-        assert ptr != 0;
-        setTargetSchema(
-                ptr,
-                descriptor.tableName.ptr(),
-                descriptor.tableName.size(),
-                descriptor.getColumnCount(),
-                descriptor.getColumnNamesPtr(),
-                descriptor.getColumnNamesLen(),
-                descriptor.getColumnDataPtr(),
-                descriptor.getColumnDataLen(),
-                descriptor.getTimestampIndex()
-        );
-    }
-
     // call to this method will update file metadata
     // MUST be called after all row groups have been updated
     // returns the final file size

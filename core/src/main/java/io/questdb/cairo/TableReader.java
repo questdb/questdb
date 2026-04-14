@@ -1348,13 +1348,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionColumns(partitionIndex, nativePath, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
                         openPartitionCount++;
-
-                        // Initialize columns and bitmap index readers for parquet partitions.
-                        // reloadColumnAt() sets columns to null (not NullMemoryCMR) for parquet,
-                        // which allows createBitmapIndexReaderAt() to open real bitmap index
-                        // readers from the .k/.v files in the native partition directory.
-                        Path nativePath = pathGenNativePartition(partitionIndex, partitionNameTxn);
-                        openPartitionColumns(partitionIndex, nativePath, getColumnBase(partitionIndex), partitionSize);
                     }
                     PartitionDecoder decoder = parquetPartitionDecoders.getQuick(partitionIndex);
                     if (decoder != null) {
