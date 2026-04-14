@@ -393,6 +393,14 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     @Override
+    public void reserveCapacity(long additionalKeys) {
+        if (free < additionalKeys) {
+            long required = keyCapacity + (long) Math.ceil((additionalKeys - free) / loadFactor);
+            rehash(Numbers.ceilPow2(required));
+        }
+    }
+
+    @Override
     public void restoreInitialCapacity() {
         if (memStart == 0 || keyCapacity != initialKeyCapacity) {
             // Allocate one extra slot at the end for the zero key entry.
