@@ -126,6 +126,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractCairoTest {
+    private static final long BITMAP_INDEX_MAX_VALUE_OFFSET = 37L;
 
     @Test
     public void apply1RowCommits1Writer() throws Exception {
@@ -1261,6 +1262,36 @@ public class WalWriterTest extends AbstractCairoTest {
                     "expected fewer than 100 total allocate() calls but got " + totalAllocates,
                     totalAllocates < 100
             );
+        });
+    }
+
+    @Test
+    public void testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (" +
+                    "sym SYMBOL NOCACHE INDEX CAPACITY 4," +
+                    "val INT," +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName +
+                    " SELECT 'sym_' || x, x::INT, '2022-01-01T00:00:00.000000Z'" +
+                    " FROM long_sequence(10)");
+            execute("INSERT INTO " + tableName +
+                    " VALUES ('sym_day2', 0, '2022-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("INSERT INTO " + tableName +
+                    " SELECT 'sym_' || (x + 10), (x + 10)::INT, '2022-01-01T00:00:00.000000Z'" +
+                    " FROM long_sequence(10)");
+            drainWalQueue();
+
+            assertSql(
+                    "count\n21\n",
+                    "SELECT count() FROM " + tableName
+            );
+            assertBitmapIndexMaxValue(tableName, "2022-01-01", "sym", 19);
         });
     }
 
@@ -4605,6 +4636,32 @@ public class WalWriterTest extends AbstractCairoTest {
             assertFalse(success); // no _event file, no state file
         } finally {
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSizeOld);
+        }
+    }
+
+    private void assertBitmapIndexMaxValue(String tableName, CharSequence partitionName, CharSequence columnName, long expectedMaxValue) {
+        try (
+                Path path = new Path().of(configuration.getDbRoot())
+                        .concat(engine.verifyTableName(tableName))
+                        .concat(partitionName);
+                MemoryCMR keyMem = Vm.getCMRInstance()
+        ) {
+            final FilesFacade ff = configuration.getFilesFacade();
+            final LPSZ keyPath = path.concat(columnName).put(".k").$();
+            keyMem.of(
+                    ff,
+                    keyPath,
+                    ff.getMapPageSize(),
+                    ff.length(keyPath),
+                    MemoryTag.MMAP_DEFAULT,
+                    CairoConfiguration.O_NONE,
+                    -1
+            );
+            assertEquals(
+                    "bitmap index max row must be inclusive",
+                    expectedMaxValue,
+                    keyMem.getLong(BITMAP_INDEX_MAX_VALUE_OFFSET)
+            );
         }
     }
 
