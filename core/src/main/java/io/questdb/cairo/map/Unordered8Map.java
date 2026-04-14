@@ -162,12 +162,12 @@ public class Unordered8Map implements Map, Reopenable {
 
             this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
 
-            final long sizeBytes = entrySize * this.keyCapacity;
+            // Allocate one extra slot at the end for the zero key entry.
+            final long sizeBytes = entrySize * (this.keyCapacity + 1);
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memset(memStart, sizeBytes, 0);
-            memLimit = memStart + sizeBytes;
-            zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
-            Vect.memset(zeroMemStart, entrySize, 0);
+            memLimit = memStart + entrySize * this.keyCapacity;
+            zeroMemStart = memLimit; // zero key lives right after the hash table
 
             value = new Unordered8MapValue(valueSize, valueOffsets);
             value2 = new Unordered8MapValue(valueSize, valueOffsets);
@@ -192,15 +192,14 @@ public class Unordered8Map implements Map, Reopenable {
         size = 0;
         nResizes = 0;
         hasZero = false;
-        Vect.memset(memStart, memLimit - memStart, 0);
-        Vect.memset(zeroMemStart, entrySize, 0);
+        Vect.memset(memStart, memLimit - memStart + entrySize, 0);
     }
 
     @Override
     public void close() {
         if (memStart != 0) {
-            memLimit = memStart = Unsafe.free(memStart, memLimit - memStart, memoryTag);
-            zeroMemStart = Unsafe.free(zeroMemStart, entrySize, memoryTag);
+            memLimit = memStart = Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
+            zeroMemStart = 0;
             free = 0;
             size = 0;
             hasZero = false;
@@ -311,21 +310,21 @@ public class Unordered8Map implements Map, Reopenable {
     @Override
     public void restoreInitialCapacity() {
         if (memStart == 0 || keyCapacity != initialKeyCapacity) {
-            final long sizeBytes = entrySize * initialKeyCapacity;
+            // Allocate one extra slot at the end for the zero key entry.
+            final long sizeBytes = entrySize * (initialKeyCapacity + 1);
             long newMemStart;
             if (memStart == 0) {
                 newMemStart = Unsafe.malloc(sizeBytes, memoryTag);
             } else {
-                newMemStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+                newMemStart = Unsafe.realloc(memStart, memLimit - memStart + entrySize, sizeBytes, memoryTag);
             }
             memStart = newMemStart;
-            memLimit = memStart + sizeBytes;
+            memLimit = memStart + entrySize * initialKeyCapacity;
+            zeroMemStart = memLimit;
             keyCapacity = initialKeyCapacity;
             mask = keyCapacity - 1;
-        }
-
-        if (zeroMemStart == 0) {
-            zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
+        } else if (zeroMemStart == 0) {
+            zeroMemStart = memLimit;
         }
 
         clear();
@@ -411,9 +410,10 @@ public class Unordered8Map implements Map, Reopenable {
             return;
         }
 
-        final long newSizeBytes = entrySize * newKeyCapacity;
+        // Allocate one extra slot at the end for the zero key entry.
+        final long newSizeBytes = entrySize * (newKeyCapacity + 1);
         final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
-        final long newMemLimit = newMemStart + newSizeBytes;
+        final long newMemLimit = newMemStart + entrySize * newKeyCapacity;
         Vect.memset(newMemStart, newSizeBytes, 0);
         final int newMask = (int) newKeyCapacity - 1;
 
@@ -433,10 +433,17 @@ public class Unordered8Map implements Map, Reopenable {
             Vect.memcpy(newAddr, addr, entrySize);
         }
 
-        Unsafe.free(memStart, memLimit - memStart, memoryTag);
+        // Copy the zero key entry to the new end-of-buffer slot.
+        final long newZeroMemStart = newMemLimit;
+        if (hasZero) {
+            Vect.memcpy(newZeroMemStart, zeroMemStart, entrySize);
+        }
+
+        Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
 
         memStart = newMemStart;
-        memLimit = newMemStart + newSizeBytes;
+        memLimit = newMemLimit;
+        zeroMemStart = newZeroMemStart;
         mask = newMask;
         free += (int) ((newKeyCapacity - keyCapacity) * loadFactor);
         keyCapacity = (int) newKeyCapacity;
