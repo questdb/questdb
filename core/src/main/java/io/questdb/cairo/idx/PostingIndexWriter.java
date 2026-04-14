@@ -987,10 +987,26 @@ public class PostingIndexWriter implements IndexWriter {
             return CoveringCompressor.compressLongsLinearPred(rawBuf, valueCount, destBuf, longWorkspaceAddr);
         }
         return switch (ColumnType.tagOf(colType)) {
-            case ColumnType.DOUBLE ->
-                    CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
-            case ColumnType.FLOAT ->
-                    CoveringCompressor.compressFloats(rawBuf, valueCount, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+            case ColumnType.DOUBLE -> {
+                int alpSize = CoveringCompressor.compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+                int rawSize = 4 + valueCount * Double.BYTES;
+                if (alpSize <= rawSize) {
+                    yield alpSize;
+                }
+                Unsafe.getUnsafe().putInt(destBuf, valueCount | CoveringCompressor.RAW_BLOCK_FLAG);
+                Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount * Double.BYTES);
+                yield rawSize;
+            }
+            case ColumnType.FLOAT -> {
+                int alpSize = CoveringCompressor.compressFloats(rawBuf, valueCount, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+                int rawSize = 4 + valueCount * Float.BYTES;
+                if (alpSize <= rawSize) {
+                    yield alpSize;
+                }
+                Unsafe.getUnsafe().putInt(destBuf, valueCount | CoveringCompressor.RAW_BLOCK_FLAG);
+                Unsafe.getUnsafe().copyMemory(rawBuf, destBuf + 4, (long) valueCount * Float.BYTES);
+                yield rawSize;
+            }
             case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
                     CoveringCompressor.compressLongs(rawBuf, valueCount, destBuf);
             case ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL,

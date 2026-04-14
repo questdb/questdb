@@ -1140,7 +1140,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             long keyOffsetsAddr = mem.addressOf(strideDataStart);
             int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
             long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Integer.BYTES + keyBlockOff);
-            return Unsafe.getUnsafe().getInt(keyBlockAddr);
+            return Unsafe.getUnsafe().getInt(keyBlockAddr) & ~CoveringCompressor.RAW_BLOCK_FLAG;
         }
 
         private byte getRawSidecarByte(int includeIdx) {
@@ -1569,7 +1569,8 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 colPointBlockAddrs[includeIdx] = blockAddr;
                 return false;
             }
-            int count = Unsafe.getUnsafe().getInt(blockAddr);
+            int rawCount = Unsafe.getUnsafe().getInt(blockAddr);
+            int count = rawCount & ~CoveringCompressor.RAW_BLOCK_FLAG;
             if (count <= 0) {
                 colCacheBlockAddrs[includeIdx] = blockAddr;
                 return true;

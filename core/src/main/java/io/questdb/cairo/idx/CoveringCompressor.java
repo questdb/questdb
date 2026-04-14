@@ -71,6 +71,12 @@ public class CoveringCompressor {
     static final float[] F10F = {1e0f, 1e1f, 1e2f, 1e3f, 1e4f, 1e5f, 1e6f, 1e7f, 1e8f, 1e9f};
     static final float[] IF10F = {1e-0f, 1e-1f, 1e-2f, 1e-3f, 1e-4f, 1e-5f, 1e-6f, 1e-7f, 1e-8f, 1e-9f};
 
+    // Raw-block sentinel: high bit set on the count field indicates the block
+    // stores uncompressed values (count(4) + raw data). Used when ALP compression
+    // expands the data (e.g., high-precision random doubles with 100% exceptions).
+    // Actual count = rawCount & ~RAW_BLOCK_FLAG.
+    static final int RAW_BLOCK_FLAG = 0x80000000;
+
     // Compressed block header sizes (excluding packed data)
     // DOUBLE: valueCount(4) + e(1) + f(1) + bitWidth(1) + excCount(4) + forBase(8) = 19
     public static final int DOUBLE_HEADER_SIZE = 19;
@@ -217,7 +223,13 @@ public class CoveringCompressor {
 
     public static int decompressFloatsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
         long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos);
+        int rawCount = Unsafe.getUnsafe().getInt(pos);
+        if ((rawCount & RAW_BLOCK_FLAG) != 0) {
+            int count = rawCount & ~RAW_BLOCK_FLAG;
+            Unsafe.getUnsafe().copyMemory(pos + 4, outputAddr, (long) count * Float.BYTES);
+            return count;
+        }
+        int count = rawCount;
         pos += 4;
         int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
@@ -421,7 +433,8 @@ public class CoveringCompressor {
      * @return number of bytes consumed from srcAddr
      */
     public static int decompressDoubles(long srcAddr, double[] output) {
-        int count = Unsafe.getUnsafe().getInt(srcAddr);
+        int rawCount = Unsafe.getUnsafe().getInt(srcAddr);
+        int count = (rawCount & RAW_BLOCK_FLAG) != 0 ? rawCount & ~RAW_BLOCK_FLAG : rawCount;
         long workspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         try {
             return decompressDoubles(srcAddr, output, workspaceAddr);
@@ -436,7 +449,15 @@ public class CoveringCompressor {
      */
     public static int decompressDoubles(long srcAddr, double[] output, long workspaceAddr) {
         long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos);
+        int rawCount = Unsafe.getUnsafe().getInt(pos);
+        if ((rawCount & RAW_BLOCK_FLAG) != 0) {
+            int count = rawCount & ~RAW_BLOCK_FLAG;
+            for (int i = 0; i < count; i++) {
+                output[i] = Unsafe.getUnsafe().getDouble(pos + 4 + (long) i * Double.BYTES);
+            }
+            return 4 + count * Double.BYTES;
+        }
+        int count = rawCount;
         pos += 4;
         int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
@@ -483,7 +504,13 @@ public class CoveringCompressor {
      */
     public static int decompressDoublesToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
         long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos);
+        int rawCount = Unsafe.getUnsafe().getInt(pos);
+        if ((rawCount & RAW_BLOCK_FLAG) != 0) {
+            int count = rawCount & ~RAW_BLOCK_FLAG;
+            Unsafe.getUnsafe().copyMemory(pos + 4, outputAddr, (long) count * Double.BYTES);
+            return count;
+        }
+        int count = rawCount;
         pos += 4;
         int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
         int f = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
@@ -1042,7 +1069,13 @@ public class CoveringCompressor {
      */
     public static double readDoubleAt(long srcAddr, int index) {
         long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos);
+        int rawCount = Unsafe.getUnsafe().getInt(pos);
+        if ((rawCount & RAW_BLOCK_FLAG) != 0) {
+            int count = rawCount & ~RAW_BLOCK_FLAG;
+            if (index < 0 || index >= count) return Double.NaN;
+            return Unsafe.getUnsafe().getDouble(pos + 4 + (long) index * Double.BYTES);
+        }
+        int count = rawCount;
         if (index < 0 || index >= count) return Double.NaN;
         pos += 4;
         int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
@@ -1169,7 +1202,13 @@ public class CoveringCompressor {
      */
     public static float readFloatAt(long srcAddr, int index) {
         long pos = srcAddr;
-        int count = Unsafe.getUnsafe().getInt(pos);
+        int rawCount = Unsafe.getUnsafe().getInt(pos);
+        if ((rawCount & RAW_BLOCK_FLAG) != 0) {
+            int count = rawCount & ~RAW_BLOCK_FLAG;
+            if (index < 0 || index >= count) return Float.NaN;
+            return Unsafe.getUnsafe().getFloat(pos + 4 + (long) index * Float.BYTES);
+        }
+        int count = rawCount;
         if (index < 0 || index >= count) return Float.NaN;
         pos += 4;
         int e = Unsafe.getUnsafe().getByte(pos++) & 0xFF;
