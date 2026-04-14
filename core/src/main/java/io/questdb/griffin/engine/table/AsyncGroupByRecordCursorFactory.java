@@ -334,7 +334,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     ) {
         final Map map = fragment.reopenMap();
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
-        final DirectLongList batch = atom.getBatchList(slotId);
+        final DirectLongList batchList = atom.getBatchList(slotId);
         final int subBatchSize = 2048;
 
         // Pre-resolve per-function value byte offsets once per frame.
@@ -342,10 +342,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         long entryBase = map.getEntryBase();
         // Use a dummy valueAt to compute byte offsets.
         final MapValue tmpValue = map.valueAt(entryBase);
+        // TODO(puzpuzpuz): get rid of GC here
         final long[] valueByteOffsets = new long[functionCount];
         for (int i = 0; i < functionCount; i++) {
             valueByteOffsets[i] = tmpValue.getAddress(functions.getQuick(i).getValueIndex()) - entryBase;
         }
+
+        // Size the batch buffer once — probeBatch writes via the raw base address, never advancing pos.
+        batchList.ensureCapacity(subBatchSize);
+        final long batchAddr = batchList.getAddress();
 
         for (long batchStart = 0; batchStart < frameRowCount; batchStart += subBatchSize) {
             final long batchEnd = Math.min(batchStart + subBatchSize, frameRowCount);
@@ -354,11 +359,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             // Must reserve capacity before probeBatch: probeBatch packs entry offsets relative to the
             // current memStart, so a mid-batch rehash would break the offsets for unordered maps.
             map.reserveCapacity(batchRows);
-
-            // Ensure the batch buffer has enough capacity for raw writes.
-            batch.clear();
-            batch.ensureCapacity(batchRows);
-            final long batchAddr = batch.getAddress();
 
             // Probe phase — delegate to the map for inlined probe loop.
             entryBase = map.probeBatch(record, mapSink, batchStart, batchEnd, batchAddr);
