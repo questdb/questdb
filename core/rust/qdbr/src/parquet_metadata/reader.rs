@@ -357,7 +357,7 @@ impl<'a> ParquetMetaReader<'a> {
 
             let pq_size =
                 footer.parquet_footer_offset() + footer.parquet_footer_length() as u64 + 8;
-            if pq_size <= target_parquet_size {
+            if pq_size == target_parquet_size {
                 return Ok((current_offset, footer));
             }
 

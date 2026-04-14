@@ -367,7 +367,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             long pqFooterOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
             int pqFooterLength = Unsafe.getUnsafe().getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
             long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + 8;
-            if (derivedPqSize <= parquetFileSize) {
+            if (derivedPqSize == parquetFileSize) {
                 break;
             }
             long prevOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PREV_FOOTER_OFFSET_OFF);
