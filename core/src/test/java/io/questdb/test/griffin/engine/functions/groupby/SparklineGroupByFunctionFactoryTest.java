@@ -409,7 +409,7 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
             assertException(
                     "SELECT sparkline(val, 0.0, 100.0, 0) FROM t",
-                    17,
+                    34,
                     "width must be a positive integer"
             );
         });

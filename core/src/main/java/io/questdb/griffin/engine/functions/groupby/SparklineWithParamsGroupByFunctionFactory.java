@@ -59,6 +59,7 @@ public class SparklineWithParamsGroupByFunctionFactory implements FunctionFactor
                 args.getQuick(2),
                 args.getQuick(3),
                 argPositions.getQuick(0),
+                argPositions.getQuick(3),
                 configuration.getStrFunctionMaxBufferLength()
         );
     }

@@ -56,6 +56,7 @@ class TextChartGroupByFunction extends VarcharFunction implements UnaryFunction,
     private final ObjList<DirectUtf8Sink> sinks = new ObjList<>();
     private final ObjList<DoubleList> valueLists = new ObjList<>();
     private final @Nullable Function widthFunc;
+    private final int widthPosition;
     private int poolIndex = 0;
     private int valueIndex;
 
@@ -67,6 +68,7 @@ class TextChartGroupByFunction extends VarcharFunction implements UnaryFunction,
             @Nullable Function maxFunc,
             @Nullable Function widthFunc,
             int functionPosition,
+            int widthPosition,
             int maxBufferLength
     ) {
         this.name = name;
@@ -76,6 +78,7 @@ class TextChartGroupByFunction extends VarcharFunction implements UnaryFunction,
         this.maxFunc = maxFunc;
         this.widthFunc = widthFunc;
         this.functionPosition = functionPosition;
+        this.widthPosition = widthPosition;
         // Each value produces one 3-byte UTF-8 character in the output
         this.maxValues = maxBufferLength / 3;
     }
@@ -295,7 +298,7 @@ class TextChartGroupByFunction extends VarcharFunction implements UnaryFunction,
         if (widthFunc != null) {
             int w = widthFunc.getInt(null);
             if (w < 1) {
-                throw CairoException.nonCritical().position(functionPosition)
+                throw CairoException.nonCritical().position(widthPosition)
                         .put("width must be a positive integer");
             }
             return w;

@@ -59,6 +59,7 @@ public class SparklineGroupByFunctionFactory implements FunctionFactory {
                 null,
                 null,
                 argPositions.getQuick(0),
+                -1,
                 configuration.getStrFunctionMaxBufferLength()
         );
     }
