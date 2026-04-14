@@ -93,6 +93,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -191,6 +192,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Publisher source is identified by a long value
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
+    private final IntObjHashMap<AsyncWriterCommand> asyncCommandCache = new IntObjHashMap<>();
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -2522,7 +2524,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (cmd.getType() == CMD_ALTER_TABLE) {
                 processAsyncWriterCommand(alterOp, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
             } else {
-                final AsyncWriterCommand asyncCmd = cmd.getAsyncWriterCommand();
+                final int cmdType = cmd.getType();
+                AsyncWriterCommand asyncCmd = asyncCommandCache.get(cmdType);
+                if (asyncCmd == null) {
+                    final AsyncWriterCommand fromTask = cmd.getAsyncWriterCommand();
+                    if (fromTask != null) {
+                        // Opt-in: commands that fully round-trip state through task.data
+                        // provide a writer-owned consumer instance via newInstance(),
+                        // which decouples producer reuse from writer consumption.
+                        final AsyncWriterCommand consumerInstance = fromTask.newInstance();
+                        if (consumerInstance != null) {
+                            asyncCommandCache.put(cmdType, consumerInstance);
+                            asyncCmd = consumerInstance;
+                        } else {
+                            asyncCmd = fromTask;
+                        }
+                    }
+                }
                 if (asyncCmd != null) {
                     processAsyncWriterCommand(asyncCmd, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
                 } else {
