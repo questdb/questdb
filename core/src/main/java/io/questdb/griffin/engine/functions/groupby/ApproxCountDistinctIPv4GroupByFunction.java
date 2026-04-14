@@ -209,7 +209,9 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
 
     @Override
     public void setEmpty(MapValue mapValue) {
-        overwrite(mapValue, 0L);
+        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(hllPtrIndex, 0);
+        mapValue.putBool(overwrittenFlagIndex, false);
     }
 
     @Override
