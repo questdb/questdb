@@ -425,8 +425,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
 
     @Test
     public void testSampleFillValue() throws Exception {
-        execute("create table x as (select * from (select rnd_int(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
-        assertSql(
+        assertQuery(
                 """
                         ts\tapprox_count_distinct
                         1970-01-01T00:00:00.000000Z\t8
@@ -440,7 +439,10 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
                         1970-01-01T00:00:08.000000Z\t7
                         1970-01-01T00:00:09.000000Z\t5
                         """,
-                "select ts, approx_count_distinct(s) from x sample by 1s fill(99)"
+                "select ts, approx_count_distinct(s) from x sample by 1s fill(99)",
+                "create table x as (select * from (select rnd_int(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
+                "ts",
+                false
         );
     }
 
