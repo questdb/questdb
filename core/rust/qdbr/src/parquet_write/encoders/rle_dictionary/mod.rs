@@ -70,23 +70,25 @@ impl<S> ColumnChunkDictState<S> {
     }
 
     #[inline]
-    fn push_optional_null(&mut self) {
+    fn push_optional_null(&mut self) -> ParquetResult<()> {
         self.num_rows += 1;
         self.null_count += 1;
         self.validity
             .as_mut()
-            .expect("optional dictionary state must track validity")
+            .ok_or_else(|| fmt_err!(Layout, "optional dictionary state must track validity"))?
             .push_null();
+        Ok(())
     }
 
     #[inline]
-    fn push_optional_value(&mut self, key: u32) {
+    fn push_optional_value(&mut self, key: u32) -> ParquetResult<()> {
         self.num_rows += 1;
         self.keys.push(key);
         self.validity
             .as_mut()
-            .expect("optional dictionary state must track validity")
+            .ok_or_else(|| fmt_err!(Layout, "optional dictionary state must track validity"))?
             .push_present();
+        Ok(())
     }
 
     #[inline]
@@ -96,10 +98,11 @@ impl<S> ColumnChunkDictState<S> {
     }
 
     #[inline]
-    fn extend_optional_nulls(&mut self, count: usize) {
+    fn extend_optional_nulls(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.push_optional_null();
+            self.push_optional_null()?;
         }
+        Ok(())
     }
 
     #[inline]
@@ -169,7 +172,7 @@ where
             )?;
             state.extend_required_values(default_key, chunk.adjusted_column_top);
         } else if chunk.adjusted_column_top > 0 {
-            state.extend_optional_nulls(chunk.adjusted_column_top);
+            state.extend_optional_nulls(chunk.adjusted_column_top)?;
         }
 
         for &value in slice {
@@ -180,7 +183,7 @@ where
                         "encountered null value in Required column"
                     ));
                 }
-                state.push_optional_null();
+                state.push_optional_null()?;
             } else {
                 let p = project(value);
                 let key =
@@ -188,7 +191,7 @@ where
                 if repetition.is_required() {
                     state.push_required_value(key);
                 } else {
-                    state.push_optional_value(key);
+                    state.push_optional_value(key)?;
                 }
             }
         }
@@ -338,7 +341,7 @@ fn build_primitive_dict_data_page(
 
     if !required {
         validity
-            .expect("optional dictionary data page must have validity")
+            .ok_or_else(|| fmt_err!(Layout, "optional dictionary data page must have validity"))?
             .encode_def_levels(&mut buffer, options.version)?;
     }
     let definition_levels_byte_length = buffer.len();

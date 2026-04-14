@@ -85,11 +85,11 @@ pub fn encode_fixed_len_bytes<const N: usize>(
         let data: &[[u8; N]] = unsafe { transmute_slice(column.primary_data) };
         let slice = &data[chunk.lower_bound..chunk.upper_bound];
 
-        state.extend_optional_nulls(chunk.adjusted_column_top);
+        state.extend_optional_nulls(chunk.adjusted_column_top)?;
 
         for &value in slice {
             if value == null_value {
-                state.push_optional_null();
+                state.push_optional_null()?;
             } else {
                 let stored = if reverse {
                     let mut r = value;
@@ -107,7 +107,7 @@ pub fn encode_fixed_len_bytes<const N: usize>(
                     }
                     next_id
                 });
-                state.push_optional_value(key);
+                state.push_optional_value(key)?;
             }
         }
     }
@@ -179,11 +179,11 @@ where
         let data: &[T] = unsafe { transmute_slice(column.primary_data) };
         let slice = &data[chunk.lower_bound..chunk.upper_bound];
 
-        state.extend_optional_nulls(chunk.adjusted_column_top);
+        state.extend_optional_nulls(chunk.adjusted_column_top)?;
 
         for &value in slice {
             if value.is_null() {
-                state.push_optional_null();
+                state.push_optional_null()?;
             } else {
                 let key = upsert_dict_entry(
                     &mut dict_map,
@@ -191,7 +191,7 @@ where
                     value,
                     state.stats.as_mut(),
                 )?;
-                state.push_optional_value(key);
+                state.push_optional_value(key)?;
             }
         }
     }

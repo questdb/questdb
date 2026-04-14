@@ -56,7 +56,7 @@ pub fn encode_string(
         let aux_slice = &aux[chunk.lower_bound..chunk.upper_bound];
         let data = column.primary_data;
 
-        state.extend_optional_nulls(chunk.adjusted_column_top);
+        state.extend_optional_nulls(chunk.adjusted_column_top)?;
 
         for offset in aux_slice {
             let offset = usize::try_from(*offset).map_err(|_| {
@@ -91,10 +91,10 @@ pub fn encode_string(
                         dict_entries.push(utf8);
                         id
                     };
-                    state.push_optional_value(key);
+                    state.push_optional_value(key)?;
                 }
                 None => {
-                    state.push_optional_null();
+                    state.push_optional_null()?;
                 }
             }
         }
@@ -222,7 +222,7 @@ where
             first_partition_start,
             last_partition_end,
         );
-        state.extend_optional_nulls(chunk.adjusted_column_top);
+        state.extend_optional_nulls(chunk.adjusted_column_top)?;
         for slice_opt in decode(column, chunk)? {
             match slice_opt? {
                 Some(s) => {
@@ -239,10 +239,10 @@ where
                         }
                         id
                     };
-                    state.push_optional_value(key);
+                    state.push_optional_value(key)?;
                 }
                 None => {
-                    state.push_optional_null();
+                    state.push_optional_null()?;
                 }
             }
         }

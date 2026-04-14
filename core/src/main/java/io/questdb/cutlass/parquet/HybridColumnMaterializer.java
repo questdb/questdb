@@ -454,42 +454,6 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         functionRecord.of(pageFrameRecord);
     }
 
-    private static void addColumnData(DirectLongList columnData, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf, int columnType) {
-        columnData.add(0L); // no col top
-        columnData.add(dataBuf.addressOf(0));
-        columnData.add(dataBuf.getAppendOffset());
-        if (auxBuf != null) {
-            columnData.add(auxBuf.addressOf(0));
-            // For STRING columns, the aux buffer has N+1 entries. Discard the
-            // last entry, which refers to the offset of the yet-unwritten string.
-            long auxSize = auxBuf.getAppendOffset();
-            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
-                auxSize -= Long.BYTES;
-            }
-            columnData.add(auxSize);
-        } else {
-            columnData.add(0L);
-            columnData.add(0L);
-        }
-        columnData.add(0L);
-        columnData.add(0L);
-    }
-
-    private static boolean isTypePreservingParquetPassThrough(int sourceColumnType, int outputColumnType) {
-        return sourceColumnType == outputColumnType
-                && outputColumnType == toExportColumnType(outputColumnType);
-    }
-
-    private static int toExportColumnType(int columnType) {
-        if (ColumnType.isSymbol(columnType)) {
-            return ColumnType.STRING;
-        }
-        if (columnType == ColumnType.VARCHAR_SLICE) {
-            return ColumnType.VARCHAR;
-        }
-        return columnType;
-    }
-
     private void addComputedColumn(RecordMetadata metadata, int i, int columnType) {
         addComputedColumn(metadata, i, columnType, 0);
     }
@@ -710,6 +674,42 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             default ->
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(outputType));
         }
+    }
+
+    private static void addColumnData(DirectLongList columnData, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf, int columnType) {
+        columnData.add(0L); // no col top
+        columnData.add(dataBuf.addressOf(0));
+        columnData.add(dataBuf.getAppendOffset());
+        if (auxBuf != null) {
+            columnData.add(auxBuf.addressOf(0));
+            // For STRING columns, the aux buffer has N+1 entries. Discard the
+            // last entry, which refers to the offset of the yet-unwritten string.
+            long auxSize = auxBuf.getAppendOffset();
+            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+                auxSize -= Long.BYTES;
+            }
+            columnData.add(auxSize);
+        } else {
+            columnData.add(0L);
+            columnData.add(0L);
+        }
+        columnData.add(0L);
+        columnData.add(0L);
+    }
+
+    private static boolean isTypePreservingParquetPassThrough(int sourceColumnType, int outputColumnType) {
+        return sourceColumnType == outputColumnType
+                && outputColumnType == toExportColumnType(outputColumnType);
+    }
+
+    private static int toExportColumnType(int columnType) {
+        if (ColumnType.isSymbol(columnType)) {
+            return ColumnType.STRING;
+        }
+        if (columnType == ColumnType.VARCHAR_SLICE) {
+            return ColumnType.VARCHAR;
+        }
+        return columnType;
     }
 
     /**
