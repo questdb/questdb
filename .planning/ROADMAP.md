@@ -2,22 +2,21 @@
 
 ## Overview
 
-This project moves QuestDB's SAMPLE BY FILL queries from the sequential cursor-based execution path to the parallel GROUP BY fast path. The optimizer rewrites SAMPLE BY to GROUP BY with `timestamp_floor_utc`, then a streaming fill cursor inserts gap-filled rows. Work progresses from optimizer gating (done) through non-keyed fill (in progress), keyed fill with cartesian product semantics, cross-column prev (new feature), and full verification against the existing 302-test suite.
+QuestDB's SAMPLE BY FILL queries now execute on the parallel GROUP BY fast path instead of the sequential cursor path. The optimizer rewrites SAMPLE BY to GROUP BY with `timestamp_floor_utc`, and a streaming fill cursor inserts gap-filled rows above the sorted group-by output. Phases 1–6 implemented the core cursor (non-keyed, keyed, cross-column PREV, FROM/TO ranges); phases 7–10 hardened it against type-safety issues, plan/test regressions across seven suites, critical review findings (geo PREV, recursion, NPE), and offset-aware bucket alignment; phase 11 closed out the remaining review findings and added missing test coverage. All 11 phases complete on PR #6946.
 
-## Phases
+## Phase Summary
 
-**Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
-
-Decimal phases appear between their surrounding integers in numeric order.
-
-- [x] **Phase 1: Optimizer Gate** - Relax optimizer to rewrite FILL(PREV) and keyed FILL to GROUP BY, preserve ORDER BY
-- [x] **Phase 2: Non-keyed Fill Cursor** - Streaming fill cursor for non-keyed FILL(NULL/PREV/VALUE) with DST and FROM/TO support
-- [x] **Phase 3: Keyed Fill Cursor** - Map-based key discovery, cartesian product emission, per-key prev tracking
-- [ ] **Phase 4: Cross-Column Prev** - FILL(PREV) referencing a different column from the previous bucket
-- [ ] **Phase 5: Verification and Hardening** - All 302 SampleByTest tests pass, resource leak fixes, parity validation
-- [x] **Phase 6: Keyed Fill with FROM/TO Range** - Keyed fill with FROM/TO range, architecture validation against cursor path (completed 2026-04-10)
+- [x] **Phase 1: Optimizer Gate** — Relax optimizer to rewrite FILL(PREV) and keyed FILL to GROUP BY, preserve ORDER BY
+- [x] **Phase 2: Non-keyed Fill Cursor** — Streaming fill cursor for non-keyed FILL(NULL/PREV/VALUE) with DST and FROM/TO support
+- [x] **Phase 3: Keyed Fill Cursor** — Map-based key discovery, cartesian product emission, per-key prev tracking
+- [x] **Phase 4: Cross-Column Prev** — FILL(PREV) referencing a different column from the previous bucket
+- [x] **Phase 5: Verification and Hardening** — Absorbed by phases 7–10 (see 05-01-SUMMARY.md)
+- [x] **Phase 6: Keyed Fill with FROM/TO Range** — Cartesian product across [FROM, TO) including leading/trailing fill
+- [x] **Phase 7: PREV Type-Safe Fast Path** — Per-column PREV snapshot with type matrix + legacy fallback for unsupported types
+- [x] **Phase 8: Fix Remaining Test Regressions** — 81 failures across 7 suites (plan text, factory classes, nano timestamp)
+- [x] **Phase 9: Fix Critical Review Findings** — Geo PREV silent null, findValue NPE guard, recursive hasNext stack overflow
+- [x] **Phase 10: Fix Offset-Aware Bucket Alignment** — Propagate calendar offset so sampler grid matches timestamp_floor_utc
+- [x] **Phase 11: Hardening — Review Findings & Missing Test Coverage** — UUID FILL_KEY dispatch, geo/decimal null sentinels, NULL-key/CTE/sparse-DST tests
 
 ## Phase Details
 
@@ -30,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `SELECT ts, key, avg(val) FROM t SAMPLE BY 1h FILL(NULL)` produces a query plan with `Async Group By` (not `SampleByFillNull`)
   3. ORDER BY on the rewritten GROUP BY model is preserved through `optimiseOrderBy` (the sort node is not dropped)
   4. `FILL(LINEAR)` queries still fall through to the cursor path (optimizer does not rewrite them)
-**Plans**: TBD
+**Plans:** 0/0 plans complete (gate-only phase, landed directly)
 
 ### Phase 2: Non-keyed Fill Cursor
 **Goal**: Non-keyed SAMPLE BY FILL queries produce correct, time-ordered output with gap-filled rows on the fast path for all fill modes and edge cases
@@ -42,9 +41,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `SELECT ts, avg(val) FROM t SAMPLE BY 1h FILL(0)` emits constant-filled rows (value 0) for missing buckets
   4. `FILL(NULL) FROM '2024-01-01' TO '2024-01-02'` emits leading fill rows before the first data point and trailing fill rows after the last
   5. A FILL query with `ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'` crossing a DST fall-back transition produces correctly ordered, non-duplicated output
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [x] 02-01-PLAN.md -- Fix infinite loop + resource leaks, add assertion tests for NULL/VALUE/FROM-TO/DST
+- [x] 02-01-PLAN.md — Fix infinite loop + resource leaks, add assertion tests for NULL/VALUE/FROM-TO/DST
 
 ### Phase 3: Keyed Fill Cursor
 **Goal**: Keyed SAMPLE BY FILL queries produce the cartesian product of all unique keys and all time buckets, with per-key prev tracking
@@ -56,9 +55,9 @@ Plans:
   3. Key order within each bucket is stable and consistent across all buckets
   4. Key column values in fill rows match the actual key values discovered during pass 1 (not null or garbage)
   5. Fill rows for missing (key, bucket) pairs use the correct fill mode (null, constant, or per-key prev)
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [x] 03-01-PLAN.md -- Optimizer gates, keyed fill cursor implementation, and integration tests
+- [x] 03-01-PLAN.md — Optimizer gates, keyed fill cursor implementation, and integration tests
 
 ### Phase 4: Cross-Column Prev
 **Goal**: FILL(PREV) can reference a specific source column from the previous bucket rather than always filling from self
@@ -68,40 +67,23 @@ Plans:
   1. Syntax for cross-column prev is defined and documented (e.g., `FILL(PREV(col_name))` or equivalent)
   2. A query using cross-column prev fills a gap row's column with the value of a different column from the previous bucket
   3. Cross-column prev works correctly with both keyed and non-keyed queries
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [x] 04-01-PLAN.md -- Optimizer gate relaxation, PREV(col_name) detection in generateFill, keyed prevValue fix, cross-column tests
+- [x] 04-01-PLAN.md — Optimizer gate relaxation, PREV(col_name) detection in generateFill, keyed prevValue fix, cross-column tests
 
 ### Phase 5: Verification and Hardening
 **Goal**: The fast-path fill implementation passes all existing tests and produces output identical to the cursor path
 **Depends on**: Phase 4
 **Requirements**: COR-01, COR-02, COR-03, COR-04
+**Status**: Absorbed by phases 7–10. The plan's four `must_have.truths` were all satisfied cumulatively by phase 7 (PREV type-safety), phase 8 (plan-text / factory-class sweep across 7 suites), phase 9 (geo PREV, NPE, recursion), and phase 10 (offset alignment). See `05-01-SUMMARY.md`.
 **Success Criteria** (what must be TRUE):
   1. All 302 existing SampleByTest tests pass without modification (behavioral parity with cursor path)
   2. `assertMemoryLeak` passes for all fill-related tests (no native memory leaks)
   3. Query plans for eligible FILL queries show `Async Group By` or `GroupBy vectorized` (parallel execution confirmed)
   4. Resource leak in `generateFill` error path is fixed (`sorted` factory and `constantFillFuncs` freed on exception)
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete (absorbed — see SUMMARY)
 Plans:
-- [ ] 05-01-PLAN.md -- Fix generateFill() metadata timestamp index, resolve all 65 test failures across 8 categories
-
-## Progress
-
-**Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Optimizer Gate | 0/0 | Complete | 2026-04-09 |
-| 2. Non-keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
-| 3. Keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
-| 4. Cross-Column Prev | 1/1 | Complete | 2026-04-10 |
-| 5. Verification and Hardening | 1/1 | Complete | 2026-04-10 |
-| 6. Keyed Fill with FROM/TO Range | 1/1 | Complete | 2026-04-10 |
-| 7. PREV Type-Safe Fast Path | 1/1 | Complete | 2026-04-10 |
-| 8. Fix Remaining Test Regressions | 0/1 | In Progress | — |
-| 9. Fix Critical Review Findings | 0/1 | Not Started | — |
-| 10. Fix Offset-Aware Bucket Alignment | 1/1 | Complete   | 2026-04-13 |
+- [x] 05-01-PLAN.md — Superseded by finer-grained phases 7–10; no direct commits. See 05-01-SUMMARY.md for attribution
 
 ### Phase 6: Keyed Fill with FROM/TO Range
 **Goal**: Keyed FILL queries with FROM/TO range emit the cartesian product of all keys for every bucket in the range, including leading and trailing fill rows for all keys
@@ -115,7 +97,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
   5. Architecture validation: output matches the cursor-based path for equivalent queries
 **Plans:** 1/1 plans complete
 Plans:
-- [x] 06-01-PLAN.md -- Fix SIGSEGV crash + 8 keyed FROM/TO fill tests
+- [x] 06-01-PLAN.md — Fix SIGSEGV crash + 8 keyed FROM/TO fill tests
 
 ### Phase 7: PREV Type-Safe Fast Path
 **Goal**: Make fast-path FILL(PREV/prev(alias)) type-safe by adding a source type support matrix, per-column snapshot tracking, and legacy fallback for unsupported types
@@ -128,9 +110,9 @@ Plans:
   4. Numeric `prev(alias)` with calendar + timezone stays on fast path
   5. No behavior regressions for existing FILL(PREV) tests (SampleByTest + SampleByFillTest)
   6. Nanosecond timestamp tests mirror microsecond equivalents
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [x] 07-01-PLAN.md -- Per-column snapshot, type matrix, optimizer gate, legacy fallback, mixed-fill and nano tests
+- [x] 07-01-PLAN.md — Per-column snapshot, type matrix, optimizer gate, legacy fallback, mixed-fill and nano tests
 
 ### Phase 8: Fix Remaining Test Regressions
 **Goal**: Fix 81 test failures across 7 suites caused by plan text changes, factory class changes, and the nano timestamp path
@@ -144,9 +126,9 @@ Plans:
   5. FirstArrayGroupByFunctionFactoryTest: 11/11 pass
   6. LastArrayGroupByFunctionFactoryTest: 20/20 pass
   7. SampleByNanoTimestampTest: 279/279 pass (fix 50 metadata/random-access)
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [x] 08-01-PLAN.md -- Fix 31 small-suite failures (plan text, factory classes, parse models, should-fail conversions) + 50 SampleByNanoTimestampTest failures
+- [x] 08-01-PLAN.md — Fix 31 small-suite failures (plan text, factory classes, parse models, should-fail conversions) + 50 SampleByNanoTimestampTest failures
 
 ### Phase 9: Fix Critical Review Findings
 **Goal**: Fix 3 critical bugs from code review: geo PREV silent null, unchecked findValue NPE, recursive hasNext stack overflow
@@ -158,9 +140,9 @@ Plans:
   3. `emitNextFillRow()` → `hasNext()` recursion replaced with loop — no StackOverflowError on sparse data with large FROM/TO range
   4. All existing tests still pass (329 SampleByFillTest + SampleByTest + SampleByNanoTimestampTest)
   5. Javadoc at line 67 updated to match `followedOrderByAdvice=false`
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [x] 09-01-PLAN.md -- Fix geo PREV null, findValue NPE guard, recursive hasNext stack overflow, Javadoc fix + regression tests
+- [x] 09-01-PLAN.md — Fix geo PREV null, findValue NPE guard, recursive hasNext stack overflow, Javadoc fix + regression tests
 
 ### Phase 10: Fix Offset-Aware Bucket Alignment in Fill Cursor
 **Goal**: Fix infinite fill when ALIGN TO CALENDAR WITH OFFSET is used without TO — the sampler's setStart() ignores the offset, causing bucket boundaries to never match GROUP BY output
@@ -173,7 +155,7 @@ Plans:
   4. All existing tests still pass
 **Plans:** 1/1 plans complete
 Plans:
-- [x] 10-01-PLAN.md -- Propagate calendar offset through optimizer/codegen/factory, fix bucket alignment in initialize(), add 5 offset+fill tests
+- [x] 10-01-PLAN.md — Propagate calendar offset through optimizer/codegen/factory, fix bucket alignment in initialize(), add 5 offset+fill tests
 
 ### Phase 11: Hardening — Review Findings & Missing Test Coverage
 **Goal**: Fix remaining code review findings and add missing test coverage
@@ -187,4 +169,24 @@ Plans:
   5. DST test with sparse data generates fill rows during transition
   6. Decimal8/16 null sentinels use Decimals.*_NULL
   7. /review-pr passes with no critical or moderate findings on production code
-**Plans**: TBD
+**Plans:** 1/1 plans complete (retroactive — work landed before plan was written; see SUMMARY)
+Plans:
+- [x] 11-01-PLAN.md — FILL_KEY dispatch for UUID/Long256/Decimal128-256, Geo/Decimal null sentinels, ownership transfer, dead code removal, 3 new tests (NULL key, CTE, DST sparse)
+
+## Progress
+
+**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11.
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 1. Optimizer Gate | 0/0 | Complete | 2026-04-09 |
+| 2. Non-keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
+| 3. Keyed Fill Cursor | 1/1 | Complete | 2026-04-10 |
+| 4. Cross-Column Prev | 1/1 | Complete | 2026-04-10 |
+| 5. Verification and Hardening | 1/1 | Absorbed by 7–10 | 2026-04-10 |
+| 6. Keyed Fill with FROM/TO Range | 1/1 | Complete | 2026-04-10 |
+| 7. PREV Type-Safe Fast Path | 1/1 | Complete | 2026-04-10 |
+| 8. Fix Remaining Test Regressions | 1/1 | Complete | 2026-04-12 |
+| 9. Fix Critical Review Findings | 1/1 | Complete | 2026-04-13 |
+| 10. Fix Offset-Aware Bucket Alignment | 1/1 | Complete | 2026-04-13 |
+| 11. Hardening — Review Findings & Missing Test Coverage | 1/1 | Complete (retroactive) | 2026-04-13 |
