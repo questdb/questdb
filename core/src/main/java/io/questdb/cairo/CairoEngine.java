@@ -177,6 +177,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DataID dataID;
     private final FunctionFactoryCache ffCache;
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
+    // TODO(live-view): zero-GC — JDK ConcurrentLinkedQueue allocates a Node per add() on the WAL notification hot path.
+    //  Switch to a ring/SPSC queue with pre-allocated task slots (see MatViewStateStore).
     private final ConcurrentLinkedQueue<LiveViewRefreshTask> liveViewTaskQueue = new ConcurrentLinkedQueue<>();
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
@@ -1626,6 +1628,8 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {
         if (liveViewRegistry.hasViewsForBaseTable(baseTableToken.getTableName())) {
+            // TODO(live-view): zero-GC — allocates a fresh LiveViewRefreshTask on every WAL commit.
+            //  Use a pre-allocated pool or in-place ring-queue slots.
             LiveViewRefreshTask task = new LiveViewRefreshTask();
             task.baseTableToken = baseTableToken;
             task.seqTxn = seqTxn;

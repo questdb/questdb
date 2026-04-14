@@ -33,6 +33,12 @@ import java.util.Map;
 
 /**
  * Thread-safe registry of live view instances.
+ * <p>
+ * TODO(live-view): zero-GC — {@link #getViewsForBaseTable}, {@link #invalidateViewsForBaseTable} and
+ *  {@link #hasViewsForBaseTable} do a linear scan over {@code viewsByName.values()} on every call. The enhanced-for
+ *  iteration allocates an Iterator via {@link ConcurrentHashMap}'s JDK-style {@code values()}, and all three methods
+ *  are called on the WAL notification path. Maintain a secondary {@code baseTable -> ObjList<LiveViewInstance>}
+ *  index (mirroring {@code MatViewGraph}'s base-table index) so lookups are O(1) and allocation-free.
  */
 public class LiveViewRegistry implements QuietCloseable {
     private final ConcurrentHashMap<LiveViewInstance> viewsByName = new ConcurrentHashMap<>();

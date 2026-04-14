@@ -78,6 +78,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return didWork;
     }
 
+    // TODO(live-view): zero-GC + algorithmic — recompiles the SELECT, rebuilds the factory, and runs a fresh cursor
+    //  on every WAL commit. SqlCompiler.compile() and factory construction allocate heavily. Incremental refresh
+    //  (WalTxnRangeLoader + computeNext()) removes the recompile entirely; until then, at minimum cache the
+    //  compiled factory on LiveViewInstance and reuse the cursor across refreshes.
     private void refreshInstance(LiveViewInstance instance) {
         String selectSql = instance.getDefinition().getViewSql();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {

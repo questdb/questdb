@@ -105,6 +105,9 @@ public class LiveViewRecordCursor implements RecordCursor {
         }
     }
 
+    // TODO(live-view): zero-GC — allocates a fresh anonymous SymbolTable on every call. Parallel queries may call this
+    //  per query per SYMBOL column. Promote to a reusable named inner class held in an ObjList<LiveViewSymbolTable>
+    //  sized to columnCount (mirroring PageFrameRecordCursorFactory).
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         int type = viewInstance.getTable().getColumnType(columnIndex);

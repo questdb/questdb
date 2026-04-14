@@ -33,8 +33,9 @@ import java.util.TreeMap;
  * A simple Java-heap sorted buffer that holds rows until they are old enough
  * to drain (past the LAG window). Rows are sorted by timestamp.
  * <p>
- * This V1 draft implementation uses Java collections (not zero-GC). A future
- * version would use native memory.
+ * TODO(live-view): zero-GC — this entire class is a V1 placeholder. TreeMap/ArrayList/Object[] and the per-row
+ *  {@code computeIfAbsent} lambda all allocate on the refresh hot path. Replace with a native-memory sorted buffer
+ *  (min-heap or sorted array keyed by timestamp) before wiring this into the refresh pipeline.
  */
 public class MergeBuffer {
     private final long lagMicros;

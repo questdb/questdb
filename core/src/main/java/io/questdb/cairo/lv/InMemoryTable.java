@@ -40,6 +40,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Columnar in-memory store for live view results. Each column is a contiguous
@@ -248,17 +249,8 @@ public class InMemoryTable implements QuietCloseable {
         Unsafe.getUnsafe().putShort(addr, value);
     }
 
-    /**
-     * Appends an ARRAY value using the native column format (16-byte aux entries).
-     */
-    public void putArray(int col, ArrayView value, int columnType) {
-        MemoryCARW data = columns.getQuick(col);
-        MemoryCARW aux = auxColumns.getQuick(col);
-        if (value == null || value.isNull()) {
-            ArrayTypeDriver.appendValue(aux, data, value);
-        } else {
-            ArrayTypeDriver.appendValue(aux, data, value);
-        }
+    public void putArray(int col, @NotNull ArrayView value, int columnType) {
+        ArrayTypeDriver.appendValue(auxColumns.getQuick(col), columns.getQuick(col), value);
     }
 
     /**
@@ -312,6 +304,9 @@ public class InMemoryTable implements QuietCloseable {
         }
     }
 
+    // TODO(live-view): zero-GC — allocates a new String per non-null symbol (value.toString()) on the refresh hot path,
+    //  and does an O(n) linear scan via ObjList.indexOf(). Replace with a CharSequence-keyed open-addressed symbol map
+    //  that interns into off-heap storage (see SymbolMapReader / GroupByAllocator patterns).
     public int putSymbol(int col, CharSequence value) {
         ObjList<String> st = symbolTables.getQuick(col);
         if (value == null) {
