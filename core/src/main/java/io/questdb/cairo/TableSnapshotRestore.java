@@ -629,11 +629,12 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             // mmap _pm metadata to read parquet file size and provide metadata to the decoder.
             path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            final long parquetMetaFileSize = ff.length(path.$());
+            long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             try {
                 final long parquetSize;
                 try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
-                    parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
+                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetMetadataFileSize);
                     parquetSize = parquetMetaReader.getParquetFileSize();
                 }
 
@@ -646,7 +647,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
                 long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 try {
-                    partitionDecoder.of(parquetMetaAddr, parquetMetadataFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    partitionDecoder.of(parquetMetaAddr, parquetMetaFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
                     // Set path to native partition directory (where index files go)
                     path.trimTo(pathTableLen);
@@ -677,7 +678,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                 }
             } finally {
-                ff.munmap(parquetMetaAddr, parquetMetadataFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
     }
@@ -729,9 +730,9 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             try {
-                long pmFileSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
-                txWriter.setPartitionParquetFormat(partitionTs, pmFileSize);
-                LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", pmSize=").$(pmFileSize).I$();
+                long parquetMetaFileSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
+                txWriter.setPartitionParquetFormat(partitionTs, parquetMetaFileSize);
+                LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", pmSize=").$(parquetMetaFileSize).I$();
             } finally {
                 ff.close(parquetFd);
                 ff.close(pmFd);
@@ -773,7 +774,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                final long parquetMetaFileSize = txWriter.getPartitionParquetMetaFileSize(partitionIndex);
+                final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
 
                 futures.add(executor.submit(() -> rebuildBitmapIndexForParquetPartition(
                         tablePathStr,
@@ -781,7 +782,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                         partitionTimestamp,
                         partitionRowCount,
                         partitionNameTxn,
-                        parquetMetaFileSize,
+                        parquetFileSize,
                         partitionBy,
                         timestampType
                 )));

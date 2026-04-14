@@ -674,6 +674,9 @@ pub struct ParquetMetaUpdateResult {
     pub bytes: Vec<u8>,
     /// Total `_pm` file size after the append.
     pub new_file_size: u64,
+    /// Absolute offset of the new footer in the file.
+    /// The caller must write this at `HEADER_FOOTER_OFFSET_OFF` in the header.
+    pub new_footer_offset: u64,
 }
 
 /// Generates a complete `_pm` file from scratch.
@@ -868,10 +871,14 @@ pub fn update_parquet_metadata(
 
     updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
     updater.unused_bytes(unused_bytes);
-    let (append_bytes, _new_footer_offset) = updater.finish()?;
+    let (append_bytes, new_footer_offset) = updater.finish()?;
     let new_file_size = existing_pm_file_size + append_bytes.len() as u64;
 
-    Ok(ParquetMetaUpdateResult { bytes: append_bytes, new_file_size })
+    Ok(ParquetMetaUpdateResult {
+        bytes: append_bytes,
+        new_file_size,
+        new_footer_offset,
+    })
 }
 
 /// Builds a `RowGroupBlockBuilder` directly from a thrift `RowGroup` struct

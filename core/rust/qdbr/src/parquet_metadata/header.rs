@@ -27,7 +27,7 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::types::{
-    ColumnFlags, HeaderFeatureFlags, COLUMN_DESCRIPTOR_SIZE, FILE_FORMAT_VERSION, HEADER_FIXED_SIZE,
+    ColumnFlags, HeaderFeatureFlags, COLUMN_DESCRIPTOR_SIZE, HEADER_FIXED_SIZE,
 };
 
 // ── On-disk column descriptor (32 bytes) ───────────────────────────────
@@ -59,15 +59,14 @@ impl ColumnDescriptorRaw {
     }
 }
 
-// ── On-disk header fixed portion (24 bytes) ────────────────────────────
+// ── On-disk header fixed portion (32 bytes) ────────────────────────────
 
-/// On-disk layout of the fixed portion of the file header (24 bytes).
+/// On-disk layout of the fixed portion of the file header (32 bytes).
 ///
-/// Read field-by-field rather than via pointer cast because
-/// `feature_flags: u64` at offset 4 is not 8-byte aligned.
+/// All u64 fields are naturally 8-byte aligned.
 #[derive(Debug, Copy, Clone)]
 pub struct FileHeaderRaw {
-    pub format_version: u32,
+    pub footer_offset: u64,
     pub feature_flags: HeaderFeatureFlags,
     pub designated_timestamp: i32,
     pub sorting_column_count: u32,
@@ -103,19 +102,12 @@ impl<'a> FileHeader<'a> {
         // Unwraps: data.len() >= HEADER_FIXED_SIZE (24) checked above, so all
         // fixed-width slices are exactly the right length.
         let raw = FileHeaderRaw {
-            format_version: u32::from_le_bytes(data[0..4].try_into().unwrap()),
-            feature_flags: HeaderFeatureFlags::from_le_bytes(data[4..12].try_into().unwrap()),
-            designated_timestamp: i32::from_le_bytes(data[12..16].try_into().unwrap()),
-            sorting_column_count: u32::from_le_bytes(data[16..20].try_into().unwrap()),
-            column_count: u32::from_le_bytes(data[20..24].try_into().unwrap()),
+            footer_offset: u64::from_le_bytes(data[0..8].try_into().unwrap()),
+            feature_flags: HeaderFeatureFlags::from_le_bytes(data[8..16].try_into().unwrap()),
+            designated_timestamp: i32::from_le_bytes(data[16..20].try_into().unwrap()),
+            sorting_column_count: u32::from_le_bytes(data[20..24].try_into().unwrap()),
+            column_count: u32::from_le_bytes(data[24..28].try_into().unwrap()),
         };
-
-        if raw.format_version != FILE_FORMAT_VERSION {
-            return Err(parquet_meta_err!(ParquetMetaErrorKind::VersionMismatch {
-                found: raw.format_version,
-                expected: FILE_FORMAT_VERSION,
-            }));
-        }
 
         let unknown_required = raw.feature_flags.unknown_required(0);
         if unknown_required != 0 {
@@ -263,12 +255,13 @@ impl<'a> FileHeader<'a> {
         Ok(end)
     }
 
-    pub fn format_version(&self) -> u32 {
-        self.raw.format_version
-    }
-
     pub fn feature_flags(&self) -> HeaderFeatureFlags {
         self.raw.feature_flags
+    }
+
+    /// Returns the footer offset stored in the header.
+    pub fn footer_offset(&self) -> u64 {
+        self.raw.footer_offset
     }
 
     /// Index of the designated timestamp column, or `None` if not set (-1).
@@ -563,12 +556,14 @@ impl FileHeaderBuilder {
             sorting_count = self.sorting_columns.len() as u32;
         }
 
-        // Fixed header fields (24 bytes, field-by-field for alignment safety).
-        buf.extend_from_slice(&FILE_FORMAT_VERSION.to_le_bytes());
+        // Fixed header fields (32 bytes).
+        // footer_offset placeholder (patched by the top-level writer after the footer is written).
+        buf.extend_from_slice(&0u64.to_le_bytes());
         buf.extend_from_slice(&flags.0.to_le_bytes());
         buf.extend_from_slice(&self.designated_timestamp.to_le_bytes());
         buf.extend_from_slice(&sorting_count.to_le_bytes());
         buf.extend_from_slice(&column_count.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes()); // reserved (alignment padding)
 
         // Reserve space for column descriptors (backpatched later with name offsets).
         let descriptors_start = buf.len();
@@ -646,7 +641,6 @@ mod tests {
         builder.write_to(&mut buf);
 
         let hdr = FileHeader::new(&buf).unwrap();
-        assert_eq!(hdr.format_version(), FILE_FORMAT_VERSION);
         assert_eq!(hdr.feature_flags(), HeaderFeatureFlags::new());
         assert_eq!(hdr.designated_timestamp(), None);
         assert_eq!(hdr.column_count(), 0);
@@ -742,14 +736,6 @@ mod tests {
     }
 
     #[test]
-    fn header_bad_version() {
-        let mut buf = vec![0u8; HEADER_FIXED_SIZE];
-        // Write version 99.
-        buf[0..4].copy_from_slice(&99u32.to_le_bytes());
-        assert!(FileHeader::new(&buf).is_err());
-    }
-
-    #[test]
     fn descriptor_out_of_range() {
         let builder = FileHeaderBuilder::new(-1);
         let mut buf = Vec::new();
@@ -773,12 +759,12 @@ mod tests {
     fn header_too_small_for_columns() {
         // Write a header claiming 10 columns but truncate the buffer.
         let mut buf = vec![0u8; HEADER_FIXED_SIZE];
-        buf[0..4].copy_from_slice(&FILE_FORMAT_VERSION.to_le_bytes());
-        buf[4..12].copy_from_slice(&0u64.to_le_bytes()); // feature_flags
-        buf[12..16].copy_from_slice(&(-1i32).to_le_bytes()); // designated_ts
-        buf[16..20].copy_from_slice(&0u32.to_le_bytes()); // sorting count
-        buf[20..24].copy_from_slice(&10u32.to_le_bytes()); // claim 10 columns
-                                                           // Buffer is only 24 bytes but needs 24 + 10*32 = 344.
+        buf[0..8].copy_from_slice(&0u64.to_le_bytes()); // footer_offset
+        buf[8..16].copy_from_slice(&0u64.to_le_bytes()); // feature_flags
+        buf[16..20].copy_from_slice(&(-1i32).to_le_bytes()); // designated_ts
+        buf[20..24].copy_from_slice(&0u32.to_le_bytes()); // sorting count
+        buf[24..28].copy_from_slice(&10u32.to_le_bytes()); // claim 10 columns
+                                                           // Buffer is only 32 bytes but needs 32 + 10*32 = 352.
         assert!(FileHeader::new(&buf).is_err());
     }
 
@@ -912,7 +898,7 @@ mod tests {
 
         // Manually set only BLOOM_FILTERS_EXTERNAL (bit 1) without BLOOM_FILTERS (bit 0).
         let flags = HeaderFeatureFlags::BLOOM_FILTERS_EXTERNAL_BIT;
-        buf[4..12].copy_from_slice(&flags.to_le_bytes());
+        buf[8..16].copy_from_slice(&flags.to_le_bytes());
 
         assert!(FileHeader::new(&buf).is_err());
     }
@@ -954,7 +940,7 @@ mod tests {
 
         // Set bit 0 manually but provide zero bloom_col_count.
         let flags = HeaderFeatureFlags::BLOOM_FILTERS_BIT;
-        buf[4..12].copy_from_slice(&flags.to_le_bytes());
+        buf[8..16].copy_from_slice(&flags.to_le_bytes());
         // After name strings, write bloom_col_count = 0.
         let names_end = buf.len();
         buf.extend_from_slice(&0u32.to_le_bytes()); // bloom_col_count = 0
@@ -1109,7 +1095,7 @@ mod tests {
 
         // Manually set SORTING_IS_DTS_ASC flag while designated_timestamp remains -1.
         let flags = HeaderFeatureFlags::SORTING_IS_DTS_ASC_BIT;
-        buf[4..12].copy_from_slice(&flags.to_le_bytes());
+        buf[8..16].copy_from_slice(&flags.to_le_bytes());
 
         assert!(FileHeader::new(&buf).is_err());
     }

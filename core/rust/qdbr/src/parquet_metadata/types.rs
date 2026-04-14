@@ -32,12 +32,15 @@ use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 
 // ── File format constants ──────────────────────────────────────────────
 
-/// Current file format version.
-pub const FILE_FORMAT_VERSION: u32 = 1;
+/// Fixed portion of the file header (footer_offset(8) + feature_flags(8) +
+/// designated_ts(4) + sorting_col_count(4) + col_count(4) + reserved(4)).
+pub const HEADER_FIXED_SIZE: usize = 32;
 
-/// Fixed portion of the file header (version(4) + feature_flags(8) + designated_ts(4)
-/// + sorting_col_count(4) + col_count(4)).
-pub const HEADER_FIXED_SIZE: usize = 24;
+/// Byte offset within the header where footer_offset is stored.
+pub const HEADER_FOOTER_OFFSET_OFF: usize = 0;
+
+/// Byte offset where the CRC-covered area begins (right after footer_offset).
+pub const HEADER_CRC_AREA_OFF: usize = HEADER_FOOTER_OFFSET_OFF + 8;
 
 /// Size of a single column descriptor in the header.
 pub const COLUMN_DESCRIPTOR_SIZE: usize = 32;
@@ -46,8 +49,11 @@ pub const COLUMN_DESCRIPTOR_SIZE: usize = 32;
 pub const COLUMN_CHUNK_SIZE: usize = 64;
 
 /// Fixed portion of the footer (parquet_footer_offset(8) + parquet_footer_length(4)
-/// + row_group_count(4) + unused_bytes(8)).
-pub const FOOTER_FIXED_SIZE: usize = 24;
+/// + row_group_count(4) + unused_bytes(8) + prev_footer_offset(8)).
+pub const FOOTER_FIXED_SIZE: usize = 32;
+
+/// Byte offset within the footer where prev_footer_offset is stored.
+pub const FOOTER_PREV_FOOTER_OFFSET_OFF: usize = 24;
 
 // ── Feature flags ─────────────────────────────────────────────────────
 

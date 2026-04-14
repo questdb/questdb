@@ -32,7 +32,7 @@ use crate::parquet_metadata::reader::ParquetMetaReader;
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::{
     ColumnFlags, BLOCK_ALIGNMENT, BLOCK_ALIGNMENT_SHIFT, COLUMN_CHUNK_SIZE, FOOTER_CHECKSUM_SIZE,
-    FOOTER_TRAILER_SIZE,
+    FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, HEADER_FOOTER_OFFSET_OFF,
 };
 
 // ── ParquetMetaWriter (create mode) ───────────────────────────────────────────
@@ -216,10 +216,16 @@ impl ParquetMetaWriter {
         fb.set_bloom_filter_section(bloom_section);
         let footer_offset = fb.write_to(&mut buf) as u64;
 
-        // Compute and write CRC32 over [0, checksum_field_offset).
-        // The trailer (last 4 bytes) is NOT covered by the CRC.
+        // Patch footer_offset into the header.
+        buf[HEADER_FOOTER_OFFSET_OFF..HEADER_FOOTER_OFFSET_OFF + 8]
+            .copy_from_slice(&footer_offset.to_le_bytes());
+
+        // Compute and write CRC32 over [HEADER_FIXED_SIZE, checksum_field_offset).
+        // The CRC covers everything after the fixed header (which contains the
+        // mutable footer_offset field): column descriptors, row group blocks,
+        // and footer.
         let checksum_field_offset = buf.len() - FOOTER_TRAILER_SIZE - FOOTER_CHECKSUM_SIZE;
-        let crc = crc32fast::hash(&buf[..checksum_field_offset]);
+        let crc = crc32fast::hash(&buf[HEADER_CRC_AREA_OFF..checksum_field_offset]);
         buf[checksum_field_offset..checksum_field_offset + FOOTER_CHECKSUM_SIZE]
             .copy_from_slice(&crc.to_le_bytes());
 
@@ -541,9 +547,10 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             Vec::new()
         };
 
-        // Write the new footer.
+        // Write the new footer with prev_footer_offset pointing to the old footer.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
         fb.unused_bytes(self.unused_bytes);
+        fb.prev_footer_offset(self.existing_footer_offset);
         for &offset in &final_offsets {
             fb.add_row_group_offset(offset)?;
         }
@@ -551,10 +558,13 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let footer_rel_start = fb.write_to(&mut append_buf);
         let new_footer_offset = (append_start + footer_rel_start) as u64;
 
-        // Resume CRC32 from the previous checksum instead of re-hashing the
-        // entire existing file.  The old CRC covers [0, old_crc_field_offset).
-        // We continue from there, hashing only the bytes after the old CRC
-        // field (old CRC value + old trailer + new append data).
+        // Resume CRC32 from the previous checksum. The CRC covers
+        // [HEADER_CRC_AREA_OFF, crc_field) of the entire (existing + appended) file.
+        // The old CRC covers [HEADER_CRC_AREA_OFF, old_crc_field) of the existing file.
+        // We continue from there, hashing the old CRC field + old trailer + new
+        // append data up to the new CRC field.
+        let footer_usize = self.existing_footer_offset as usize;
+        let footer_length = Self::read_footer_length(self.existing)?;
         let old_crc_field_offset = footer_usize + footer_length as usize - FOOTER_CHECKSUM_SIZE;
         let old_crc = u32::from_le_bytes(
             self.existing[old_crc_field_offset..old_crc_field_offset + FOOTER_CHECKSUM_SIZE]

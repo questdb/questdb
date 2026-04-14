@@ -92,7 +92,7 @@ public class Mig940Test extends AbstractCairoTest {
                 long pmAddr = TableUtils.mapRO(ff, path.$(), LOG, pmSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(pmAddr, pmSize);
+                    reader.of(pmAddr, pmSize, Long.MAX_VALUE);
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                     Assert.assertTrue(reader.getParquetFileSize() > 0);

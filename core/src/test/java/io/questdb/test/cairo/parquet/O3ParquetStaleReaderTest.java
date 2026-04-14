@@ -38,9 +38,9 @@ import org.junit.Test;
  * <p>QuestDB-managed parquet normalizes {@code column_top} to 0 when a
  * partition is converted or rewritten. The stale-reader guarantee therefore no
  * longer depends on mutating top metadata. It still depends on append-only
- * footer snapshots: a reader pinned to an older {@code parquetMetaFileSize}
- * must keep resolving a consistent older `_pm` snapshot while a fresh reader
- * sees the new footer after the O3 merge commits.
+ * footer snapshots: a reader pinned to an older {@code parquetFileSize}
+ * must keep resolving a consistent older footer via the {@code prev_footer_offset}
+ * chain while a fresh reader sees the new footer after the O3 merge commits.
  */
 public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 

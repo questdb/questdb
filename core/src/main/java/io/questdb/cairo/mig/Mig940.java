@@ -36,7 +36,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 
@@ -44,11 +43,11 @@ import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 /**
- * Generates {@code _pm} metadata files for existing parquet partitions and
- * stores the pm file size in field 3 of each partition entry in {@code _txn}.
+ * Generates {@code _pm} metadata files for existing parquet partitions.
  * <p>
- * Field 3 was previously "parquet file size" and is now "parquet metadata file size."
- * For non-parquet partitions, the field is set to -1.
+ * Field 3 in {@code _txn} remains the parquet file size (unchanged).
+ * The migration only reads {@code _txn} to locate partitions and generates
+ * {@code _pm} files; it does not modify {@code _txn}.
  */
 public final class Mig940 {
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
@@ -57,7 +56,6 @@ public final class Mig940 {
     private static final int LONGS_PER_PARTITION = 4;
     private static final int PARTITION_MASKED_SIZE_IDX = 1;
     private static final int PARTITION_NAME_TX_IDX = 2;
-    private static final int PARTITION_PM_FILE_SIZE_IDX = 3;
     private static final int PARQUET_FORMAT_BIT = 61;
     private static final long META_OFFSET_PARTITION_BY = 4;
     private static final long META_OFFSET_TIMESTAMP_INDEX = 8;
@@ -109,10 +107,11 @@ public final class Mig940 {
             LOG.error().$("tx file does not exist, nothing to migrate [path=").$(path).I$();
             return;
         }
-        EngineMigration.backupFile(ff, path, migrationContext.getTablePath2(), TXN_FILE_NAME, 426);
-
         LOG.info().$("generating parquet metadata files [path=").$(path).I$();
-        try (MemoryMARW txMem = migrationContext.createRwMemoryOf(ff, path.$())) {
+        long txFileSize = ff.length(path.$());
+        try (MemoryMARW txMem = Vm.getCMARWInstance(
+                ff, path.$(), ff.getPageSize(), txFileSize, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE
+        )) {
             long version = txMem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
             boolean isA = (version & 1) == 0;
 
@@ -134,18 +133,15 @@ public final class Mig940 {
                 long entryOffset = dataStart + (long) i * LONGS_PER_PARTITION * Long.BYTES;
                 long maskedSize = txMem.getLong(entryOffset + PARTITION_MASKED_SIZE_IDX * Long.BYTES);
                 boolean isParquet = ((maskedSize >>> PARQUET_FORMAT_BIT) & 1) == 1;
-                long fieldOffset = entryOffset + PARTITION_PM_FILE_SIZE_IDX * Long.BYTES;
 
                 if (!isParquet) {
-                    txMem.putLong(fieldOffset, -1L);
                     continue;
                 }
 
                 long partitionTs = txMem.getLong(entryOffset);
                 long nameTxn = txMem.getLong(entryOffset + PARTITION_NAME_TX_IDX * Long.BYTES);
 
-                long parquetMetaFileSize = generateParquetMetaForPartition(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn);
-                txMem.putLong(fieldOffset, parquetMetaFileSize);
+                generateParquetMetaForPartition(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn);
             }
         }
         path.trimTo(plen);

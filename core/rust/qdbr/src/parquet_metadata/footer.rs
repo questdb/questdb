@@ -31,15 +31,16 @@ use crate::parquet_metadata::types::{
     FOOTER_TRAILER_SIZE, ROW_GROUP_ENTRY_SIZE,
 };
 
-// ── On-disk footer fixed portion (24 bytes) ─────────────────────────────
+// ── On-disk footer fixed portion (32 bytes) ─────────────────────────────
 
-/// On-disk layout of the fixed portion of the footer (24 bytes, read field-by-field).
+/// On-disk layout of the fixed portion of the footer (32 bytes, read field-by-field).
 #[derive(Debug, Copy, Clone)]
 pub struct FooterRaw {
     pub parquet_footer_offset: u64,
     pub parquet_footer_length: u32,
     pub row_group_count: u32,
     pub unused_bytes: u64,
+    pub prev_footer_offset: u64,
 }
 
 // ── Footer (zero-copy reader) ──────────────────────────────────────────
@@ -80,6 +81,7 @@ impl<'a> Footer<'a> {
             parquet_footer_length: u32::from_le_bytes(data[8..12].try_into().unwrap()),
             row_group_count: u32::from_le_bytes(data[12..16].try_into().unwrap()),
             unused_bytes: u64::from_le_bytes(data[16..24].try_into().unwrap()),
+            prev_footer_offset: u64::from_le_bytes(data[24..32].try_into().unwrap()),
         };
 
         // Validate that the footer data is large enough for base entries + CRC.
@@ -172,6 +174,11 @@ impl<'a> Footer<'a> {
         self.raw.unused_bytes
     }
 
+    /// Returns the offset of the previous footer in the chain (0 if first version).
+    pub fn prev_footer_offset(&self) -> u64 {
+        self.raw.prev_footer_offset
+    }
+
     /// Returns the actual byte offset of the row group block at `index`.
     /// The stored value is right-shifted by [`BLOCK_ALIGNMENT_SHIFT`].
     pub fn row_group_block_offset(&self, index: usize) -> ParquetResult<u64> {
@@ -218,6 +225,7 @@ pub struct FooterBuilder {
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     unused_bytes: u64,
+    prev_footer_offset: u64,
     row_group_offsets: Vec<u64>,
     /// Optional bloom filter footer feature section bytes, written between
     /// row group entries and CRC.
@@ -230,6 +238,7 @@ impl FooterBuilder {
             parquet_footer_offset,
             parquet_footer_length,
             unused_bytes: 0,
+            prev_footer_offset: 0,
             row_group_offsets: Vec::new(),
             bloom_filter_section: Vec::new(),
         }
@@ -237,6 +246,11 @@ impl FooterBuilder {
 
     pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
         self.unused_bytes = unused_bytes;
+        self
+    }
+
+    pub fn prev_footer_offset(&mut self, prev_footer_offset: u64) -> &mut Self {
+        self.prev_footer_offset = prev_footer_offset;
         self
     }
 
@@ -267,6 +281,7 @@ impl FooterBuilder {
         buf.extend_from_slice(&self.parquet_footer_length.to_le_bytes());
         buf.extend_from_slice(&(self.row_group_offsets.len() as u32).to_le_bytes());
         buf.extend_from_slice(&self.unused_bytes.to_le_bytes());
+        buf.extend_from_slice(&self.prev_footer_offset.to_le_bytes());
 
         for &offset in &self.row_group_offsets {
             let stored = (offset >> BLOCK_ALIGNMENT_SHIFT) as u32;
@@ -368,8 +383,9 @@ mod tests {
         buf.extend_from_slice(&0u32.to_le_bytes()); // parquet_footer_length
         buf.extend_from_slice(&5u32.to_le_bytes()); // row_group_count = 5
         buf.extend_from_slice(&0u64.to_le_bytes()); // unused_bytes
-                                                    // Need 24 + 5*4 + 4 = 48 bytes, but only have 24.
-        assert!(Footer::new(&buf, 24).is_err());
+        buf.extend_from_slice(&0u64.to_le_bytes()); // prev_footer_offset
+                                                    // Need 32 + 5*4 + 4 = 56 bytes, but only have 32.
+        assert!(Footer::new(&buf, 32).is_err());
     }
 
     #[test]
@@ -405,7 +421,7 @@ mod tests {
     fn footer_length_too_small_for_base() {
         // Build a valid empty footer, then call Footer::new with a
         // footer_length_through_crc that is smaller than base_size_through_crc.
-        // base_through_crc for 0 row groups = FOOTER_FIXED_SIZE(24) + FOOTER_CHECKSUM_SIZE(4) = 28.
+        // base_through_crc for 0 row groups = FOOTER_FIXED_SIZE(32) + FOOTER_CHECKSUM_SIZE(4) = 36.
         let fb = FooterBuilder::new(0, 0);
         let mut buf = Vec::new();
         let start = fb.write_to(&mut buf);

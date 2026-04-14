@@ -54,7 +54,7 @@ public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_READ_ONLY_BIT_OFFSET = 62;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
-    protected static final int PARTITION_PARQUET_METADATA_FILE_SIZE = 3;
+    protected static final int PARTITION_PARQUET_FILE_SIZE = 3;
     protected static final int PARTITION_SQUASH_COUNTER_BIT_OFFSET = 44;
     protected static final long PARTITION_SQUASH_COUNTER_MASK = 0xFFFFL << PARTITION_SQUASH_COUNTER_BIT_OFFSET;
     // partition size's highest possible value is 0xFFFFFFFFFFFL (15 Tera Rows):
@@ -330,8 +330,8 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionNameTxnByRawIndex(attachedPartitions, index);
     }
 
-    public long getPartitionParquetMetaFileSize(int partitionIndex) {
-        return getPartitionParquetMetaFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    public long getPartitionParquetFileSize(int partitionIndex) {
+        return getPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public long getPartitionRowCountByTimestamp(long ts) {
@@ -536,7 +536,7 @@ public class TxReader implements Closeable, Mutable {
             }
 
             long nameTxn = getPartitionNameTxnByRawIndex(i);
-            long parquetMetadataFileSize = getPartitionParquetMetaFileSizeByRawIndex(i);
+            long parquetFileSize = getPartitionParquetFileSizeByRawIndex(i);
 
             if (i > 0) {
                 sink.put(",");
@@ -547,7 +547,7 @@ public class TxReader implements Closeable, Mutable {
             sink.put("', rowCount: ").put(rowCount);
             sink.put(", nameTxn: ").put(nameTxn);
             if (isPartitionParquet(i / LONGS_PER_TX_ATTACHED_PARTITION)) {
-                sink.put(", parquetMetadataFileSize: ").put(parquetMetadataFileSize);
+                sink.put(", parquetFileSize: ").put(parquetFileSize);
             }
             if (isPartitionReadOnlyByRawIndex(i)) {
                 sink.put(", readOnly=true");
@@ -696,8 +696,8 @@ public class TxReader implements Closeable, Mutable {
         return roTxMemBase.getLong(baseOffset + readOffset);
     }
 
-    private long getPartitionParquetMetaFileSizeByRawIndex(int partitionRawIndex) {
-        return attachedPartitions.getQuick(partitionRawIndex + PARTITION_PARQUET_METADATA_FILE_SIZE);
+    private long getPartitionParquetFileSizeByRawIndex(int partitionRawIndex) {
+        return attachedPartitions.getQuick(partitionRawIndex + PARTITION_PARQUET_FILE_SIZE);
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
@@ -831,7 +831,7 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestampLo);
         attachedPartitions.setQuick(index + PARTITION_MASKED_SIZE_OFFSET, partitionSize & PARTITION_SIZE_MASK);
         attachedPartitions.setQuick(index + PARTITION_NAME_TX_OFFSET, partitionNameTxn);
-        attachedPartitions.setQuick(index + PARTITION_PARQUET_METADATA_FILE_SIZE, -1L);
+        attachedPartitions.setQuick(index + PARTITION_PARQUET_FILE_SIZE, -1L);
     }
 
     protected void switchRecord(int readBaseOffset, long readRecordSize) {

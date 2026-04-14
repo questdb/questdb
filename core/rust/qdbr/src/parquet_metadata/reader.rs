@@ -33,7 +33,7 @@ use crate::parquet_metadata::header::{ColumnDescriptorRaw, FileHeader};
 use crate::parquet_metadata::row_group::RowGroupBlockReader;
 use crate::parquet_metadata::types::{
     decode_stat_sizes, HeaderFeatureFlags, StatFlags, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE,
-    FOOTER_TRAILER_SIZE, ROW_GROUP_ENTRY_SIZE,
+    FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, ROW_GROUP_ENTRY_SIZE,
 };
 use crate::parquet_read::row_groups::ParquetDecoder;
 use crate::parquet_read::{
@@ -202,12 +202,11 @@ impl<'a> ParquetMetaReader<'a> {
         })
     }
 
-    /// Verifies the CRC32 checksum stored in the footer against the file contents.
-    /// Verifies the CRC32 checksum stored in the footer against the file contents.
+    /// Verifies the CRC32 checksum stored in the footer.
     ///
-    /// The CRC covers bytes `[0, crc_field_offset)` of the entire file.
-    /// The CRC field offset is determined from `footer_length` via the trailer,
-    /// which handles unknown footer feature sections.
+    /// The CRC covers bytes `[HEADER_CRC_AREA_OFF, crc_field_offset)` — everything
+    /// after the `footer_offset` field (which is mutable on update). This protects
+    /// feature flags, column descriptors, row group blocks, and all footer versions.
     pub fn verify_checksum(&self) -> ParquetResult<()> {
         let footer_usize = self.footer_offset as usize;
         let crc_rel_offset = self.footer.crc_offset();
@@ -219,7 +218,7 @@ impl<'a> ParquetMetaReader<'a> {
             ));
         }
         let stored_crc = self.footer.checksum()?;
-        let computed_crc = crc32fast::hash(&self.data[..checksum_abs]);
+        let computed_crc = crc32fast::hash(&self.data[HEADER_CRC_AREA_OFF..checksum_abs]);
         if stored_crc != computed_crc {
             return Err(parquet_meta_err!(ParquetMetaErrorKind::ChecksumMismatch {
                 stored: stored_crc,
@@ -306,6 +305,72 @@ impl<'a> ParquetMetaReader<'a> {
     /// Returns the footer offset within this file.
     pub fn footer_offset(&self) -> u64 {
         self.footer_offset
+    }
+
+    /// Returns the previous footer offset from the footer chain (0 if first version).
+    pub fn prev_footer_offset(&self) -> u64 {
+        self.footer.prev_footer_offset()
+    }
+
+    /// Walks the prev_footer_offset chain starting from `header_footer_offset` to
+    /// find the footer whose parquet file size matches `target_parquet_size`.
+    ///
+    /// Parquet file size is derived from each footer as:
+    /// `parquet_footer_offset + parquet_footer_length + 8`.
+    ///
+    /// Returns `(footer_offset, Footer)` for the matching footer.
+    pub fn find_footer_for_parquet_size(
+        data: &'a [u8],
+        header_footer_offset: u64,
+        target_parquet_size: u64,
+    ) -> ParquetResult<(u64, Footer<'a>)> {
+        let mut current_offset = header_footer_offset;
+        loop {
+            let current_usize = usize::try_from(current_offset).map_err(|_| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "footer offset {} exceeds addressable range",
+                    current_offset
+                )
+            })?;
+            let footer_data = data.get(current_usize..).ok_or_else(|| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "footer offset {} out of bounds",
+                    current_offset
+                )
+            })?;
+            if footer_data.len() < FOOTER_TRAILER_SIZE {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "footer region too small for trailer at offset {}",
+                    current_offset
+                ));
+            }
+            let trailer_start = footer_data.len() - FOOTER_TRAILER_SIZE;
+            let footer_length = u32::from_le_bytes(
+                footer_data[trailer_start..trailer_start + FOOTER_TRAILER_SIZE]
+                    .try_into()
+                    .expect("slice is 4 bytes"),
+            );
+            let footer = Footer::new(footer_data, footer_length)?;
+
+            let pq_size =
+                footer.parquet_footer_offset() + footer.parquet_footer_length() as u64 + 8;
+            if pq_size <= target_parquet_size {
+                return Ok((current_offset, footer));
+            }
+
+            let prev = footer.prev_footer_offset();
+            if prev == 0 {
+                return Err(parquet_meta_err!(
+                    ParquetMetaErrorKind::InvalidValue,
+                    "no footer found for parquet size {}",
+                    target_parquet_size
+                ));
+            }
+            current_offset = prev;
+        }
     }
 
     /// Returns true if the bloom filter feature is enabled.
@@ -694,16 +759,20 @@ mod tests {
     fn crc_corruption_detected() {
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut rg = RowGroupBlockBuilder::new(1);
+        rg.set_num_rows(42);
+        w.add_row_group(rg);
         let (mut bytes, footer_offset) = w.finish().unwrap();
 
-        // Corrupt one byte in the header.
-        bytes[0] ^= 0xFF;
-        // Should fail on version check (new() no longer checks CRC).
-        assert!(ParquetMetaReader::new(&bytes, footer_offset).is_err());
+        // Corrupt a byte in the CRC-covered area (column descriptors, after offset 8).
+        let target = crate::parquet_metadata::types::HEADER_CRC_AREA_OFF + 1;
+        bytes[target] ^= 0xFF;
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        assert!(reader.verify_checksum().is_err());
     }
 
     #[test]
-    fn crc_corrupted_in_body() {
+    fn crc_corrupted_in_footer() {
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         let mut rg = RowGroupBlockBuilder::new(1);
@@ -711,10 +780,10 @@ mod tests {
         w.add_row_group(rg);
         let (mut bytes, footer_offset) = w.finish().unwrap();
 
-        // Corrupt a byte in the row group block area.
-        let mid = footer_offset as usize / 2;
-        if mid < bytes.len() {
-            bytes[mid] ^= 0xFF;
+        // Corrupt a byte inside the footer (first byte after footer_offset).
+        let target = footer_offset as usize;
+        if target < bytes.len() {
+            bytes[target] ^= 0xFF;
         }
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         assert!(reader.verify_checksum().is_err());

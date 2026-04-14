@@ -281,7 +281,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 PartitionBy.setSinkForPartition(partitionName, timestampType, partitionBy, timestamp);
                 TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
                 if (isParquet) {
-                    openParquetMeta(path, tableTxReader.getPartitionParquetMetaFileSize(partitionIndex));
+                    openParquetMeta(path, tableTxReader.getPartitionParquetFileSize(partitionIndex));
                 }
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
             } else {
@@ -390,20 +390,24 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
          * can be read later in the same loadNextPartition() call.
          * Call {@link #closeParquetMeta()} to release the mmap.
          */
-        private void openParquetMeta(Path partitionDirPath, long parquetMetaFileSize) {
-            if (parquetMetaFileSize <= 0) {
+        private void openParquetMeta(Path partitionDirPath, long parquetFileSize) {
+            if (parquetFileSize <= 0) {
                 return;
             }
             int dirLen = partitionDirPath.size();
             partitionDirPath.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             long addr = 0;
+            long parquetMetaFileSize = 0;
             try {
+                parquetMetaFileSize = ff.length(partitionDirPath.$());
+                if (parquetMetaFileSize <= 0) {
+                    return;
+                }
                 addr = TableUtils.mapRO(ff, partitionDirPath.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                 if (parquetMetaReader == null) {
                     parquetMetaReader = new ParquetMetaFileReader();
                 }
-                parquetMetaReader.of(addr, parquetMetaFileSize);
-                parquetFileSize = parquetMetaReader.getParquetFileSize();
+                parquetMetaReader.of(addr, parquetMetaFileSize, parquetFileSize);
             } catch (CairoException e) {
                 LOG.error().$("could not read pm metadata [path=").$(partitionDirPath).$(", error=").$(e.getMessage()).I$();
                 closeParquetMeta();

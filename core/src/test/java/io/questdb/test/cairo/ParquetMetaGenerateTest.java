@@ -77,28 +77,28 @@ public class ParquetMetaGenerateTest extends AbstractCairoTest {
                 long pmFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
                 Assert.assertTrue("pm fd should be valid", pmFd >= 0);
 
-                long pmFileSize;
+                long parquetMetaFileSize;
                 try {
-                    pmFileSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
-                    Assert.assertTrue("pm file size should be positive", pmFileSize > 0);
+                    parquetMetaFileSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
+                    Assert.assertTrue("pm file size should be positive", parquetMetaFileSize > 0);
                 } finally {
                     ff.close(parquetFd);
                     ff.close(pmFd);
                 }
 
                 // Read the _pm file back and verify.
-                Assert.assertEquals(pmFileSize, ff.length(path.$()));
-                long pmAddr = TableUtils.mapRO(ff, path.$(), LOG, pmFileSize, MemoryTag.MMAP_DEFAULT);
+                Assert.assertEquals(parquetMetaFileSize, ff.length(path.$()));
+                long pmAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(pmAddr, pmFileSize);
+                    reader.of(pmAddr, parquetMetaFileSize, parquetFileSize);
 
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                     Assert.assertEquals(parquetFileSize, reader.getParquetFileSize());
                     Assert.assertEquals(1, reader.getRowGroupSize(0));
                 } finally {
-                    ff.munmap(pmAddr, pmFileSize, MemoryTag.MMAP_DEFAULT);
+                    ff.munmap(pmAddr, parquetMetaFileSize, MemoryTag.MMAP_DEFAULT);
                 }
             }
         });

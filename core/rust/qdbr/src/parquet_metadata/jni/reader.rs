@@ -248,15 +248,6 @@ mod tests {
     }
 
     #[test]
-    fn create_invalid_format_version() {
-        let mut bytes = build_long_pm(&[(100, 0, 10, 200)]);
-        // Corrupt the format version field at byte 0.
-        bytes[0] ^= 0xFF;
-        let res = unsafe { JniParquetMetaReader::new(bytes.as_ptr(), bytes.len() as u64) };
-        assert!(res.is_err(), "expected Err for corrupted format version");
-    }
-
-    #[test]
     fn create_invalid_footer_length() {
         // Trailer claims a footer length larger than the file.
         let mut buf = [0u8; 20];

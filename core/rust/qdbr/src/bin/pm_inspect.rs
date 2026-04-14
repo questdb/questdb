@@ -136,6 +136,7 @@ fn run_dump(path: &Path, file_size: u64, reader: &ParquetMetaReader) {
     );
     println!("Row groups: {}", reader.row_group_count());
     println!("Footer offset in file: {}", reader.footer_offset());
+    println!("Prev footer offset: {}", reader.prev_footer_offset());
     println!();
 
     // Row groups

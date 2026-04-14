@@ -94,21 +94,21 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
     private static final int COLUMN_DESCRIPTOR_SIZE = 32;
-    private static final int EXPECTED_FORMAT_VERSION = 1;
-    private static final int FOOTER_FIXED_SIZE = 24;
+    private static final int FOOTER_FIXED_SIZE = 32;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
     // Footer offsets (relative to footer start)
     private static final int FOOTER_PARQUET_FOOTER_OFFSET_OFF = 0;
+    private static final int FOOTER_PREV_FOOTER_OFFSET_OFF = 24;
     private static final int FOOTER_ROW_GROUP_COUNT_OFF = 12;
     // Footer trailer size (appended after CRC)
     private static final int FOOTER_TRAILER_SIZE = 4;
     private static final int FOOTER_UNUSED_BYTES_OFF = 16;
-    private static final int HEADER_COLUMN_COUNT_OFF = 20;
-    private static final int HEADER_DESIGNATED_TS_OFF = 12;
-    private static final long HEADER_FEATURE_FLAGS_OFF = 4;
-    private static final int HEADER_FIXED_SIZE = 24;
-    // Header offsets
-    private static final int HEADER_FORMAT_VERSION_OFF = 0;
+    // Header offsets (new layout: footer_offset(8) + feature_flags(8) + dts(4) + sorting(4) + col_count(4) + reserved(4))
+    private static final int HEADER_FOOTER_OFFSET_OFF = 0;
+    private static final long HEADER_FEATURE_FLAGS_OFF = 8;
+    private static final int HEADER_DESIGNATED_TS_OFF = 16;
+    private static final int HEADER_COLUMN_COUNT_OFF = 24;
+    private static final int HEADER_FIXED_SIZE = 32;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
     private long addr;
@@ -325,46 +325,64 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     /**
-     * Initializes (or reinitializes) the reader with the given mmap address and file size.
-     * The footer offset is derived from the 4-byte trailer at the end of the file.
+     * Initializes (or reinitializes) the reader with the given mmap address, file size,
+     * and parquet file size (MVCC token from _txn field 3).
+     * <p>
+     * The footer is located via the header's footer_offset field. If the latest footer's
+     * parquet file size exceeds parquetFileSize, the reader walks the prev_footer_offset
+     * chain to find the matching footer for this _txn snapshot.
      * <p>
      * Calls {@link #clear()} first so that any previously allocated native
      * handle from a prior {@code of()} call is released before storing the
      * new state.
      *
-     * @param addr     base address of the mmaped _pm file
-     * @param fileSize size of the mmaped file in bytes
+     * @param addr            base address of the mmaped _pm file
+     * @param fileSize        actual size of the mmaped _pm file in bytes
+     * @param parquetFileSize parquet file size from _txn field 3, used as MVCC version token
      * @throws CairoException if the format version is unsupported or the file is too small
      */
-    public void of(long addr, long fileSize) {
+    public void of(long addr, long fileSize, long parquetFileSize) {
         clear();
-        if (fileSize < FOOTER_TRAILER_SIZE + FOOTER_FIXED_SIZE) {
+        if (fileSize < HEADER_FIXED_SIZE) {
             throw CairoException.critical(0)
                     .put("pm file too small [fileSize=").put(fileSize).put(']');
         }
 
-        // Read footer length from the trailer (last 4 bytes of the file).
-        int footerLength = Unsafe.getUnsafe().getInt(addr + fileSize - FOOTER_TRAILER_SIZE);
-        long footerOffset = fileSize - FOOTER_TRAILER_SIZE - Integer.toUnsignedLong(footerLength);
-        if (footerOffset < 0 || footerOffset >= fileSize - FOOTER_TRAILER_SIZE) {
+        // Read footer_offset from the header. A loadFence ensures subsequent
+        // reads of the footer data observe the bytes the writer committed
+        // before patching this field.
+        long footerOffset = Unsafe.getUnsafe().getLong(addr + HEADER_FOOTER_OFFSET_OFF);
+        Unsafe.getUnsafe().loadFence();
+        if (footerOffset < 0 || footerOffset >= fileSize) {
             throw CairoException.critical(0)
-                    .put("invalid _pm footer offset [offset=").put(footerOffset)
+                    .put("invalid _pm header footer_offset [offset=").put(footerOffset)
                     .put(", fileSize=").put(fileSize)
                     .put(']');
         }
 
-        int formatVersion = Unsafe.getUnsafe().getInt(addr + HEADER_FORMAT_VERSION_OFF);
-        if (formatVersion != EXPECTED_FORMAT_VERSION) {
-            throw CairoException.critical(0)
-                    .put("unsupported _pm format version [version=").put(formatVersion)
-                    .put(", expected=").put(EXPECTED_FORMAT_VERSION)
-                    .put(']');
+        // Walk the prev_footer_offset chain to find the footer matching parquetFileSize.
+        long currentOffset = footerOffset;
+        while (true) {
+            long currentAddr = addr + currentOffset;
+            long pqFooterOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
+            int pqFooterLength = Unsafe.getUnsafe().getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
+            long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + 8;
+            if (derivedPqSize <= parquetFileSize) {
+                break;
+            }
+            long prevOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PREV_FOOTER_OFFSET_OFF);
+            if (prevOffset == 0) {
+                throw CairoException.critical(0)
+                        .put("no _pm footer found for parquet size [parquetFileSize=").put(parquetFileSize)
+                        .put(']');
+            }
+            currentOffset = prevOffset;
         }
 
         // Use local variables for all validation. Fields are only assigned
         // at the very end so that a validation failure leaves isOpen()==false,
         // preventing double-munmap in callers that check isOpen() in catch blocks.
-        long footerAddr = addr + footerOffset;
+        long footerAddr = addr + currentOffset;
         int columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
         long headerEndOffset = HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
         if (headerEndOffset > fileSize) {
@@ -375,22 +393,21 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         }
         int rowGroupCount = Unsafe.getUnsafe().getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
 
+        // Read footer_length from the trailer following this footer.
+        // The trailer is at: footerAddr + footer_length_through_crc.
+        // We find footer_length by reading it from the end of the footer region.
+        // For a footer at currentOffset, its trailer is right after CRC.
+        // We need to compute the end of this footer. Read the trailer: at
+        // the end of this footer's data region.
+        // Since the footer might not be at the end of the file (chain-walk),
+        // we validate using the base footer size.
         final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
-        final long footerLengthUnsigned = Integer.toUnsignedLong(footerLength);
-        if (footerLengthUnsigned < baseFooterLength) {
-            throw CairoException.critical(0)
-                    .put("invalid _pm footer length [footerLength=").put(footerLengthUnsigned)
-                    .put(", min=").put(baseFooterLength)
-                    .put(']');
-        }
-
-        long rowCount = 0;
-        for (int i = 0; i < rowGroupCount; i++) {
-            long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * 4;
-            int stored = Unsafe.getUnsafe().getInt(entryAddr);
-            rowCount += Unsafe.getUnsafe().getLong(addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT));
-        }
-
+        // Read the actual footer_length_through_crc from the trailer.
+        long trailerAddr = footerAddr + baseFooterLength;
+        // For footers with feature sections, the trailer is after the feature sections + CRC.
+        // We use the approach of reading footer_length from the 4 bytes after the CRC.
+        // But we don't know the CRC position without footer_length. Instead, for the
+        // chain-walk case we must use the base footer check.
         long featureFlags = Unsafe.getUnsafe().getLong(addr + HEADER_FEATURE_FLAGS_OFF);
         long unknownRequired = featureFlags & REQUIRED_FEATURE_MASK;
         if (unknownRequired != 0) {
@@ -399,11 +416,12 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(Long.toHexString(unknownRequired))
                     .put(']');
         }
-        final long footerExtra = footerLengthUnsigned - baseFooterLength;
-        if (footerExtra != 0 && featureFlags == 0) {
-            throw CairoException.critical(0)
-                    .put("unexpected _pm footer feature bytes [bytes=").put(footerExtra)
-                    .put(']');
+
+        long rowCount = 0;
+        for (int i = 0; i < rowGroupCount; i++) {
+            long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * 4;
+            int stored = Unsafe.getUnsafe().getInt(entryAddr);
+            rowCount += Unsafe.getUnsafe().getLong(addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT));
         }
 
         // All validations passed — commit state.

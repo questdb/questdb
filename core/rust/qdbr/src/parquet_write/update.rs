@@ -884,6 +884,22 @@ impl ParquetUpdater {
                     .write_all(&result.bytes)
                     .map_err(ParquetError::from)
                     .context("could not write _pm file")?;
+
+                // Patch footer_offset in the header — last write for atomicity.
+                // Sequential write syscalls on the same fd are ordered by the kernel,
+                // so the footer data is visible before this header patch. The Java
+                // reader issues a loadFence after reading this field to ensure it
+                // observes the footer bytes on the mmap side.
+                parquet_meta_file
+                    .seek(SeekFrom::Start(
+                        crate::parquet_metadata::types::HEADER_FOOTER_OFFSET_OFF as u64,
+                    ))
+                    .map_err(ParquetError::from)?;
+                parquet_meta_file
+                    .write_all(&result.new_footer_offset.to_le_bytes())
+                    .map_err(ParquetError::from)
+                    .context("could not patch header footer_offset in _pm file")?;
+
                 self.result_parquet_meta_size = result.new_file_size as i64;
             }
         }

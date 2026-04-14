@@ -496,11 +496,11 @@ fn check_corrupted_checksum() {
     let parquet_bytes = make_single_column_parquet::<Timestamp>("col", 100, Null::None);
     let mut pm_bytes = make_pm_bytes(&parquet_bytes);
 
-    // Flip a byte in the middle of the body — far enough from the trailer
-    // (last 8 bytes) and header to not break parsing, but enough to
-    // invalidate the CRC.
-    let mid = pm_bytes.len() / 2;
-    pm_bytes[mid] ^= 0xFF;
+    // Flip a byte in the footer to invalidate the CRC.
+    // The footer offset is stored in the header at bytes [0..8].
+    let footer_offset = u64::from_le_bytes(pm_bytes[0..8].try_into().unwrap()) as usize;
+    // Corrupt the first byte of the footer.
+    pm_bytes[footer_offset] ^= 0xFF;
 
     let dir = tempfile::tempdir().expect("create temp dir");
     let pm_path = dir.path().join("_pm");
