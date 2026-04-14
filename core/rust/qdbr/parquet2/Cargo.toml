@@ -39,7 +39,7 @@ xxhash-rust = { version = "^0.8", optional = true, features = ["xxh64"] }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
 criterion = "0.4"
-rand = "0.8"
+rand = "0.9"
 
 [features]
 default = ["snappy", "gzip", "lz4", "zstd", "brotli", "bloom_filter"]
