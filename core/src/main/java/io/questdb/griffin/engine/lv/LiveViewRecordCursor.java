@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.sql.Record;
@@ -61,6 +62,7 @@ public class LiveViewRecordCursor implements RecordCursor {
         if (isOpen) {
             isOpen = false;
             viewInstance.unlockAfterRead();
+            viewInstance.tryCloseIfDropped();
         }
     }
 
@@ -94,7 +96,10 @@ public class LiveViewRecordCursor implements RecordCursor {
             currentRow = 0;
             return;
         }
-        viewInstance.lockForRead();
+        if (!viewInstance.tryLockForRead()) {
+            throw CairoException.nonCritical()
+                    .put("live view was dropped [name=").put(viewInstance.getDefinition().getViewName()).put(']');
+        }
         try {
             rowCount = viewInstance.getTable().getRowCount();
             currentRow = 0;

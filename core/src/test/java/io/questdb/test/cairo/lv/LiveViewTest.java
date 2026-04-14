@@ -211,6 +211,29 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropDuringRefreshDefersFree() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndLiveView();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+            Assert.assertNotNull(instance);
+
+            // Simulate a refresh in flight: hold the refresh latch across the DROP.
+            Assert.assertTrue(instance.tryLockForRefresh());
+            try {
+                execute("DROP LIVE VIEW live_rn");
+                // The view is removed from the registry and marked as dropped, but the
+                // table is NOT freed yet because we hold the refresh latch.
+                Assert.assertTrue(instance.isDropped());
+                Assert.assertFalse(engine.getLiveViewRegistry().hasView("live_rn"));
+            } finally {
+                instance.unlockAfterRefresh();
+            }
+            // The refresh finally hook would normally do this; call it explicitly here.
+            instance.tryCloseIfDropped();
+        });
+    }
+
+    @Test
     public void testDropLiveViewIfExists() throws Exception {
         // should not throw
         execute("DROP LIVE VIEW IF EXISTS nonexistent");
@@ -224,6 +247,29 @@ public class LiveViewTest extends AbstractCairoTest {
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage().contains("live view does not exist"));
         }
+    }
+
+    @Test
+    public void testDropWithActiveReadLockDefersFree() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndLiveView();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+            Assert.assertNotNull(instance);
+
+            // Simulate an active reader cursor: hold the read lock across the DROP.
+            Assert.assertTrue(instance.tryLockForRead());
+            try {
+                execute("DROP LIVE VIEW live_rn");
+                // The view is removed from the registry and marked dropped, but the
+                // table is NOT freed yet because we hold the read lock.
+                Assert.assertTrue(instance.isDropped());
+                Assert.assertFalse(engine.getLiveViewRegistry().hasView("live_rn"));
+            } finally {
+                instance.unlockAfterRead();
+            }
+            // The cursor close hook would normally do this; call it explicitly here.
+            instance.tryCloseIfDropped();
+        });
     }
 
     @Test
@@ -554,6 +600,21 @@ public class LiveViewTest extends AbstractCairoTest {
                 "SELECT table_type FROM tables() WHERE table_name = 'live_rn'"
         );
         execute("DROP LIVE VIEW live_rn");
+    }
+
+    @Test
+    public void testTryLockForReadFailsAfterDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseTableAndLiveView();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("live_rn");
+            Assert.assertNotNull(instance);
+
+            execute("DROP LIVE VIEW live_rn");
+            Assert.assertTrue(instance.isDropped());
+
+            // A reader arriving after the drop must be turned away.
+            Assert.assertFalse(instance.tryLockForRead());
+        });
     }
 
     private static void drainLiveViewQueue() {

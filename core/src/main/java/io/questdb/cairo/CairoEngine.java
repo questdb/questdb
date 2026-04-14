@@ -826,7 +826,11 @@ public class CairoEngine implements Closeable, WriterSource {
     public void dropLiveView(CharSequence name) {
         LiveViewInstance instance = liveViewRegistry.removeView(name);
         if (instance != null) {
-            Misc.free(instance);
+            // Mark the instance dropped and attempt an immediate free. If a refresh or
+            // reader is currently holding a lock, tryCloseIfDropped() bails and the
+            // winning party (refresh finally hook or cursor close) performs the free.
+            instance.markAsDropped();
+            instance.tryCloseIfDropped();
         }
         TableToken token = tableNameRegistry.getTableToken(name);
         if (token != null) {

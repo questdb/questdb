@@ -82,19 +82,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     //  on every WAL commit. SqlCompiler.compile() and factory construction allocate heavily. Incremental refresh
     //  (WalTxnRangeLoader + computeNext()) removes the recompile entirely; until then, at minimum cache the
     //  compiled factory on LiveViewInstance and reuse the cursor across refreshes.
-    private void refreshInstance(LiveViewInstance instance) {
-        String selectSql = instance.getDefinition().getViewSql();
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            CompiledQuery cq = compiler.compile(selectSql, executionContext);
-            try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    instance.refresh(cursor);
-                }
+    private void refreshInstance(LiveViewInstance instance, long seqTxn) {
+        if (!instance.tryLockForRefresh()) {
+            // A concurrent drop or refresh holds the latch; skip this turn and let the other
+            // party complete. The next WAL notification will re-enqueue the task.
+            return;
+        }
+        try {
+            if (instance.isDropped() || instance.isInvalid()) {
+                return;
             }
-        } catch (Throwable t) {
-            LOG.error().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
-                    .$(", error=").$(t.getMessage())
-                    .I$();
+            String selectSql = instance.getDefinition().getViewSql();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery cq = compiler.compile(selectSql, executionContext);
+                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                        instance.refresh(cursor);
+                    }
+                }
+            } catch (Throwable t) {
+                LOG.error().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
+                        .$(", error=").$(t.getMessage())
+                        .I$();
+                return;
+            }
+            instance.setLastProcessedSeqTxn(seqTxn);
+        } finally {
+            instance.unlockAfterRefresh();
+            instance.tryCloseIfDropped();
         }
     }
 
@@ -104,12 +119,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         for (int i = 0, n = viewInstanceSink.size(); i < n; i++) {
             LiveViewInstance instance = viewInstanceSink.getQuick(i);
-            if (instance.isClosed() || instance.isInvalid()) {
+            if (instance.isDropped() || instance.isInvalid()) {
                 continue;
             }
             if (seqTxn > instance.getLastProcessedSeqTxn()) {
-                refreshInstance(instance);
-                instance.setLastProcessedSeqTxn(seqTxn);
+                refreshInstance(instance, seqTxn);
             }
         }
     }
