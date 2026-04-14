@@ -95,7 +95,10 @@ pub fn partition_slice_range(
             last_partition_end.saturating_sub(first_partition_start),
         )
     } else if part_idx == 0 {
-        (first_partition_start, row_count.saturating_sub(first_partition_start))
+        (
+            first_partition_start,
+            row_count.saturating_sub(first_partition_start),
+        )
     } else if part_idx == num_partitions - 1 {
         (0, last_partition_end)
     } else {

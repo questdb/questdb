@@ -9,11 +9,10 @@ use parquet2::schema::Repetition;
 use parquet2::write::Version;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::bench::{
-    array_to_raw_page, binary_to_page, boolean_to_page, bytes_to_page,
-    decimal_slice_to_dict_pages, encode_column_chunk, int_slice_to_dict_pages_notnull,
-    int_slice_to_dict_pages_nullable, int_slice_to_page_notnull, int_slice_to_page_nullable,
-    slice_to_dict_pages_simd, slice_to_page_simd, string_to_page, symbol_to_pages,
-    varchar_to_page, Column, WriteOptions,
+    array_to_raw_page, binary_to_page, boolean_to_page, bytes_to_page, decimal_slice_to_dict_pages,
+    encode_column_chunk, int_slice_to_dict_pages_notnull, int_slice_to_dict_pages_nullable,
+    int_slice_to_page_notnull, int_slice_to_page_nullable, slice_to_dict_pages_simd,
+    slice_to_page_simd, string_to_page, symbol_to_pages, varchar_to_page, Column, WriteOptions,
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;

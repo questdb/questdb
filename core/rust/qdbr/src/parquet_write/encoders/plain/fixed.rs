@@ -1,10 +1,6 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use parquet2::bloom_filter::hash_byte;
-use parquet2::encoding::Encoding;
-use parquet2::page::Page;
-use parquet2::schema::types::PrimitiveType;
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::encoders::helpers::{
     collect_partition_chunk_views, rows_per_primitive_page, slice_partition_chunk_views,
@@ -13,9 +9,12 @@ use crate::parquet_write::encoders::helpers::{
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_def_levels, transmute_slice,
-    BinaryMaxMinStats,
+    build_plain_page, encode_primitive_def_levels, transmute_slice, BinaryMaxMinStats,
 };
+use parquet2::bloom_filter::hash_byte;
+use parquet2::encoding::Encoding;
+use parquet2::page::Page;
+use parquet2::schema::types::PrimitiveType;
 
 use super::encode_column_chunk;
 
@@ -227,4 +226,3 @@ pub fn bytes_to_page<const N: usize>(
     )
     .map(Page::Data)
 }
-

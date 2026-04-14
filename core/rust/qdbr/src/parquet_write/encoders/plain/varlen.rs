@@ -1,11 +1,6 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use parquet2::bloom_filter::hash_byte;
-use parquet2::encoding::{delta_bitpacked, Encoding};
-use parquet2::page::Page;
-use parquet2::schema::types::PrimitiveType;
-use parquet2::types;
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::encoders::helpers::{
     collect_varlen_segments, rows_per_primitive_page, slice_varlen_segments, FlatValidity,
@@ -17,6 +12,11 @@ use crate::parquet_write::util::{
     build_plain_page, encode_primitive_def_levels, transmute_slice, BinaryMaxMinStats,
     ExactSizedIter,
 };
+use parquet2::bloom_filter::hash_byte;
+use parquet2::encoding::{delta_bitpacked, Encoding};
+use parquet2::page::Page;
+use parquet2::schema::types::PrimitiveType;
+use parquet2::types;
 
 use super::encode_column_chunk;
 
