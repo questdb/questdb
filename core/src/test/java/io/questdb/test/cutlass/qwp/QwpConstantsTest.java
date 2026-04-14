@@ -37,8 +37,6 @@ public class QwpConstantsTest {
         Assert.assertEquals(16 * 1024 * 1024, DEFAULT_MAX_BATCH_SIZE);
         Assert.assertEquals(1_000_000, DEFAULT_MAX_ROWS_PER_TABLE);
         Assert.assertEquals(2048, MAX_COLUMNS_PER_TABLE);
-        Assert.assertEquals(64 * 1024, DEFAULT_INITIAL_RECV_BUFFER_SIZE);
-        Assert.assertEquals(4, DEFAULT_MAX_IN_FLIGHT_BATCHES);
     }
 
     @Test
@@ -122,36 +120,6 @@ public class QwpConstantsTest {
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_VARCHAR));
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_DOUBLE_ARRAY));
         Assert.assertFalse(QwpConstants.isFixedWidthType(TYPE_LONG_ARRAY));
-    }
-
-    @Test
-    public void testMagicBytesCapabilityRequest() {
-        // "ILP?" in ASCII
-        byte[] expected = new byte[]{'I', 'L', 'P', '?'};
-        Assert.assertEquals((byte) (MAGIC_CAPABILITY_REQUEST & 0xFF), expected[0]);
-        Assert.assertEquals((byte) ((MAGIC_CAPABILITY_REQUEST >> 8) & 0xFF), expected[1]);
-        Assert.assertEquals((byte) ((MAGIC_CAPABILITY_REQUEST >> 16) & 0xFF), expected[2]);
-        Assert.assertEquals((byte) ((MAGIC_CAPABILITY_REQUEST >> 24) & 0xFF), expected[3]);
-    }
-
-    @Test
-    public void testMagicBytesCapabilityResponse() {
-        // "ILP!" in ASCII
-        byte[] expected = new byte[]{'I', 'L', 'P', '!'};
-        Assert.assertEquals((byte) (MAGIC_CAPABILITY_RESPONSE & 0xFF), expected[0]);
-        Assert.assertEquals((byte) ((MAGIC_CAPABILITY_RESPONSE >> 8) & 0xFF), expected[1]);
-        Assert.assertEquals((byte) ((MAGIC_CAPABILITY_RESPONSE >> 16) & 0xFF), expected[2]);
-        Assert.assertEquals((byte) ((MAGIC_CAPABILITY_RESPONSE >> 24) & 0xFF), expected[3]);
-    }
-
-    @Test
-    public void testMagicBytesFallback() {
-        // "ILP0" in ASCII
-        byte[] expected = new byte[]{'I', 'L', 'P', '0'};
-        Assert.assertEquals((byte) (MAGIC_FALLBACK & 0xFF), expected[0]);
-        Assert.assertEquals((byte) ((MAGIC_FALLBACK >> 8) & 0xFF), expected[1]);
-        Assert.assertEquals((byte) ((MAGIC_FALLBACK >> 16) & 0xFF), expected[2]);
-        Assert.assertEquals((byte) ((MAGIC_FALLBACK >> 24) & 0xFF), expected[3]);
     }
 
     @Test

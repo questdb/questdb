@@ -248,13 +248,6 @@ public class QwpMessageHeaderTest {
         int magic = QwpMessageHeader.readMagic(buf, 0);
         Assert.assertEquals(MAGIC_MESSAGE, magic);
         Assert.assertTrue(QwpMessageHeader.isMessageMagic(magic));
-
-        buf[0] = 'I';
-        buf[1] = 'L';
-        buf[3] = '?';
-        magic = QwpMessageHeader.readMagic(buf, 0);
-        Assert.assertEquals(MAGIC_CAPABILITY_REQUEST, magic);
-        Assert.assertTrue(QwpMessageHeader.isCapabilityRequestMagic(magic));
     }
 
     @Test

@@ -61,16 +61,6 @@ public class QwpMessageHeader {
     }
 
     /**
-     * Checks if the given 4 bytes match the capability request magic.
-     *
-     * @param magic the magic integer to check
-     * @return true if it's a capability request
-     */
-    public static boolean isCapabilityRequestMagic(int magic) {
-        return magic == MAGIC_CAPABILITY_REQUEST;
-    }
-
-    /**
      * Checks if the given 4 bytes match the QWP v1 message magic.
      *
      * @param magic the magic integer to check

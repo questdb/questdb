@@ -34,18 +34,10 @@ package io.questdb.cutlass.qwp.protocol;
 public final class QwpConstants {
 
     /**
-     * Default initial receive buffer size (64 KB).
-     */
-    public static final int DEFAULT_INITIAL_RECV_BUFFER_SIZE = 64 * 1024;
-    /**
      * Default maximum batch size in bytes (16 MB).
      */
     public static final int DEFAULT_MAX_BATCH_SIZE = 16 * 1024 * 1024;
 
-    /**
-     * Maximum in-flight batches for pipelining.
-     */
-    public static final int DEFAULT_MAX_IN_FLIGHT_BATCHES = 4;
     /**
      * Default maximum rows per table in a batch.
      */
@@ -91,18 +83,6 @@ public final class QwpConstants {
      * Size of the message header in bytes.
      */
     public static final int HEADER_SIZE = 12;
-    /**
-     * Magic bytes for capability request: "ILP?" (ASCII).
-     */
-    public static final int MAGIC_CAPABILITY_REQUEST = 0x3F504C49; // "ILP?" in little-endian
-    /**
-     * Magic bytes for capability response: "ILP!" (ASCII).
-     */
-    public static final int MAGIC_CAPABILITY_RESPONSE = 0x21504C49; // "ILP!" in little-endian
-    /**
-     * Magic bytes for fallback response (old server): "ILP0" (ASCII).
-     */
-    public static final int MAGIC_FALLBACK = 0x30504C49; // "ILP0" in little-endian
     /**
      * Magic bytes for QWP v1 message: "QWP1" (ASCII).
      */
