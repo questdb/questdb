@@ -1327,6 +1327,7 @@ mod tests {
             (Encoding::RleDictionary, ColumnTypeTag::Int),
             (Encoding::RleDictionary, ColumnTypeTag::Long),
             (Encoding::RleDictionary, ColumnTypeTag::Date),
+            (Encoding::RleDictionary, ColumnTypeTag::Timestamp),
             (Encoding::RleDictionary, ColumnTypeTag::Float),
             (Encoding::RleDictionary, ColumnTypeTag::Double),
             (Encoding::RleDictionary, ColumnTypeTag::IPv4),

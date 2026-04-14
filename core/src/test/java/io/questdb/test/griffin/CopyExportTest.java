@@ -36,14 +36,11 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
-import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.mp.Job;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -1482,7 +1479,7 @@ public class CopyExportTest extends AbstractCairoTest {
                             if (addr != 0) {
                                 ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                             }
-                            if (fd > 0) {
+                            if (fd != -1) {
                                 ff.close(fd);
                             }
                         }
@@ -1678,29 +1675,9 @@ public class CopyExportTest extends AbstractCairoTest {
 
                         // The label STRING column (col 0) must NOT be dictionary-encoded
                         // because SYMBOL->STRING is a type-changing projection.
-                        final FilesFacade ff = configuration.getFilesFacade();
-                        long fd = -1;
-                        long addr = 0;
-                        long fileSize = 0;
-                        try (Path path = new Path(); PartitionDecoder decoder = new PartitionDecoder()) {
-                            path.of(parquetPath).$();
-                            fd = TableUtils.openRO(ff, path.$(), LOG);
-                            fileSize = ff.length(fd);
-                            addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-
-                            Assert.assertFalse(
-                                    "SYMBOL->STRING override must be dropped; column 0 should not be RLE_DICTIONARY",
-                                    decoder.rowGroupColumnHasEncoding(0, 0, ParquetEncoding.ENCODING_RLE_DICTIONARY)
-                            );
-                        } finally {
-                            if (addr != 0) {
-                                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                            }
-                            if (fd > 0) {
-                                ff.close(fd);
-                            }
-                        }
+                        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(
+                                parquetPath, configuration.getFilesFacade(), 0
+                        );
                     });
 
             testCopyExport(stmt, test);

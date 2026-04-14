@@ -73,6 +73,43 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
  */
 public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
+
+    private static void addColumnData(DirectLongList columnData, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf, int columnType) {
+        columnData.add(0L); // no col top
+        columnData.add(dataBuf.addressOf(0));
+        columnData.add(dataBuf.getAppendOffset());
+        if (auxBuf != null) {
+            columnData.add(auxBuf.addressOf(0));
+            // For STRING columns, the aux buffer has N+1 entries. Discard the
+            // last entry, which refers to the offset of the yet-unwritten string.
+            long auxSize = auxBuf.getAppendOffset();
+            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+                auxSize -= Long.BYTES;
+            }
+            columnData.add(auxSize);
+        } else {
+            columnData.add(0L);
+            columnData.add(0L);
+        }
+        columnData.add(0L);
+        columnData.add(0L);
+    }
+
+    private static boolean isTypePreservingParquetPassThrough(int sourceColumnType, int outputColumnType) {
+        return sourceColumnType == outputColumnType
+                && outputColumnType == toExportColumnType(outputColumnType);
+    }
+
+    private static int toExportColumnType(int columnType) {
+        if (ColumnType.isSymbol(columnType)) {
+            return ColumnType.STRING;
+        }
+        if (columnType == ColumnType.VARCHAR_SLICE) {
+            return ColumnType.VARCHAR;
+        }
+        return columnType;
+    }
+
     private final GenericRecordMetadata adjustedMetadata = new GenericRecordMetadata();
     // Per computed col: aux memory (for var-size) or null (for fixed-size)
     private final ObjList<MemoryCARWImpl> auxBuffers = new ObjList<>();
@@ -674,42 +711,6 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
             default ->
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(outputType));
         }
-    }
-
-    private static void addColumnData(DirectLongList columnData, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf, int columnType) {
-        columnData.add(0L); // no col top
-        columnData.add(dataBuf.addressOf(0));
-        columnData.add(dataBuf.getAppendOffset());
-        if (auxBuf != null) {
-            columnData.add(auxBuf.addressOf(0));
-            // For STRING columns, the aux buffer has N+1 entries. Discard the
-            // last entry, which refers to the offset of the yet-unwritten string.
-            long auxSize = auxBuf.getAppendOffset();
-            if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
-                auxSize -= Long.BYTES;
-            }
-            columnData.add(auxSize);
-        } else {
-            columnData.add(0L);
-            columnData.add(0L);
-        }
-        columnData.add(0L);
-        columnData.add(0L);
-    }
-
-    private static boolean isTypePreservingParquetPassThrough(int sourceColumnType, int outputColumnType) {
-        return sourceColumnType == outputColumnType
-                && outputColumnType == toExportColumnType(outputColumnType);
-    }
-
-    private static int toExportColumnType(int columnType) {
-        if (ColumnType.isSymbol(columnType)) {
-            return ColumnType.STRING;
-        }
-        if (columnType == ColumnType.VARCHAR_SLICE) {
-            return ColumnType.VARCHAR;
-        }
-        return columnType;
     }
 
     /**

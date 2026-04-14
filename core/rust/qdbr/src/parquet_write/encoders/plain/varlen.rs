@@ -169,7 +169,7 @@ fn binary_segments_to_page(
         Encoding::Plain => {
             for segment in segments {
                 for &offset in segment.index {
-                    if let Some(value) = binary_get_slice_validated(segment.data, offset) {
+                    if let Some(value) = binary_get_slice(segment.data, offset)? {
                         let len = value.len();
                         buffer.extend_from_slice(&(len as u32).to_le_bytes());
                         buffer.extend_from_slice(value);
@@ -183,19 +183,20 @@ fn binary_segments_to_page(
         }
         Encoding::DeltaLengthByteArray => {
             let non_null_count = num_rows - null_count;
-            let lengths = segments.iter().flat_map(|segment| {
-                segment
-                    .index
-                    .iter()
-                    .filter_map(|&offset| binary_get_slice_validated(segment.data, offset))
-                    .map(|value| value.len() as i64)
-            });
-            let lengths = ExactSizedIter::new(lengths, non_null_count);
+            let mut lengths = Vec::with_capacity(non_null_count);
+            for segment in segments.iter() {
+                for &offset in segment.index {
+                    if let Some(value) = binary_get_slice(segment.data, offset)? {
+                        lengths.push(value.len() as i64);
+                    }
+                }
+            }
+            let lengths = ExactSizedIter::new(lengths.into_iter(), non_null_count);
             delta_bitpacked::encode(lengths, &mut buffer);
 
             for segment in segments {
                 for &offset in segment.index {
-                    if let Some(value) = binary_get_slice_validated(segment.data, offset) {
+                    if let Some(value) = binary_get_slice(segment.data, offset)? {
                         buffer.extend_from_slice(value);
                         stats.update(value);
                         if let Some(ref mut h) = bloom_hashes {
@@ -263,7 +264,7 @@ fn string_segments_to_page(
         Encoding::Plain => {
             for segment in segments {
                 for &offset in segment.index {
-                    if let Some(utf16) = string_get_utf16_validated(segment.data, offset) {
+                    if let Some(utf16) = string_get_utf16_at_offset(segment.data, offset)? {
                         let len_offset = buffer.len();
                         buffer.extend_from_slice(&[0; 4]);
                         let utf8_start = buffer.len();
@@ -281,19 +282,20 @@ fn string_segments_to_page(
         }
         Encoding::DeltaLengthByteArray => {
             let non_null_count = num_rows - null_count;
-            let lengths = segments.iter().flat_map(|segment| {
-                segment
-                    .index
-                    .iter()
-                    .filter_map(|&offset| string_get_utf16_validated(segment.data, offset))
-                    .map(|utf16| compute_utf8_length(utf16) as i64)
-            });
-            let lengths = ExactSizedIter::new(lengths, non_null_count);
+            let mut lengths = Vec::with_capacity(non_null_count);
+            for segment in segments.iter() {
+                for &offset in segment.index {
+                    if let Some(utf16) = string_get_utf16_at_offset(segment.data, offset)? {
+                        lengths.push(compute_utf8_length(utf16) as i64);
+                    }
+                }
+            }
+            let lengths = ExactSizedIter::new(lengths.into_iter(), non_null_count);
             delta_bitpacked::encode(lengths, &mut buffer);
 
             for segment in segments {
                 for &offset in segment.index {
-                    if let Some(utf16) = string_get_utf16_validated(segment.data, offset) {
+                    if let Some(utf16) = string_get_utf16_at_offset(segment.data, offset)? {
                         let utf8_start = buffer.len();
                         let utf8_len = append_utf8_from_utf16(&mut buffer, utf16)?;
                         let value = &buffer[utf8_start..utf8_start + utf8_len];
@@ -363,7 +365,7 @@ fn varchar_segments_to_page(
         Encoding::Plain => {
             for segment in segments {
                 for entry in segment.index {
-                    if let Some(value) = varchar_get_slice_validated(entry, segment.data) {
+                    if let Some(value) = varchar_get_slice(entry, segment.data)? {
                         let len = value.len();
                         buffer.extend_from_slice(&(len as u32).to_le_bytes());
                         buffer.extend_from_slice(value);
@@ -377,19 +379,20 @@ fn varchar_segments_to_page(
         }
         Encoding::DeltaLengthByteArray => {
             let non_null_count = num_rows - null_count;
-            let lengths = segments.iter().flat_map(|segment| {
-                segment
-                    .index
-                    .iter()
-                    .filter_map(|entry| varchar_get_slice_validated(entry, segment.data))
-                    .map(|value| value.len() as i64)
-            });
-            let lengths = ExactSizedIter::new(lengths, non_null_count);
+            let mut lengths = Vec::with_capacity(non_null_count);
+            for segment in segments.iter() {
+                for entry in segment.index {
+                    if let Some(value) = varchar_get_slice(entry, segment.data)? {
+                        lengths.push(value.len() as i64);
+                    }
+                }
+            }
+            let lengths = ExactSizedIter::new(lengths.into_iter(), non_null_count);
             delta_bitpacked::encode(lengths, &mut buffer);
 
             for segment in segments {
                 for entry in segment.index {
-                    if let Some(value) = varchar_get_slice_validated(entry, segment.data) {
+                    if let Some(value) = varchar_get_slice(entry, segment.data)? {
                         buffer.extend_from_slice(value);
                         stats.update(value);
                         if let Some(ref mut h) = bloom_hashes {
@@ -536,10 +539,6 @@ fn binary_get_slice(values: &[u8], offset: i64) -> ParquetResult<Option<&[u8]>> 
         ));
     }
     Ok(Some(&values[value_offset..value_offset + len as usize]))
-}
-
-fn binary_get_slice_validated(values: &[u8], offset: i64) -> Option<&[u8]> {
-    binary_get_slice(values, offset).expect("binary segment was validated before encoding")
 }
 
 fn visit_binary_entries<'a, F>(offsets: &[i64], values: &'a [u8], mut visit: F) -> ParquetResult<()>
@@ -795,10 +794,6 @@ fn string_get_utf16_at_offset(data: &[u8], offset: i64) -> ParquetResult<Option<
     string_get_utf16(data)
 }
 
-fn string_get_utf16_validated(data: &[u8], offset: i64) -> Option<&[u16]> {
-    string_get_utf16_at_offset(data, offset).expect("string segment was validated before encoding")
-}
-
 fn visit_string_entries<'a, F>(offsets: &[i64], data: &'a [u8], mut visit: F) -> ParquetResult<()>
 where
     F: FnMut(Option<&'a [u16]>) -> ParquetResult<()>,
@@ -999,10 +994,6 @@ fn varchar_get_slice<'a>(entry: &'a [u8; 16], data: &'a [u8]) -> ParquetResult<O
         }
         Ok(Some(&data[offset..][..size]))
     }
-}
-
-fn varchar_get_slice_validated<'a>(entry: &'a [u8; 16], data: &'a [u8]) -> Option<&'a [u8]> {
-    varchar_get_slice(entry, data).expect("varchar segment was validated before encoding")
 }
 
 fn visit_varchar_entries<'a, F>(
