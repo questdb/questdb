@@ -96,6 +96,48 @@ public interface GroupByFunction extends Function, Mutable {
     void computeFirst(MapValue mapValue, Record record, long rowId);
 
     /**
+     * Aggregates {@code rowCount} input values into per-row output entries
+     * in the keyed GROUP BY path. The default implementation loops over the
+     * batch and delegates to {@link #computeFirst}/{@link #computeNext}.
+     * Individual functions may override with tight loops for direct column
+     * arguments.
+     * <p>
+     * Each packed long in {@code batchAddr} has the layout:
+     * {@code [isNew:1][rowIndex:24][offset:39]}.
+     *
+     * @param record          page frame record, positioned via setRowIndex
+     * @param map             the map owning the entries
+     * @param entryBase       stable base address ({@link Map#getEntryBase()}), pre-resolved by the reducer
+     * @param valueByteOffset byte offset of this function's value slot from the entry start,
+     *                        pre-resolved by the reducer
+     * @param batchAddr       native pointer to {@code rowCount} packed longs (8 bytes each)
+     * @param rowCount        number of entries to process
+     * @param baseRowId       absolute row id of the first row in the sub-batch
+     */
+    default void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            Map map,
+            long entryBase,
+            long valueByteOffset,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        for (long i = 0; i < rowCount; i++) {
+            long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            long offset = Map.decodeBatchOffset(encoded);
+            int rowIndex = Map.decodeBatchRowIndex(encoded);
+            record.setRowIndex(rowIndex);
+            MapValue value = map.valueAt(entryBase + offset);
+            if (Map.isNewBatchEntry(encoded)) {
+                computeFirst(value, record, baseRowId + rowIndex);
+            } else {
+                computeNext(value, record, baseRowId + rowIndex);
+            }
+        }
+    }
+
+    /**
      * Performs a subsequent aggregation within a group.
      * <p>
      * Row id is provided for aggregation functions that consider row order, such as first/last.
@@ -349,48 +391,6 @@ public interface GroupByFunction extends Function, Mutable {
      */
     default boolean supportsBatchComputation() {
         return false;
-    }
-
-    /**
-     * Aggregates {@code rowCount} input values into per-row output entries
-     * in the keyed GROUP BY path. The default implementation loops over the
-     * batch and delegates to {@link #computeFirst}/{@link #computeNext}.
-     * Individual functions may override with tight loops for direct column
-     * arguments.
-     * <p>
-     * Each packed long in {@code batchAddr} has the layout:
-     * {@code [isNew:1][rowIndex:24][offset:39]}.
-     *
-     * @param record          page frame record, positioned via setRowIndex
-     * @param map             the map owning the entries
-     * @param entryBase       stable base address ({@link Map#getEntryBase()}), pre-resolved by the reducer
-     * @param valueByteOffset byte offset of this function's value slot from the entry start,
-     *                        pre-resolved by the reducer
-     * @param batchAddr       native pointer to {@code rowCount} packed longs (8 bytes each)
-     * @param rowCount        number of entries to process
-     * @param baseRowId       absolute row id of the first row in the sub-batch
-     */
-    default void computeKeyedBatch(
-            PageFrameMemoryRecord record,
-            Map map,
-            long entryBase,
-            long valueByteOffset,
-            long batchAddr,
-            long rowCount,
-            long baseRowId
-    ) {
-        for (long i = 0; i < rowCount; i++) {
-            long packed = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
-            long offset = packed & 0x7F_FFFF_FFFFL;
-            int rowIndex = (int) ((packed >>> 39) & 0xFF_FFFF);
-            record.setRowIndex(rowIndex);
-            MapValue value = map.valueAt(entryBase + offset);
-            if (packed < 0) {
-                computeFirst(value, record, baseRowId + rowIndex);
-            } else {
-                computeNext(value, record, baseRowId + rowIndex);
-            }
-        }
     }
 
     @Override

@@ -35,10 +35,64 @@ import java.io.Closeable;
 
 public interface Map extends Mutable, Closeable, Reopenable {
 
+    /**
+     * Mask for the offset field of a packed batch entry (39 bits, bits 0–38).
+     */
+    long BATCH_OFFSET_MASK = 0x7F_FFFF_FFFFL;
+    /**
+     * Mask for the row index field of a packed batch entry after shifting (24 bits).
+     */
+    int BATCH_ROW_INDEX_MASK = 0xFF_FFFF;
+    /**
+     * Bit shift for the row index field within a packed batch entry.
+     * Layout (MSB to LSB): {@code [isNew:1][rowIndex:24][offset:39]}.
+     */
+    int BATCH_ROW_INDEX_SHIFT = 39;
+
+    /**
+     * Decodes the entry byte offset from an encoded batch entry. Combine with
+     * {@link #getEntryBase()} to obtain the absolute entry address.
+     */
+    static long decodeBatchOffset(long encoded) {
+        return encoded & BATCH_OFFSET_MASK;
+    }
+
+    /**
+     * Decodes the frame-relative row index from an encoded batch entry.
+     */
+    static int decodeBatchRowIndex(long encoded) {
+        return (int) ((encoded >>> BATCH_ROW_INDEX_SHIFT) & BATCH_ROW_INDEX_MASK);
+    }
+
+    /**
+     * Encodes a batch entry from its components. The layout is
+     * {@code [isNew:1][rowIndex:24][offset:39]}.
+     */
+    static long encodeBatchEntry(long rowIndex, long offset, boolean isNew) {
+        long encoded = (rowIndex << BATCH_ROW_INDEX_SHIFT) | (offset & BATCH_OFFSET_MASK);
+        return isNew ? encoded | Long.MIN_VALUE : encoded;
+    }
+
+    /**
+     * Returns {@code true} if the encoded batch entry represents a newly
+     * inserted map entry.
+     */
+    static boolean isNewBatchEntry(long encoded) {
+        return encoded < 0;
+    }
+
     @Override
     void close();
 
     MapRecordCursor getCursor();
+
+    /**
+     * Returns the current base address against which entry offsets from
+     * {@link MapValue#getStartOffset()} are interpreted.
+     */
+    default long getEntryBase() {
+        throw new UnsupportedOperationException();
+    }
 
     @TestOnly
     default long getHeapSize() {
@@ -66,38 +120,6 @@ public interface Map extends Mutable, Closeable, Reopenable {
     void merge(Map srcMap, MapValueMergeFunction mergeFunc);
 
     /**
-     * Reopens previously closed map with given key capacity and initial heap size.
-     * Heap size value is ignored if the map does not use heap to store keys and values, e.g. {@link Unordered8Map}.
-     */
-    void reopen(int keyCapacity, long heapSize);
-
-    void restoreInitialCapacity();
-
-    void setKeyCapacity(int keyCapacity);
-
-    long size();
-
-    MapValue valueAt(long address);
-
-    MapKey withKey();
-
-    /**
-     * Returns the current base address against which entry offsets from
-     * {@link MapValue#getStartOffset()} are interpreted.
-     */
-    default long getEntryBase() {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Ensures the map can accept up to {@code additionalKeys} new entries
-     * without triggering a rehash that would invalidate harvested offsets.
-     */
-    default void reserveCapacity(long additionalKeys) {
-        // no-op by default
-    }
-
-    /**
      * Probes rows {@code batchStart..batchEnd-1} and writes packed longs into
      * {@code batchAddr}. Each packed long has the layout:
      * {@code [isNew:1][rowIndex:24][offset:39]}.
@@ -120,13 +142,34 @@ public interface Map extends Mutable, Closeable, Reopenable {
             final MapKey key = withKey();
             mapSink.copy(record, key);
             final MapValue value = key.createValue();
-            long packed = (r << 39) | ((value.getStartAddress() - getEntryBase()) & 0x7F_FFFF_FFFFL);
-            if (value.isNew()) {
-                packed |= Long.MIN_VALUE;
-            }
-            Unsafe.getUnsafe().putLong(batchAddr, packed);
+            long encoded = encodeBatchEntry(r, value.getStartAddress() - getEntryBase(), value.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return getEntryBase();
     }
+
+    /**
+     * Reopens previously closed map with given key capacity and initial heap size.
+     * Heap size value is ignored if the map does not use heap to store keys and values, e.g. {@link Unordered8Map}.
+     */
+    void reopen(int keyCapacity, long heapSize);
+
+    /**
+     * Ensures the map can accept up to {@code additionalKeys} new entries
+     * without triggering a rehash that would invalidate harvested offsets.
+     */
+    default void reserveCapacity(long additionalKeys) {
+        // no-op by default
+    }
+
+    void restoreInitialCapacity();
+
+    void setKeyCapacity(int keyCapacity);
+
+    long size();
+
+    MapValue valueAt(long address);
+
+    MapKey withKey();
 }

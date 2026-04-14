@@ -60,9 +60,8 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
             long baseRowId
     ) {
         for (long i = 0; i < rowCount; i++) {
-            long packed = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
-            long offset = packed & 0x7F_FFFF_FFFFL;
-            long addr = entryBase + offset + valueByteOffset;
+            long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            long addr = entryBase + Map.decodeBatchOffset(encoded) + valueByteOffset;
             Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
         }
     }

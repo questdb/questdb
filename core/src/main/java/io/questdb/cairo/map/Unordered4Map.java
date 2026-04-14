@@ -356,11 +356,8 @@ public class Unordered4Map implements Map, Reopenable {
                 }
             }
 
-            long packed = (r << 39) | ((startAddress - memStart) & 0x7F_FFFF_FFFFL);
-            if (isNew) {
-                packed |= Long.MIN_VALUE;
-            }
-            Unsafe.getUnsafe().putLong(batchAddr, packed);
+            long encoded = Map.encodeBatchEntry(r, startAddress - memStart, isNew);
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
@@ -520,11 +517,8 @@ public class Unordered4Map implements Map, Reopenable {
                 }
             }
 
-            long packed = (r << 39) | ((startAddress - memStart) & 0x7F_FFFF_FFFFL);
-            if (isNew) {
-                packed |= Long.MIN_VALUE;
-            }
-            Unsafe.getUnsafe().putLong(batchAddr, packed);
+            long encoded = Map.encodeBatchEntry(r, startAddress - memStart, isNew);
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
         return memStart;
