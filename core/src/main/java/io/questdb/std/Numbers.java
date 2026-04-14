@@ -2031,6 +2031,42 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static int parseNonNegativeIntQuiet(Utf8Sequence sequence) {
+        if (sequence == null) {
+            return -1;
+        }
+        CharSequence sequence1 = sequence.asAsciiCharSequence();
+        int lim = sequence.size();
+        if (lim == 0) {
+            return -1;
+        }
+
+        int digitCounter = 0;
+        int val = 0;
+        for (int i = 0; i < lim; i++) {
+            char c = sequence1.charAt(i);
+            if (c == '_') {
+                if (digitCounter == 0) {
+                    return -1;
+                }
+                digitCounter = 0;
+            } else if (c < '0' || c > '9') {
+                return -1;
+            } else {
+                if (val > (Integer.MAX_VALUE / 10)) {
+                    return -1;
+                }
+                int r = val * 10 + (c - '0');
+                if (r < val) {
+                    return -1;
+                }
+                val = r;
+                digitCounter++;
+            }
+        }
+        return digitCounter > 0 ? val : -1;
+    }
+
     public static short parseShort(Utf8Sequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.instance().put("null string");

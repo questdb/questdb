@@ -106,6 +106,24 @@ stages:
               OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
               OSS_BRANCH: $(System.PullRequest.SourceBranch)
 
+  - stage: ClientIntegrationTests
+    displayName: "Client Integration Tests"
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - job: ClientTests
+        displayName: "Client Integration Tests"
+        variables:
+          SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+          jdk: "1.17"
+        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        pool:
+          name: "hetzner-incus"
+        timeoutInMinutes: 30
+        steps:
+          - template: templates/client-integration-tests.yml
+
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
@@ -208,6 +226,7 @@ stages:
               echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
             displayName: "Install JDK and Maven"
             condition: eq(variables['SHOULD_RUN'], 'true')
+          - template: templates/detect-local-client.yml
           - download: current
             artifact: jacoco-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
@@ -225,10 +244,10 @@ stages:
             displayName: "Compile with Maven"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
-              mavenPomFile: "core/pom.xml"
+              mavenPomFile: "pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
               goals: "compile"
-              options: "--batch-mode -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+              options: "--batch-mode -pl core -am -DskipTests $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
               jdkVersionOption: $(jdk)
 
           - task: Maven@3
