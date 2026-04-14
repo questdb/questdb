@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -141,10 +142,83 @@ public final class Mig940 {
                 long partitionTs = txMem.getLong(entryOffset);
                 long nameTxn = txMem.getLong(entryOffset + PARTITION_NAME_TX_IDX * Long.BYTES);
 
+                if (!isParquetMetadataStale(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn)) {
+                    continue;
+                }
                 generateParquetMetaForPartition(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn);
             }
         }
         path.trimTo(plen);
+    }
+
+    /**
+     * Returns true if the _pm file is missing or stale (its latest footer's
+     * derived parquet size does not match the actual data.parquet file size).
+     */
+    private static boolean isParquetMetadataStale(
+            FilesFacade ff,
+            Path path,
+            int pathRootLen,
+            int timestampType,
+            int partitionBy,
+            long partitionTs,
+            long nameTxn
+    ) {
+        TableUtils.setPathForNativePartition(path.trimTo(pathRootLen), timestampType, partitionBy, partitionTs, nameTxn);
+        int partitionDirLen = path.size();
+
+        // Check if _pm exists.
+        path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+        if (!ff.exists(path.$())) {
+            path.trimTo(pathRootLen);
+            return true;
+        }
+
+        long pmFileSize = ff.length(path.$());
+        // Header is 32 bytes. Need at least that + some footer bytes.
+        if (pmFileSize < 32 + 32) {
+            path.trimTo(pathRootLen);
+            return true;
+        }
+
+        // Read footer_offset from header (8 bytes at offset 0) and
+        // parquet_footer_offset (8 bytes) + parquet_footer_length (4 bytes) from footer.
+        long pmFd = ff.openRO(path.$());
+        if (pmFd < 0) {
+            path.trimTo(pathRootLen);
+            return true;
+        }
+        try {
+            long mem = Unsafe.malloc(32, MemoryTag.NATIVE_MIG);
+            try {
+                // Read header footer_offset.
+                if (ff.read(pmFd, mem, 8, 0) != 8) {
+                    return true;
+                }
+                long footerOffset = Unsafe.getUnsafe().getLong(mem);
+                if (footerOffset < 32 || footerOffset >= pmFileSize) {
+                    return true;
+                }
+
+                // Read first 12 bytes of footer: parquet_footer_offset(8) + parquet_footer_length(4).
+                if (ff.read(pmFd, mem, 12, footerOffset) != 12) {
+                    return true;
+                }
+                long parquetFooterOffset = Unsafe.getUnsafe().getLong(mem);
+                int parquetFooterLength = Unsafe.getUnsafe().getInt(mem + 8);
+                long derivedParquetSize = parquetFooterOffset + Integer.toUnsignedLong(parquetFooterLength) + 8;
+
+                // Compare against actual data.parquet size.
+                path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+                long actualParquetSize = ff.length(path.$());
+                return derivedParquetSize != actualParquetSize;
+            } finally {
+                Unsafe.free(mem, 32, MemoryTag.NATIVE_MIG);
+            }
+        } finally {
+            ff.close(pmFd);
+            path.trimTo(pathRootLen);
+        }
     }
 
     private static long generateParquetMetaForPartition(
@@ -190,9 +264,16 @@ public final class Mig940 {
         }
 
         try {
+            if (!ff.truncate(parquetMetaFd, 0)) {
+                throw CairoException.critical(ff.errno()).put("could not truncate _pm [path=").put(path).put(']');
+            }
             long parquetMetaSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
             LOG.info().$("generated parquet metadata [path=").$(path).$(", parquetMetadataFileSize=").$(parquetMetaSize).I$();
             return parquetMetaSize;
+        } catch (Throwable t) {
+            // Remove partially written _pm file so a retry regenerates it.
+            ff.remove(path.$());
+            throw t;
         } finally {
             ff.close(parquetFd);
             ff.close(parquetMetaFd);

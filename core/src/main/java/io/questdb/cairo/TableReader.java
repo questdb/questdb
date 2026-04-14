@@ -1505,10 +1505,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return path;
     }
 
-    private void prepareForLazyOpen(int partitionIndex) {
-        closePartition(partitionIndex);
-    }
-
     private void readTxnSlow(long deadline) {
         int count = 0;
 
@@ -1569,7 +1565,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
-                                    prepareForLazyOpen(partitionIndex);
+                                    closePartition(partitionIndex);
                                 }
                             } else {
                                 // reload Parquet file
@@ -1578,11 +1574,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated parquet partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
-                                    prepareForLazyOpen(partitionIndex);
+                                    closePartition(partitionIndex);
                                 }
                             }
                         } else {
-                            prepareForLazyOpen(partitionIndex);
+                            closePartition(partitionIndex);
                         }
                     }
                     partitionIndex++;
@@ -1648,7 +1644,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                                 } else {
-                                    prepareForLazyOpen(partitionIndex);
+                                    closePartition(partitionIndex);
                                 }
                             } else {
                                 // reload Parquet file
@@ -1657,16 +1653,16 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated parquet partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
-                                    prepareForLazyOpen(partitionIndex);
+                                    closePartition(partitionIndex);
                                 }
                             }
                         }
                     } else if (openPartitionSize > -1) {
-                        prepareForLazyOpen(partitionIndex);
+                        closePartition(partitionIndex);
                     }
                     changed = true;
                 } else if (openPartitionSize > -1 && txPartitionSize > -1) { // Don't force re-open if not yet opened
-                    prepareForLazyOpen(partitionIndex);
+                    closePartition(partitionIndex);
                 }
                 txPartitionIndex++;
                 partitionIndex++;

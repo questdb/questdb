@@ -83,17 +83,17 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
     // Row group block offsets are stored right-shifted by this amount
     private static final int BLOCK_ALIGNMENT_SHIFT = 3;
-    // Column descriptor layout (32B each, starting at header offset 24)
-    private static final int COL_DESC_COL_TYPE_OFF = 12;
-    private static final int COL_DESC_ID_OFF = 8;
-    private static final int COL_DESC_NAME_LENGTH_OFF = 24;
-    private static final int COL_DESC_NAME_OFFSET_OFF = 0;
     private static final int COLUMN_CHUNK_MAX_STAT_OFF = 56;
     private static final int COLUMN_CHUNK_MIN_STAT_OFF = 48;
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
     private static final int COLUMN_DESCRIPTOR_SIZE = 32;
+    // Column descriptor layout (32B each, starting at header offset 24)
+    private static final int COL_DESC_COL_TYPE_OFF = 12;
+    private static final int COL_DESC_ID_OFF = 8;
+    private static final int COL_DESC_NAME_LENGTH_OFF = 24;
+    private static final int COL_DESC_NAME_OFFSET_OFF = 0;
     private static final int FOOTER_FIXED_SIZE = 32;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
     // Footer offsets (relative to footer start)
@@ -103,17 +103,17 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     // Footer trailer size (appended after CRC)
     private static final int FOOTER_TRAILER_SIZE = 4;
     private static final int FOOTER_UNUSED_BYTES_OFF = 16;
+    private static final int HEADER_COLUMN_COUNT_OFF = 24;
+    private static final int HEADER_DESIGNATED_TS_OFF = 16;
+    private static final long HEADER_FEATURE_FLAGS_OFF = 8;
+    private static final int HEADER_FIXED_SIZE = 32;
     // Header offsets (new layout: footer_offset(8) + feature_flags(8) + dts(4) + sorting(4) + col_count(4) + reserved(4))
     private static final int HEADER_FOOTER_OFFSET_OFF = 0;
-    private static final long HEADER_FEATURE_FLAGS_OFF = 8;
-    private static final int HEADER_DESIGNATED_TS_OFF = 16;
-    private static final int HEADER_COLUMN_COUNT_OFF = 24;
-    private static final int HEADER_FIXED_SIZE = 32;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
-    private long addr;
     private final DirectUtf8String flyweightColName = new DirectUtf8String();
+    private long addr;
     private int columnCount;
     private long fileSize;
     private long footerAddr;
@@ -375,7 +375,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                 }
                 long prevOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PREV_FOOTER_OFFSET_OFF);
                 if (prevOffset == 0 || prevOffset < 0 || prevOffset >= fileSize) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical(CairoException.STALE_PARQUET_METADATA)
                             .put("no _pm footer found for parquet size [parquetFileSize=").put(parquetFileSize)
                             .put(']');
                 }
@@ -446,11 +446,20 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             }
         }
 
+        long minBlockSize = 8 + (long) columnCount * COLUMN_CHUNK_SIZE;
         long rowCount = 0;
         for (int i = 0; i < rowGroupCount; i++) {
             long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * 4;
             int stored = Unsafe.getUnsafe().getInt(entryAddr);
-            rowCount += Unsafe.getUnsafe().getLong(addr + (Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT));
+            long blockOffset = Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
+            if (blockOffset + minBlockSize > fileSize) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm row group block offset [rowGroup=").put(i)
+                        .put(", offset=").put(blockOffset)
+                        .put(", fileSize=").put(fileSize)
+                        .put(']');
+            }
+            rowCount += Unsafe.getUnsafe().getLong(addr + blockOffset);
         }
 
         // All validations passed — commit state.

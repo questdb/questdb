@@ -247,6 +247,100 @@ public class Mig940Test extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMigrateRegeneratesStalePm() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Corrupt _pm by truncating to 0 (simulates stale metadata).
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                long fd = ff.openRW(path.$(), 0);
+                try {
+                    Assert.assertTrue("truncate should succeed", ff.truncate(fd, 0));
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            // Run migration — should detect staleness and regenerate.
+            runMig940(token);
+
+            // Verify _pm was regenerated and is valid.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertTrue("_pm should exist after migration", ff.exists(path.$()));
+
+                long pmSize = ff.length(path.$());
+                Assert.assertTrue("_pm should have positive size", pmSize > 0);
+
+                long pmAddr = TableUtils.mapRO(ff, path.$(), LOG, pmSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(pmAddr, pmSize, Long.MAX_VALUE);
+                    Assert.assertEquals(2, reader.getColumnCount());
+                    Assert.assertEquals(1, reader.getRowGroupCount());
+                } finally {
+                    ff.munmap(pmAddr, pmSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMigrateSkipsHealthyPm() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // Record _pm size before migration.
+            long pmSizeBefore;
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                pmSizeBefore = ff.length(path.$());
+                Assert.assertTrue("_pm should exist", pmSizeBefore > 0);
+            }
+
+            // Run migration — should skip healthy _pm.
+            runMig940(token);
+
+            // Verify _pm size is unchanged.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertEquals("_pm should not be rewritten", pmSizeBefore, ff.length(path.$()));
+            }
+        });
+    }
+
     private void runMig940(TableToken token) {
         engine.releaseAllWriters();
         engine.releaseAllReaders();

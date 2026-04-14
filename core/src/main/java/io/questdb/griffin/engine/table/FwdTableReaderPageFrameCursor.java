@@ -183,6 +183,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.rowGroupHi = -1;
                     if (frame.format == PartitionFormat.PARQUET) {
                         frame.parquetMetaDecoder = partitionFrame.getParquetMetaDecoder();
+                    } else {
+                        frame.parquetMetaDecoder = null;
                     }
 
                     return frame;

@@ -33,6 +33,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -685,6 +686,26 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStalePmThrowsWithCorrectErrno() throws Exception {
+        assertMemoryLeak(() -> {
+            // Build a _pm with derived parquet size = 100 + 50 + 8 = 158.
+            try (PmTestFile file = buildFile(2, 100, 50, 1000)) {
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                // Request parquet size 9999 — no footer matches.
+                try {
+                    reader.of(file.dataPtr, file.dataLen, 9999);
+                    Assert.fail("Expected CairoException for stale _pm");
+                } catch (CairoException e) {
+                    Assert.assertEquals(CairoException.STALE_PARQUET_METADATA, e.getErrno());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "no _pm footer found for parquet size");
+                }
+            }
+        });
+    }
+
+    // ── Feature flags / bloom filter tests ──────────────────────────────
+
+    @Test
     public void testUnknownRequiredFeatureFlagRejected() throws Exception {
         assertMemoryLeak(() -> {
             try (PmTestFile file = buildFile(1, 100)) {
@@ -702,8 +723,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ── Feature flags / bloom filter tests ──────────────────────────────
 
     @Test
     public void testZeroRowGroups() throws Exception {
@@ -747,6 +766,8 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         }
     }
 
+    // ── Bloom filter test helper ────────────────────────────────────────
+
     private static PmTestFile buildFileWithBloomFilter(int columnCount, long... rowGroupSizes) {
         long writerPtr = ParquetMetaFileWriter.create();
         try {
@@ -777,8 +798,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             ParquetMetaFileWriter.destroyWriter(writerPtr);
         }
     }
-
-    // ── Bloom filter test helper ────────────────────────────────────────
 
     private static class PmTestFile implements AutoCloseable {
         final long dataLen;

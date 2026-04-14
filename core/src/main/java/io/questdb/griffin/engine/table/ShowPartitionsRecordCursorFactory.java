@@ -409,8 +409,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     parquetMetaReader = new ParquetMetaFileReader();
                 }
                 parquetMetaReader.of(addr, parquetMetaFileSize, parquetFileSize);
-            } catch (CairoException e) {
-                LOG.error().$("could not read pm metadata [path=").$(partitionDirPath).$(", error=").$(e.getMessage()).I$();
+            } catch (Throwable e) {
+                LOG.error().$("could not read parquet metadata [path=").$(partitionDirPath).$(", error=").$(e.getMessage()).I$();
                 closeParquetMeta();
                 // If of() threw before setting addr, the reader is not open.
                 // Munmap the raw address directly to prevent a leak.

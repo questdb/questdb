@@ -32,10 +32,10 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -129,9 +129,32 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             parquetMetaFileSize = ff.length(path.$());
-            parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            boolean needsRegeneration = parquetMetaFileSize <= 0;
             try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
-                parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
+                if (!needsRegeneration) {
+                    parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                    try {
+                        parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
+                    } catch (CairoException e) {
+                        ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                        parquetMetaAddr = 0;
+                        if (e.getErrno() != CairoException.STALE_PARQUET_METADATA) {
+                            throw e;
+                        }
+                        needsRegeneration = true;
+                    }
+                }
+                if (needsRegeneration) {
+                    LOG.info()
+                            .$("regenerating stale _pm [path=").$(path)
+                            .$(", parquetFileSize=").$(parquetFileSize)
+                            .I$();
+                    regenerateParquetMetadata(ff, path, partitionDirLen, parquetFileSize, cairoConfiguration);
+                    path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                    parquetMetaFileSize = ff.length(path.$());
+                    parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
+                }
                 parquetSize = parquetMetaReader.getParquetFileSize();
             }
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
@@ -3184,6 +3207,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriter
                 );
             }
+        }
+    }
+
+    private static void regenerateParquetMetadata(FilesFacade ff, Path path, int partitionDirLen, long parquetFileSize, CairoConfiguration configuration) {
+        path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+        long parquetFd = TableUtils.openRO(ff, path.$(), LOG);
+        try {
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            long pmFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            try {
+                if (!ff.truncate(pmFd, 0)) {
+                    throw CairoException.critical(ff.errno()).put("could not truncate _pm [path=").put(path).put(']');
+                }
+                ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
+            } finally {
+                ff.close(pmFd);
+            }
+        } finally {
+            ff.close(parquetFd);
+            path.trimTo(partitionDirLen);
         }
     }
 
