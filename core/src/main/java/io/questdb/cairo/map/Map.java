@@ -123,6 +123,12 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * Probes rows {@code batchStart..batchEnd-1} and writes packed longs into
      * {@code batchAddr}. Each packed long has the layout:
      * {@code [isNew:1][rowIndex:24][offset:39]}.
+     * <p>
+     * Callers must invoke {@link #reserveCapacity(long)} with at least
+     * {@code batchEnd - batchStart} beforehand. Inlined implementations rely on
+     * the pre-reserved headroom to skip the per-insert rehash check in the hot
+     * loop; a mid-batch rehash would invalidate offsets already written into
+     * {@code batchAddr} for earlier rows in the same batch.
      *
      * @return the entryBase address valid for the written batch
      */

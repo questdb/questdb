@@ -318,6 +318,10 @@ public class Unordered8Map implements Map, Reopenable {
             return probeBatchUnsafe(record.getPageAddress(directColumnIndex), batchStart, batchEnd, batchAddr);
         }
 
+        // Caller must have pre-reserved at least (batchEnd - batchStart) free slots via
+        // reserveCapacity(), so the hot loop skips the per-insert rehash check — a mid-batch
+        // rehash would invalidate offsets already packed into batchAddr.
+        assert free >= batchEnd - batchStart;
         for (long r = batchStart; r < batchEnd; r++) {
             record.setRowIndex(r);
             mapSink.copy(record, key);
@@ -331,21 +335,8 @@ public class Unordered8Map implements Map, Reopenable {
                 for (; ; ) {
                     long existing = Unsafe.getUnsafe().getLong(startAddress);
                     if (existing == 0) {
-                        // New entry — write the key and handle bookkeeping.
                         Unsafe.getUnsafe().putLong(startAddress, k);
-                        if (--free == 0) {
-                            try {
-                                rehash();
-                            } catch (CairoException e) {
-                                free = 1;
-                                throw e;
-                            }
-                            // Re-locate after rehash.
-                            startAddress = getStartAddress(hashCode & mask);
-                            while (Unsafe.getUnsafe().getLong(startAddress) != k) {
-                                startAddress = getNextAddress(startAddress);
-                            }
-                        }
+                        free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
                             Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
@@ -520,6 +511,8 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     private long probeBatchUnsafe(long columnAddr, long batchStart, long batchEnd, long batchAddr) {
+        // See probeBatch: free slots are pre-reserved by the caller.
+        assert free >= batchEnd - batchStart;
         for (long r = batchStart; r < batchEnd; r++) {
             final long k = Unsafe.getUnsafe().getLong(columnAddr + r * Long.BYTES);
 
@@ -532,18 +525,7 @@ public class Unordered8Map implements Map, Reopenable {
                     long existing = Unsafe.getUnsafe().getLong(startAddress);
                     if (existing == 0) {
                         Unsafe.getUnsafe().putLong(startAddress, k);
-                        if (--free == 0) {
-                            try {
-                                rehash();
-                            } catch (CairoException e) {
-                                free = 1;
-                                throw e;
-                            }
-                            startAddress = getStartAddress(hashCode & mask);
-                            while (Unsafe.getUnsafe().getLong(startAddress) != k) {
-                                startAddress = getNextAddress(startAddress);
-                            }
-                        }
+                        free--;
                         size++;
                         if (batchEmptyValueStart != 0) {
                             Vect.memcpy(startAddress + KEY_SIZE, batchEmptyValueStart, valueSize);
