@@ -26,12 +26,11 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 public class BitmapIndexBwdNullReader implements BitmapIndexReader {
-    private final ObjList<NullCursor> cursorSlots = new ObjList<>();
+    private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
     private long partitionTxn;
 
@@ -42,7 +41,7 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
 
     @Override
     public void close() {
-        Misc.clear(cursorSlots);
+        freeCursors.clear();
     }
 
     @Override
@@ -56,12 +55,12 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(int slotId, int key, long minValue, long maxValue) {
-        assert slotId >= 0 : "slotId must be non-negative";
-        NullCursor c = cursorSlots.getQuiet(slotId);
-        if (c == null) {
-            c = new NullCursor();
-            cursorSlots.extendAndSet(slotId, c);
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+        NullCursor c;
+        if (freeCursors.size() > 0) {
+            c = freeCursors.popLast();
+        } else {
+            c = new NullCursor(this.freeCursors);
         }
         c.value = key == 0 ? maxValue - minValue : -1;
         return c;
@@ -120,7 +119,19 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
 
 
     private static class NullCursor implements RowCursor {
+        private final ObjList<NullCursor> pool;
         private long value;
+
+        NullCursor(ObjList<NullCursor> freeCursors) {
+            this.pool = freeCursors;
+        }
+
+        @Override
+        public void close() {
+            if (pool.size() < MAX_CACHED_FREE_CURSORS) {
+                pool.add(this);
+            }
+        }
 
         @Override
         public boolean hasNext() {

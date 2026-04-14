@@ -232,7 +232,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             rowCursorFactory = new SymbolIndexRowCursorFactory(
                     columnIndex,
                     symbolKey,
-                    cursorFactories.size(),
                     indexDirection,
                     null
             );
@@ -241,7 +240,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                     columnIndex,
                     symbolKey,
                     filter,
-                    cursorFactories.size(),
                     indexDirection,
                     null
             );

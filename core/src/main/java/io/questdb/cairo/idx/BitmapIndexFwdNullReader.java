@@ -34,7 +34,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 public class BitmapIndexFwdNullReader implements BitmapIndexReader {
-    private final ObjList<NullCursor> cursorSlots = new ObjList<>();
+    private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
     private long partitionTxn;
 
@@ -45,7 +45,7 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
 
     @Override
     public void close() {
-        Misc.clear(cursorSlots);
+        Misc.clear(freeCursors);
     }
 
     @Override
@@ -59,12 +59,12 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(int slotId, int key, long minValue, long maxValue) {
-        assert slotId >= 0 : "slotId must be non-negative";
-        NullCursor c = cursorSlots.getQuiet(slotId);
-        if (c == null) {
-            c = new NullCursor();
-            cursorSlots.extendAndSet(slotId, c);
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+        NullCursor c;
+        if (freeCursors.size() > 0) {
+            c = freeCursors.popLast();
+        } else {
+            c = new NullCursor(this.freeCursors);
         }
         c.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
         c.value = 0;
@@ -129,8 +129,20 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
 
 
     private static class NullCursor implements RowCursor {
+        private final ObjList<NullCursor> pool;
         private long maxValue;
         private long value;
+
+        NullCursor(ObjList<NullCursor> freeCursors) {
+            this.pool = freeCursors;
+        }
+
+        @Override
+        public void close() {
+            if (pool != null && pool.size() < MAX_CACHED_FREE_CURSORS) {
+                pool.add(this);
+            }
+        }
 
         @Override
         public boolean hasNext() {

@@ -251,6 +251,16 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         pos += length;
     }
 
+    public T popLast() {
+        assert pos > 0 : "index out of bounds, " + pos;
+
+        int last = pos - 1;
+        T item = buffer[last];
+        buffer[last] = null;
+        pos = last;
+        return item;
+    }
+
     public void remove(int index) {
         if (pos < 1 || index >= pos) {
             return;

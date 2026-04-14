@@ -36,6 +36,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -109,9 +110,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Open reader -- should see 0 keys (graceful degradation)
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     Assert.assertFalse("both pages corrupted: cursor should be empty", cursor.hasNext());
                     Assert.assertEquals("keyCount should be 0", 0, reader.getKeyCount());
+                    Misc.free(cursor);
                 }
             }
         });
@@ -141,7 +143,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), "compact_snap", COLUMN_NAME_TXN_NONE, -1, 0)) {
                         reader.reloadConditionally();
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
 
                         // Read a few values
                         LongList partial = new LongList();
@@ -164,6 +166,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             long val = i < partial.size() ? partial.getQuick(i) : rest.getQuick(i - partial.size());
                             Assert.assertEquals("value " + i, i, val);
                         }
+                        Misc.free(cursor);
                     }
                 }
 
@@ -178,6 +181,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals(totalValues, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -221,6 +225,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals(500, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -260,7 +265,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                          configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                                 while (!Thread.interrupted() && (writerDone.getCount() > 0 || committedBatches.get() < writerCommits)) {
                                     reader.reloadConditionally();
-                                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                     long prev = Long.MAX_VALUE;
                                     int count = 0;
                                     while (cursor.hasNext()) {
@@ -281,6 +286,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                                 "bwd reader " + readerId + ": zero values visible");
                                     }
                                     Thread.yield();
+                                    Misc.free(cursor);
                                 }
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);
@@ -346,7 +352,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 reader.reloadConditionally();
                                 barrier.await();
 
-                                RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                 long prev = Long.MAX_VALUE;
                                 int count = 0;
                                 while (cursor.hasNext()) {
@@ -369,6 +375,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                     throw new AssertionError(
                                             "bwd reader " + readerId + ": expected " + (10 * BP_BATCH) + " got " + count);
                                 }
+                                Misc.free(cursor);
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);
                             } finally {
@@ -423,7 +430,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                                  configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                                         while (!Thread.interrupted() && writerDone.getCount() > 0) {
                                             reader.reloadConditionally();
-                                            RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                                            RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                             long prev = -1;
                                             int count = 0;
                                             while (cursor.hasNext()) {
@@ -440,6 +447,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                                         "fwd reader " + readerId + ": unexpected count=" + count);
                                             }
                                             Thread.yield();
+                                            Misc.free(cursor);
                                         }
                                     }
                                 } else {
@@ -448,7 +456,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                                  configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                                         while (!Thread.interrupted() && writerDone.getCount() > 0) {
                                             reader.reloadConditionally();
-                                            RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                                            RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                             long prev = Long.MAX_VALUE;
                                             int count = 0;
                                             while (cursor.hasNext()) {
@@ -465,6 +473,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                                         "bwd reader " + readerId + ": unexpected count=" + count);
                                             }
                                             Thread.yield();
+                                            Misc.free(cursor);
                                         }
                                     }
                                 }
@@ -537,7 +546,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                          configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                                 while (!Thread.interrupted() && writerDone.getCount() > 0) {
                                     reader.reloadConditionally();
-                                    RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
+                                    RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE);
                                     long prev = -1;
                                     int count = 0;
                                     while (cursor.hasNext()) {
@@ -559,6 +568,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                                 "key=" + key + " partial batch: count=" + count);
                                     }
                                     Thread.yield();
+                                    Misc.free(cursor);
                                 }
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);
@@ -621,7 +631,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             int iterations = 0;
                             while (!Thread.interrupted() && (writerDone.getCount() > 0 || iterations < writerBatches)) {
                                 reader.reloadConditionally();
-                                RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                 long prev = -1;
                                 int count = 0;
                                 while (cursor.hasNext()) {
@@ -639,6 +649,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                     throw new AssertionError("partial batch: count=" + count);
                                 }
                                 iterations++;
+                                Misc.free(cursor);
                             }
                         } catch (Throwable t) {
                             error.compareAndSet(null, t);
@@ -701,7 +712,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                          configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                                 while (!Thread.interrupted() && (writerDone.getCount() > 0 || committedBatches.get() < writerCommits)) {
                                     reader.reloadConditionally();
-                                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                     long prev = -1;
                                     int count = 0;
                                     while (cursor.hasNext()) {
@@ -723,6 +734,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                                 "reader " + readerId + ": zero values visible");
                                     }
                                     Thread.yield();
+                                    Misc.free(cursor);
                                 }
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);
@@ -792,7 +804,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 reader.reloadConditionally();
                                 barrier.await();
 
-                                RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                 long prev = -1;
                                 int count = 0;
                                 while (cursor.hasNext()) {
@@ -814,6 +826,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                     throw new AssertionError(
                                             "reader " + readerId + ": expected " + (10 * BP_BATCH) + " got " + count);
                                 }
+                                Misc.free(cursor);
                             } catch (Throwable t) {
                                 error.compareAndSet(null, t);
                             } finally {
@@ -847,13 +860,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals(totalBatches * BP_BATCH, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -904,9 +918,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                     // If the reader opens, attempt to use the cursor
                     try {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                        while (cursor.hasNext()) {
-                            cursor.next();
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                            while (cursor.hasNext()) {
+                                cursor.next();
+                            }
                         }
                     } catch (CairoException e) {
                         // Exception during cursor iteration is acceptable
@@ -976,13 +991,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Phase 3: open a fresh reader -- should fall back to the valid page
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("reader val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("reader sees all initial data", totalInitialValues, count);
+                    Misc.free(cursor);
                 }
 
                 // Phase 4: open a fresh writer -- should recover from the valid page
@@ -1010,19 +1026,21 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         writer.setMaxValue(base + BP_BATCH - 1);
                         writer.commit();
                     }
+                    preCursor = io.questdb.std.Misc.free(preCursor);
                 }
 
                 // Verify all 10 batches are readable
                 int totalFinalValues = (initialBatches + 5) * BP_BATCH;
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("final val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("all batches readable after recovery", totalFinalValues, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -1088,13 +1106,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Open fresh reader -- should see the sealed data, ignoring extra bytes
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("reader val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("reader sees sealed data", 10 * BP_BATCH, count);
+                    Misc.free(cursor);
                 }
 
                 // Open fresh writer -- should recover and be able to write more data
@@ -1117,13 +1136,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Verify all data is correct after recovery + additional writes
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("sealed val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("all 15 batches readable", 15 * BP_BATCH, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -1149,13 +1169,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "edge_const", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int idx = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(idx * 7L, cursor.next());
                         idx++;
                     }
                     Assert.assertEquals(count, idx);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -1173,8 +1194,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "edge_empty", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     Assert.assertFalse(cursor.hasNext());
+                    Misc.free(cursor);
                 }
             }
         });
@@ -1206,13 +1228,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "edge_boundary", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals(totalValues, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -1237,19 +1260,20 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Verify forward
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "edge_exact_bc", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("fwd val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("fwd count for 64 values", BP_BATCH, count);
+                    Misc.free(cursor);
                 }
 
                 // Verify backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                         configuration, path.trimTo(plen), "edge_exact_bc", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("bwd val " + count,
@@ -1257,6 +1281,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals("bwd count for 64 values", BP_BATCH, count);
+                    Misc.free(cursor);
                 }
 
                 // Now write 65 values (1 full block + 1 value in second block)
@@ -1271,19 +1296,20 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Verify forward with 65 values
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "edge_exact_bc_65", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("fwd65 val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("fwd count for 65 values", BP_BATCH + 1, count);
+                    Misc.free(cursor);
                 }
 
                 // Verify backward with 65 values
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                         configuration, path.trimTo(plen), "edge_exact_bc_65", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("bwd65 val " + count,
@@ -1291,6 +1317,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals("bwd count for 65 values", BP_BATCH + 1, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -1320,7 +1347,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "edge_gaps", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     long expected = 0;
                     int idx = 0;
                     while (cursor.hasNext()) {
@@ -1329,6 +1356,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         idx++;
                     }
                     Assert.assertEquals(count, idx);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -1358,29 +1386,35 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "edge_nokey", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     // Query key=5 (non-existent, beyond written keys)
-                    RowCursor cursor5 = reader.getCursor(0, 5, 0, Long.MAX_VALUE);
+                    RowCursor cursor5 = reader.getCursor(5, 0, Long.MAX_VALUE);
                     Assert.assertFalse("key=5 should be empty", cursor5.hasNext());
 
                     // Query key=-1 (negative, non-existent)
-                    RowCursor cursorNeg = reader.getCursor(0, -1, 0, Long.MAX_VALUE);
+                    RowCursor cursorNeg = reader.getCursor(-1, 0, Long.MAX_VALUE);
                     Assert.assertFalse("key=-1 should be empty", cursorNeg.hasNext());
 
                     // Query key=Integer.MAX_VALUE (far beyond written keys)
-                    RowCursor cursorMax = reader.getCursor(0, Integer.MAX_VALUE, 0, Long.MAX_VALUE);
+                    RowCursor cursorMax = reader.getCursor(Integer.MAX_VALUE, 0, Long.MAX_VALUE);
                     Assert.assertFalse("key=MAX_VALUE should be empty", cursorMax.hasNext());
+                    cursorMax = io.questdb.std.Misc.free(cursorMax);
+                    cursorNeg = io.questdb.std.Misc.free(cursorNeg);
+                    cursor5 = io.questdb.std.Misc.free(cursor5);
                 }
 
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                         configuration, path.trimTo(plen), "edge_nokey", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     // Same checks for backward reader
-                    RowCursor cursor5 = reader.getCursor(0, 5, 0, Long.MAX_VALUE);
+                    RowCursor cursor5 = reader.getCursor(5, 0, Long.MAX_VALUE);
                     Assert.assertFalse("bwd key=5 should be empty", cursor5.hasNext());
 
-                    RowCursor cursorNeg = reader.getCursor(0, -1, 0, Long.MAX_VALUE);
+                    RowCursor cursorNeg = reader.getCursor(-1, 0, Long.MAX_VALUE);
                     Assert.assertFalse("bwd key=-1 should be empty", cursorNeg.hasNext());
 
-                    RowCursor cursorMax = reader.getCursor(0, Integer.MAX_VALUE, 0, Long.MAX_VALUE);
+                    RowCursor cursorMax = reader.getCursor(Integer.MAX_VALUE, 0, Long.MAX_VALUE);
                     Assert.assertFalse("bwd key=MAX_VALUE should be empty", cursorMax.hasNext());
+                    cursorMax = io.questdb.std.Misc.free(cursorMax);
+                    cursorNeg = io.questdb.std.Misc.free(cursorNeg);
+                    cursor5 = io.questdb.std.Misc.free(cursor5);
                 }
             }
         });
@@ -1443,10 +1477,11 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "edge_single", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     for (int k = 0; k < keyCount; k++) {
-                        RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                         Assert.assertTrue("key " + k + " should have value", cursor.hasNext());
                         Assert.assertEquals(k * 1000L, cursor.next());
                         Assert.assertFalse("key " + k + " should have only one value", cursor.hasNext());
+                        Misc.free(cursor);
                     }
                 }
             }
@@ -1504,7 +1539,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             hi = tmp;
                         }
 
-                        RowCursor cursor = reader.getCursor(0, key, lo, hi);
+                        RowCursor cursor = reader.getCursor(key, lo, hi);
                         long prev = Long.MIN_VALUE;
                         int count = 0;
                         while (cursor.hasNext()) {
@@ -1524,6 +1559,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals("trial=" + trial + " key=" + key + " range [" + lo + "," + hi + "]",
                                 expectedCount, count);
+                        Misc.free(cursor);
                     }
                 }
             }
@@ -1586,7 +1622,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         for (int k = 0; k < keyCount; k++) {
                             LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = 0;
                             while (cursor.hasNext()) {
                                 Assert.assertTrue("seed=" + seed + " key=" + k + " extra values",
@@ -1597,6 +1633,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             }
                             Assert.assertEquals("seed=" + seed + " key=" + k + " count",
                                     expected.size(), idx);
+                            Misc.free(cursor);
                         }
                     }
 
@@ -1605,7 +1642,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         for (int k = 0; k < keyCount; k++) {
                             LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = expected.size() - 1;
                             while (cursor.hasNext()) {
                                 Assert.assertTrue("seed=" + seed + " key=" + k + " bwd extra", idx >= 0);
@@ -1615,6 +1652,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             }
                             Assert.assertEquals("seed=" + seed + " key=" + k + " bwd count",
                                     -1, idx);
+                            Misc.free(cursor);
                         }
                     }
                 }
@@ -1679,7 +1717,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         for (int k = 0; k < keyCount; k++) {
                             LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = 0;
                             while (cursor.hasNext()) {
                                 Assert.assertEquals("seed=" + seed + " key=" + k + " idx=" + idx,
@@ -1688,6 +1726,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             }
                             Assert.assertEquals("seed=" + seed + " key=" + k + " count",
                                     expected.size(), idx);
+                            Misc.free(cursor);
                         }
                     }
                 }
@@ -1758,7 +1797,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         for (int k = 0; k < keyCount; k++) {
                             LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = 0;
                             while (cursor.hasNext()) {
                                 Assert.assertTrue("seed=" + seed + " key=" + k + " extra", idx < expected.size());
@@ -1768,6 +1807,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             }
                             Assert.assertEquals("seed=" + seed + " key=" + k + " count",
                                     expected.size(), idx);
+                            Misc.free(cursor);
                         }
                     }
                 }
@@ -1809,19 +1849,20 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 int totalValues = batchCount * BP_BATCH;
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("total count", totalValues, count);
+                    Misc.free(cursor);
                 }
 
                 // Also verify backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("bwd val " + count,
@@ -1829,10 +1870,47 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals("bwd total count", totalValues, count);
+                    Misc.free(cursor);
                 }
             }
         });
     }
+
+    @Test
+    public void testMultipleRollbacksBumpTxnSequentially() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_multi", COLUMN_NAME_TXN_NONE)) {
+                    long prevTxn = -1;
+
+                    for (int round = 0; round < 5; round++) {
+                        // Write data
+                        int base = round * 200;
+                        for (int i = 0; i < 200; i++) {
+                            writer.add(0, base + i);
+                        }
+                        writer.setMaxValue(base + 199);
+                        writer.commit();
+
+                        // Rollback to midpoint
+                        writer.rollbackValues(base + 99);
+
+                        long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                                ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_multi", COLUMN_NAME_TXN_NONE));
+                        Assert.assertTrue("round " + round + ": txn should increase", txn > prevTxn);
+                        prevTxn = txn;
+                    }
+                }
+            }
+        });
+    }
+
+    // ===================================================================
+    // Compaction overlap test
+    // ===================================================================
 
     @Test
     public void testMultipleSealCompactCyclesWithReaderVerification() throws Exception {
@@ -1860,7 +1938,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Read phase: verify everything from value 0 to rowId-1
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), "multi_compact", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         int count = 0;
                         while (cursor.hasNext()) {
                             Assert.assertEquals("cycle=" + cycle + " val " + count,
@@ -1869,12 +1947,13 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals("cycle=" + cycle + " count",
                                 rowId, count);
+                        Misc.free(cursor);
                     }
 
                     // Backward read verification
                     try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                             configuration, path.trimTo(plen), "multi_compact", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         long expected = rowId - 1;
                         int count = 0;
                         while (cursor.hasNext()) {
@@ -1885,6 +1964,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals("cycle=" + cycle + " bwd count",
                                 rowId, count);
+                        Misc.free(cursor);
                     }
                 }
             }
@@ -1892,7 +1972,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
     }
 
     // ===================================================================
-    // Compaction overlap test
+    // Concurrent backward reader stress tests
     // ===================================================================
 
     @Test
@@ -1954,7 +2034,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             prevPageUsed = bestPage;
 
                             // Verify all data is readable
-                            RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                             int expectedCount = (commit + 1) * BP_BATCH;
                             int count = 0;
                             while (cursor.hasNext()) {
@@ -1963,16 +2043,13 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 count++;
                             }
                             Assert.assertEquals("commit " + commit + " count", expectedCount, count);
+                            Misc.free(cursor);
                         }
                     }
                 }
             }
         });
     }
-
-    // ===================================================================
-    // Concurrent backward reader stress tests
-    // ===================================================================
 
     @Test
     public void testPartialKeyFileRecovery() {
@@ -2039,7 +2116,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                     // If it opens, try to read -- we want to ensure no JVM crash
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         cursor.next();
@@ -2047,6 +2124,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     }
                     // Page A should be valid, page B zeros -> reader uses page A
                     Assert.assertTrue("should see data from page A", count > 0);
+                    Misc.free(cursor);
                 }
                 succeeded = true;
             } catch (CairoException | InternalError e) {
@@ -2111,7 +2189,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                                 // Verify all data
                                 int expectedTotal = (commit + 1) * batchSize;
-                                RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                 long prev = -1;
                                 int count = 0;
                                 while (cursor.hasNext()) {
@@ -2124,6 +2202,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 }
                                 Assert.assertEquals("commit " + (commit + 1) + " count",
                                         expectedTotal, count);
+                                Misc.free(cursor);
                             }
                         }
                     }
@@ -2133,13 +2212,127 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 int totalValues = totalCommits * batchSize;
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("final val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("final count", totalValues, count);
+                    Misc.free(cursor);
+                }
+            }
+        });
+    }
+
+    // ===================================================================
+    // Double-buffered metadata page protocol tests
+    // ===================================================================
+
+    @Test
+    public void testReaderSurvivesWriterRollback() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_reader", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < 200; i++) {
+                        writer.add(0, i);
+                        if ((i + 1) % BP_BATCH == 0) {
+                            writer.setMaxValue(i);
+                            writer.commit();
+                        }
+                    }
+                    writer.setMaxValue(199);
+                    writer.commit();
+                    writer.seal();
+
+                    // Open reader and start iterating BEFORE rollback
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), "rb_reader", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+
+                        // Read first half
+                        for (int i = 0; i < 100; i++) {
+                            Assert.assertTrue("should have value " + i, cursor.hasNext());
+                            Assert.assertEquals(i, cursor.next());
+                        }
+
+                        // Writer rolls back — creates a new .pv file
+                        // The reader's mmap of the old .pv file stays valid
+                        writer.add(0, 200);
+                        writer.setMaxValue(200);
+                        writer.commit();
+                        writer.rollbackValues(149);
+
+                        // Continue reading from OLD .pv — should NOT crash
+                        int count = 100;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(count, cursor.next());
+                            count++;
+                        }
+                        Assert.assertEquals(200, count);
+
+                        // After reload, reader sees the new (rolled-back) state
+                        reader.reloadConditionally();
+                        RowCursor cursor2 = reader.getCursor(0, 0, Long.MAX_VALUE);
+                        count = 0;
+                        while (cursor2.hasNext()) {
+                            Assert.assertEquals(count, cursor2.next());
+                            count++;
+                        }
+                        Assert.assertEquals(150, count);
+                        cursor2 = io.questdb.std.Misc.free(cursor2);
+                        Misc.free(cursor);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderSurvivesWriterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "trunc_reader", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < BP_BATCH * 3; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(BP_BATCH * 3 - 1);
+                    writer.commit();
+                    writer.seal();
+
+                    // Open reader and iterate BEFORE truncate
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), "trunc_reader", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+
+                        // Read some values
+                        for (int i = 0; i < BP_BATCH; i++) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(i, cursor.next());
+                        }
+
+                        // Writer truncates — old .pv stays on disk
+                        writer.truncate();
+
+                        // Continue reading from OLD .pv — should NOT crash
+                        int count = BP_BATCH;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(count, cursor.next());
+                            count++;
+                        }
+                        Assert.assertEquals(BP_BATCH * 3, count);
+
+                        // After reload, reader sees empty index
+                        reader.reloadConditionally();
+                        RowCursor cursor2 = reader.getCursor(0, 0, Long.MAX_VALUE);
+                        Assert.assertFalse(cursor2.hasNext());
+                        cursor2 = io.questdb.std.Misc.free(cursor2);
+                        Misc.free(cursor);
+                    }
                 }
             }
         });
@@ -2202,14 +2395,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Key 3: values 300..349 — all > 250, so fully removed
                     RowCursor c3 = writer.getCursor(3);
                     Assert.assertFalse(c3.hasNext());
+                    c3 = io.questdb.std.Misc.free(c3);
+                    c2 = io.questdb.std.Misc.free(c2);
+                    c1 = io.questdb.std.Misc.free(c1);
+                    c0 = io.questdb.std.Misc.free(c0);
                 }
             }
         });
     }
-
-    // ===================================================================
-    // Double-buffered metadata page protocol tests
-    // ===================================================================
 
     @Test
     public void testRollbackAfterSeal() throws Exception {
@@ -2242,11 +2435,12 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals(rollbackTo + 1, count);
+                    Misc.free(cursor);
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "rb_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(count, cursor.next());
@@ -2254,10 +2448,82 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     }
                     int rollbackTo = 2 * BP_BATCH + BP_BATCH / 2;
                     Assert.assertEquals(rollbackTo + 1, count);
+                    Misc.free(cursor);
                 }
             }
         });
     }
+
+    @Test
+    public void testRollbackCreatesNewValueFile() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_newfile", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < 200; i++) {
+                        writer.add(0, i);
+                        if ((i + 1) % BP_BATCH == 0) {
+                            writer.setMaxValue(i);
+                            writer.commit();
+                        }
+                    }
+                    writer.setMaxValue(199);
+                    writer.commit();
+
+                    // Seal to create a .pv.1 file
+                    writer.seal();
+
+                    long txnAfterSeal = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue("seal should set VALUE_FILE_TXN > 0", txnAfterSeal > 0);
+
+                    LPSZ sealedFile = PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterSeal);
+                    Assert.assertTrue("sealed .pv file should exist", ff.exists(sealedFile));
+
+                    // Write more data, then rollback
+                    for (int i = 200; i < 300; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(299);
+                    writer.commit();
+
+                    writer.rollbackValues(149);
+
+                    long txnAfterRollback = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue("rollback should bump VALUE_FILE_TXN",
+                            txnAfterRollback > txnAfterSeal);
+
+                    // Old sealed .pv file should still exist on disk (for concurrent readers)
+                    Assert.assertTrue("old sealed .pv should remain on disk",
+                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterSeal)));
+
+                    // New .pv file should exist
+                    Assert.assertTrue("new .pv file should exist after rollback",
+                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterRollback)));
+                }
+
+                // Verify data correctness via reader
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(150, count);
+                    Misc.free(cursor);
+                }
+            }
+        });
+    }
+
+    // ===================================================================
+    // Corruption detection and crash safety tests
+    // ===================================================================
 
     @Test
     public void testRollbackMiddle() throws Exception {
@@ -2288,18 +2554,20 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals("count", rollbackTo + 1, count);
+                    Misc.free(cursor);
                 }
 
                 // Also verify via reader after close
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "rb_mid", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals(rollbackTo + 1, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -2328,17 +2596,19 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals(100, count);
+                    Misc.free(cursor);
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "rb_noop", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals(100, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -2381,13 +2651,77 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Verify: should have 0..99 then 100..299 = 300 values
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "rb_write", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals(300, count);
+                    Misc.free(cursor);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackThenWriteThenSeal() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_w_seal", COLUMN_NAME_TXN_NONE)) {
+                    // Write 200 values, rollback to 99, write more, seal
+                    for (int i = 0; i < 200; i++) {
+                        writer.add(0, i);
+                        if ((i + 1) % BP_BATCH == 0) {
+                            writer.setMaxValue(i);
+                            writer.commit();
+                        }
+                    }
+                    writer.setMaxValue(199);
+                    writer.commit();
+
+                    writer.rollbackValues(99);
+
+                    // Continue writing after rollback
+                    for (int i = 100; i < 300; i++) {
+                        writer.add(0, i);
+                        if ((i + 1) % BP_BATCH == 0) {
+                            writer.setMaxValue(i);
+                            writer.commit();
+                        }
+                    }
+                    writer.setMaxValue(299);
+                    writer.commit();
+
+                    writer.seal();
+                }
+
+                // Verify all data via reader
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "rb_w_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(300, count);
+                    Misc.free(cursor);
+                }
+
+                // Also verify backward
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), "rb_w_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(299 - count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(300, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -2411,13 +2745,52 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     Assert.assertEquals(0, writer.getKeyCount());
                     RowCursor cursor = writer.getCursor(0);
                     Assert.assertFalse(cursor.hasNext());
+                    Misc.free(cursor);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackToZeroCreatesNewValueFile() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_zero_nf", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 10; i < 100; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(99);
+                    writer.commit();
+
+                    // Rollback to 5 — all values >= 10, none survive → triggers truncate
+                    writer.rollbackValues(5);
+
+                    long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_zero_nf", COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue("truncate via rollback should set VALUE_FILE_TXN > 0", txn > 0);
+
+                    Assert.assertEquals(0, writer.getKeyCount());
+                    RowCursor cursor = writer.getCursor(0);
+                    Assert.assertFalse(cursor.hasNext());
+                    Misc.free(cursor);
+                }
+
+                // Verify reader sees empty index
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "rb_zero_nf", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                    Assert.assertFalse(cursor.hasNext());
+                    Misc.free(cursor);
                 }
             }
         });
     }
 
     // ===================================================================
-    // Corruption detection and crash safety tests
+    // Tier-specific lookup tests
     // ===================================================================
 
     @Test
@@ -2454,7 +2827,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             reader.reloadConditionally();
 
                             // Create cursor (this snapshots gen dir into genLookup)
-                            RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
 
                             // Signal to writer: reader has snapshotted, go ahead and seal
                             readerReady.await();
@@ -2483,6 +2856,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 throw new AssertionError(
                                         "expected " + expectedTotal + " values, got " + count);
                             }
+                            Misc.free(cursor);
                         } catch (Throwable t) {
                             error.compareAndSet(null, t);
                         }
@@ -2509,13 +2883,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Also verify a fresh reader sees all data after seal
                     try (PostingIndexFwdReader freshReader = new PostingIndexFwdReader(
                             configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = freshReader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = freshReader.getCursor(0, 0, Long.MAX_VALUE);
                         int count = 0;
                         while (cursor.hasNext()) {
                             Assert.assertEquals(count, cursor.next());
                             count++;
                         }
                         Assert.assertEquals(expectedTotal, count);
+                        Misc.free(cursor);
                     }
                 }
             }
@@ -2564,13 +2939,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Verify data is readable
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         cursor.next();
                         count++;
                     }
                     Assert.assertTrue("should have some values for key 0", count > 0);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -2601,25 +2977,27 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Verify forward
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), "stress_hot", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals(totalValues, count);
+                    Misc.free(cursor);
                 }
 
                 // Verify backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                         configuration, path.trimTo(plen), "stress_hot", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals(totalValues - 1 - count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals(totalValues, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -2670,7 +3048,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         configuration, path.trimTo(plen), "stress_many", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     for (int k = 0; k < keyCount; k++) {
                         LongList expected = oracle.getQuick(k);
-                        RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                         int idx = 0;
                         while (cursor.hasNext()) {
                             Assert.assertEquals("key=" + k + " idx=" + idx,
@@ -2679,6 +3057,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals("key=" + k + " count",
                                 expected.size(), idx);
+                        Misc.free(cursor);
                     }
                 }
             }
@@ -2712,7 +3091,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Verify data after each cycle via reader
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), "stress_cycle", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         long expectedTotal = (long) (cycle + 1) * 3 * BP_BATCH;
                         int count = 0;
                         while (cursor.hasNext()) {
@@ -2721,11 +3100,16 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             count++;
                         }
                         Assert.assertEquals("cycle=" + cycle + " count", expectedTotal, count);
+                        Misc.free(cursor);
                     }
                 }
             }
         });
     }
+
+    // ===================================================================
+    // New-file safety tests: rollback and truncate create new .pv files
+    // ===================================================================
 
     @Test
     public void testTier1PerKeyLookupBwd() throws Exception {
@@ -2787,16 +3171,17 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                             configuration, path.trimTo(plen), "tier1_bwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Force lookup build
-                        RowCursor firstCursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                        while (firstCursor.hasNext()) {
-                            firstCursor.next();
+                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                            while (firstCursor.hasNext()) {
+                                firstCursor.next();
+                            }
                         }
                         Assert.assertEquals("Tier 1 should be used",
                                 TIER_PER_KEY, reader.getGenLookupTier());
 
                         for (int k = 0; k < totalKeySpace; k++) {
                             LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = expected.size() - 1;
                             long prev = Long.MAX_VALUE;
                             while (cursor.hasNext()) {
@@ -2810,16 +3195,13 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 idx--;
                             }
                             Assert.assertEquals("key=" + k + " bwd count", -1, idx);
+                            Misc.free(cursor);
                         }
                     }
                 }
             }
         });
     }
-
-    // ===================================================================
-    // Tier-specific lookup tests
-    // ===================================================================
 
     @Test
     public void testTier1PerKeyLookupFwd() throws Exception {
@@ -2884,16 +3266,17 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), "tier1_fwd", COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Force lookup build by reading a cursor
-                        RowCursor firstCursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                        while (firstCursor.hasNext()) {
-                            firstCursor.next();
+                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                            while (firstCursor.hasNext()) {
+                                firstCursor.next();
+                            }
                         }
                         Assert.assertEquals("Tier 1 should be used",
                                 TIER_PER_KEY, reader.getGenLookupTier());
 
                         for (int k = 0; k < totalKeySpace; k++) {
                             LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = 0;
                             long prev = Long.MIN_VALUE;
                             while (cursor.hasNext()) {
@@ -2908,6 +3291,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 idx++;
                             }
                             Assert.assertEquals("key=" + k + " count", expected.size(), idx);
+                            Misc.free(cursor);
                         }
                     }
                 }
@@ -2960,9 +3344,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         reader.setGenLookupMemoryBudget(1024);
 
                         // Force lookup rebuild by reading a cursor
-                        RowCursor firstCursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                        while (firstCursor.hasNext()) {
-                            firstCursor.next();
+                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                            while (firstCursor.hasNext()) {
+                                firstCursor.next();
+                            }
                         }
                         Assert.assertEquals("Tier 2 (SBBF) should be used",
                                 TIER_SBBF, reader.getGenLookupTier());
@@ -2970,7 +3355,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         // Verify correctness for all keys
                         for (int k = 0; k < keyCount; k++) {
                             LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = 0;
                             while (cursor.hasNext()) {
                                 Assert.assertTrue("key=" + k + " extra values at idx=" + idx,
@@ -2980,6 +3365,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 idx++;
                             }
                             Assert.assertEquals("key=" + k + " count", expected.size(), idx);
+                            Misc.free(cursor);
                         }
                     }
 
@@ -2988,16 +3374,17 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), "tier2_sbbf", COLUMN_NAME_TXN_NONE, -1, 0)) {
                         reader.setGenLookupMemoryBudget(1024);
 
-                        RowCursor firstCursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                        while (firstCursor.hasNext()) {
-                            firstCursor.next();
+                        try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                            while (firstCursor.hasNext()) {
+                                firstCursor.next();
+                            }
                         }
                         Assert.assertEquals("Bwd Tier 2 (SBBF) should be used",
                                 TIER_SBBF, reader.getGenLookupTier());
 
                         for (int k = 0; k < keyCount; k++) {
                             LongList expected = oracle.getQuick(k);
-                            RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                            RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                             int idx = expected.size() - 1;
                             while (cursor.hasNext()) {
                                 Assert.assertTrue("key=" + k + " bwd extra", idx >= 0);
@@ -3006,6 +3393,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                                 idx--;
                             }
                             Assert.assertEquals("key=" + k + " bwd count", -1, idx);
+                            Misc.free(cursor);
                         }
                     }
                 }
@@ -3062,16 +3450,17 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Set budget=0 to reject Tier 1, genCount=2 rejects Tier 2
                     reader.setGenLookupMemoryBudget(0);
 
-                    RowCursor firstCursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                    while (firstCursor.hasNext()) {
-                        firstCursor.next();
+                    try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                        while (firstCursor.hasNext()) {
+                            firstCursor.next();
+                        }
                     }
                     Assert.assertEquals("Tier 3 (NONE) should be used",
                             TIER_NONE, reader.getGenLookupTier());
 
                     for (int k = 0; k < keyCount; k++) {
                         LongList expected = oracle.getQuick(k);
-                        RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                         int idx = 0;
                         while (cursor.hasNext()) {
                             Assert.assertTrue("key=" + k + " extra values at idx=" + idx,
@@ -3081,6 +3470,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             idx++;
                         }
                         Assert.assertEquals("key=" + k + " count", expected.size(), idx);
+                        Misc.free(cursor);
                     }
                 }
 
@@ -3089,16 +3479,17 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         configuration, path.trimTo(plen), "tier3_none", COLUMN_NAME_TXN_NONE, -1, 0)) {
                     reader.setGenLookupMemoryBudget(0);
 
-                    RowCursor firstCursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                    while (firstCursor.hasNext()) {
-                        firstCursor.next();
+                    try (RowCursor firstCursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                        while (firstCursor.hasNext()) {
+                            firstCursor.next();
+                        }
                     }
                     Assert.assertEquals("Bwd Tier 3 (NONE) should be used",
                             TIER_NONE, reader.getGenLookupTier());
 
                     for (int k = 0; k < keyCount; k++) {
                         LongList expected = oracle.getQuick(k);
-                        RowCursor cursor = reader.getCursor(0, k, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(k, 0, Long.MAX_VALUE);
                         int idx = expected.size() - 1;
                         while (cursor.hasNext()) {
                             Assert.assertTrue("key=" + k + " bwd extra", idx >= 0);
@@ -3107,6 +3498,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             idx--;
                         }
                         Assert.assertEquals("key=" + k + " bwd count", -1, idx);
+                        Misc.free(cursor);
                     }
                 }
             }
@@ -3165,13 +3557,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // Open a fresh reader — should fall back to the valid page
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("count after other page corruption", 2 * BP_BATCH, count);
+                    Misc.free(cursor);
                 }
 
                 // Now corrupt the ACTIVE page (the one with the highest valid seq)
@@ -3203,8 +3596,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // should see 0 keys (graceful degradation, not a crash).
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     Assert.assertFalse("both pages torn: cursor should be empty", cursor.hasNext());
+                    Misc.free(cursor);
                 }
 
                 // Fix: restore one valid page so we can verify fallback works when only one is torn
@@ -3225,7 +3619,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("restored page A, val " + count, count, cursor.next());
@@ -3233,6 +3627,63 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     }
                     // Page A should have the data from when it was last validly written
                     Assert.assertTrue("restored page A should have data", count > 0);
+                    Misc.free(cursor);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateCreatesNewValueFile() throws Exception {
+        assertMemoryLeak(() -> {
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "trunc_nf", COLUMN_NAME_TXN_NONE)) {
+                    for (int i = 0; i < BP_BATCH * 3; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(BP_BATCH * 3 - 1);
+                    writer.commit();
+
+                    writer.truncate();
+
+                    long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "trunc_nf", COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue("truncate should set VALUE_FILE_TXN > 0", txn > 0);
+
+                    // Index should be empty
+                    Assert.assertEquals(0, writer.getKeyCount());
+
+                    // Write new data after truncate
+                    for (int i = 0; i < BP_BATCH; i++) {
+                        writer.add(0, i);
+                    }
+                    writer.setMaxValue(BP_BATCH - 1);
+                    writer.commit();
+
+                    RowCursor cursor = writer.getCursor(0);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(BP_BATCH, count);
+                    Misc.free(cursor);
+                }
+
+                // Verify via reader
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), "trunc_nf", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(count, cursor.next());
+                        count++;
+                    }
+                    Assert.assertEquals(BP_BATCH, count);
+                    Misc.free(cursor);
                 }
             }
         });
@@ -3295,24 +3746,26 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     // Seal to finalize
                     writer.seal();
+                    preCursor = io.questdb.std.Misc.free(preCursor);
                 }
 
                 // Phase 4: verify all 25 batches readable via forward reader
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("val " + count, count, cursor.next());
                         count++;
                     }
                     Assert.assertEquals("all 25 batches readable", 25 * BP_BATCH, count);
+                    Misc.free(cursor);
                 }
 
                 // Also verify backward
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     int count = 0;
                     while (cursor.hasNext()) {
                         Assert.assertEquals("bwd val " + count,
@@ -3320,364 +3773,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         count++;
                     }
                     Assert.assertEquals("bwd all 25 batches readable", 25 * BP_BATCH, count);
-                }
-            }
-        });
-    }
-
-    // ===================================================================
-    // New-file safety tests: rollback and truncate create new .pv files
-    // ===================================================================
-
-    @Test
-    public void testRollbackCreatesNewValueFile() throws Exception {
-        assertMemoryLeak(() -> {
-            FilesFacade ff = configuration.getFilesFacade();
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_newfile", COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 0; i < 200; i++) {
-                        writer.add(0, i);
-                        if ((i + 1) % BP_BATCH == 0) {
-                            writer.setMaxValue(i);
-                            writer.commit();
-                        }
-                    }
-                    writer.setMaxValue(199);
-                    writer.commit();
-
-                    // Seal to create a .pv.1 file
-                    writer.seal();
-
-                    long txnAfterSeal = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE));
-                    Assert.assertTrue("seal should set VALUE_FILE_TXN > 0", txnAfterSeal > 0);
-
-                    LPSZ sealedFile = PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterSeal);
-                    Assert.assertTrue("sealed .pv file should exist", ff.exists(sealedFile));
-
-                    // Write more data, then rollback
-                    for (int i = 200; i < 300; i++) {
-                        writer.add(0, i);
-                    }
-                    writer.setMaxValue(299);
-                    writer.commit();
-
-                    writer.rollbackValues(149);
-
-                    long txnAfterRollback = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE));
-                    Assert.assertTrue("rollback should bump VALUE_FILE_TXN",
-                            txnAfterRollback > txnAfterSeal);
-
-                    // Old sealed .pv file should still exist on disk (for concurrent readers)
-                    Assert.assertTrue("old sealed .pv should remain on disk",
-                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterSeal)));
-
-                    // New .pv file should exist
-                    Assert.assertTrue("new .pv file should exist after rollback",
-                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterRollback)));
-                }
-
-                // Verify data correctness via reader
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                    int count = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(count, cursor.next());
-                        count++;
-                    }
-                    Assert.assertEquals(150, count);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testRollbackToZeroCreatesNewValueFile() throws Exception {
-        assertMemoryLeak(() -> {
-            FilesFacade ff = configuration.getFilesFacade();
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_zero_nf", COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 10; i < 100; i++) {
-                        writer.add(0, i);
-                    }
-                    writer.setMaxValue(99);
-                    writer.commit();
-
-                    // Rollback to 5 — all values >= 10, none survive → triggers truncate
-                    writer.rollbackValues(5);
-
-                    long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_zero_nf", COLUMN_NAME_TXN_NONE));
-                    Assert.assertTrue("truncate via rollback should set VALUE_FILE_TXN > 0", txn > 0);
-
-                    Assert.assertEquals(0, writer.getKeyCount());
-                    RowCursor cursor = writer.getCursor(0);
-                    Assert.assertFalse(cursor.hasNext());
-                }
-
-                // Verify reader sees empty index
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), "rb_zero_nf", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                    Assert.assertFalse(cursor.hasNext());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testTruncateCreatesNewValueFile() throws Exception {
-        assertMemoryLeak(() -> {
-            FilesFacade ff = configuration.getFilesFacade();
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "trunc_nf", COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 0; i < BP_BATCH * 3; i++) {
-                        writer.add(0, i);
-                    }
-                    writer.setMaxValue(BP_BATCH * 3 - 1);
-                    writer.commit();
-
-                    writer.truncate();
-
-                    long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "trunc_nf", COLUMN_NAME_TXN_NONE));
-                    Assert.assertTrue("truncate should set VALUE_FILE_TXN > 0", txn > 0);
-
-                    // Index should be empty
-                    Assert.assertEquals(0, writer.getKeyCount());
-
-                    // Write new data after truncate
-                    for (int i = 0; i < BP_BATCH; i++) {
-                        writer.add(0, i);
-                    }
-                    writer.setMaxValue(BP_BATCH - 1);
-                    writer.commit();
-
-                    RowCursor cursor = writer.getCursor(0);
-                    int count = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(count, cursor.next());
-                        count++;
-                    }
-                    Assert.assertEquals(BP_BATCH, count);
-                }
-
-                // Verify via reader
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), "trunc_nf", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                    int count = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(count, cursor.next());
-                        count++;
-                    }
-                    Assert.assertEquals(BP_BATCH, count);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testMultipleRollbacksBumpTxnSequentially() throws Exception {
-        assertMemoryLeak(() -> {
-            FilesFacade ff = configuration.getFilesFacade();
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_multi", COLUMN_NAME_TXN_NONE)) {
-                    long prevTxn = -1;
-
-                    for (int round = 0; round < 5; round++) {
-                        // Write data
-                        int base = round * 200;
-                        for (int i = 0; i < 200; i++) {
-                            writer.add(0, base + i);
-                        }
-                        writer.setMaxValue(base + 199);
-                        writer.commit();
-
-                        // Rollback to midpoint
-                        writer.rollbackValues(base + 99);
-
-                        long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                                ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_multi", COLUMN_NAME_TXN_NONE));
-                        Assert.assertTrue("round " + round + ": txn should increase", txn > prevTxn);
-                        prevTxn = txn;
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testRollbackThenWriteThenSeal() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_w_seal", COLUMN_NAME_TXN_NONE)) {
-                    // Write 200 values, rollback to 99, write more, seal
-                    for (int i = 0; i < 200; i++) {
-                        writer.add(0, i);
-                        if ((i + 1) % BP_BATCH == 0) {
-                            writer.setMaxValue(i);
-                            writer.commit();
-                        }
-                    }
-                    writer.setMaxValue(199);
-                    writer.commit();
-
-                    writer.rollbackValues(99);
-
-                    // Continue writing after rollback
-                    for (int i = 100; i < 300; i++) {
-                        writer.add(0, i);
-                        if ((i + 1) % BP_BATCH == 0) {
-                            writer.setMaxValue(i);
-                            writer.commit();
-                        }
-                    }
-                    writer.setMaxValue(299);
-                    writer.commit();
-
-                    writer.seal();
-                }
-
-                // Verify all data via reader
-                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), "rb_w_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                    int count = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(count, cursor.next());
-                        count++;
-                    }
-                    Assert.assertEquals(300, count);
-                }
-
-                // Also verify backward
-                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                        configuration, path.trimTo(plen), "rb_w_seal", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                    int count = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(299 - count, cursor.next());
-                        count++;
-                    }
-                    Assert.assertEquals(300, count);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testReaderSurvivesWriterRollback() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "rb_reader", COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 0; i < 200; i++) {
-                        writer.add(0, i);
-                        if ((i + 1) % BP_BATCH == 0) {
-                            writer.setMaxValue(i);
-                            writer.commit();
-                        }
-                    }
-                    writer.setMaxValue(199);
-                    writer.commit();
-                    writer.seal();
-
-                    // Open reader and start iterating BEFORE rollback
-                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), "rb_reader", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-
-                        // Read first half
-                        for (int i = 0; i < 100; i++) {
-                            Assert.assertTrue("should have value " + i, cursor.hasNext());
-                            Assert.assertEquals(i, cursor.next());
-                        }
-
-                        // Writer rolls back — creates a new .pv file
-                        // The reader's mmap of the old .pv file stays valid
-                        writer.add(0, 200);
-                        writer.setMaxValue(200);
-                        writer.commit();
-                        writer.rollbackValues(149);
-
-                        // Continue reading from OLD .pv — should NOT crash
-                        int count = 100;
-                        while (cursor.hasNext()) {
-                            Assert.assertEquals(count, cursor.next());
-                            count++;
-                        }
-                        Assert.assertEquals(200, count);
-
-                        // After reload, reader sees the new (rolled-back) state
-                        reader.reloadConditionally();
-                        RowCursor cursor2 = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                        count = 0;
-                        while (cursor2.hasNext()) {
-                            Assert.assertEquals(count, cursor2.next());
-                            count++;
-                        }
-                        Assert.assertEquals(150, count);
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testReaderSurvivesWriterTruncate() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                final int plen = path.size();
-
-                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, "trunc_reader", COLUMN_NAME_TXN_NONE)) {
-                    for (int i = 0; i < BP_BATCH * 3; i++) {
-                        writer.add(0, i);
-                    }
-                    writer.setMaxValue(BP_BATCH * 3 - 1);
-                    writer.commit();
-                    writer.seal();
-
-                    // Open reader and iterate BEFORE truncate
-                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), "trunc_reader", COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-
-                        // Read some values
-                        for (int i = 0; i < BP_BATCH; i++) {
-                            Assert.assertTrue(cursor.hasNext());
-                            Assert.assertEquals(i, cursor.next());
-                        }
-
-                        // Writer truncates — old .pv stays on disk
-                        writer.truncate();
-
-                        // Continue reading from OLD .pv — should NOT crash
-                        int count = BP_BATCH;
-                        while (cursor.hasNext()) {
-                            Assert.assertEquals(count, cursor.next());
-                            count++;
-                        }
-                        Assert.assertEquals(BP_BATCH * 3, count);
-
-                        // After reload, reader sees empty index
-                        reader.reloadConditionally();
-                        RowCursor cursor2 = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                        Assert.assertFalse(cursor2.hasNext());
-                    }
+                    Misc.free(cursor);
                 }
             }
         });

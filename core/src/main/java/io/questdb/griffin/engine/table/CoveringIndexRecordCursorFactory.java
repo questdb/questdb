@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -72,6 +72,8 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
+
 /**
  * A RecordCursorFactory that reads covered column values directly from the
  * posting index sidecar files, bypassing column files entirely.
@@ -106,10 +108,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int symbolKey,
             Function symbolFunction,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizeShifts,
-            @NotNull int[] queryColToIncludeIdx
+            int @NotNull [] queryColToIncludeIdx
     ) {
-        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, columnSizeShifts, queryColToIncludeIdx, false, null);
+        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, queryColToIncludeIdx, false, null);
     }
 
     public CoveringIndexRecordCursorFactory(
@@ -119,11 +120,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int symbolKey,
             Function symbolFunction,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizeShifts,
             int @NotNull [] queryColToIncludeIdx,
             boolean latestBy
     ) {
-        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, columnSizeShifts, queryColToIncludeIdx, latestBy, null);
+        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, queryColToIncludeIdx, latestBy, null);
     }
 
     public CoveringIndexRecordCursorFactory(
@@ -133,8 +133,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int symbolKey,
             Function symbolFunction,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizeShifts,
-            @NotNull int[] queryColToIncludeIdx,
+            int @NotNull [] queryColToIncludeIdx,
             boolean latestBy,
             @Nullable Function latestByFilter
     ) {
@@ -166,12 +165,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int symbolKey,
             Function symbolFunction,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizeShifts,
-            @NotNull int[] queryColToIncludeIdx,
+            int @NotNull [] queryColToIncludeIdx,
             ObjList<Function> keyValueFuncs,
             TableReader reader
     ) {
-        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, columnSizeShifts, queryColToIncludeIdx, keyValueFuncs, reader, false);
+        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, queryColToIncludeIdx, keyValueFuncs, reader, false, null);
     }
 
     public CoveringIndexRecordCursorFactory(
@@ -181,24 +179,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int symbolKey,
             Function symbolFunction,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizeShifts,
-            @NotNull int[] queryColToIncludeIdx,
-            ObjList<Function> keyValueFuncs,
-            TableReader reader,
-            boolean latestBy
-    ) {
-        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, columnSizeShifts, queryColToIncludeIdx, keyValueFuncs, reader, latestBy, null);
-    }
-
-    public CoveringIndexRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
-            @NotNull PartitionFrameCursorFactory dfcFactory,
-            int indexColumnIndex,
-            int symbolKey,
-            Function symbolFunction,
-            @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizeShifts,
-            @NotNull int[] queryColToIncludeIdx,
+            int @NotNull [] queryColToIncludeIdx,
             ObjList<Function> keyValueFuncs,
             TableReader reader,
             boolean latestBy,
@@ -434,15 +415,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return result;
     }
 
-    private static boolean hasAnyVarSizeIncludeColumn(int[] queryColToIncludeIdx, RecordMetadata metadata) {
-        for (int q = 0; q < queryColToIncludeIdx.length; q++) {
-            if (queryColToIncludeIdx[q] >= 0 && ColumnType.isVarSize(metadata.getColumnType(q))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static class CoveringCursor implements RecordCursor {
         private final IntList columnIndexes;
         private final CoveringRecord coveringRecord;
@@ -482,7 +454,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         public void close() {
             frameCursor = Misc.free(frameCursor);
-            currentRowCursor = null;
+            this.currentRowCursor = Misc.free(currentRowCursor);
         }
 
         @Override
@@ -557,19 +529,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 while ((frame = frameCursor.next()) != null) {
                     BitmapIndexReader reader = tableReader.getBitmapIndexReader(
                             frame.getPartitionIndex(), indexColumnIndex, BitmapIndexReader.DIR_FORWARD);
-                    RowCursor rc = reader.getCursor(0, TableUtils.toIndexKey(symbolKey),
-                            frame.getRowLo(), frame.getRowHi() - 1);
-                    if (rc instanceof CoveringRowCursor coveringCursor) {
-                        int count = coveringCursor.getCoveredValueCount();
-                        if (count >= 0) {
-                            total += count;
-                            continue;
+                    try (RowCursor rc = reader.getCursor(TableUtils.toIndexKey(symbolKey),
+                            frame.getRowLo(), frame.getRowHi() - 1)) {
+                        if (rc instanceof CoveringRowCursor coveringCursor) {
+                            int count = coveringCursor.getCoveredValueCount();
+                            if (count >= 0) {
+                                total += count;
+                                continue;
+                            }
                         }
-                    }
-                    // Fallback for bitmap index or unbounded frames: iterate
-                    while (rc.hasNext()) {
-                        rc.next();
-                        total++;
+                        // Fallback for bitmap index or unbounded frames: iterate
+                        while (rc.hasNext()) {
+                            rc.next();
+                            total++;
+                        }
                     }
                 }
             } finally {
@@ -583,7 +556,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (frameCursor != null) {
                 frameCursor.toTop();
             }
-            currentRowCursor = null;
+            currentRowCursor = Misc.free(currentRowCursor);
             currentKeyIdx = 0;
             cachedPartitionIndex = -1;
             isLatestByDone = false;
@@ -652,51 +625,65 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // file I/O; otherwise fall back to column files.
                     BitmapIndexReader bwdReader = tableReader.getBitmapIndexReader(
                             partitionIndex, indexColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-                    RowCursor bwdCursor = bwdReader.getCursor(0, indexKey, rowLo, rowHi);
-                    if (bwdCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
-                        coveringRecord.of(crc);
-                        coveringRecord.setSymbolKey(rawSymbolKey);
-                        while (bwdCursor.hasNext()) {
-                            long rowId = bwdCursor.next();
-                            coveringRecord.setRowId(rowId);
-                            if (latestByFilter.getBool(coveringRecord)) {
-                                activeRecord = coveringRecord;
-                                return true;
+                    RowCursor bwdCursor = bwdReader.getCursor(indexKey, rowLo, rowHi);
+                    try {
+                        if (bwdCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                            Misc.free(currentRowCursor);
+                            currentRowCursor = crc;
+                            bwdCursor = null;
+                            coveringRecord.of(crc);
+                            coveringRecord.setSymbolKey(rawSymbolKey);
+                            while (crc.hasNext()) {
+                                long rowId = crc.next();
+                                coveringRecord.setRowId(rowId);
+                                if (latestByFilter.getBool(coveringRecord)) {
+                                    activeRecord = coveringRecord;
+                                    return true;
+                                }
+                            }
+                        } else {
+                            fallbackRecord.of(tableReader, partitionIndex);
+                            fallbackRecord.setSymbolKey(rawSymbolKey);
+                            while (bwdCursor.hasNext()) {
+                                long rowId = bwdCursor.next();
+                                fallbackRecord.setRowId(rowId);
+                                if (latestByFilter.getBool(fallbackRecord)) {
+                                    activeRecord = fallbackRecord;
+                                    return true;
+                                }
                             }
                         }
-                    } else {
-                        fallbackRecord.of(tableReader, partitionIndex);
-                        fallbackRecord.setSymbolKey(rawSymbolKey);
-                        while (bwdCursor.hasNext()) {
-                            long rowId = bwdCursor.next();
-                            fallbackRecord.setRowId(rowId);
-                            if (latestByFilter.getBool(fallbackRecord)) {
-                                activeRecord = fallbackRecord;
-                                return true;
-                            }
-                        }
+                    } finally {
+                        Misc.free(bwdCursor);
                     }
                 } else {
                     // No filter: use forward reader and seekToLast for covering data
                     BitmapIndexReader fwdReader = tableReader.getBitmapIndexReader(
                             partitionIndex, indexColumnIndex, BitmapIndexReader.DIR_FORWARD);
-                    RowCursor rowCursor = fwdReader.getCursor(0, indexKey, rowLo, rowHi);
-                    if (rowCursor instanceof CoveringRowCursor crc) {
-                        long lastRowId = crc.seekToLast();
-                        if (lastRowId >= 0) {
-                            if (crc.hasCovering()) {
-                                coveringRecord.of(crc);
-                                coveringRecord.setSymbolKey(rawSymbolKey);
-                                coveringRecord.setRowId(lastRowId);
-                                activeRecord = coveringRecord;
-                            } else {
-                                fallbackRecord.of(tableReader, partitionIndex);
-                                fallbackRecord.setSymbolKey(rawSymbolKey);
-                                fallbackRecord.setRowId(lastRowId);
-                                activeRecord = fallbackRecord;
+                    RowCursor rowCursor = fwdReader.getCursor(indexKey, rowLo, rowHi);
+                    try {
+                        if (rowCursor instanceof CoveringRowCursor crc) {
+                            long lastRowId = crc.seekToLast();
+                            if (lastRowId >= 0) {
+                                Misc.free(currentRowCursor);
+                                currentRowCursor = crc;
+                                rowCursor = null;
+                                if (crc.hasCovering()) {
+                                    coveringRecord.of(crc);
+                                    coveringRecord.setSymbolKey(rawSymbolKey);
+                                    coveringRecord.setRowId(lastRowId);
+                                    activeRecord = coveringRecord;
+                                } else {
+                                    fallbackRecord.of(tableReader, partitionIndex);
+                                    fallbackRecord.setSymbolKey(rawSymbolKey);
+                                    fallbackRecord.setRowId(lastRowId);
+                                    activeRecord = fallbackRecord;
+                                }
+                                return true;
                             }
-                            return true;
                         }
+                    } finally {
+                        Misc.free(rowCursor);
                     }
                 }
             }
@@ -740,31 +727,36 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     BitmapIndexReader.DIR_FORWARD
             );
             RowCursor rowCursor = indexReader.getCursor(
-                    0,
                     TableUtils.toIndexKey(rawSymbolKey),
                     rowLo,
                     rowHi - 1
             );
-            if (rowCursor instanceof CoveringRowCursor crc) {
-                currentRowCursor = crc;
-                if (crc.hasCovering()) {
-                    coveringRecord.of(crc);
-                    coveringRecord.setSymbolKey(rawSymbolKey);
-                    activeRecord = coveringRecord;
-                } else {
-                    fallbackRecord.of(tableReader, partitionIndex);
-                    fallbackRecord.setSymbolKey(rawSymbolKey);
-                    activeRecord = fallbackRecord;
+            try {
+                if (rowCursor instanceof CoveringRowCursor crc) {
+                    Misc.free(currentRowCursor);
+                    currentRowCursor = crc;
+                    rowCursor = null;
+                    if (crc.hasCovering()) {
+                        coveringRecord.of(crc);
+                        coveringRecord.setSymbolKey(rawSymbolKey);
+                        activeRecord = coveringRecord;
+                    } else {
+                        fallbackRecord.of(tableReader, partitionIndex);
+                        fallbackRecord.setSymbolKey(rawSymbolKey);
+                        activeRecord = fallbackRecord;
+                    }
+                    return true;
                 }
-                return true;
+                return false;
+            } finally {
+                Misc.free(rowCursor);
             }
-            return false;
         }
 
         void of(PartitionFrameCursor frameCursor) {
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
-            this.currentRowCursor = null;
+            this.currentRowCursor = Misc.free(this.currentRowCursor);
             this.currentKeyIdx = 0;
             this.cachedPartitionIndex = -1;
             this.isLatestByDone = false;
@@ -786,7 +778,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         void ofEmpty() {
             this.frameCursor = null;
             this.tableReader = null;
-            this.currentRowCursor = null;
+            this.currentRowCursor = Misc.free(this.currentRowCursor);
             this.activeRecord = coveringRecord;
             this.coveringRecord.of(null);
         }
@@ -1060,69 +1052,67 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     indexColumnIndex,
                     BitmapIndexReader.DIR_FORWARD
             );
-            RowCursor rowCursor = indexReader.getCursor(
-                    0,
+            final long[] addrs = frameAddrs;
+            final long[] varDataAddrs = frameVarDataAddrs;
+            final int[] varDataPos = frameVarDataPos;
+            final int[] varDataCap = frameVarDataCap;
+            int count;
+            try (RowCursor rowCursor = indexReader.getCursor(
                     TableUtils.toIndexKey(rawSymbolKey),
                     rowLo,
                     rowHi - 1
-            );
+            )) {
+                // Fast path: covering sidecar data available — read directly from sidecar.
+                // Fallback: read matching rows from column files (unsealed partitions, etc.)
+                CoveringRowCursor coveringCursor = null;
+                if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                    coveringCursor = crc;
+                }
 
-            // Fast path: covering sidecar data available — read directly from sidecar.
-            // Fallback: read matching rows from column files (unsealed partitions, etc.)
-            CoveringRowCursor coveringCursor = null;
-            if (rowCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
-                coveringCursor = crc;
-            }
-
-            // Allocate fresh native buffers for this frame. Reuse the cursor-level
-            // Java arrays (frameAddrs, frameVarDataAddrs, etc.) to avoid per-frame heap allocation.
-            int capacity = INITIAL_CAPACITY;
-            long[] addrs = frameAddrs;
-            long[] varDataAddrs = frameVarDataAddrs;
-            int[] varDataPos = frameVarDataPos;
-            int[] varDataCap = frameVarDataCap;
-            java.util.Arrays.fill(varDataAddrs, 0);
-            java.util.Arrays.fill(varDataPos, 0);
-            java.util.Arrays.fill(varDataCap, 0);
-            for (int q = 0; q < queryColCount; q++) {
-                if (queryColToIncludeIdx[q] >= 0) {
-                    if (columnTypeTags[q] == ColumnType.VARCHAR) {
-                        addrs[q] = allocBuffer((long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
-                        int initDataCap = capacity * 32;
-                        varDataAddrs[q] = allocBuffer(initDataCap);
-                        varDataCap[q] = initDataCap;
-                    } else if (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY) {
-                        // STRING/BINARY aux: 8 bytes per row (offset), plus sentinel at end
-                        addrs[q] = allocBuffer((long) (capacity + 1) * Long.BYTES);
-                        int initDataCap = capacity * 32;
-                        varDataAddrs[q] = allocBuffer(initDataCap);
-                        varDataCap[q] = initDataCap;
-                    } else {
-                        addrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
+                int capacity = INITIAL_CAPACITY;
+                Arrays.fill(varDataAddrs, 0);
+                Arrays.fill(varDataPos, 0);
+                Arrays.fill(varDataCap, 0);
+                for (int q = 0; q < queryColCount; q++) {
+                    if (queryColToIncludeIdx[q] >= 0) {
+                        if (columnTypeTags[q] == ColumnType.VARCHAR) {
+                            addrs[q] = allocBuffer((long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+                            int initDataCap = capacity * 32;
+                            varDataAddrs[q] = allocBuffer(initDataCap);
+                            varDataCap[q] = initDataCap;
+                        } else if (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY) {
+                            // STRING/BINARY aux: 8 bytes per row (offset), plus sentinel at end
+                            addrs[q] = allocBuffer((long) (capacity + 1) * Long.BYTES);
+                            int initDataCap = capacity * 32;
+                            varDataAddrs[q] = allocBuffer(initDataCap);
+                            varDataCap[q] = initDataCap;
+                        } else {
+                            addrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
+                        }
                     }
                 }
-            }
-            addrs[queryColCount] = allocBuffer((long) capacity * Integer.BYTES);
+                addrs[queryColCount] = allocBuffer((long) capacity * Integer.BYTES);
 
-            int count = 0;
-            if (coveringCursor != null) {
-                while (coveringCursor.hasNext()) {
-                    coveringCursor.next();
-                    if (count >= capacity) {
-                        capacity = growFrameBuffers(addrs, varDataAddrs, varDataCap, count, capacity);
+                count = 0;
+                if (coveringCursor != null) {
+                    while (coveringCursor.hasNext()) {
+                        coveringCursor.next();
+                        if (count >= capacity) {
+                            capacity = growFrameBuffers(addrs, count, capacity);
+                        }
+                        writeCoveredRow(addrs, varDataAddrs, varDataPos, varDataCap, count, coveringCursor);
+                        count++;
                     }
-                    writeCoveredRow(addrs, varDataAddrs, varDataPos, varDataCap, count, coveringCursor);
-                    count++;
-                }
-            } else {
-                int colBase = tableReader.getColumnBase(partitionIndex);
-                while (rowCursor.hasNext()) {
-                    long rowId = rowCursor.next();
-                    if (count >= capacity) {
-                        capacity = growFrameBuffers(addrs, varDataAddrs, varDataCap, count, capacity);
+                } else {
+                    int colBase = tableReader.getColumnBase(partitionIndex);
+                    while (rowCursor.hasNext()) {
+                        long rowId = rowCursor.next();
+                        if (count >= capacity) {
+                            capacity = growFrameBuffers(addrs, count, capacity);
+                        }
+                        writeColumnRow(addrs, varDataAddrs, varDataPos, varDataCap, count, rowId, colBase);
+                        count++;
                     }
-                    writeColumnRow(addrs, varDataAddrs, varDataPos, varDataCap, count, rowId, colBase);
-                    count++;
                 }
             }
             if (count == 0) {
@@ -1175,7 +1165,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * Grow all column and symbol buffers. addrs[0..queryColCount-1] are column
          * buffers; addrs[queryColCount] is the symbol buffer. Returns new capacity.
          */
-        private int growFrameBuffers(long[] addrs, long[] varDataAddrs, int[] varDataCap, int count, int capacity) {
+        private int growFrameBuffers(long[] addrs, int count, int capacity) {
             int newCapacity = capacity * 2;
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
@@ -1448,7 +1438,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     int header = (size << 4);
                     if (value.isAscii()) header |= 2;
                     Unsafe.getUnsafe().putInt(auxEntry, header);
-                    for (int b = 0; b < VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES && b < size; b++) {
+                    for (int b = 0; b < VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES; b++) {
                         Unsafe.getUnsafe().putByte(auxEntry + 4 + b, value.byteAt(b));
                     }
                     ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, size);

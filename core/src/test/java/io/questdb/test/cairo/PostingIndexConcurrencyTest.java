@@ -29,6 +29,7 @@ import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
@@ -63,69 +64,6 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
     @Test
     public void testConcurrentMixedReadersWhileWriterCommits() throws Exception {
         runConcurrentTest("conc_mixed", 4, true, true);
-    }
-
-    @Test
-    public void testHighContentionManyReaders() throws Exception {
-        runConcurrentTest("conc_high", 16, true, false);
-    }
-
-    private static void readBackward(String dbRoot, String name, int id,
-                                     CountDownLatch writerDone, AtomicInteger committed) {
-        try (Path rPath = new Path().of(dbRoot);
-             PostingIndexBwdReader reader = new PostingIndexBwdReader(
-                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
-                reader.reloadConditionally();
-                RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                long prev = Long.MAX_VALUE;
-                int count = 0;
-                while (cursor.hasNext()) {
-                    long val = cursor.next();
-                    if (val >= prev) {
-                        throw new AssertionError(
-                                "bwd " + id + ": non-descending " + prev + " -> " + val);
-                    }
-                    prev = val;
-                    count++;
-                }
-                if (count == 0) {
-                    throw new AssertionError("bwd " + id + ": zero values");
-                }
-                if (count % BP_BATCH != 0) {
-                    throw new AssertionError("bwd " + id + ": partial batch, count=" + count);
-                }
-            }
-        }
-    }
-
-    private static void readForward(String dbRoot, String name, int id,
-                                    CountDownLatch writerDone, AtomicInteger committed) {
-        try (Path rPath = new Path().of(dbRoot);
-             PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
-                reader.reloadConditionally();
-                RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
-                long prev = -1;
-                int count = 0;
-                while (cursor.hasNext()) {
-                    long val = cursor.next();
-                    if (val <= prev) {
-                        throw new AssertionError(
-                                "fwd " + id + ": non-ascending " + prev + " -> " + val);
-                    }
-                    prev = val;
-                    count++;
-                }
-                if (count == 0) {
-                    throw new AssertionError("fwd " + id + ": zero values");
-                }
-                if (count % BP_BATCH != 0) {
-                    throw new AssertionError("fwd " + id + ": partial batch, count=" + count);
-                }
-            }
-        }
     }
 
     @Test
@@ -227,7 +165,7 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                                 while (!Thread.interrupted() && writerDone.getCount() > 0) {
                                     try {
                                         reader.reloadConditionally();
-                                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                                         long prev = -1;
                                         while (cursor.hasNext()) {
                                             long val = cursor.next();
@@ -237,6 +175,8 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                                             }
                                             prev = val;
                                         }
+                                        cursor = Misc.free(cursor);
+                                        ;
                                     } catch (io.questdb.cairo.CairoException e) {
                                         // Transient corrupt reads are expected during truncate
                                         // cycles — the reader's seqlock snapshot can lag the
@@ -281,6 +221,73 @@ public class PostingIndexConcurrencyTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testHighContentionManyReaders() throws Exception {
+        runConcurrentTest("conc_high", 16, true, false);
+    }
+
+    private static void readBackward(String dbRoot, String name, int id,
+                                     CountDownLatch writerDone, AtomicInteger committed) {
+        try (Path rPath = new Path().of(dbRoot);
+             PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
+                reader.reloadConditionally();
+                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                long prev = Long.MAX_VALUE;
+                int count = 0;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    if (val >= prev) {
+                        throw new AssertionError(
+                                "bwd " + id + ": non-descending " + prev + " -> " + val);
+                    }
+                    prev = val;
+                    count++;
+                }
+                if (count == 0) {
+                    throw new AssertionError("bwd " + id + ": zero values");
+                }
+                if (count % BP_BATCH != 0) {
+                    throw new AssertionError("bwd " + id + ": partial batch, count=" + count);
+                }
+                cursor = Misc.free(cursor);
+                ;
+            }
+        }
+    }
+
+    private static void readForward(String dbRoot, String name, int id,
+                                    CountDownLatch writerDone, AtomicInteger committed) {
+        try (Path rPath = new Path().of(dbRoot);
+             PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                     configuration, rPath, name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+            while (!Thread.interrupted() && (writerDone.getCount() > 0 || committed.get() < COMMITS)) {
+                reader.reloadConditionally();
+                RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
+                long prev = -1;
+                int count = 0;
+                while (cursor.hasNext()) {
+                    long val = cursor.next();
+                    if (val <= prev) {
+                        throw new AssertionError(
+                                "fwd " + id + ": non-ascending " + prev + " -> " + val);
+                    }
+                    prev = val;
+                    count++;
+                }
+                if (count == 0) {
+                    throw new AssertionError("fwd " + id + ": zero values");
+                }
+                if (count % BP_BATCH != 0) {
+                    throw new AssertionError("fwd " + id + ": partial batch, count=" + count);
+                }
+                cursor = Misc.free(cursor);
+                ;
+            }
+        }
     }
 
     private void runConcurrentTest(String name, int numReaders, boolean useFwd, boolean useBwd) throws Exception {

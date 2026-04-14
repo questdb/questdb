@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
@@ -34,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
@@ -59,6 +59,7 @@ import io.questdb.std.IOURingFacadeImpl;
 import io.questdb.std.IOURingImpl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
@@ -1546,10 +1547,11 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
                         // expect only the very first row in zero partition to have 'sy1' symbol value
                         StaticSymbolTable symbolTable = reader.getSymbolTable(columnIndex);
-                        RowCursor ic = indexReader.getCursor(0, TableUtils.toIndexKey(symbolTable.keyOf("sy1")), 0, 1);
+                        RowCursor ic = indexReader.getCursor(TableUtils.toIndexKey(symbolTable.keyOf("sy1")), 0, 1);
                         Assert.assertTrue(ic.hasNext());
                         Assert.assertEquals(0, ic.next());
                         Assert.assertFalse(ic.hasNext());
+                        Misc.free(ic);
                     }
 
                     // run a query that uses the index

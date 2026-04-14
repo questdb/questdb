@@ -24,10 +24,15 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -35,20 +40,17 @@ import io.questdb.griffin.SqlExecutionContext;
 public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCursorFactory {
     private final int columnIndex;
     private final int indexDirection;
-    private final int slotId;
     private final Function symbol;
     private int symbolKey;
 
     public DeferredSymbolIndexRowCursorFactory(
             int columnIndex,
             Function symbol,
-            int slotId,
             int indexDirection
     ) {
         this.columnIndex = columnIndex;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.symbol = symbol;
-        this.slotId = slotId;
         this.indexDirection = indexDirection;
     }
 
@@ -60,7 +62,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
 
         return pageFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
-                .getCursor(slotId, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
     }
 
     @Override

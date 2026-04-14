@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -45,539 +46,6 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
 
 public class CoveringIndexTest extends AbstractCairoTest {
-
-    @Test
-    public void testCoveringIndexNextPartitionNullSymbolWal() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_null_part (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_null_part VALUES
-                    ('2025-01-01T00:00:00', 'A', 1.0, 10),
-                    ('2025-01-01T01:00:00', 'B', 2.0, 20),
-                    ('2025-01-01T02:00:00', 'A', 3.0, 30)
-                    """);
-            // Second partition with NULL symbol
-            execute("INSERT INTO t_null_part (ts) VALUES ('2025-01-02')");
-            drainWalQueue();
-
-            assertSql("""
-                    price\tqty
-                    1.0\t10
-                    3.0\t30
-                    """, "SELECT price, qty FROM t_null_part WHERE sym = 'A'");
-
-            // Nonexistent key should return empty across both partitions
-            assertSql("""
-                    price\tqty
-                    """, "SELECT price, qty FROM t_null_part WHERE sym = 'nonexistent'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexNoCorruptionAfterO3Merge() throws Exception {
-        // O3CopyJob.updateIndex calls rollbackConditionally before writing.
-        // Before the fix, PostingIndexWriter.rollbackConditionally would trigger
-        // a destructive in-place re-encode of sealed generations, corrupting
-        // sidecar alignment and causing AIOOBE in ALP decode.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_o3_cover (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_o3_cover VALUES
-                    ('2024-01-01T10:00:00', 'A', 10.5, 100),
-                    ('2024-01-01T12:00:00', 'B', 20.5, 200),
-                    ('2024-01-01T14:00:00', 'A', 30.5, 300)
-                    """);
-            drainWalQueue();
-
-            // O3 insert into same partition triggers merge → rollbackConditionally
-            execute("""
-                    INSERT INTO t_o3_cover VALUES
-                    ('2024-01-01T09:00:00', 'A', 5.5, 50),
-                    ('2024-01-01T11:00:00', 'B', 15.5, 150),
-                    ('2024-01-01T13:00:00', 'A', 25.5, 250)
-                    """);
-            drainWalQueue();
-
-            // Verify covering data is readable (would crash with AIOOBE before the fix)
-            assertSql("""
-                    price\tqty
-                    5.5\t50
-                    10.5\t100
-                    25.5\t250
-                    30.5\t300
-                    """, "SELECT price, qty FROM t_o3_cover WHERE sym = 'A'");
-
-            assertSql("""
-                    price\tqty
-                    15.5\t150
-                    20.5\t200
-                    """, "SELECT price, qty FROM t_o3_cover WHERE sym = 'B'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexNoCorruptionAfterO3MergeMultiPartition() throws Exception {
-        // O3 merge across multiple partitions: each partition's posting index
-        // must survive rollbackConditionally without sidecar corruption.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_o3_mp (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
-                        val DOUBLE
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_o3_mp VALUES
-                    ('2024-01-01T12:00:00', 'X', 1.0),
-                    ('2024-01-02T12:00:00', 'X', 2.0),
-                    ('2024-01-03T12:00:00', 'Y', 3.0)
-                    """);
-            drainWalQueue();
-
-            // O3: insert rows before existing ones in every partition
-            execute("""
-                    INSERT INTO t_o3_mp VALUES
-                    ('2024-01-01T06:00:00', 'X', 0.5),
-                    ('2024-01-02T06:00:00', 'Y', 1.5),
-                    ('2024-01-03T06:00:00', 'X', 2.5)
-                    """);
-            drainWalQueue();
-
-            assertSql("""
-                    val
-                    0.5
-                    1.0
-                    2.0
-                    2.5
-                    """, "SELECT val FROM t_o3_mp WHERE sym = 'X'");
-
-            assertSql("""
-                    val
-                    1.5
-                    3.0
-                    """, "SELECT val FROM t_o3_mp WHERE sym = 'Y'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexNoCorruptionAfterRepeatedO3() throws Exception {
-        // Multiple rounds of O3 merges on the same partition.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_o3_repeat (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
-                        price DOUBLE
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_o3_repeat VALUES
-                    ('2024-01-01T10:00:00', 'A', 100.0),
-                    ('2024-01-01T20:00:00', 'B', 200.0)
-                    """);
-            drainWalQueue();
-
-            // Round 1: O3 before existing data
-            execute("""
-                    INSERT INTO t_o3_repeat VALUES
-                    ('2024-01-01T05:00:00', 'A', 50.0)
-                    """);
-            drainWalQueue();
-
-            // Round 2: O3 between existing rows
-            execute("""
-                    INSERT INTO t_o3_repeat VALUES
-                    ('2024-01-01T15:00:00', 'A', 150.0)
-                    """);
-            drainWalQueue();
-
-            // Round 3: O3 at the very start
-            execute("""
-                    INSERT INTO t_o3_repeat VALUES
-                    ('2024-01-01T01:00:00', 'B', 10.0)
-                    """);
-            drainWalQueue();
-
-            assertSql("""
-                    price
-                    50.0
-                    100.0
-                    150.0
-                    """, "SELECT price FROM t_o3_repeat WHERE sym = 'A'");
-
-            assertSql("""
-                    price
-                    10.0
-                    200.0
-                    """, "SELECT price FROM t_o3_repeat WHERE sym = 'B'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexNoCorruptionDuplicateO3() throws Exception {
-        // Duplicate rows via O3 — exercises rollbackConditionally with row > 0
-        // where the posting index already has entries at those positions.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_o3_dup (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_o3_dup VALUES
-                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
-                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
-                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
-                    """);
-            drainWalQueue();
-
-            // Exact duplicate insert triggers O3 merge
-            execute("""
-                    INSERT INTO t_o3_dup VALUES
-                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
-                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
-                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
-                    """);
-            drainWalQueue();
-
-            assertSql("""
-                    price\tqty
-                    1.5\t10
-                    1.5\t10
-                    3.5\t30
-                    3.5\t30
-                    """, "SELECT price, qty FROM t_o3_dup WHERE sym = 'A'");
-
-            assertSql("""
-                    price\tqty
-                    2.5\t20
-                    2.5\t20
-                    """, "SELECT price, qty FROM t_o3_dup WHERE sym = 'B'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexNoCorruptionO3WithNulls() throws Exception {
-        // O3 merge where some rows have NULL symbol values.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_o3_null (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
-                        val DOUBLE
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_o3_null VALUES
-                    ('2024-01-01T10:00:00', 'A', 10.0),
-                    ('2024-01-01T12:00:00', null, 20.0),
-                    ('2024-01-01T14:00:00', 'A', 30.0)
-                    """);
-            drainWalQueue();
-
-            // O3 insert with NULLs
-            execute("""
-                    INSERT INTO t_o3_null VALUES
-                    ('2024-01-01T09:00:00', null, 5.0),
-                    ('2024-01-01T11:00:00', 'A', 15.0),
-                    ('2024-01-01T13:00:00', null, 25.0)
-                    """);
-            drainWalQueue();
-
-            assertSql("""
-                    val
-                    10.0
-                    15.0
-                    30.0
-                    """, "SELECT val FROM t_o3_null WHERE sym = 'A'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexNoCorruptionWalMultiPartitionThenO3() throws Exception {
-        // WAL creates multiple partitions in order, then O3 merges into a prior partition.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_mp_o3 (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
-                        price DOUBLE
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_mp_o3 VALUES
-                    ('2024-01-01T12:00:00', 'A', 1.0),
-                    ('2024-01-02T12:00:00', 'A', 2.0),
-                    ('2024-01-03T12:00:00', 'A', 3.0)
-                    """);
-            drainWalQueue();
-
-            // O3 into first partition
-            execute("""
-                    INSERT INTO t_mp_o3 VALUES
-                    ('2024-01-01T06:00:00', 'A', 0.5)
-                    """);
-            drainWalQueue();
-
-            // Verify all partitions are intact
-            assertSql("""
-                    price
-                    0.5
-                    1.0
-                    2.0
-                    3.0
-                    """, "SELECT price FROM t_mp_o3 WHERE sym = 'A'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexNoCorruptionO3ManyCoveredColumns() throws Exception {
-        // Many covered columns of different types — exercises all CoveringCompressor
-        // read methods (readDoubleAt, readLongAt, readIntAt) on sidecar data that
-        // would have been corrupted by in-place rollback.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_many_cols (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d1, d2, d3, i1, l1),
-                        d1 DOUBLE,
-                        d2 DOUBLE,
-                        d3 DOUBLE,
-                        i1 INT,
-                        l1 LONG
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_many_cols VALUES
-                    ('2024-01-01T10:00:00', 'A', 1.1, 2.2, 3.3, 100, 1000),
-                    ('2024-01-01T12:00:00', 'B', 4.4, 5.5, 6.6, 200, 2000),
-                    ('2024-01-01T14:00:00', 'A', 7.7, 8.8, 9.9, 300, 3000)
-                    """);
-            drainWalQueue();
-
-            // O3 merge
-            execute("""
-                    INSERT INTO t_many_cols VALUES
-                    ('2024-01-01T09:00:00', 'A', 0.1, 0.2, 0.3, 10, 100),
-                    ('2024-01-01T11:00:00', 'B', 3.3, 3.4, 3.5, 150, 1500)
-                    """);
-            drainWalQueue();
-
-            assertSql("""
-                    d1\td2\td3\ti1\tl1
-                    0.1\t0.2\t0.3\t10\t100
-                    1.1\t2.2\t3.3\t100\t1000
-                    7.7\t8.8\t9.9\t300\t3000
-                    """, "SELECT d1, d2, d3, i1, l1 FROM t_many_cols WHERE sym = 'A'");
-
-            assertSql("""
-                    d1\td2\td3\ti1\tl1
-                    3.3\t3.4\t3.5\t150\t1500
-                    4.4\t5.5\t6.6\t200\t2000
-                    """, "SELECT d1, d2, d3, i1, l1 FROM t_many_cols WHERE sym = 'B'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexSidecarWrittenOnAlterAddIndex() throws Exception {
-        // ALTER TABLE ADD INDEX INCLUDE on a table with existing data must
-        // seal the posting index for the last partition so that sidecar files
-        // exist before any query uses the covering scan plan.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_alter_cover (
-                        ts TIMESTAMP,
-                        sym SYMBOL,
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_alter_cover VALUES
-                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
-                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
-                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
-                    """);
-            execute("ALTER TABLE t_alter_cover ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
-            engine.releaseAllWriters();
-
-            // Covering query — all selected columns are in INCLUDE
-            assertSql("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    """, "SELECT price, qty FROM t_alter_cover WHERE sym = 'A'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexSidecarWrittenOnAlterAddIndexWal() throws Exception {
-        // Same as above but through the WAL path.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_alter_wal (
-                        ts TIMESTAMP,
-                        sym SYMBOL,
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_alter_wal VALUES
-                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
-                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
-                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
-                    """);
-            drainWalQueue();
-            execute("ALTER TABLE t_alter_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
-            drainWalQueue();
-
-            assertSql("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    """, "SELECT price, qty FROM t_alter_wal WHERE sym = 'A'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexSidecarSurvivesPartitionSwitch() throws Exception {
-        // After ALTER TABLE ADD INDEX INCLUDE, inserting into the next partition
-        // must not corrupt the prior partition's sidecar files.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_switch (
-                        ts TIMESTAMP,
-                        sym SYMBOL,
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_switch VALUES
-                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
-                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
-                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
-                    """);
-            execute("ALTER TABLE t_switch ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
-
-            // Insert into next partition — triggers partition switch and seal
-            execute("""
-                    INSERT INTO t_switch VALUES
-                    ('2024-01-02T09:00:00', 'A', 4.5, 40),
-                    ('2024-01-02T10:00:00', 'B', 5.5, 50)
-                    """);
-            engine.releaseAllWriters();
-
-            // Both partitions should return correct covered data
-            assertSql("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    4.5\t40
-                    """, "SELECT price, qty FROM t_switch WHERE sym = 'A'");
-
-            assertSql("""
-                    price\tqty
-                    2.5\t20
-                    5.5\t50
-                    """, "SELECT price, qty FROM t_switch WHERE sym = 'B'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexSidecarSurvivesPartitionSwitchWal() throws Exception {
-        // Same partition-switch scenario through WAL.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_switch_wal (
-                        ts TIMESTAMP,
-                        sym SYMBOL,
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_switch_wal VALUES
-                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
-                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
-                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
-                    """);
-            drainWalQueue();
-            execute("ALTER TABLE t_switch_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
-            drainWalQueue();
-
-            // Insert into next partition
-            execute("""
-                    INSERT INTO t_switch_wal VALUES
-                    ('2024-01-02T09:00:00', 'A', 4.5, 40),
-                    ('2024-01-02T10:00:00', 'B', 5.5, 50)
-                    """);
-            drainWalQueue();
-
-            assertSql("""
-                    price\tqty
-                    1.5\t10
-                    3.5\t30
-                    4.5\t40
-                    """, "SELECT price, qty FROM t_switch_wal WHERE sym = 'A'");
-        });
-    }
-
-    @Test
-    public void testCoveringIndexSidecarAlterAddIndexMultiPartition() throws Exception {
-        // ALTER TABLE ADD INDEX INCLUDE on a table with multiple existing partitions.
-        // All partitions must get sidecar files.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_alter_mp (
-                        ts TIMESTAMP,
-                        sym SYMBOL,
-                        price DOUBLE,
-                        qty INT
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_alter_mp VALUES
-                    ('2024-01-01T09:00:00', 'A', 1.0, 10),
-                    ('2024-01-01T10:00:00', 'B', 2.0, 20),
-                    ('2024-01-02T09:00:00', 'A', 3.0, 30),
-                    ('2024-01-03T09:00:00', 'B', 4.0, 40)
-                    """);
-            execute("ALTER TABLE t_alter_mp ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    price\tqty
-                    1.0\t10
-                    3.0\t30
-                    """, "SELECT price, qty FROM t_alter_mp WHERE sym = 'A'");
-
-            assertSql("""
-                    price\tqty
-                    2.0\t20
-                    4.0\t40
-                    """, "SELECT price, qty FROM t_alter_mp WHERE sym = 'B'");
-        });
-    }
 
     @Test
     public void testAlterTableAddIndexO3DuplicateInsert() throws Exception {
@@ -1393,10 +861,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // End-to-end SQL tests
-    // ===================================================================
-
     @Test
     public void testCoveringAfterSealThenNewCommit() throws Exception {
         // After seal + new commit: genCount=2. With per-gen sidecars,
@@ -1454,7 +918,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader: genCount=2, but per-gen sidecars exist
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         assertTrue(((CoveringRowCursor) cursor).hasCovering());
 
@@ -1464,6 +928,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             count++;
                         }
                         assertTrue(count > 0);
+                        Misc.free(cursor);
                     }
 
                     writer2.close();
@@ -1511,7 +976,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Verify ALL 30 covered values across both gens
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cc.hasCovering());
                         for (int i = 0; i < 30; i++) {
                             assertTrue("row " + i, cc.hasNext());
@@ -1519,6 +984,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             assertEquals("value at row " + i, 10.0 * (i + 1), cc.getCoveredDouble(0), 0.001);
                         }
                         assertFalse(cc.hasNext());
+                        Misc.free(cc);
                     }
                     w2.close();
                 } finally {
@@ -1612,7 +1078,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Key 260 is in stride 1, local key 4
-                        RowCursor cursor = reader.getCursor(0, 260, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
@@ -1621,24 +1087,25 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertEquals(260, cc.next());
                         assertEquals(1260L, cc.getCoveredLong(0));
                         assertFalse(cc.hasNext());
-
+                        Misc.free(cursor);
                         // Key 299 is in stride 1, local key 43
-                        cursor = reader.getCursor(0, 299, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(299, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
                         assertEquals(299, cc.next());
                         assertEquals(1299L, cc.getCoveredLong(0));
                         assertFalse(cc.hasNext());
-
+                        Misc.free(cursor);
                         // Key 0 is in stride 0 (control)
-                        cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
                         assertEquals(1000L, cc.getCoveredLong(0));
                         assertFalse(cc.hasNext());
+                        Misc.free(cursor);
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -1947,6 +1414,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ===================================================================
+    // End-to-end SQL tests
+    // ===================================================================
+
     @Test
     public void testCoveringIndexLatestOnPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -1982,9 +1453,355 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Fallback scenario tests: covering index NOT used
-    // ===================================================================
+    @Test
+    public void testCoveringIndexNextPartitionNullSymbolWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_null_part (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_null_part VALUES
+                    ('2025-01-01T00:00:00', 'A', 1.0, 10),
+                    ('2025-01-01T01:00:00', 'B', 2.0, 20),
+                    ('2025-01-01T02:00:00', 'A', 3.0, 30)
+                    """);
+            // Second partition with NULL symbol
+            execute("INSERT INTO t_null_part (ts) VALUES ('2025-01-02')");
+            drainWalQueue();
+
+            assertSql("""
+                    price\tqty
+                    1.0\t10
+                    3.0\t30
+                    """, "SELECT price, qty FROM t_null_part WHERE sym = 'A'");
+
+            // Nonexistent key should return empty across both partitions
+            assertSql("""
+                    price\tqty
+                    """, "SELECT price, qty FROM t_null_part WHERE sym = 'nonexistent'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionAfterO3Merge() throws Exception {
+        // O3CopyJob.updateIndex calls rollbackConditionally before writing.
+        // Before the fix, PostingIndexWriter.rollbackConditionally would trigger
+        // a destructive in-place re-encode of sealed generations, corrupting
+        // sidecar alignment and causing AIOOBE in ALP decode.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_cover (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_cover VALUES
+                    ('2024-01-01T10:00:00', 'A', 10.5, 100),
+                    ('2024-01-01T12:00:00', 'B', 20.5, 200),
+                    ('2024-01-01T14:00:00', 'A', 30.5, 300)
+                    """);
+            drainWalQueue();
+
+            // O3 insert into same partition triggers merge → rollbackConditionally
+            execute("""
+                    INSERT INTO t_o3_cover VALUES
+                    ('2024-01-01T09:00:00', 'A', 5.5, 50),
+                    ('2024-01-01T11:00:00', 'B', 15.5, 150),
+                    ('2024-01-01T13:00:00', 'A', 25.5, 250)
+                    """);
+            drainWalQueue();
+
+            // Verify covering data is readable (would crash with AIOOBE before the fix)
+            assertSql("""
+                    price\tqty
+                    5.5\t50
+                    10.5\t100
+                    25.5\t250
+                    30.5\t300
+                    """, "SELECT price, qty FROM t_o3_cover WHERE sym = 'A'");
+
+            assertSql("""
+                    price\tqty
+                    15.5\t150
+                    20.5\t200
+                    """, "SELECT price, qty FROM t_o3_cover WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionAfterO3MergeMultiPartition() throws Exception {
+        // O3 merge across multiple partitions: each partition's posting index
+        // must survive rollbackConditionally without sidecar corruption.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_mp VALUES
+                    ('2024-01-01T12:00:00', 'X', 1.0),
+                    ('2024-01-02T12:00:00', 'X', 2.0),
+                    ('2024-01-03T12:00:00', 'Y', 3.0)
+                    """);
+            drainWalQueue();
+
+            // O3: insert rows before existing ones in every partition
+            execute("""
+                    INSERT INTO t_o3_mp VALUES
+                    ('2024-01-01T06:00:00', 'X', 0.5),
+                    ('2024-01-02T06:00:00', 'Y', 1.5),
+                    ('2024-01-03T06:00:00', 'X', 2.5)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    val
+                    0.5
+                    1.0
+                    2.0
+                    2.5
+                    """, "SELECT val FROM t_o3_mp WHERE sym = 'X'");
+
+            assertSql("""
+                    val
+                    1.5
+                    3.0
+                    """, "SELECT val FROM t_o3_mp WHERE sym = 'Y'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionAfterRepeatedO3() throws Exception {
+        // Multiple rounds of O3 merges on the same partition.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_repeat (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_repeat VALUES
+                    ('2024-01-01T10:00:00', 'A', 100.0),
+                    ('2024-01-01T20:00:00', 'B', 200.0)
+                    """);
+            drainWalQueue();
+
+            // Round 1: O3 before existing data
+            execute("""
+                    INSERT INTO t_o3_repeat VALUES
+                    ('2024-01-01T05:00:00', 'A', 50.0)
+                    """);
+            drainWalQueue();
+
+            // Round 2: O3 between existing rows
+            execute("""
+                    INSERT INTO t_o3_repeat VALUES
+                    ('2024-01-01T15:00:00', 'A', 150.0)
+                    """);
+            drainWalQueue();
+
+            // Round 3: O3 at the very start
+            execute("""
+                    INSERT INTO t_o3_repeat VALUES
+                    ('2024-01-01T01:00:00', 'B', 10.0)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    price
+                    50.0
+                    100.0
+                    150.0
+                    """, "SELECT price FROM t_o3_repeat WHERE sym = 'A'");
+
+            assertSql("""
+                    price
+                    10.0
+                    200.0
+                    """, "SELECT price FROM t_o3_repeat WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionDuplicateO3() throws Exception {
+        // Duplicate rows via O3 — exercises rollbackConditionally with row > 0
+        // where the posting index already has entries at those positions.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_dup (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_dup VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+
+            // Exact duplicate insert triggers O3 merge
+            execute("""
+                    INSERT INTO t_o3_dup VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    1.5\t10
+                    3.5\t30
+                    3.5\t30
+                    """, "SELECT price, qty FROM t_o3_dup WHERE sym = 'A'");
+
+            assertSql("""
+                    price\tqty
+                    2.5\t20
+                    2.5\t20
+                    """, "SELECT price, qty FROM t_o3_dup WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionO3ManyCoveredColumns() throws Exception {
+        // Many covered columns of different types — exercises all CoveringCompressor
+        // read methods (readDoubleAt, readLongAt, readIntAt) on sidecar data that
+        // would have been corrupted by in-place rollback.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_many_cols (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d1, d2, d3, i1, l1),
+                        d1 DOUBLE,
+                        d2 DOUBLE,
+                        d3 DOUBLE,
+                        i1 INT,
+                        l1 LONG
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_many_cols VALUES
+                    ('2024-01-01T10:00:00', 'A', 1.1, 2.2, 3.3, 100, 1000),
+                    ('2024-01-01T12:00:00', 'B', 4.4, 5.5, 6.6, 200, 2000),
+                    ('2024-01-01T14:00:00', 'A', 7.7, 8.8, 9.9, 300, 3000)
+                    """);
+            drainWalQueue();
+
+            // O3 merge
+            execute("""
+                    INSERT INTO t_many_cols VALUES
+                    ('2024-01-01T09:00:00', 'A', 0.1, 0.2, 0.3, 10, 100),
+                    ('2024-01-01T11:00:00', 'B', 3.3, 3.4, 3.5, 150, 1500)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    d1\td2\td3\ti1\tl1
+                    0.1\t0.2\t0.3\t10\t100
+                    1.1\t2.2\t3.3\t100\t1000
+                    7.7\t8.8\t9.9\t300\t3000
+                    """, "SELECT d1, d2, d3, i1, l1 FROM t_many_cols WHERE sym = 'A'");
+
+            assertSql("""
+                    d1\td2\td3\ti1\tl1
+                    3.3\t3.4\t3.5\t150\t1500
+                    4.4\t5.5\t6.6\t200\t2000
+                    """, "SELECT d1, d2, d3, i1, l1 FROM t_many_cols WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionO3WithNulls() throws Exception {
+        // O3 merge where some rows have NULL symbol values.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_null (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_null VALUES
+                    ('2024-01-01T10:00:00', 'A', 10.0),
+                    ('2024-01-01T12:00:00', null, 20.0),
+                    ('2024-01-01T14:00:00', 'A', 30.0)
+                    """);
+            drainWalQueue();
+
+            // O3 insert with NULLs
+            execute("""
+                    INSERT INTO t_o3_null VALUES
+                    ('2024-01-01T09:00:00', null, 5.0),
+                    ('2024-01-01T11:00:00', 'A', 15.0),
+                    ('2024-01-01T13:00:00', null, 25.0)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    val
+                    10.0
+                    15.0
+                    30.0
+                    """, "SELECT val FROM t_o3_null WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexNoCorruptionWalMultiPartitionThenO3() throws Exception {
+        // WAL creates multiple partitions in order, then O3 merges into a prior partition.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mp_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_mp_o3 VALUES
+                    ('2024-01-01T12:00:00', 'A', 1.0),
+                    ('2024-01-02T12:00:00', 'A', 2.0),
+                    ('2024-01-03T12:00:00', 'A', 3.0)
+                    """);
+            drainWalQueue();
+
+            // O3 into first partition
+            execute("""
+                    INSERT INTO t_mp_o3 VALUES
+                    ('2024-01-01T06:00:00', 'A', 0.5)
+                    """);
+            drainWalQueue();
+
+            // Verify all partitions are intact
+            assertSql("""
+                    price
+                    0.5
+                    1.0
+                    2.0
+                    3.0
+                    """, "SELECT price FROM t_mp_o3 WHERE sym = 'A'");
+        });
+    }
 
     @Test
     public void testCoveringIndexOrderBy() throws Exception {
@@ -2087,6 +1904,193 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     price
                     30.0
                     """, "SELECT price FROM t_resid_uncov WHERE sym = 'A' AND extra > 150");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexSidecarAlterAddIndexMultiPartition() throws Exception {
+        // ALTER TABLE ADD INDEX INCLUDE on a table with multiple existing partitions.
+        // All partitions must get sidecar files.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter_mp VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.0, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.0, 20),
+                    ('2024-01-02T09:00:00', 'A', 3.0, 30),
+                    ('2024-01-03T09:00:00', 'B', 4.0, 40)
+                    """);
+            execute("ALTER TABLE t_alter_mp ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    price\tqty
+                    1.0\t10
+                    3.0\t30
+                    """, "SELECT price, qty FROM t_alter_mp WHERE sym = 'A'");
+
+            assertSql("""
+                    price\tqty
+                    2.0\t20
+                    4.0\t40
+                    """, "SELECT price, qty FROM t_alter_mp WHERE sym = 'B'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexSidecarSurvivesPartitionSwitch() throws Exception {
+        // After ALTER TABLE ADD INDEX INCLUDE, inserting into the next partition
+        // must not corrupt the prior partition's sidecar files.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_switch (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_switch VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            execute("ALTER TABLE t_switch ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+
+            // Insert into next partition — triggers partition switch and seal
+            execute("""
+                    INSERT INTO t_switch VALUES
+                    ('2024-01-02T09:00:00', 'A', 4.5, 40),
+                    ('2024-01-02T10:00:00', 'B', 5.5, 50)
+                    """);
+            engine.releaseAllWriters();
+
+            // Both partitions should return correct covered data
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    4.5\t40
+                    """, "SELECT price, qty FROM t_switch WHERE sym = 'A'");
+
+            assertSql("""
+                    price\tqty
+                    2.5\t20
+                    5.5\t50
+                    """, "SELECT price, qty FROM t_switch WHERE sym = 'B'");
+        });
+    }
+
+    // ===================================================================
+    // Fallback scenario tests: covering index NOT used
+    // ===================================================================
+
+    @Test
+    public void testCoveringIndexSidecarSurvivesPartitionSwitchWal() throws Exception {
+        // Same partition-switch scenario through WAL.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_switch_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_switch_wal VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_switch_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+
+            // Insert into next partition
+            execute("""
+                    INSERT INTO t_switch_wal VALUES
+                    ('2024-01-02T09:00:00', 'A', 4.5, 40),
+                    ('2024-01-02T10:00:00', 'B', 5.5, 50)
+                    """);
+            drainWalQueue();
+
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    4.5\t40
+                    """, "SELECT price, qty FROM t_switch_wal WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexSidecarWrittenOnAlterAddIndex() throws Exception {
+        // ALTER TABLE ADD INDEX INCLUDE on a table with existing data must
+        // seal the posting index for the last partition so that sidecar files
+        // exist before any query uses the covering scan plan.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_cover (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter_cover VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            execute("ALTER TABLE t_alter_cover ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            engine.releaseAllWriters();
+
+            // Covering query — all selected columns are in INCLUDE
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    """, "SELECT price, qty FROM t_alter_cover WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexSidecarWrittenOnAlterAddIndexWal() throws Exception {
+        // Same as above but through the WAL path.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_alter_wal (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_alter_wal VALUES
+                    ('2024-01-01T09:00:00', 'A', 1.5, 10),
+                    ('2024-01-01T10:00:00', 'B', 2.5, 20),
+                    ('2024-01-01T11:00:00', 'A', 3.5, 30)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_alter_wal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+
+            assertSql("""
+                    price\tqty
+                    1.5\t10
+                    3.5\t30
+                    """, "SELECT price, qty FROM t_alter_wal WHERE sym = 'A'");
         });
     }
 
@@ -2671,7 +2675,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader sees genCount=2 with per-gen sidecar data
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         // Per-gen sidecars: hasCovering() returns true
@@ -2687,6 +2691,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             count++;
                         }
                         assertEquals(20, count);
+                        Misc.free(cursor);
                     }
 
                     writer.close(); // seal happens here
@@ -2732,7 +2737,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Key 0: only gen 0 data (rows 0,2)
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
@@ -2743,7 +2748,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertFalse(cc.hasNext());
 
                         // Key 1: gen 0 + gen 1 (rows 1,3,4,5)
-                        cc = (CoveringRowCursor) reader.getCursor(0, 1, 0, Long.MAX_VALUE);
+                        cc = (CoveringRowCursor) reader.getCursor(1, 0, Long.MAX_VALUE);
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
                         assertEquals(1, cc.next());
@@ -2802,7 +2807,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Key 1: rows 1,3,5,7,9,11,13,15,17,19
-                        RowCursor cursor = reader.getCursor(0, 1, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         int count = 0;
@@ -2813,6 +2818,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             count++;
                         }
                         assertEquals(10, count);
+                        Misc.free(cursor);
                     }
                     writer.close();
                 } finally {
@@ -2858,7 +2864,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
 
@@ -2881,6 +2887,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertEquals(101, cc.getCoveredShort(0));
 
                         assertFalse(cc.hasNext());
+                        Misc.free(cursor);
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Short.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -4860,7 +4867,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
 
@@ -4878,6 +4885,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             assertEquals(50.0 + (i - colTop), cc.getCoveredDouble(0), 0.001);
                         }
                         assertFalse(cc.hasNext());
+                        Misc.free(cursor);
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -6422,7 +6430,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
                         // Key 0 is in stride 0 (clean stride) — should have correct covered value
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue("covering should be available after incremental seal", cc.hasCovering());
@@ -6430,23 +6438,25 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertEquals(0, cc.next());
                         assertEquals(1000L, cc.getCoveredLong(0));
                         assertFalse(cc.hasNext());
-
+                        Misc.free(cursor);
                         // Key 100 is in stride 0 (clean stride)
-                        cursor = reader.getCursor(0, 100, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(100, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
                         assertEquals(100, cc.next());
                         assertEquals(1100L, cc.getCoveredLong(0));
                         assertFalse(cc.hasNext());
+                        Misc.free(cursor);
 
                         // Key 260 is in stride 1 (dirty stride) — should also work
-                        cursor = reader.getCursor(0, 260, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(260, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
                         assertTrue(cc.hasNext());
                         assertEquals(260, cc.next());
                         assertEquals(1260L, cc.getCoveredLong(0));
+                        Misc.free(cursor);
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -6539,6 +6549,136 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByAllColumnTypes() throws Exception {
+        // LATEST BY through CoveringRecord — exercises every type accessor
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_all (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
+                            v_byte, v_short, v_int, v_long, v_float, v_double,
+                            v_bool, v_date, v_uuid, v_ipv4,
+                            v_varchar, v_string
+                        ),
+                        v_byte BYTE,
+                        v_short SHORT,
+                        v_int INT,
+                        v_long LONG,
+                        v_float FLOAT,
+                        v_double DOUBLE,
+                        v_bool BOOLEAN,
+                        v_date DATE,
+                        v_uuid UUID,
+                        v_ipv4 IPv4,
+                        v_varchar VARCHAR,
+                        v_string STRING
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_all VALUES
+                    ('2024-01-01T00:00:00', 'A', 1, 100, 1000, 10_000, 1.5, 2.5, true,  '2024-06-01T00:00:00.000Z', '11111111-1111-1111-1111-111111111111', '1.2.3.4', 'hello', 'world'),
+                    ('2024-01-02T00:00:00', 'A', 2, 200, 2000, 20_000, 2.5, 3.5, false, '2024-07-01T00:00:00.000Z', '22222222-2222-2222-2222-222222222222', '5.6.7.8', 'bye',   'earth'),
+                    ('2024-01-02T12:00:00', 'B', 3, 300, 3000, 30_000, 3.5, 4.5, true,  '2024-08-01T00:00:00.000Z', '33333333-3333-3333-3333-333333333333', '9.0.1.2', 'foo',   'bar')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    v_byte\tv_short\tv_int\tv_long\tv_float\tv_double\tv_bool\tv_date\tv_uuid\tv_ipv4\tv_varchar\tv_string
+                    2\t200\t2000\t20000\t2.5\t3.5\tfalse\t2024-07-01T00:00:00.000Z\t22222222-2222-2222-2222-222222222222\t5.6.7.8\tbye\tearth
+                    """, """
+                    SELECT v_byte, v_short, v_int, v_long, v_float, v_double,
+                           v_bool, v_date, v_uuid, v_ipv4, v_varchar, v_string
+                    FROM t_latest_all WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    // ---- Wide table and wide INCLUDE edge case tests ----
+
+    @Test
+    public void testLatestByArrayColumn() throws Exception {
+        // LATEST BY with ARRAY covered column through CoveringRecord
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_arr (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals),
+                        vals DOUBLE[]
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_arr VALUES
+                    ('2024-01-01T00:00:00', 'A', ARRAY[1.0, 2.0]),
+                    ('2024-01-02T00:00:00', 'A', ARRAY[3.0, 4.0])
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    vals
+                    [3.0,4.0]
+                    """, """
+                    SELECT vals
+                    FROM t_latest_arr WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
+    public void testLatestByBinaryColumn() throws Exception {
+        // LATEST BY with BINARY covered column through CoveringRecord
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_bin (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (data),
+                        data BINARY
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_latest_bin VALUES ('2024-01-01T00:00:00', 'A', rnd_bin(10, 10, 0))");
+            execute("INSERT INTO t_latest_bin VALUES ('2024-01-02T00:00:00', 'A', rnd_bin(10, 10, 0))");
+            engine.releaseAllWriters();
+
+            // Just verify the query runs without errors and returns a row
+            assertSql("""
+                    count
+                    1
+                    """, """
+                    SELECT count(*) AS count
+                    FROM t_latest_bin WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
+    public void testLatestByDecimalAndLong256() throws Exception {
+        // LATEST BY for DECIMAL128 and LONG256 through CoveringRecord
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_dec (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d128, hash),
+                        d128 DECIMAL(38, 10),
+                        hash LONG256
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_dec VALUES
+                    ('2024-01-01T00:00:00', 'A', '123.4567890000'::DECIMAL(38, 10), 0x01),
+                    ('2024-01-02T00:00:00', 'A', '999.9999999999'::DECIMAL(38, 10), 0x0f)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    d128\thash
+                    999.9999999999\t0x0f
+                    """, """
+                    SELECT d128, hash
+                    FROM t_latest_dec WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
     public void testLatestByFilterMultiPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -6567,8 +6707,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Wide table and wide INCLUDE edge case tests ----
-
     @Test
     public void testLatestByFilterNoMatch() throws Exception {
         assertMemoryLeak(() -> {
@@ -6590,6 +6728,70 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // Filter that matches no rows — empty result
             assertSql("price\n",
                     "SELECT price FROM t_latest_nomatch WHERE sym = 'A' AND price > 100 LATEST ON ts PARTITION BY sym");
+        });
+    }
+
+    @Test
+    public void testLatestByMultiKeyAllTypes() throws Exception {
+        // LATEST BY multi-key with diverse types through CoveringRecord
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_multi (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v_float, v_short, v_byte),
+                        v_float FLOAT,
+                        v_short SHORT,
+                        v_byte BYTE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_multi VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.5, 10, 1),
+                    ('2024-01-02T00:00:00', 'A', 2.5, 20, 2),
+                    ('2024-01-01T12:00:00', 'B', 3.5, 30, 3),
+                    ('2024-01-02T12:00:00', 'B', 4.5, 40, 4)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    sym\tv_float\tv_short\tv_byte
+                    A\t2.5\t20\t2
+                    B\t4.5\t40\t4
+                    """, """
+                    SELECT sym, v_float, v_short, v_byte
+                    FROM t_latest_multi
+                    WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym
+                    """);
+        });
+    }
+
+    @Test
+    public void testLatestByNullValues() throws Exception {
+        // LATEST BY with NULL values in various types
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_latest_nulls (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v_int, v_double, v_varchar),
+                        v_int INT,
+                        v_double DOUBLE,
+                        v_varchar VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_latest_nulls VALUES
+                    ('2024-01-01T00:00:00', 'A', 1, 1.0, 'ok'),
+                    ('2024-01-02T00:00:00', 'A', NULL, NaN, NULL)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    v_int\tv_double\tv_varchar
+                    null\tnull\t
+                    """, """
+                    SELECT v_int, v_double, v_varchar
+                    FROM t_latest_nulls WHERE sym = 'A' LATEST ON ts PARTITION BY sym
+                    """);
         });
     }
 
@@ -6833,6 +7035,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== no_covering hint tests ====================
+
     @Test
     public void testMetadataPersistenceAcrossReopen() throws Exception {
         assertMemoryLeak(() -> {
@@ -6978,6 +7182,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // ==================== no_index hint tests ====================
+
     @Test
     public void testNoCoveringHint_DisablesCovering() throws Exception {
         assertMemoryLeak(() -> {
@@ -7035,8 +7241,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ==================== no_covering hint tests ====================
 
     @Test
     public void testNoCoveringHint_LatestBy() throws Exception {
@@ -7161,8 +7365,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== no_index hint tests ====================
-
     @Test
     public void testNoIndexHint_InList() throws Exception {
         assertMemoryLeak(() -> {
@@ -7194,6 +7396,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSql(expected, "SELECT /*+ no_index */ price FROM t_noidx_in WHERE sym IN ('A', 'B')");
         });
     }
+
+    // ==================== residual filter + covering index tests ====================
 
     @Test
     public void testNoIndexHint_LatestBy() throws Exception {
@@ -7278,7 +7482,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                         configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                     // Cursor should still implement CoveringRowCursor but hasCovering() returns false
                     assertTrue(cursor instanceof CoveringRowCursor);
                     assertFalse(((CoveringRowCursor) cursor).hasCovering());
@@ -7289,6 +7493,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     assertTrue(cursor.hasNext());
                     assertEquals(1, cursor.next());
                     assertFalse(cursor.hasNext());
+                    Misc.free(cursor);
                 }
             }
         });
@@ -7395,8 +7600,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== residual filter + covering index tests ====================
-
     @Test
     public void testO3WithSymbolIncludeColumn() throws Exception {
         // Gap 17 extended: O3 with SYMBOL INCLUDE columns
@@ -7427,6 +7630,35 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     A\tcold\t10.0
                     A\thot\t20.0
                     """, "SELECT sym, tag, price FROM t_o3_sym WHERE sym = 'A'");
+        });
+    }
+
+    // ==================== page frame cursor tests ====================
+
+    @Test
+    public void testPageFrameAggregationUuidIpv4() throws Exception {
+        // Page frame aggregation for UUID and IPv4 types
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_uuid (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (id, addr),
+                        id UUID,
+                        addr IPv4
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_uuid VALUES
+                    ('2024-01-01T00:00:00', 'A', '11111111-1111-1111-1111-111111111111', '1.2.3.4'),
+                    ('2024-01-01T01:00:00', 'A', '22222222-2222-2222-2222-222222222222', '5.6.7.8'),
+                    ('2024-01-01T02:00:00', 'B', '33333333-3333-3333-3333-333333333333', '9.0.1.2')
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    count
+                    2
+                    """, "SELECT count(*) AS count FROM t_pf_uuid WHERE sym = 'A'");
         });
     }
 
@@ -7634,7 +7866,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Read back with covering cursor — verify both row IDs and covered values
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, 0, Long.MAX_VALUE);
+                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
@@ -7653,9 +7885,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertEquals(70.0, cc.getCoveredDouble(0), 0.001);
 
                         assertFalse(cc.hasNext());
-
+                        Misc.free(cursor);
                         // key 1: rows 1, 4 -> values 20.0, 50.0
-                        cursor = reader.getCursor(0, 1, 0, Long.MAX_VALUE);
+                        cursor = reader.getCursor(1, 0, Long.MAX_VALUE);
                         cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
 
@@ -7668,6 +7900,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
 
                         assertFalse(cc.hasNext());
+                        Misc.free(cursor);
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -7675,8 +7908,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ==================== page frame cursor tests ====================
 
     @Test
     public void testPostingIndexRowIdsMatchBitmap() throws Exception {
@@ -8088,31 +8319,27 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowCreateTableWithInclude() throws Exception {
+    public void testShowColumnsWithBitmapIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
-                    CREATE TABLE t_show (
+                    CREATE TABLE t_show_bmp (
                         ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
-                        price DOUBLE,
-                        qty INT
+                        sym SYMBOL INDEX CAPACITY 256,
+                        val DOUBLE
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
-            // TODO: SHOW CREATE TABLE should include the INCLUDE clause so the table
-            //  can be recreated with covering column info preserved. Currently, the
-            //  MetadataCache startup hydration (from _meta file) doesn't read the
-            //  variable-length covering column data section.
+
+            // BITMAP index should show indexType=BITMAP and empty indexInclude
             assertSql("""
-                    ddl
-                    CREATE TABLE 't_show' (\s
-                    \tts TIMESTAMP,
-                    \tsym SYMBOL INDEX TYPE POSTING,
-                    \tprice DOUBLE,
-                    \tqty INT
-                    ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
-                    """, "SHOW CREATE TABLE t_show");
+                    column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
+                    ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse
+                    sym\tSYMBOL\ttrue\t256\tBITMAP\t\ttrue\t128\t0\tfalse\tfalse
+                    val\tDOUBLE\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
+                    """, "SHOW COLUMNS FROM t_show_bmp");
         });
     }
+
+    // --- Issue 1: INCLUDE validation on WAL and CREATE TABLE paths ---
 
     @Test
     public void testShowColumnsWithPostingIndex() throws Exception {
@@ -8138,23 +8365,29 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowColumnsWithBitmapIndex() throws Exception {
+    public void testShowCreateTableWithInclude() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
-                    CREATE TABLE t_show_bmp (
+                    CREATE TABLE t_show (
                         ts TIMESTAMP,
-                        sym SYMBOL INDEX CAPACITY 256,
-                        val DOUBLE
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty),
+                        price DOUBLE,
+                        qty INT
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
-
-            // BITMAP index should show indexType=BITMAP and empty indexInclude
+            // TODO: SHOW CREATE TABLE should include the INCLUDE clause so the table
+            //  can be recreated with covering column info preserved. Currently, the
+            //  MetadataCache startup hydration (from _meta file) doesn't read the
+            //  variable-length covering column data section.
             assertSql("""
-                    column\ttype\tindexed\tindexBlockCapacity\tindexType\tindexInclude\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                    ts\tTIMESTAMP\tfalse\t0\t\t\tfalse\t0\t0\ttrue\tfalse
-                    sym\tSYMBOL\ttrue\t256\tBITMAP\t\ttrue\t128\t0\tfalse\tfalse
-                    val\tDOUBLE\tfalse\t0\t\t\tfalse\t0\t0\tfalse\tfalse
-                    """, "SHOW COLUMNS FROM t_show_bmp");
+                    ddl
+                    CREATE TABLE 't_show' (\s
+                    \tts TIMESTAMP,
+                    \tsym SYMBOL INDEX TYPE POSTING,
+                    \tprice DOUBLE,
+                    \tqty INT
+                    ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
+                    """, "SHOW CREATE TABLE t_show");
         });
     }
 
@@ -8227,6 +8460,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_trunc WHERE sym = 'C'");
         });
     }
+
+    // --- Issue 2: LATEST BY + residual filter through covering index ---
 
     @Test
     public void testVarcharPageFrameCountMixed() throws Exception {
@@ -8314,7 +8549,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 1: INCLUDE validation on WAL and CREATE TABLE paths ---
+    // --- Issue 3: Index restart skips already-indexed partitions ---
 
     @Test
     public void testVarcharPageFrameMultiPartition() throws Exception {
@@ -8351,6 +8586,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // --- Issue 4: Page frame with BINARY covered column (GROUP BY) ---
+
     @Test
     public void testVarcharPageFramePlan() throws Exception {
         // VARCHAR in INCLUDE should use CoveringIndex with page frame path (not row-by-row)
@@ -8380,6 +8617,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
+
+    // --- Issue 5: DISTINCT end-to-end ---
 
     @Test
     public void testVarcharPageFrameVectorizedGroupBy() throws Exception {
@@ -8451,7 +8690,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 2: LATEST BY + residual filter through covering index ---
+    // --- Issue 6: Covered TIMESTAMP values correct through seal + delta compression ---
 
     @Test
     public void testWideInclude10Columns() throws Exception {
@@ -8505,6 +8744,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
+
+    // --- Auto-include designated timestamp in INCLUDE ---
 
     @Test
     public void testWideInclude20Columns() throws Exception {
@@ -8599,8 +8840,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 3: Index restart skips already-indexed partitions ---
-
     @Test
     public void testWideIncludeAlterTable() throws Exception {
         // Add a wide INCLUDE via ALTER TABLE, then insert and query
@@ -8638,8 +8877,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 4: Page frame with BINARY covered column (GROUP BY) ---
-
     @Test
     public void testWideIncludeDistinct() throws Exception {
         // DISTINCT on symbol with wide INCLUDE — should still use posting index
@@ -8669,8 +8906,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT DISTINCT sym FROM t_wide_distinct");
         });
     }
-
-    // --- Issue 5: DISTINCT end-to-end ---
 
     @Test
     public void testWideIncludeInListSubset() throws Exception {
@@ -8736,8 +8971,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 6: Covered TIMESTAMP values correct through seal + delta compression ---
-
     @Test
     public void testWideIncludeManyRowsPerKey() throws Exception {
         // Many rows for same key with wide INCLUDE — stress sidecar writes
@@ -8787,8 +9020,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT c0, c1 FROM t_wide_many WHERE sym = 'A' LIMIT 1");
         });
     }
-
-    // --- Auto-include designated timestamp in INCLUDE ---
 
     @Test
     public void testWideIncludeMetadataRoundtrip() throws Exception {
@@ -9027,225 +9258,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     99.9\thello
                     77.7\ttest
                     """, "SELECT uncovered1, uncovered3 FROM t_partial WHERE sym = 'A'");
-        });
-    }
-
-    @Test
-    public void testLatestByAllColumnTypes() throws Exception {
-        // LATEST BY through CoveringRecord — exercises every type accessor
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_latest_all (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (
-                            v_byte, v_short, v_int, v_long, v_float, v_double,
-                            v_bool, v_date, v_uuid, v_ipv4,
-                            v_varchar, v_string
-                        ),
-                        v_byte BYTE,
-                        v_short SHORT,
-                        v_int INT,
-                        v_long LONG,
-                        v_float FLOAT,
-                        v_double DOUBLE,
-                        v_bool BOOLEAN,
-                        v_date DATE,
-                        v_uuid UUID,
-                        v_ipv4 IPv4,
-                        v_varchar VARCHAR,
-                        v_string STRING
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_latest_all VALUES
-                    ('2024-01-01T00:00:00', 'A', 1, 100, 1000, 10_000, 1.5, 2.5, true,  '2024-06-01T00:00:00.000Z', '11111111-1111-1111-1111-111111111111', '1.2.3.4', 'hello', 'world'),
-                    ('2024-01-02T00:00:00', 'A', 2, 200, 2000, 20_000, 2.5, 3.5, false, '2024-07-01T00:00:00.000Z', '22222222-2222-2222-2222-222222222222', '5.6.7.8', 'bye',   'earth'),
-                    ('2024-01-02T12:00:00', 'B', 3, 300, 3000, 30_000, 3.5, 4.5, true,  '2024-08-01T00:00:00.000Z', '33333333-3333-3333-3333-333333333333', '9.0.1.2', 'foo',   'bar')
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    v_byte\tv_short\tv_int\tv_long\tv_float\tv_double\tv_bool\tv_date\tv_uuid\tv_ipv4\tv_varchar\tv_string
-                    2\t200\t2000\t20000\t2.5\t3.5\tfalse\t2024-07-01T00:00:00.000Z\t22222222-2222-2222-2222-222222222222\t5.6.7.8\tbye\tearth
-                    """, """
-                    SELECT v_byte, v_short, v_int, v_long, v_float, v_double,
-                           v_bool, v_date, v_uuid, v_ipv4, v_varchar, v_string
-                    FROM t_latest_all WHERE sym = 'A' LATEST ON ts PARTITION BY sym
-                    """);
-        });
-    }
-
-    @Test
-    public void testLatestByDecimalAndLong256() throws Exception {
-        // LATEST BY for DECIMAL128 and LONG256 through CoveringRecord
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_latest_dec (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (d128, hash),
-                        d128 DECIMAL(38, 10),
-                        hash LONG256
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_latest_dec VALUES
-                    ('2024-01-01T00:00:00', 'A', '123.4567890000'::DECIMAL(38, 10), 0x01),
-                    ('2024-01-02T00:00:00', 'A', '999.9999999999'::DECIMAL(38, 10), 0x0f)
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    d128\thash
-                    999.9999999999\t0x0f
-                    """, """
-                    SELECT d128, hash
-                    FROM t_latest_dec WHERE sym = 'A' LATEST ON ts PARTITION BY sym
-                    """);
-        });
-    }
-
-    @Test
-    public void testLatestByBinaryColumn() throws Exception {
-        // LATEST BY with BINARY covered column through CoveringRecord
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_latest_bin (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (data),
-                        data BINARY
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("INSERT INTO t_latest_bin VALUES ('2024-01-01T00:00:00', 'A', rnd_bin(10, 10, 0))");
-            execute("INSERT INTO t_latest_bin VALUES ('2024-01-02T00:00:00', 'A', rnd_bin(10, 10, 0))");
-            engine.releaseAllWriters();
-
-            // Just verify the query runs without errors and returns a row
-            assertSql("""
-                    count
-                    1
-                    """, """
-                    SELECT count(*) AS count
-                    FROM t_latest_bin WHERE sym = 'A' LATEST ON ts PARTITION BY sym
-                    """);
-        });
-    }
-
-    @Test
-    public void testLatestByArrayColumn() throws Exception {
-        // LATEST BY with ARRAY covered column through CoveringRecord
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_latest_arr (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (vals),
-                        vals DOUBLE[]
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_latest_arr VALUES
-                    ('2024-01-01T00:00:00', 'A', ARRAY[1.0, 2.0]),
-                    ('2024-01-02T00:00:00', 'A', ARRAY[3.0, 4.0])
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    vals
-                    [3.0,4.0]
-                    """, """
-                    SELECT vals
-                    FROM t_latest_arr WHERE sym = 'A' LATEST ON ts PARTITION BY sym
-                    """);
-        });
-    }
-
-    @Test
-    public void testLatestByMultiKeyAllTypes() throws Exception {
-        // LATEST BY multi-key with diverse types through CoveringRecord
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_latest_multi (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v_float, v_short, v_byte),
-                        v_float FLOAT,
-                        v_short SHORT,
-                        v_byte BYTE
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_latest_multi VALUES
-                    ('2024-01-01T00:00:00', 'A', 1.5, 10, 1),
-                    ('2024-01-02T00:00:00', 'A', 2.5, 20, 2),
-                    ('2024-01-01T12:00:00', 'B', 3.5, 30, 3),
-                    ('2024-01-02T12:00:00', 'B', 4.5, 40, 4)
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    sym\tv_float\tv_short\tv_byte
-                    A\t2.5\t20\t2
-                    B\t4.5\t40\t4
-                    """, """
-                    SELECT sym, v_float, v_short, v_byte
-                    FROM t_latest_multi
-                    WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym
-                    """);
-        });
-    }
-
-    @Test
-    public void testLatestByNullValues() throws Exception {
-        // LATEST BY with NULL values in various types
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_latest_nulls (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (v_int, v_double, v_varchar),
-                        v_int INT,
-                        v_double DOUBLE,
-                        v_varchar VARCHAR
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_latest_nulls VALUES
-                    ('2024-01-01T00:00:00', 'A', 1, 1.0, 'ok'),
-                    ('2024-01-02T00:00:00', 'A', NULL, NaN, NULL)
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    v_int\tv_double\tv_varchar
-                    null\tnull\t
-                    """, """
-                    SELECT v_int, v_double, v_varchar
-                    FROM t_latest_nulls WHERE sym = 'A' LATEST ON ts PARTITION BY sym
-                    """);
-        });
-    }
-
-    @Test
-    public void testPageFrameAggregationUuidIpv4() throws Exception {
-        // Page frame aggregation for UUID and IPv4 types
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_pf_uuid (
-                        ts TIMESTAMP,
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (id, addr),
-                        id UUID,
-                        addr IPv4
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            execute("""
-                    INSERT INTO t_pf_uuid VALUES
-                    ('2024-01-01T00:00:00', 'A', '11111111-1111-1111-1111-111111111111', '1.2.3.4'),
-                    ('2024-01-01T01:00:00', 'A', '22222222-2222-2222-2222-222222222222', '5.6.7.8'),
-                    ('2024-01-01T02:00:00', 'B', '33333333-3333-3333-3333-333333333333', '9.0.1.2')
-                    """);
-            engine.releaseAllWriters();
-
-            assertSql("""
-                    count
-                    2
-                    """, "SELECT count(*) AS count FROM t_pf_uuid WHERE sym = 'A'");
         });
     }
 

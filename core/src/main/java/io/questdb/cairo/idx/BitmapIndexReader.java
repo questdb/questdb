@@ -37,6 +37,8 @@ public interface BitmapIndexReader extends Closeable {
 
     int DIR_BACKWARD = 2;
     int DIR_FORWARD = 1;
+
+    int MAX_CACHED_FREE_CURSORS = 128;
     String NAME_BACKWARD = "backward";
     String NAME_FORWARD = "forward";
 
@@ -66,17 +68,18 @@ public interface BitmapIndexReader extends Closeable {
     long getColumnTxn();
 
     /**
-     * Setup value cursor. Values in this cursor will be bounded by provided
-     * minimum and maximum, both of which are inclusive. Order of values is
-     * determined by specific implementations of this method.
+     * Acquire a value cursor bounded by the given min/max (inclusive). The returned
+     * cursor must be {@link RowCursor#close() closed} when iteration is done — prefer
+     * try-with-resources. On close, pool-backed cursors return to a free list for
+     * reuse; stateless cursors are no-op. Order of values is determined by specific
+     * implementations of this method.
      *
-     * @param slotId   cursor slot identifier (non-negative)
      * @param key      index key
      * @param minValue inclusive minimum value
      * @param maxValue inclusive maximum value
      * @return index value cursor, relative to the minValue
      */
-    RowCursor getCursor(int slotId, int key, long minValue, long maxValue);
+    RowCursor getCursor(int key, long minValue, long maxValue);
 
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();

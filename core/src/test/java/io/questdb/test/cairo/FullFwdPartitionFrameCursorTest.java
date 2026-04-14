@@ -1020,13 +1020,14 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(0, i, 0, limit - 1);
+                RowCursor ic = indexReader.getCursor(i, 0, limit - 1);
                 CharSequence expected = symbolTable.valueOf(i - 1);
                 while (ic.hasNext()) {
                     record.setRecordIndex(ic.next());
                     TestUtils.assertEquals(expected, record.getSymA(columnIndex));
                     rowCount++;
                 }
+                Misc.free(ic);
             }
         }
         Assert.assertEquals(expectedRowCount, rowCount);
@@ -1073,12 +1074,12 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
             long target = record.getRecordIndex();
 
             // Get index cursor for each symbol in partition frame
-            RowCursor ic = indexReader.getCursor(0, TableUtils.toIndexKey(symbolTable.keyOf(sym)), frame.getRowLo(), hi - 1);
-
-            while (ic.hasNext()) {
-                if (ic.next() == target) {
-                    offsetFound = true;
-                    break;
+            try (RowCursor ic = indexReader.getCursor(TableUtils.toIndexKey(symbolTable.keyOf(sym)), frame.getRowLo(), hi - 1)) {
+                while (ic.hasNext()) {
+                    if (ic.next() == target) {
+                        offsetFound = true;
+                        break;
+                    }
                 }
             }
             if (!offsetFound) {

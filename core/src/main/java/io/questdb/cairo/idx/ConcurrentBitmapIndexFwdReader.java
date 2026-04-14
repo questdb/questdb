@@ -30,8 +30,7 @@ import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.mp.ConcurrentPool;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -45,7 +44,7 @@ import io.questdb.std.str.Path;
  */
 public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
     private final static Log LOG = LogFactory.getLog(ConcurrentBitmapIndexFwdReader.class);
-    private final ObjList<Cursor> cursorSlots = new ObjList<>();
+    private final ConcurrentPool<Cursor> freeCursors = new ConcurrentPool<>();
 
     public ConcurrentBitmapIndexFwdReader() {
     }
@@ -63,18 +62,10 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public void close() {
-        super.close();
-        Misc.clear(cursorSlots);
-    }
-
-    @Override
-    public RowCursor getCursor(int slotId, int key, long minValue, long maxValue) {
-        assert slotId >= 0 : "slotId must be non-negative";
-        Cursor c = cursorSlots.getQuiet(slotId);
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
+        Cursor c = freeCursors.pop();
         if (c == null) {
             c = new Cursor();
-            cursorSlots.extendAndSet(slotId, c);
         }
         return initCursor(c, key, minValue, maxValue);
     }
@@ -125,6 +116,13 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         private long nullPos;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
+
+        @Override
+        public void close() {
+            if (freeCursors.count() < MAX_CACHED_FREE_CURSORS) {
+                freeCursors.push(this);
+            }
+        }
 
         @Override
         public boolean hasNext() {

@@ -85,15 +85,6 @@ public class PostingIndexBenchmarkSuite {
 
     private static final PrintStream out = System.err;
 
-    private static DefaultCairoConfiguration benchConfig(String root) {
-        return new DefaultCairoConfiguration(root) {
-            @Override
-            public byte getPostingIndexRowIdEncoding() {
-                return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
-            }
-        };
-    }
-
     public static void main(String[] args) throws Exception {
         System.setProperty("questdb.log.level", "E");
         LogFactory.haltInstance();
@@ -110,10 +101,6 @@ public class PostingIndexBenchmarkSuite {
         printSummary(results);
         runPageFaultAnalysis();
     }
-
-    // ==================================================================================
-    // Summary: structured output for feedback/iteration cycles
-    // ==================================================================================
 
     /**
      * Per-commit write profiling: measures incremental add+commit cost (market data pattern).
@@ -146,7 +133,7 @@ public class PostingIndexBenchmarkSuite {
     }
 
     // ==================================================================================
-    // Post-JMH: Page fault projection for covering vs baseline
+    // Summary: structured output for feedback/iteration cycles
     // ==================================================================================
 
     @Benchmark
@@ -155,7 +142,7 @@ public class PostingIndexBenchmarkSuite {
     }
 
     // ==================================================================================
-    // Section 1: Index Comparison — Legacy vs Posting, all 7 scenarios
+    // Post-JMH: Page fault projection for covering vs baseline
     // ==================================================================================
 
     @Benchmark
@@ -164,8 +151,9 @@ public class PostingIndexBenchmarkSuite {
             BitmapIndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key : s.pointKeys) {
-                    RowCursor c = reader.getCursor(0, key, 0, Long.MAX_VALUE);
-                    while (c.hasNext()) c.next();
+                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE);) {
+                        while (c.hasNext()) c.next();
+                    }
                 }
             } finally {
                 Misc.free(reader);
@@ -173,14 +161,19 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    // ==================================================================================
+    // Section 1: Index Comparison — Legacy vs Posting, all 7 scenarios
+    // ==================================================================================
+
     @Benchmark
     public void indexRangeRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
             BitmapIndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key : s.rangeKeys) {
-                    RowCursor c = reader.getCursor(0, key, s.maxRow / 4, s.maxRow * 3 / 4);
-                    while (c.hasNext()) c.next();
+                    try (RowCursor c = reader.getCursor(key, s.maxRow / 4, s.maxRow * 3 / 4);) {
+                        while (c.hasNext()) c.next();
+                    }
                 }
             } finally {
                 Misc.free(reader);
@@ -194,8 +187,9 @@ public class PostingIndexBenchmarkSuite {
             BitmapIndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key = 0; key < s.keyCount; key++) {
-                    RowCursor c = reader.getCursor(0, key, 0, Long.MAX_VALUE);
-                    while (c.hasNext()) c.next();
+                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                        while (c.hasNext()) c.next();
+                    }
                 }
             } finally {
                 Misc.free(reader);
@@ -210,30 +204,31 @@ public class PostingIndexBenchmarkSuite {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                     s.config, path, "test", COLUMN_NAME_TXN_NONE, 0, 0)) {
                 for (int key : s.readKeys) {
-                    RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
-                    if ("covering".equals(s.mode) && cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
-                        while (crc.hasNext()) {
-                            crc.next();
-                            sum += switch (s.columnType) {
-                                case "DOUBLE" -> (long) crc.getCoveredDouble(0);
-                                case "FLOAT" -> (long) crc.getCoveredFloat(0);
-                                case "LONG", "DECIMAL64" -> crc.getCoveredLong(0);
-                                case "INT", "DECIMAL32" -> crc.getCoveredInt(0);
-                                case "SHORT" -> crc.getCoveredShort(0);
-                                default -> 0;
-                            };
-                        }
-                    } else {
-                        while (cursor.hasNext()) {
-                            long rowId = cursor.next();
-                            sum += switch (s.columnType) {
-                                case "DOUBLE" -> (long) Unsafe.getUnsafe().getDouble(s.colAddr + rowId * 8);
-                                case "FLOAT" -> (long) Unsafe.getUnsafe().getFloat(s.colAddr + rowId * 4);
-                                case "LONG", "DECIMAL64" -> Unsafe.getUnsafe().getLong(s.colAddr + rowId * 8);
-                                case "INT", "DECIMAL32" -> Unsafe.getUnsafe().getInt(s.colAddr + rowId * 4);
-                                case "SHORT" -> Unsafe.getUnsafe().getShort(s.colAddr + rowId * 2);
-                                default -> 0;
-                            };
+                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                        if ("covering".equals(s.mode) && cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                            while (crc.hasNext()) {
+                                crc.next();
+                                sum += switch (s.columnType) {
+                                    case "DOUBLE" -> (long) crc.getCoveredDouble(0);
+                                    case "FLOAT" -> (long) crc.getCoveredFloat(0);
+                                    case "LONG", "DECIMAL64" -> crc.getCoveredLong(0);
+                                    case "INT", "DECIMAL32" -> crc.getCoveredInt(0);
+                                    case "SHORT" -> crc.getCoveredShort(0);
+                                    default -> 0;
+                                };
+                            }
+                        } else {
+                            while (cursor.hasNext()) {
+                                long rowId = cursor.next();
+                                sum += switch (s.columnType) {
+                                    case "DOUBLE" -> (long) Unsafe.getUnsafe().getDouble(s.colAddr + rowId * 8);
+                                    case "FLOAT" -> (long) Unsafe.getUnsafe().getFloat(s.colAddr + rowId * 4);
+                                    case "LONG", "DECIMAL64" -> Unsafe.getUnsafe().getLong(s.colAddr + rowId * 8);
+                                    case "INT", "DECIMAL32" -> Unsafe.getUnsafe().getInt(s.colAddr + rowId * 4);
+                                    case "SHORT" -> Unsafe.getUnsafe().getShort(s.colAddr + rowId * 2);
+                                    default -> 0;
+                                };
+                            }
                         }
                     }
                 }
@@ -241,10 +236,6 @@ public class PostingIndexBenchmarkSuite {
         }
         return sum;
     }
-
-    // ==================================================================================
-    // Section 2: Decode Throughput
-    // ==================================================================================
 
     @Benchmark
     public long sqlQuery(SqlState s) throws Exception {
@@ -269,12 +260,25 @@ public class PostingIndexBenchmarkSuite {
         return sum;
     }
 
+    // ==================================================================================
+    // Section 2: Decode Throughput
+    // ==================================================================================
+
     @Benchmark
     public void writeInsert(WriteState s) throws Exception {
         s.engine.execute(s.ddl, s.ctx);
         s.engine.execute(s.insertSql, s.ctx);
         s.engine.releaseAllWriters();
         s.engine.execute("DROP TABLE wbench", s.ctx);
+    }
+
+    private static DefaultCairoConfiguration benchConfig(String root) {
+        return new DefaultCairoConfiguration(root) {
+            @Override
+            public byte getPostingIndexRowIdEncoding() {
+                return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+            }
+        };
     }
 
     private static int[] buildRoundRobin(int totalRows, int keyCount) {
@@ -360,15 +364,16 @@ public class PostingIndexBenchmarkSuite {
         try (Path path = new Path().of(dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                 for (int key : keys) {
-                    RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
-                    while (cursor.hasNext()) {
-                        long rowId = cursor.next();
-                        sum += switch (ct) {
-                            case DOUBLE -> (long) Unsafe.getUnsafe().getDouble(colAddr + rowId * 8);
-                            case FLOAT -> (long) Unsafe.getUnsafe().getFloat(colAddr + rowId * 4);
-                            case LONG -> Unsafe.getUnsafe().getLong(colAddr + rowId * 8);
-                            case INT -> Unsafe.getUnsafe().getInt(colAddr + rowId * 4);
-                        };
+                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE);) {
+                        while (cursor.hasNext()) {
+                            long rowId = cursor.next();
+                            sum += switch (ct) {
+                                case DOUBLE -> (long) Unsafe.getUnsafe().getDouble(colAddr + rowId * 8);
+                                case FLOAT -> (long) Unsafe.getUnsafe().getFloat(colAddr + rowId * 4);
+                                case LONG -> Unsafe.getUnsafe().getLong(colAddr + rowId * 8);
+                                case INT -> Unsafe.getUnsafe().getInt(colAddr + rowId * 4);
+                            };
+                        }
                     }
                 }
             }
@@ -381,19 +386,20 @@ public class PostingIndexBenchmarkSuite {
         try (Path path = new Path().of(dir)) {
             try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                 for (int key : keys) {
-                    RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
-                    if (cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
-                        while (crc.hasNext()) {
-                            crc.next();
-                            sum += switch (ct) {
-                                case DOUBLE -> (long) crc.getCoveredDouble(0);
-                                case FLOAT -> (long) crc.getCoveredFloat(0);
-                                case LONG -> crc.getCoveredLong(0);
-                                case INT -> crc.getCoveredInt(0);
-                            };
+                    try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE);) {
+                        if (cursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
+                            while (crc.hasNext()) {
+                                crc.next();
+                                sum += switch (ct) {
+                                    case DOUBLE -> (long) crc.getCoveredDouble(0);
+                                    case FLOAT -> (long) crc.getCoveredFloat(0);
+                                    case LONG -> crc.getCoveredLong(0);
+                                    case INT -> crc.getCoveredInt(0);
+                                };
+                            }
+                        } else {
+                            while (cursor.hasNext()) sum += cursor.next();
                         }
-                    } else {
-                        while (cursor.hasNext()) sum += cursor.next();
                     }
                 }
             }
@@ -618,11 +624,12 @@ public class PostingIndexBenchmarkSuite {
                 try (Path path = new Path().of(baseDir)) {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(config, path, "test", COL_TXN, 0, 0)) {
                         for (int key : queryKeys) {
-                            RowCursor cursor = reader.getCursor(0, key, 0, Long.MAX_VALUE);
-                            while (cursor.hasNext()) {
-                                long rowId = cursor.next();
-                                long pageNum = (rowId * ct.size) / PAGE_SIZE;
-                                baselinePages.add(pageNum);
+                            try (RowCursor cursor = reader.getCursor(key, 0, Long.MAX_VALUE);) {
+                                while (cursor.hasNext()) {
+                                    long rowId = cursor.next();
+                                    long pageNum = (rowId * ct.size) / PAGE_SIZE;
+                                    baselinePages.add(pageNum);
+                                }
                             }
                         }
                     }
@@ -1108,13 +1115,13 @@ public class PostingIndexBenchmarkSuite {
             tmpDir = Files.createTempDirectory("suite-sql");
             CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
                 @Override
-                public int getRndFunctionMemoryMaxPages() {
-                    return 4096;
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
                 }
 
                 @Override
-                public byte getPostingIndexRowIdEncoding() {
-                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
                 }
             };
             engine = new CairoEngine(config);
@@ -1254,13 +1261,13 @@ public class PostingIndexBenchmarkSuite {
             tmpDir = Files.createTempDirectory("suite-write");
             CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
                 @Override
-                public int getRndFunctionMemoryMaxPages() {
-                    return 4096;
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
                 }
 
                 @Override
-                public byte getPostingIndexRowIdEncoding() {
-                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
                 }
             };
             engine = new CairoEngine(config);

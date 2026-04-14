@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -36,20 +36,17 @@ import io.questdb.griffin.PlanSink;
 public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFactory {
     private final int columnIndex;
     private final int indexDirection;
-    private final int slotId;
     private final Function symbolFunction;
     private int symbolKey;
 
     public SymbolIndexRowCursorFactory(
             int columnIndex,
             int symbolKey,
-            int slotId,
             int indexDirection,
             Function symbolFunction
     ) {
         this.columnIndex = columnIndex;
         this.symbolKey = TableUtils.toIndexKey(symbolKey);
-        this.slotId = slotId;
         this.indexDirection = indexDirection;
         this.symbolFunction = symbolFunction;
     }
@@ -58,7 +55,7 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         return pageFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
-                .getCursor(slotId, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
     }
 
     @Override

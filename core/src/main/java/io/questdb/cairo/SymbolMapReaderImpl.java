@@ -137,11 +137,12 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public int keyOf(CharSequence value) {
         if (value != null) {
             int hash = Hash.boundedHash(value, maxHash);
-            final RowCursor cursor = indexReader.getCursor(0, hash, 0, maxOffset - Long.BYTES);
-            while (cursor.hasNext()) {
-                final long offsetOffset = cursor.next();
-                if (Chars.equals(value, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
-                    return SymbolMapWriter.offsetToKey(offsetOffset);
+            try (RowCursor cursor = indexReader.getCursor(hash, 0, maxOffset - Long.BYTES)) {
+                while (cursor.hasNext()) {
+                    final long offsetOffset = cursor.next();
+                    if (Chars.equals(value, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
+                        return SymbolMapWriter.offsetToKey(offsetOffset);
+                    }
                 }
             }
             return SymbolTable.VALUE_NOT_FOUND;

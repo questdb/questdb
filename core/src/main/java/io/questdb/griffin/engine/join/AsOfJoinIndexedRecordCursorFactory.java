@@ -168,20 +168,20 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 // Use Record.getUpdateRowId() to get the absolute row ID.
                 slaveTimeFrameCursor.recordAt(slaveRecA, Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo()));
                 final long rowLo = Rows.toLocalRowID(slaveRecA.getUpdateRowId());
-                RowCursor rowCursor = indexReader.getCursor(0, symbolKey, rowLo, rowMax + rowLo);
-
-                // Check the first entry only. They are sorted descending by timestamp,
-                // so there aren't any entries more recent than the first one.
-                if (rowCursor.hasNext()) {
-                    long rowId = rowCursor.next();
-                    slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
-                    long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
-                    if (slaveTimestamp <= masterTimestamp) {
-                        // Enforce tolerance limit if specified
-                        boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||
-                                slaveTimestamp >= masterTimestamp - toleranceInterval;
-                        record.hasSlave(hasSlave);
-                        return;
+                try (RowCursor rowCursor = indexReader.getCursor(symbolKey, rowLo, rowMax + rowLo)) {
+                    // Check the first entry only. They are sorted descending by timestamp,
+                    // so there aren't any entries more recent than the first one.
+                    if (rowCursor.hasNext()) {
+                        long rowId = rowCursor.next();
+                        slaveTimeFrameCursor.recordAt(slaveRecB, Rows.toRowID(frameIndex, rowId));
+                        long slaveTimestamp = scaleTimestamp(slaveRecB.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+                        if (slaveTimestamp <= masterTimestamp) {
+                            // Enforce tolerance limit if specified
+                            boolean hasSlave = toleranceInterval == Numbers.LONG_NULL ||
+                                    slaveTimestamp >= masterTimestamp - toleranceInterval;
+                            record.hasSlave(hasSlave);
+                            return;
+                        }
                     }
                 }
 

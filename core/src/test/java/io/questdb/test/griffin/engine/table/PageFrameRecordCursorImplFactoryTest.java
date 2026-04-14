@@ -119,10 +119,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        0,
                         BitmapIndexReader.DIR_FORWARD,
                         null
-                );
+                        );
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
                     // entity index
                     final IntList columnIndexes = new IntList();
@@ -1019,10 +1018,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        0,
                         BitmapIndexReader.DIR_FORWARD,
                         null
-                );
+                        );
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
                     // entity index
                     final IntList columnIndexes = new IntList();

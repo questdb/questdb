@@ -38,8 +38,8 @@ import io.questdb.std.str.Path;
  * Cursors returned by this class are not thread-safe.
  */
 public class BitmapIndexBwdReader extends AbstractIndexReader {
-    private final ObjList<Cursor> cursorSlots = new ObjList<>();
-    private final ObjList<NullCursor> nullCursorSlots = new ObjList<>();
+    private final ObjList<Cursor> freeCursors = new ObjList<>();
+    private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
 
     public BitmapIndexBwdReader(
             CairoConfiguration configuration,
@@ -52,17 +52,15 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
     }
 
-
     @Override
     public void close() {
         super.close();
-        Misc.clear(cursorSlots);
-        Misc.clear(nullCursorSlots);
+        Misc.clear(freeCursors);
+        Misc.clear(freeNullCursors);
     }
 
     @Override
-    public RowCursor getCursor(int slotId, int key, long minValue, long maxValue) {
-        assert slotId >= 0 : "slotId must be non-negative";
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
         assert minValue <= maxValue;
 
         if (key >= keyCount) {
@@ -70,10 +68,11 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         }
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            NullCursor nc = nullCursorSlots.getQuiet(slotId);
-            if (nc == null) {
+            NullCursor nc;
+            if (freeNullCursors.size() > 0) {
+                nc = freeNullCursors.popLast();
+            } else {
                 nc = new NullCursor();
-                nullCursorSlots.extendAndSet(slotId, nc);
             }
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
@@ -82,10 +81,11 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         }
 
         if (key < keyCount) {
-            Cursor c = cursorSlots.getQuiet(slotId);
-            if (c == null) {
+            Cursor c;
+            if (freeCursors.size() > 0) {
+                c = freeCursors.popLast();
+            } else {
                 c = new Cursor();
-                cursorSlots.extendAndSet(slotId, c);
             }
             c.of(key, minValue, maxValue, keyCount);
             return c;
@@ -100,6 +100,13 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         protected long valueCount;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
+
+        @Override
+        public void close() {
+            if (freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                freeCursors.add(this);
+            }
+        }
 
         @Override
         public boolean hasNext() {
@@ -199,6 +206,13 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
     private class NullCursor extends Cursor {
         private long nullCount;
+
+        @Override
+        public void close() {
+            if (freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                freeNullCursors.add(this);
+            }
+        }
 
         @Override
         public boolean hasNext() {

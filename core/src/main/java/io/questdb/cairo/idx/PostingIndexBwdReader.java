@@ -42,7 +42,8 @@ import io.questdb.std.str.Path;
  * Uses PostingGenLookup for tiered gen-to-key mapping with cached metadata.
  */
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
-    private final ObjList<Cursor> cursorSlots = new ObjList<>();
+    private static final int MIN_BUFFER_CAPACITY = 4;
+    private final ObjList<Cursor> freeCursors = new ObjList<>();
 
     public PostingIndexBwdReader(
             CairoConfiguration configuration,
@@ -58,21 +59,24 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     @Override
     public void close() {
         super.close();
-        Misc.freeObjListAndClear(cursorSlots);
+        for (int i = 0, n = freeCursors.size(); i < n; i++) {
+            freeCursors.getQuick(i).releaseResources();
+        }
+        Misc.clear(freeCursors);
     }
 
     @Override
-    public RowCursor getCursor(int slotId, int key, long minValue, long maxValue) {
-        assert slotId >= 0 : "slotId must be non-negative";
+    public RowCursor getCursor(int key, long minValue, long maxValue) {
         if (key >= keyCount) {
             updateKeyCount();
         }
 
         if (key < keyCount) {
-            Cursor c = cursorSlots.getQuiet(slotId);
-            if (c == null) {
+            Cursor c;
+            if (freeCursors.size() > 0) {
+                c = freeCursors.popLast();
+            } else {
                 c = new Cursor();
-                cursorSlots.extendAndSet(slotId, c);
             }
             c.of(key, minValue, maxValue);
             return c;
@@ -82,7 +86,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     }
 
     private class Cursor extends AbstractCoveringCursor {
-        private long blockBufferAddr = Unsafe.malloc((long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        private long blockBufferAddr = 0;
+        private int blockBufferCapacity = 0;
         private int blockBufferPos;
         private int constantDeltaRemaining;
         private long constantDeltaStep;
@@ -121,16 +126,25 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            if (blockBufferAddr != 0) {
-                Unsafe.free(blockBufferAddr, (long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                blockBufferAddr = 0;
+            // On pool return, keep only blockBuffer (~2 KB upper bound, size
+            // fixed by the block encoding format) and release every buffer
+            // whose size scales with data — covering caches (alp/float/
+            // decodeWorkspace/fsstDecompBuf) and the EF rank directory.
+            // Retaining data-scaled buffers would pin memory proportional to
+            // historical peak, multiplied across pool slots × partitions ×
+            // concurrent table readers.
+            if (freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                closeCoveringResources();
+                if (efRankDirAddr != 0) {
+                    Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                    efRankDirAddr = 0;
+                    efRankDirCapacity = 0;
+                }
+                resetCoveringState();
+                freeCursors.add(this);
+                return;
             }
-            if (efRankDirAddr != 0) {
-                Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                efRankDirAddr = 0;
-                efRankDirCapacity = 0;
-            }
-            closeCoveringResources();
+            releaseResources();
         }
 
         @Override
@@ -343,6 +357,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             } else {
                 // Variable-delta: decode to buffer
+                ensureBuffer(count);
                 Unsafe.getUnsafe().putLong(blockBufferAddr, firstValue);
                 if (numDeltas > 0) {
                     long minD = Unsafe.getUnsafe().getLong(srcMinDeltasAddr + (long) b * Long.BYTES);
@@ -362,6 +377,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         private void decodeNextEFChunkReverse() {
+            ensureBuffer(PostingIndexUtils.PACKED_BATCH_SIZE);
             while (efHighWordIdx >= 0) {
                 long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
                 if (word == 0) {
@@ -389,11 +405,22 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         private void decodeNextFlatBatchReverse() {
             int batch = Math.min(flatRemaining, PostingIndexUtils.PACKED_BATCH_SIZE);
+            ensureBuffer(batch);
             int batchStart = flatStartIdx - batch;
             BitpackUtils.unpackValuesFrom(flatDataBase, batchStart, batch, flatBitWidth, flatBaseValue, blockBufferAddr);
             flatStartIdx = batchStart;
             flatRemaining -= batch;
             blockBufferPos = batch - 1;
+        }
+
+        private void ensureBuffer(int count) {
+            if (count <= blockBufferCapacity) return;
+            int newCap = Math.max(count, MIN_BUFFER_CAPACITY);
+            if (blockBufferAddr != 0) {
+                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            }
+            blockBufferAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            blockBufferCapacity = newCap;
         }
 
         private void loadDenseGenerationCached(int gen) {
@@ -502,6 +529,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
                 int batch = Math.min(effectiveCount, PostingIndexUtils.PACKED_BATCH_SIZE);
                 int batchStart = effectiveStart + effectiveCount - batch;
+                ensureBuffer(batch);
                 BitpackUtils.unpackValuesFrom(dataAddr, batchStart, batch, bitWidth, baseValue, blockBufferAddr);
                 this.blockBufferPos = batch - 1;
                 this.flatStartIdx = batchStart;
@@ -780,13 +808,22 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             this.blockBufferPos = -1;
         }
 
+        private void releaseResources() {
+            if (blockBufferAddr != 0) {
+                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                blockBufferAddr = 0;
+                blockBufferCapacity = 0;
+            }
+            if (efRankDirAddr != 0) {
+                Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                efRankDirAddr = 0;
+                efRankDirCapacity = 0;
+            }
+            closeCoveringResources();
+        }
+
         void of(int key, long minValue, long maxValue) {
             this.cursorReloadGeneration = reloadGeneration;
-            // Re-allocate buffer if freed by close()
-            if (blockBufferAddr == 0) {
-                blockBufferAddr = Unsafe.malloc((long) PostingIndexUtils.PACKED_BATCH_SIZE * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-
             clearBlockState();
             resetCoveringState();
 

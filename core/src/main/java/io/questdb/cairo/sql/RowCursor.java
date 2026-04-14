@@ -24,10 +24,30 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.QuietCloseable;
+
 /**
  * Used internally for index-based (but not only) row access.
+ * <p>
+ * <b>Lifecycle is the caller's responsibility.</b> A cursor acquired from
+ * {@link io.questdb.cairo.idx.BitmapIndexReader#getCursor} must be closed
+ * exactly once by whoever acquired it — the reader does not track outstanding
+ * cursors and will not free them on its own.
+ * <p>
+ * Most implementations (BITMAP-based, wrapper, singleton) have a no-op
+ * {@code close()}; POSTING cursors return to their reader's free list.
  */
-public interface RowCursor {
+public interface RowCursor extends QuietCloseable {
+
+    /**
+     * Releases cursor resources. For pool-backed cursors (e.g. POSTING) this returns
+     * the cursor to the owning reader's free list. For stateless / singleton cursors
+     * this is a no-op. Implementations must be idempotent: calling close more than
+     * once must be safe and a no-op.
+     */
+    @Override
+    default void close() {
+    }
 
     /**
      * @return true if cursor has more rows, otherwise false.

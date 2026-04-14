@@ -41,7 +41,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -609,7 +608,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
      * Contains all sidecar reading, FSST decompression, ALP decoding, and covering
      * column access methods. Subclasses provide iteration direction (hasNext/next).
      */
-    protected abstract class AbstractCoveringCursor implements CoveringRowCursor, QuietCloseable {
+    protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
         protected final BorrowedArray arrayView = new BorrowedArray();
         protected final DirectBinarySequence binView = new DirectBinarySequence();
         protected final DirectString stringViewA = new DirectString();

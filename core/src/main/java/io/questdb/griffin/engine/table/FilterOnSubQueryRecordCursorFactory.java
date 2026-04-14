@@ -256,7 +256,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
                                 rowCursorFactory = new SymbolIndexRowCursorFactory(
                                         columnIndex,
                                         symbolKey,
-                                        cursorFactories.size(),
                                         BitmapIndexReader.DIR_FORWARD,
                                         null
                                 );
@@ -265,7 +264,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
                                         columnIndex,
                                         symbolKey,
                                         filter,
-                                        cursorFactories.size(),
                                         BitmapIndexReader.DIR_FORWARD,
                                         null
                                 );

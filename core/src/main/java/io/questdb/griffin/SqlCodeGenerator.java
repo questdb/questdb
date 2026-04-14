@@ -5763,7 +5763,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         symbol,
                                         symbolValueFunc,
                                         columnIndexes,
-                                        columnSizeShifts,
                                         coveringMapping,
                                         true,
                                         filter
@@ -5836,7 +5835,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     SymbolTable.VALUE_NOT_FOUND,
                                     null,
                                     columnIndexes,
-                                    columnSizeShifts,
                                     coveringMapping,
                                     intrinsicModel.keyValueFuncs,
                                     reader,
@@ -9334,7 +9332,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     rcf = new DeferredSymbolIndexRowCursorFactory(
                                             keyColumnIndex,
                                             symbolFunc,
-                                            0,
                                             indexDirection
                                     );
                                 } else {
@@ -9342,7 +9339,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             keyColumnIndex,
                                             symbolFunc,
                                             filter,
-                                            0,
                                             indexDirection
                                     );
                                 }
@@ -9351,7 +9347,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     rcf = new SymbolIndexRowCursorFactory(
                                             keyColumnIndex,
                                             symbolKey,
-                                            0,
                                             indexDirection,
                                             null
                                     );
@@ -9360,7 +9355,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             keyColumnIndex,
                                             symbolKey,
                                             filter,
-                                            0,
                                             indexDirection,
                                             null
                                     );
@@ -9381,7 +9375,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             symbolKey,
                                             symbolFunc,
                                             columnIndexes,
-                                            columnSizeShifts,
                                             coveringMapping
                                     );
                                     if (filter != null) {
@@ -9436,7 +9429,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         SymbolTable.VALUE_NOT_FOUND,
                                         null,
                                         columnIndexes,
-                                        columnSizeShifts,
                                         coveringMapping,
                                         intrinsicModel.keyValueFuncs,
                                         reader

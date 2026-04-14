@@ -181,46 +181,6 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             return false;
         }
 
-        private void scanPartitions() {
-            // totalExpected = symbolCount non-null keys + 1 potential NULL key
-            int totalExpected = symbolCount + 1;
-            while (foundCount < totalExpected) {
-                PartitionFrame frame = frameCursor.next();
-                if (frame == null) {
-                    return;
-                }
-                BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
-                        frame.getPartitionIndex(),
-                        readerColumnIndex,
-                        BitmapIndexReader.DIR_FORWARD
-                );
-                // Bulk stride-scan: walks all dense/sparse gens in one sequential pass
-                // and marks present keys in the BitSet. Returns newly found count,
-                // or -1 if not supported (bitmap index fallback).
-                int newlyFound = indexReader.collectDistinctKeys(foundKeys);
-                if (newlyFound >= 0) {
-                    foundCount += newlyFound;
-                } else {
-                    // Bitmap index fallback: per-key cursor check
-                    for (int key = 0; key < symbolCount; key++) {
-                        int indexKey = TableUtils.toIndexKey(key);
-                        if (!foundKeys.get(indexKey)) {
-                            RowCursor c = indexReader.getCursor(0, indexKey, frame.getRowLo(), frame.getRowHi() - 1);
-                            if (c.hasNext() && !foundKeys.getAndSet(indexKey)) {
-                                foundCount++;
-                            }
-                        }
-                    }
-                    if (!foundKeys.get(0)) {
-                        RowCursor c = indexReader.getCursor(0, 0, frame.getRowLo(), frame.getRowHi() - 1);
-                        if (c.hasNext() && !foundKeys.getAndSet(0)) {
-                            foundCount++;
-                        }
-                    }
-                }
-            }
-        }
-
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             return frameCursor.newSymbolTable(readerColumnIndex);
@@ -250,6 +210,48 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
             foundKeys.clear();
             if (frameCursor != null) {
                 frameCursor.toTop();
+            }
+        }
+
+        private void scanPartitions() {
+            // totalExpected = symbolCount non-null keys + 1 potential NULL key
+            int totalExpected = symbolCount + 1;
+            while (foundCount < totalExpected) {
+                PartitionFrame frame = frameCursor.next();
+                if (frame == null) {
+                    return;
+                }
+                BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
+                        frame.getPartitionIndex(),
+                        readerColumnIndex,
+                        BitmapIndexReader.DIR_FORWARD
+                );
+                // Bulk stride-scan: walks all dense/sparse gens in one sequential pass
+                // and marks present keys in the BitSet. Returns newly found count,
+                // or -1 if not supported (bitmap index fallback).
+                int newlyFound = indexReader.collectDistinctKeys(foundKeys);
+                if (newlyFound >= 0) {
+                    foundCount += newlyFound;
+                } else {
+                    // Bitmap index fallback: per-key cursor check
+                    for (int key = 0; key < symbolCount; key++) {
+                        int indexKey = TableUtils.toIndexKey(key);
+                        if (!foundKeys.get(indexKey)) {
+                            try (RowCursor c = indexReader.getCursor(indexKey, frame.getRowLo(), frame.getRowHi() - 1)) {
+                                if (c.hasNext() && !foundKeys.getAndSet(indexKey)) {
+                                    foundCount++;
+                                }
+                            }
+                        }
+                    }
+                    if (!foundKeys.get(0)) {
+                        try (RowCursor c = indexReader.getCursor(0, frame.getRowLo(), frame.getRowHi() - 1)) {
+                            if (c.hasNext() && !foundKeys.getAndSet(0)) {
+                                foundCount++;
+                            }
+                        }
+                    }
+                }
             }
         }
 
