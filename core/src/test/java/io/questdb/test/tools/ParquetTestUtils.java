@@ -41,46 +41,14 @@ public final class ParquetTestUtils {
     }
 
     public static void assertColumnsDoNotUseDictionaryEncoding(String parquetFilePath, FilesFacade ff, int... columnIndexes) {
-        long fd = -1;
-        long addr = 0;
-        long fileSize = 0;
-        try (Path path = new Path(); PartitionDecoder decoder = new PartitionDecoder()) {
-            path.of(parquetFilePath).$();
-            fd = TableUtils.openRO(ff, path.$(), LOG);
-            fileSize = ff.length(fd);
-            addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-
-            final int rowGroupCount = decoder.metadata().getRowGroupCount();
-            Assert.assertTrue("expected parquet file to contain at least one row group", rowGroupCount > 0);
-
-            for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                for (int columnIndex : columnIndexes) {
-                    Assert.assertTrue(
-                            "row group " + rowGroupIndex + " is missing column " + columnIndex,
-                            columnIndex >= 0 && columnIndex < decoder.metadata().getColumnCount()
-                    );
-                    Assert.assertFalse(
-                            "unexpected RLE_DICTIONARY encoding in row group " + rowGroupIndex + ", column " + columnIndex,
-                            decoder.rowGroupColumnHasEncoding(
-                                    rowGroupIndex,
-                                    columnIndex,
-                                    ParquetEncoding.ENCODING_RLE_DICTIONARY
-                            )
-                    );
-                }
-            }
-        } finally {
-            if (addr != 0) {
-                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            }
-            if (fd != -1) {
-                ff.close(fd);
-            }
-        }
+        assertDictionaryEncoding(parquetFilePath, ff, false, columnIndexes);
     }
 
     public static void assertColumnsUseDictionaryEncoding(String parquetFilePath, FilesFacade ff, int... columnIndexes) {
+        assertDictionaryEncoding(parquetFilePath, ff, true, columnIndexes);
+    }
+
+    private static void assertDictionaryEncoding(String parquetFilePath, FilesFacade ff, boolean expectDictionary, int... columnIndexes) {
         long fd = -1;
         long addr = 0;
         long fileSize = 0;
@@ -100,8 +68,11 @@ public final class ParquetTestUtils {
                             "row group " + rowGroupIndex + " is missing column " + columnIndex,
                             columnIndex >= 0 && columnIndex < decoder.metadata().getColumnCount()
                     );
-                    Assert.assertTrue(
-                            "expected RLE_DICTIONARY encoding in row group " + rowGroupIndex + ", column " + columnIndex,
+                    Assert.assertEquals(
+                            (expectDictionary ? "expected" : "unexpected")
+                                    + " RLE_DICTIONARY encoding in row group " + rowGroupIndex
+                                    + ", column " + columnIndex,
+                            expectDictionary,
                             decoder.rowGroupColumnHasEncoding(
                                     rowGroupIndex,
                                     columnIndex,

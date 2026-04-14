@@ -713,7 +713,7 @@ impl Write for BufferWriter {
         unsafe {
             let buffer_ref = &mut *self.buffer;
             if buffer_ref.len() <= self.init_offset {
-                buffer_ref.set_len(self.init_offset);
+                buffer_ref.resize(self.init_offset, 0);
                 self.offset = self.init_offset;
             }
 

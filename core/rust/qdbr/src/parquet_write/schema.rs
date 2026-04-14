@@ -592,7 +592,6 @@ const COMPRESSION_MASK: u32 = 0xFF;
 const LEVEL_SHIFT: u32 = 16;
 const LEVEL_MASK: u32 = 0xFF;
 const EXPLICIT_FLAG: u32 = 1 << 24;
-const BLOOM_FILTER_FLAG: u32 = 1 << 25;
 
 impl ParquetEncodingConfig {
     /// Create a config from the raw packed i32 received from JNI.
@@ -622,12 +621,6 @@ impl ParquetEncodingConfig {
     /// Whether the config was explicitly set by the user.
     pub fn is_explicit(self) -> bool {
         (self.0 as u32 & EXPLICIT_FLAG) != 0
-    }
-
-    /// Whether a bloom filter should be written for this column.
-    #[allow(dead_code)]
-    pub fn has_bloom_filter(self) -> bool {
-        (self.0 as u32 & BLOOM_FILTER_FLAG) != 0
     }
 
     /// Extract per-column encoding override.
