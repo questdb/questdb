@@ -1920,9 +1920,12 @@ public final class TableUtils {
             LOG.error().$("could not convert partition to parquet [table=").$(tableName)
                     .$(", error=").$safe(e.getMessage()).I$();
 
-            // rollback
-            if (!ff.rmdir(other.trimTo(other.size() - PARQUET_PARTITION_NAME.length()))) {
-                LOG.error().$("could not remove parquet dir [path=").$(other).I$();
+            // Rollback: remove only the partial data.parquet file itself, never its parent directory.
+            // Callers that allocate a fresh parquet-only directory handle that directory's cleanup
+            // in their own outer catch.
+            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+            if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
+                LOG.error().$("could not remove parquet file on rollback [path=").$(other).I$();
             }
             throw e;
         } finally {
