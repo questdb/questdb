@@ -107,7 +107,7 @@ public class TableUpdateDetails implements Closeable {
             @Nullable SecurityContext ownSecurityContext,
             TableWriterAPI writer,
             int writerThreadId,
-            NetworkIOJob[] netIoJobs,
+            ObjList<NetworkIOJob> netIoJobs,
             DefaultColumnTypes defaultColumnTypes,
             Utf8String tableNameUtf8
     ) {
@@ -127,11 +127,11 @@ public class TableUpdateDetails implements Closeable {
         this.commitInterval = configuration.getCommitInterval();
         this.nextCommitTime = millisecondClock.getTicks() + commitInterval;
 
-        final int n = netIoJobs.length;
+        final int n = netIoJobs.size();
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
             //noinspection resource
-            this.localDetailsArray[i] = new ThreadLocalDetails(netIoJobs[i].getSymbolCachePool());
+            this.localDetailsArray[i] = new ThreadLocalDetails(netIoJobs.getQuick(i).getSymbolCachePool());
         }
         this.tableNameUtf8 = tableNameUtf8;
         this.commitOnClose = true;
@@ -165,6 +165,7 @@ public class TableUpdateDetails implements Closeable {
         this.metadataService = writer.supportsMultipleWriters() ? null : (MetadataService) writer;
         this.commitInterval = commitInterval;
         this.nextCommitTime = millisecondClock.getTicks() + this.commitInterval;
+        //noinspection resource
         this.localDetailsArray = new ThreadLocalDetails[]{new ThreadLocalDetails(symbolCachePool)};
         this.tableNameUtf8 = tableNameUtf8;
     }
@@ -260,6 +261,10 @@ public class TableUpdateDetails implements Closeable {
         return networkIOOwnerCount;
     }
 
+    public long getNextCommitTime() {
+        return nextCommitTime;
+    }
+
     public String getTableNameUtf16() {
         return tableToken.getTableName();
     }
@@ -304,6 +309,10 @@ public class TableUpdateDetails implements Closeable {
 
     public boolean isWriterInError() {
         return writerInError;
+    }
+
+    public void markMeasurement() {
+        lastMeasurementMillis = millisecondClock.getTicks();
     }
 
     public void removeReference(int workerId) {
@@ -363,7 +372,7 @@ public class TableUpdateDetails implements Closeable {
         }
     }
 
-    long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
+    public long commitIfIntervalElapsed(long wallClockMillis) throws CommitFailedException {
         if (wallClockMillis < nextCommitTime) {
             return nextCommitTime;
         }
@@ -381,7 +390,7 @@ public class TableUpdateDetails implements Closeable {
         return nextCommitTime;
     }
 
-    void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
+    public void commitIfMaxUncommittedRowsCountReached() throws CommitFailedException {
         final long rowsSinceCommit = writerAPI.getUncommittedRowCount();
         if (rowsSinceCommit < getMetaMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
