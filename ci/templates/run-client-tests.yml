@@ -1,0 +1,54 @@
+parameters:
+  - name: configName
+    type: string
+  - name: authEnabled
+    type: string
+
+steps:
+  - bash: |
+      set -e
+      mkdir -p questdb-data
+      cp -r client-main/ci/confs/${{ parameters.configName }} questdb-data/conf
+      mkdir -p logs
+      LOG_FILE="logs/questdb-${{ parameters.configName }}.log"
+
+      java -p core/target/questdb-*-SNAPSHOT.jar \
+        -m io.questdb/io.questdb.ServerMain \
+        -d questdb-data > "$LOG_FILE" 2>&1 &
+      echo $! > questdb.pid
+
+      echo "Waiting for QuestDB to start..."
+      for i in {1..30}; do
+        if grep -q "server-main enjoy" "$LOG_FILE"; then
+          echo "Server started."
+          break
+        fi
+        echo "Waiting..."
+        sleep 2
+      done
+
+      if ! grep -q "server-main enjoy" "$LOG_FILE"; then
+        echo "QuestDB failed to start:"
+        cat "$LOG_FILE"
+        exit 1
+      fi
+    displayName: "Start QuestDB (${{ parameters.configName }} config)"
+
+  - task: Maven@3
+    displayName: "Run client tests (${{ parameters.configName }} config)"
+    inputs:
+      mavenPomFile: "client-main/core/pom.xml"
+      jdkVersionOption: "1.17"
+      goals: "test"
+      options: "--batch-mode -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+    env:
+      QUESTDB_RUNNING: "true"
+      QUESTDB_ILP_TCP_AUTH_ENABLE: ${{ parameters.authEnabled }}
+
+  - bash: |
+      echo "Stopping QuestDB server..."
+      kill -TERM "$(cat questdb.pid)" || true
+      rm -f questdb.pid
+      rm -rf questdb-data
+    displayName: "Stop QuestDB (${{ parameters.configName }} config)"
+    condition: always()

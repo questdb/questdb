@@ -88,7 +88,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
     // state
     // cache entry index is always a negative value
-    private int cacheEntryIndex = 0;
+    private int cacheEntryIndex = Integer.MIN_VALUE;
     private int columnIndex;
     private long columnName;
     private int columnType;
@@ -506,7 +506,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void switchTable(CachedCharSequence tableName, int entryIndex) {
-        if (this.cacheEntryIndex != 0) {
+        if (this.cacheEntryIndex != Integer.MIN_VALUE) {
             // add previous writer to commit list
             CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {
