@@ -40,8 +40,8 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     private int valueIndex;
 
     @Override
-    public void computeBatch(MapValue mapValue, long p, int count, long startRowId) {
-        mapValue.addLong(valueIndex, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        mapValue.addLong(valueIndex, rowCount);
     }
 
     @Override

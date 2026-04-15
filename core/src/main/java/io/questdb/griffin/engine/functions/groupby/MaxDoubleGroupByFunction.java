@@ -45,9 +45,9 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final double batchMax = Vect.maxDouble(ptr, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final double batchMax = Vect.maxDouble(dataAddr, rowCount);
             final double existing = mapValue.getDouble(valueIndex);
             if (batchMax > existing || Numbers.isNull(existing)) {
                 mapValue.putDouble(valueIndex, batchMax);

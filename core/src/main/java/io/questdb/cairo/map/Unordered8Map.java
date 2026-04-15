@@ -313,15 +313,16 @@ public class Unordered8Map implements Map, Reopenable {
             long batchEnd,
             long batchAddr
     ) {
+        // Caller must have pre-reserved at least (batchEnd - batchStart) free slots via
+        // reserveCapacity(), so the hot loop skips the per-insert rehash check — a mid-batch
+        // rehash would invalidate offsets already packed into batchAddr.
+        assert free >= batchEnd - batchStart;
+
         final int directColumnIndex = mapSink.getDirectColumnIndex();
         if (directColumnIndex >= 0) {
             return probeBatchUnsafe(record.getPageAddress(directColumnIndex), batchStart, batchEnd, batchAddr);
         }
 
-        // Caller must have pre-reserved at least (batchEnd - batchStart) free slots via
-        // reserveCapacity(), so the hot loop skips the per-insert rehash check — a mid-batch
-        // rehash would invalidate offsets already packed into batchAddr.
-        assert free >= batchEnd - batchStart;
         for (long r = batchStart; r < batchEnd; r++) {
             record.setRowIndex(r);
             mapSink.copy(record, key);
@@ -511,8 +512,6 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     private long probeBatchUnsafe(long columnAddr, long batchStart, long batchEnd, long batchAddr) {
-        // See probeBatch: free slots are pre-reserved by the caller.
-        assert free >= batchEnd - batchStart;
         for (long r = batchStart; r < batchEnd; r++) {
             final long k = Unsafe.getUnsafe().getLong(columnAddr + r * Long.BYTES);
 

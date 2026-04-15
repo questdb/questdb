@@ -38,13 +38,13 @@ public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            long lastRowId = startRowId + count - 1;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long lastRowId = startRowId + rowCount - 1;
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putBool(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr + ((long) count - 1) * Byte.BYTES) != 0);
+                mapValue.putBool(valueIndex + 1, Unsafe.getUnsafe().getByte(dataAddr + ((long) rowCount - 1) * Byte.BYTES) != 0);
             }
         }
     }

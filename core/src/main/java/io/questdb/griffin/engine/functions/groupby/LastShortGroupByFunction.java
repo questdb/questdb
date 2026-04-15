@@ -38,13 +38,13 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            long lastRowId = startRowId + count - 1;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long lastRowId = startRowId + rowCount - 1;
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(ptr + ((long) count - 1) * Short.BYTES));
+                mapValue.putShort(valueIndex + 1, Unsafe.getUnsafe().getShort(dataAddr + ((long) rowCount - 1) * Short.BYTES));
             }
         }
     }

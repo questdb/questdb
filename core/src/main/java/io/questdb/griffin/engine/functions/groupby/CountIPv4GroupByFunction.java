@@ -39,12 +39,12 @@ public class CountIPv4GroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
             long nonNullCount = 0;
-            final long hi = ptr + count * (long) Integer.BYTES;
-            for (; ptr < hi; ptr += Integer.BYTES) {
-                if (Unsafe.getUnsafe().getInt(ptr) != Numbers.IPv4_NULL) {
+            final long hi = dataAddr + rowCount * (long) Integer.BYTES;
+            for (; dataAddr < hi; dataAddr += Integer.BYTES) {
+                if (Unsafe.getUnsafe().getInt(dataAddr) != Numbers.IPv4_NULL) {
                     nonNullCount++;
                 }
             }

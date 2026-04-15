@@ -37,11 +37,11 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            long hi = ptr + (count - 1) * (long) Long.BYTES;
-            long offset = count - 1;
-            for (; hi >= ptr; hi -= Long.BYTES) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long hi = dataAddr + (rowCount - 1) * (long) Long.BYTES;
+            long offset = rowCount - 1;
+            for (; hi >= dataAddr; hi -= Long.BYTES) {
                 long value = Unsafe.getUnsafe().getLong(hi);
                 if (value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;

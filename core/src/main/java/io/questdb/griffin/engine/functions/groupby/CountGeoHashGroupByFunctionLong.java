@@ -39,12 +39,12 @@ public class CountGeoHashGroupByFunctionLong extends AbstractCountGroupByFunctio
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
             long nonNullCount = 0;
-            final long hi = ptr + count * 8L;
-            for (; ptr < hi; ptr += 8L) {
-                if (Unsafe.getUnsafe().getLong(ptr) != GeoHashes.NULL) {
+            final long hi = dataAddr + rowCount * 8L;
+            for (; dataAddr < hi; dataAddr += 8L) {
+                if (Unsafe.getUnsafe().getLong(dataAddr) != GeoHashes.NULL) {
                     nonNullCount++;
                 }
             }

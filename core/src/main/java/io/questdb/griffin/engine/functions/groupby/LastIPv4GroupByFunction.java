@@ -37,13 +37,13 @@ public class LastIPv4GroupByFunction extends FirstIPv4GroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            long lastRowId = startRowId + count - 1;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long lastRowId = startRowId + rowCount - 1;
             long existingRowId = mapValue.getLong(valueIndex);
             if (lastRowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, lastRowId);
-                mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(ptr + ((long) count - 1) * Integer.BYTES));
+                mapValue.putInt(valueIndex + 1, Unsafe.getUnsafe().getInt(dataAddr + ((long) rowCount - 1) * Integer.BYTES));
             }
         }
     }

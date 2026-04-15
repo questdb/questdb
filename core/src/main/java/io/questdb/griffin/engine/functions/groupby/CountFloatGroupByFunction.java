@@ -38,12 +38,12 @@ public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
             long nonNullCount = 0;
-            final long hi = ptr + count * (long) Float.BYTES;
-            for (; ptr < hi; ptr += Float.BYTES) {
-                final float value = Unsafe.getUnsafe().getFloat(ptr);
+            final long hi = dataAddr + rowCount * (long) Float.BYTES;
+            for (; dataAddr < hi; dataAddr += Float.BYTES) {
+                final float value = Unsafe.getUnsafe().getFloat(dataAddr);
                 if (!Numbers.isNull(value)) {
                     nonNullCount++;
                 }

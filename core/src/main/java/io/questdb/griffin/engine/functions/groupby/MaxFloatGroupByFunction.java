@@ -45,12 +45,12 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long hi = ptr + count * (long) Float.BYTES;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long hi = dataAddr + rowCount * (long) Float.BYTES;
             float max = Float.NaN;
-            for (; ptr < hi; ptr += Float.BYTES) {
-                float value = Unsafe.getUnsafe().getFloat(ptr);
+            for (; dataAddr < hi; dataAddr += Float.BYTES) {
+                float value = Unsafe.getUnsafe().getFloat(dataAddr);
                 if (value > max || Numbers.isNull(max)) {
                     max = value;
                 }

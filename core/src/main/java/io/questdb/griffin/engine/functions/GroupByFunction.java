@@ -70,13 +70,13 @@ public interface GroupByFunction extends Function, Mutable {
      * </ul>
      *
      * @param mapValue   group state that must be updated with the aggregated result
-     * @param ptr        native memory address of the first buffered value for the group, or 0 for
+     * @param dataAddr   native memory address of the first buffered value for the group, or 0 for
      *                   no-arg functions (e.g. count(*))
-     * @param count      number of buffered values that can be read starting from {@code ptr}
+     * @param rowCount   number of buffered values that can be read starting from {@code ptr}
      * @param startRowId row id of the first record in the batch; the row id of the i-th
      *                   record is {@code startRowId + i}
      */
-    default void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
+    default void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         throw new UnsupportedOperationException();
     }
 
@@ -106,7 +106,7 @@ public interface GroupByFunction extends Function, Mutable {
      * {@code [isNew:1][rowIndex:24][offset:39]}.
      *
      * @param record          page frame record, positioned via setRowIndex
-     * @param map             the map owning the entries
+     * @param map             the map owning the entries (used by the default implementation)
      * @param entryBase       stable base address ({@link Map#getEntryBase()}), pre-resolved by the reducer
      * @param valueByteOffset byte offset of this function's value slot from the entry start,
      *                        pre-resolved by the reducer

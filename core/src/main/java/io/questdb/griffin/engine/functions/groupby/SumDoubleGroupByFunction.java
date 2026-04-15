@@ -44,9 +44,9 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final double batchSum = Vect.sumDouble(ptr, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final double batchSum = Vect.sumDouble(dataAddr, rowCount);
             if (!Double.isNaN(batchSum)) {
                 final double existing = mapValue.getDouble(valueIndex);
                 if (!Double.isNaN(existing)) {

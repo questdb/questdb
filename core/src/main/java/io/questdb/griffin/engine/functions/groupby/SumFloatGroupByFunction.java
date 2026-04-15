@@ -44,13 +44,13 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
             float acc = 0.0f;
             boolean hasValue = false;
-            final long hi = ptr + count * (long) Float.BYTES;
-            for (; ptr < hi; ptr += Float.BYTES) {
-                final float value = Unsafe.getUnsafe().getFloat(ptr);
+            final long hi = dataAddr + rowCount * (long) Float.BYTES;
+            for (; dataAddr < hi; dataAddr += Float.BYTES) {
+                final float value = Unsafe.getUnsafe().getFloat(dataAddr);
                 if (!Float.isNaN(value)) {
                     acc += value;
                     hasValue = true;

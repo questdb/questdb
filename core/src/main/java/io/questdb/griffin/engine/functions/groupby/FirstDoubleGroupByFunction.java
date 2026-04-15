@@ -45,12 +45,12 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putDouble(valueIndex + 1, Unsafe.getUnsafe().getDouble(ptr));
+                mapValue.putDouble(valueIndex + 1, Unsafe.getUnsafe().getDouble(dataAddr));
             }
         }
     }

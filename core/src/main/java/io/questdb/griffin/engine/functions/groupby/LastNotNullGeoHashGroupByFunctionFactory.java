@@ -70,11 +70,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-            if (count > 0) {
-                long hi = ptr + count - 1;
-                long offset = count - 1;
-                for (; hi >= ptr; hi--) {
+        public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+            if (rowCount > 0) {
+                long hi = dataAddr + rowCount - 1;
+                long offset = rowCount - 1;
+                for (; hi >= dataAddr; hi--) {
                     byte value = Unsafe.getUnsafe().getByte(hi);
                     if (value != GeoHashes.BYTE_NULL) {
                         long rowId = startRowId + offset;
@@ -123,11 +123,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-            if (count > 0) {
-                long hi = ptr + (count - 1) * 4L;
-                long offset = count - 1;
-                for (; hi >= ptr; hi -= 4L) {
+        public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+            if (rowCount > 0) {
+                long hi = dataAddr + (rowCount - 1) * 4L;
+                long offset = rowCount - 1;
+                for (; hi >= dataAddr; hi -= 4L) {
                     int value = Unsafe.getUnsafe().getInt(hi);
                     if (value != GeoHashes.INT_NULL) {
                         long rowId = startRowId + offset;
@@ -176,11 +176,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-            if (count > 0) {
-                long hi = ptr + (count - 1) * 8L;
-                long offset = count - 1;
-                for (; hi >= ptr; hi -= 8L) {
+        public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+            if (rowCount > 0) {
+                long hi = dataAddr + (rowCount - 1) * 8L;
+                long offset = rowCount - 1;
+                for (; hi >= dataAddr; hi -= 8L) {
                     long value = Unsafe.getUnsafe().getLong(hi);
                     if (value != GeoHashes.NULL) {
                         long rowId = startRowId + offset;
@@ -229,11 +229,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         }
 
         @Override
-        public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-            if (count > 0) {
-                long hi = ptr + (count - 1) * 2L;
-                long offset = count - 1;
-                for (; hi >= ptr; hi -= 2L) {
+        public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+            if (rowCount > 0) {
+                long hi = dataAddr + (rowCount - 1) * 2L;
+                long offset = rowCount - 1;
+                for (; hi >= dataAddr; hi -= 2L) {
                     short value = Unsafe.getUnsafe().getShort(hi);
                     if (value != GeoHashes.SHORT_NULL) {
                         long rowId = startRowId + offset;

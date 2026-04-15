@@ -39,11 +39,11 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            long hi = ptr + (count - 1) * 2L;
-            long offset = count - 1;
-            for (; hi >= ptr; hi -= 2L) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long hi = dataAddr + (rowCount - 1) * 2L;
+            long offset = rowCount - 1;
+            for (; hi >= dataAddr; hi -= 2L) {
                 char value = Unsafe.getUnsafe().getChar(hi);
                 if (value != CharConstant.ZERO.getChar(null)) {
                     long rowId = startRowId + offset;

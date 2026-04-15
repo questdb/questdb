@@ -358,6 +358,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long batchEnd,
             long batchAddr
     ) {
+        // Caller must have pre-reserved at least (batchEnd - batchStart) free slots via
+        // reserveCapacity(). A mid-batch rehash reallocates memStart and reindexes entries,
+        // which would invalidate offsets already packed into batchAddr for earlier rows.
+        assert free >= batchEnd - batchStart;
+
         final int directColumnIndex = mapSink.getDirectColumnIndex();
         if (directColumnIndex >= 0) {
             return probeBatchUnsafe(record, directColumnIndex, batchStart, batchEnd, batchAddr);
@@ -480,6 +485,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return key.init();
     }
 
+    /**
+     * When comparing hash and size for equality, we want to ignore ascii vs non-ascii flag, since it doesn't affect hash collisions or key equality checks.
+     */
+    private static long makePackComparable(long packedHashSizeFlags) {
+        return packedHashSizeFlags & 0x7fffffffffffffffL;
+    }
+
     private UnorderedVarcharMapValue asNew(
             long startAddress,
             long hash,
@@ -565,13 +577,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 }
             }
         }
-    }
-
-    /**
-     * When comparing hash and size for equality, we want to ignore ascii vs non-ascii flag, since it doesn't affect hash collisions or key equality checks.
-     */
-    private static long makePackComparable(long packedHashSizeFlags) {
-        return packedHashSizeFlags & 0x7fffffffffffffffL;
     }
 
     private long probeBatchUnsafe(

@@ -45,9 +45,9 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long batchMin = Vect.minLong(ptr, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long batchMin = Vect.minLong(dataAddr, rowCount);
             if (batchMin != Numbers.LONG_NULL) {
                 final long existing = mapValue.getTimestamp(valueIndex);
                 if (batchMin < existing || existing == Numbers.LONG_NULL) {

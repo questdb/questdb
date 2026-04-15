@@ -44,12 +44,12 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long hi = ptr + count * (long) Character.BYTES;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long hi = dataAddr + rowCount * (long) Character.BYTES;
             char min = 0;
-            for (; ptr < hi; ptr += Character.BYTES) {
-                char value = Unsafe.getUnsafe().getChar(ptr);
+            for (; dataAddr < hi; dataAddr += Character.BYTES) {
+                char value = Unsafe.getUnsafe().getChar(dataAddr);
                 if (value > 0 && (value < min || min == 0)) {
                     min = value;
                 }

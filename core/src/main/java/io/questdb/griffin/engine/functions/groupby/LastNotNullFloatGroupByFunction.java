@@ -38,11 +38,11 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            long hi = ptr + (count - 1) * 4L;
-            long offset = count - 1;
-            for (; hi >= ptr; hi -= 4L) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long hi = dataAddr + (rowCount - 1) * 4L;
+            long offset = rowCount - 1;
+            for (; hi >= dataAddr; hi -= 4L) {
                 float value = Unsafe.getUnsafe().getFloat(hi);
                 if (!Numbers.isNull(value)) {
                     long rowId = startRowId + offset;

@@ -37,12 +37,12 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long hi = ptr + count * 4L;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long hi = dataAddr + rowCount * 4L;
             long offset = 0;
-            for (; ptr < hi; ptr += 4L) {
-                int value = Unsafe.getUnsafe().getInt(ptr);
+            for (; dataAddr < hi; dataAddr += 4L) {
+                int value = Unsafe.getUnsafe().getInt(dataAddr);
                 if (value != Numbers.INT_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);

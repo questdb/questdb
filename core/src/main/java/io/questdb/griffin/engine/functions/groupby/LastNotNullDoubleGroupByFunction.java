@@ -38,11 +38,11 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            long hi = ptr + (count - 1) * 8L;
-            long offset = count - 1;
-            for (; hi >= ptr; hi -= 8L) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            long hi = dataAddr + (rowCount - 1) * 8L;
+            long offset = rowCount - 1;
+            for (; hi >= dataAddr; hi -= 8L) {
                 double value = Unsafe.getUnsafe().getDouble(hi);
                 if (!Numbers.isNull(value)) {
                     long rowId = startRowId + offset;

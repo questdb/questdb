@@ -45,9 +45,9 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final int batchMin = Vect.minInt(ptr, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final int batchMin = Vect.minInt(dataAddr, rowCount);
             if (batchMin != Numbers.INT_NULL) {
                 final int existing = mapValue.getInt(valueIndex);
                 if (batchMin < existing || existing == Numbers.INT_NULL) {

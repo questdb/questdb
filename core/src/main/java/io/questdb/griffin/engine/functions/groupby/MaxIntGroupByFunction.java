@@ -45,9 +45,9 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final int batchMax = Vect.maxInt(ptr, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final int batchMax = Vect.maxInt(dataAddr, rowCount);
             final int existing = mapValue.getInt(valueIndex);
             if (batchMax > existing) {
                 mapValue.putInt(valueIndex, batchMax);

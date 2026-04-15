@@ -39,9 +39,9 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long nonNullCount = Vect.countDouble(ptr, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long nonNullCount = Vect.countDouble(dataAddr, rowCount);
             if (nonNullCount > 0) {
                 mapValue.addLong(valueIndex, nonNullCount);
             }

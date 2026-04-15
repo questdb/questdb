@@ -45,9 +45,9 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long batchMax = Vect.maxLong(ptr, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long batchMax = Vect.maxLong(dataAddr, rowCount);
             final long existing = mapValue.getLong(valueIndex);
             if (batchMax > existing) {
                 mapValue.putLong(valueIndex, batchMax);

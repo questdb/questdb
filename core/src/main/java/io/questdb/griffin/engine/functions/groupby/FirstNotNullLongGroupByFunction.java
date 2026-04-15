@@ -38,12 +38,12 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long hi = ptr + count * 8L;
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long hi = dataAddr + rowCount * 8L;
             long offset = 0;
-            for (; ptr < hi; ptr += 8L) {
-                long value = Unsafe.getUnsafe().getLong(ptr);
+            for (; dataAddr < hi; dataAddr += 8L) {
+                long value = Unsafe.getUnsafe().getLong(dataAddr);
                 if (value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);

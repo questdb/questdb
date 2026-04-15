@@ -45,9 +45,9 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
-            final long batchSum = Vect.sumInt(ptr, count);
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
+            final long batchSum = Vect.sumInt(dataAddr, rowCount);
             if (batchSum != Numbers.LONG_NULL) {
                 final long existing = mapValue.getLong(valueIndex);
                 if (existing != Numbers.LONG_NULL) {
