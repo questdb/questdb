@@ -3034,7 +3034,7 @@ public class TickExprTest {
         assertBracketIntervalError("[$today+..$today+5d]", "Expected number after operator");
     }
 
-    // ==================== Bracket Expansion Tests ====================
+    // Bracket Expansion Tests
 
     @Test
     public void testDateVariableRangeMissingUnitAfterNumber() {
@@ -3102,7 +3102,7 @@ public class TickExprTest {
         assertBracketIntervalError("[$today.$tomorrow]", "Unknown date variable: tomorrow");
     }
 
-    // ================= Date Variable Tests =================
+    // Date Variable Tests
 
     @Test
     public void testDateVariableRangeSpanningMonthBoundary() throws SqlException {
@@ -3394,7 +3394,7 @@ public class TickExprTest {
         );
     }
 
-    // ================= Date Variable Range Tests =================
+    // Date Variable Range Tests
 
     @Test
     public void testDateVariableRangeWithTrailingWhitespaceInStartExpr() throws SqlException {
@@ -3869,7 +3869,7 @@ public class TickExprTest {
         );
     }
 
-    // ==================== CompiledTickExpression (dynamic date variable) tests ====================
+    // CompiledTickExpression (dynamic date variable) tests
 
     @Test
     public void testDayFilterDateListWithGlobalTimezone() throws SqlException {
@@ -4201,7 +4201,7 @@ public class TickExprTest {
         );
     }
 
-    // ================= End Date Variable Tests =================
+    // End Date Variable Tests
 
     @Test
     public void testDayFilterWithMultiDayDuration() throws SqlException {
@@ -4451,7 +4451,7 @@ public class TickExprTest {
         assertImpreciseEquivalence("[2024-02]T09:30@+05:00", "[2024-02-[01..29]]T09:30@+05:00");
     }
 
-    // ==================== TIME LIST BRACKET TESTS ====================
+    // TIME LIST BRACKET TESTS
 
     @Test
     public void testImpreciseMonthTimeTimezoneDayFilter() throws SqlException {
