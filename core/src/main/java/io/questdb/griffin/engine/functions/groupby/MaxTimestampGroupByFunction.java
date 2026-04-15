@@ -33,8 +33,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -48,7 +48,9 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     public MaxTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
         super(timestampType);
         this.arg = arg;
-        this.argColumnIndex = arg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
+        // The factory derives timestampType from arg.getType(), so this check also
+        // filters out non-direct args (e.g., CASTs) that happen to produce timestamps.
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, timestampType);
     }
 
     @Override

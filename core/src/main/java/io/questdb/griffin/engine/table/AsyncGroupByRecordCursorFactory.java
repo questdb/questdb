@@ -282,6 +282,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final long rowCount = rows.size();
         final long rowIdsAddr = rows.getAddress();
 
+        // Size the batch buffer once — probeBatch writes via the raw base address, never advancing pos.
+        // ensureCapacity reopens the list if it's closed.
         batchList.ensureCapacity(batchSize);
         final long batchAddr = batchList.getAddress();
 
@@ -368,6 +370,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final int batchSize = atom.getBatchSize();
 
         // Size the batch buffer once — probeBatch writes via the raw base address, never advancing pos.
+        // ensureCapacity reopens the list if it's closed.
         batchList.ensureCapacity(batchSize);
         final long batchAddr = batchList.getAddress();
 

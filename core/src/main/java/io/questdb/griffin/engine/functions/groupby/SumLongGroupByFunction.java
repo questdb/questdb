@@ -34,8 +34,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -43,15 +43,12 @@ import org.jetbrains.annotations.NotNull;
 
 public class SumLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
-    // Set to a non-negative column index when arg is a direct ColumnFunction
-    // reference (e.g. sum(long_col)). The batched dispatch path uses this to
-    // read values straight from page-frame memory and skip arg.getLong(record).
     private final int argColumnIndex;
     private int valueIndex;
 
     public SumLongGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-        this.argColumnIndex = arg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.LONG);
     }
 
     @Override

@@ -137,8 +137,6 @@ public interface GroupByFunction extends Function, Mutable {
             boolean isNew = Map.isNewBatchEntry(encoded);
             record.setRowIndex(rowIndex);
             mapValue.of(baseValueAddress + valueOffset);
-            // TODO(puzpuzpuz): it's safe to always call computeNext on certain group by functions like count or sum;
-            //   those functions work correctly when only computeNext is called on identity value state (setEmpty state)
             if (isNew) {
                 computeFirst(mapValue, record, baseRowId + rowIndex);
             } else {

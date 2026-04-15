@@ -31,13 +31,17 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class CountFloatGroupByFunction extends AbstractCountGroupByFunction {
+    private final int argColumnIndex;
+
     public CountFloatGroupByFunction(@NotNull Function arg) {
         super(arg);
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.FLOAT);
     }
 
     @Override

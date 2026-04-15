@@ -34,8 +34,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -48,7 +48,7 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
 
     public MinDateGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-        this.argColumnIndex = arg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.DATE);
     }
 
     @Override

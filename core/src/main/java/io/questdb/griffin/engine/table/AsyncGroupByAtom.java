@@ -210,13 +210,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             perWorkerLongTopKLists = new ObjList<>(workerCount);
             perWorkerLongTopKLists.setAll(workerCount, null);
 
-            // Pre-allocate per-worker batch scratch buffers and flyweights for batched dispatch.
+            // Per-worker batch scratch buffers and flyweights for batched dispatch.
             // The owner uses slotId -1 which maps to index 0; worker slots 0..N-1 map to 1..N.
-            this.batchSize = configuration.getGroupByBatchSize();
+            batchSize = configuration.getGroupByBatchSize();
             perWorkerBatchLists = new ObjList<>(workerCount + 1);
             perWorkerBatchMapValues = new ObjList<>(workerCount + 1);
             for (int i = 0; i < workerCount + 1; i++) {
-                perWorkerBatchLists.extendAndSet(i, new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT));
+                perWorkerBatchLists.extendAndSet(i, new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true));
                 perWorkerBatchMapValues.extendAndSet(i, new FlyweightPackedMapValue(valueTypes));
             }
         } catch (Throwable th) {
@@ -238,6 +238,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.clearObjList(perWorkerAllocators);
         Misc.clear(ownerLongTopKList);
         Misc.clearObjList(perWorkerLongTopKLists);
+        Misc.freeObjListAndKeepObjects(perWorkerBatchLists);
         filterCtx.clear();
     }
 
@@ -259,16 +260,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-        Misc.free(filterCtx);
         Misc.freeObjList(perWorkerBatchLists);
-    }
-
-    public ObjList<Map> getDestShards() {
-        return shardingCtx.getDestShards();
-    }
-
-    public AsyncFilterContext getFilterContext() {
-        return filterCtx;
+        Misc.free(filterCtx);
     }
 
     public DirectLongList getBatchList(int slotId) {
@@ -285,12 +278,27 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return batchSize;
     }
 
+    public ObjList<Map> getDestShards() {
+        return shardingCtx.getDestShards();
+    }
+
+    public AsyncFilterContext getFilterContext() {
+        return filterCtx;
+    }
+
     public GroupByMapFragment getFragment(int slotId) {
         return shardingCtx.getFragment(slotId);
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
         return shardingCtx.getFunctionUpdater(slotId);
+    }
+
+    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
     public DirectLongLongSortedList getLongTopKList(int slotId, int order, int limit) {
@@ -411,13 +419,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-    }
-
-    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
-        if (slotId == -1 || perWorkerGroupByFunctions == null) {
-            return ownerGroupByFunctions;
-        }
-        return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
     private long getTotalFunctionCardinality(int slotId) {

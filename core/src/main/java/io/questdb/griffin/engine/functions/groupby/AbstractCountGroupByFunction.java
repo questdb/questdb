@@ -33,7 +33,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.std.Numbers;
 
 /**
@@ -44,11 +43,6 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
      * The function argument.
      */
     protected final Function arg;
-    /**
-     * Non-negative when {@link #arg} is a direct {@link ColumnFunction} reference;
-     * enables the batched dispatch path to read arg values straight from page memory.
-     */
-    protected final int argColumnIndex;
     /**
      * The value index in the map.
      */
@@ -61,7 +55,6 @@ public abstract class AbstractCountGroupByFunction extends LongFunction implemen
      */
     protected AbstractCountGroupByFunction(Function arg) {
         this.arg = arg;
-        this.argColumnIndex = arg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
     }
 
     @Override
