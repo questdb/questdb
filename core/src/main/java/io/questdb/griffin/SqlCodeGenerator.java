@@ -833,7 +833,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList columnIndexes,
             RecordMetadata queryMeta
     ) {
-        // keyReaderColIdx is the reader column index of the indexed symbol column.
         int[] coveringIndices = reader.getMetadata().getColumnMetadata(keyReaderColIdx).getCoveringColumnIndices();
         if (coveringIndices == null || coveringIndices.length == 0) {
             return null;

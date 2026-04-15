@@ -1023,7 +1023,7 @@ public class TableSnapshotRestore implements QuietCloseable {
         if (IndexType.isPosting(indexType)) {
             long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                     ff, PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
-            if (fromPk > 0) sealTxn = fromPk;
+            if (fromPk >= 0) sealTxn = fromPk;
         }
         // Remove .k file
         removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn));

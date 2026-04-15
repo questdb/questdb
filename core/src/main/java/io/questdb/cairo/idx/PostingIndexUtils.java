@@ -1191,15 +1191,10 @@ public final class PostingIndexUtils {
     /**
      * Builds the full path to a sealed value file (.pv).
      * <p>
-     * Filename format: <code>&lt;name&gt;.pv.&lt;postingColumnNameTxn&gt;.&lt;sealTxn&gt;</code>,
+     * Filename: <code>&lt;name&gt;.pv.&lt;postingColumnNameTxn&gt;.&lt;sealTxn&gt;</code>,
      * with {@code postingColumnNameTxn} omitted when it is
-     * {@code COLUMN_NAME_TXN_NONE} (matches the {@code .pk} / {@code .pci}
-     * convention). Each seal that the writer performs creates a new file at a
-     * higher {@code sealTxn}; older files survive until the purge job decides
-     * no reader still needs them.
-     * <p>
-     * The first sealed file (immediately after writer initialisation) uses
-     * {@code sealTxn = postingColumnNameTxn}.
+     * {@code COLUMN_NAME_TXN_NONE}. {@code sealTxn} is a monotonic counter:
+     * 0 in the pre-seal initial state, N after N seals.
      */
     public static LPSZ valueFileName(Path path, CharSequence name, long postingColumnNameTxn, long sealTxn) {
         path.concat(name).put(".pv");

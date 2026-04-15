@@ -219,11 +219,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                 throw CairoException.critical(0).put("Unsupported Posting index version: ").put(version);
             }
 
-            // valueFileTxn determines which .pv file to open.
-            // -1 (COLUMN_NAME_TXN_NONE) or 0 (pre-upgrade zero-fill) = same as columnNameTxn.
-            // After seal, set to the bumped txn of the sealed .pv file.
-            long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
-            this.valueFileTxn = (metaValueTxn <= 0) ? columnNameTxn : metaValueTxn;
+            this.valueFileTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
 
             this.valueMem.of(
                     configuration.getFilesFacade(),
@@ -263,8 +259,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             // mapping — otherwise the new valueMemSize describes a different
             // file (a newly-sealed .pv) and applying it to our old mapping
             // would either truncate or reach past the on-disk file end.
-            long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
-            long currentSealTxn = metaValueTxn <= 0 ? columnTxn : metaValueTxn;
+            long currentSealTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
             if (currentSealTxn == valueFileTxn && valueMemSize > 0) {
                 long oldAddr = valueMem.addressOf(0);
                 ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
@@ -584,8 +579,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     // .pv file is protected from premature purge by the
                     // TxnScoreboard (reader's acquired txn covers it until the
                     // next reload).
-                    long metaValueTxn = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
-                    long effectiveTxn = metaValueTxn > 0 ? metaValueTxn : this.valueFileTxn;
+                    long effectiveTxn = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
                     if (effectiveTxn != this.valueFileTxn) {
                         if (attempt == 0) {
                             continue; // try the other page — may have a same-txn update

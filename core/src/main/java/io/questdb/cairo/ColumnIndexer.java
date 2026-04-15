@@ -28,39 +28,17 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
 
 public interface ColumnIndexer extends QuietCloseable {
 
-    /**
-     * Publishes every accumulated purge request (one per superseded
-     * sealed-version file set) onto the global {@code PostingSealPurgeQueue}.
-     * The background {@code PostingSealPurgeJob} persists each task and,
-     * when the {@link TxnScoreboard} confirms safety, calls
-     * {@code PostingSealPurgeOperator} to delete the files. Default no-op
-     * for index types that do not produce seal-versioned files (BITMAP).
-     */
-    default void publishPendingPurges(
-            MessageBus messageBus,
-            TableToken tableToken,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            int partitionBy
-    ) {
-    }
-
     default void clearCovering() {
         // no-op by default
-    }
-
-    /**
-     * Close without sealing. Used when the index is being dropped —
-     * sealing would create new files that become orphans.
-     */
-    default void discardAndClose() {
-        close();
     }
 
     /**
@@ -68,13 +46,12 @@ public interface ColumnIndexer extends QuietCloseable {
      * read-only mmaps. Used for both active and historic partitions.
      */
     default void configureCovering(
-            String[] coveredColumnNames,
-            long[] coveredColumnNameTxns,
-            long[] coveredColumnTops,
-            int[] coveredColumnShifts,
-            int[] coveredColumnIndices,
-            int[] coveredColumnTypes,
-            int coverCount,
+            ObjList<CharSequence> coveredColumnNames,
+            LongList coveredColumnNameTxns,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
             int timestampColumnIndex
     ) {
         // no-op by default
@@ -105,6 +82,10 @@ public interface ColumnIndexer extends QuietCloseable {
 
     void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop);
 
+    default void discardAndClose() {
+        close();
+    }
+
     void distress();
 
     long getFd();
@@ -116,6 +97,16 @@ public interface ColumnIndexer extends QuietCloseable {
     void index(FilesFacade ff, long dataColumnFd, long loRow, long hiRow);
 
     boolean isDistressed();
+
+    default void publishPendingPurges(
+            MessageBus messageBus,
+            TableToken tableToken,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy,
+            long currentTableTxn
+    ) {
+    }
 
     void refreshSourceAndIndex(long loRow, long hiRow);
 

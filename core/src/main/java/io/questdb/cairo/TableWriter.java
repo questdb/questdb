@@ -204,6 +204,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
     private final CairoConfiguration configuration;
+    private final IntList coveringIndices = new IntList();
+    private final LongList coveringNameTxns = new LongList();
+    private final ObjList<CharSequence> coveringNames = new ObjList<>();
+    private final IntList coveringShifts = new IntList();
+    private final LongList coveringTops = new LongList();
+    private final IntList coveringTypes = new IntList();
     private final long dataAppendPageSize;
     private final DdlListener ddlListener;
     private final MemoryMAR ddlMem;
@@ -3887,7 +3893,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (IndexType.isPosting(indexType)) {
                     long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                             ff, keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn));
-                    if (fromPk > 0) sealTxn = fromPk;
+                    if (fromPk >= 0) sealTxn = fromPk;
                 }
                 valueFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn, sealTxn);
                 if (!ff.exists(partitionPath.$())) {
@@ -4481,24 +4487,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         int coverCount = coveringCols.length;
-        String[] names = new String[coverCount];
-        long[] nameTxns = new long[coverCount];
-        long[] tops = new long[coverCount];
-        int[] shifts = new int[coverCount];
-        int[] indices = new int[coverCount];
-        int[] types = new int[coverCount];
+        coveringNames.clear();
+        coveringNameTxns.clear();
+        coveringTops.clear();
+        coveringShifts.clear();
+        coveringIndices.clear();
+        coveringTypes.clear();
         for (int i = 0; i < coverCount; i++) {
             int covCol = coveringCols[i];
-            names[i] = Chars.toString(metadata.getColumnName(covCol));
-            nameTxns[i] = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
-            tops[i] = columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol);
             int covType = metadata.getColumnType(covCol);
-            types[i] = covType;
-            indices[i] = covCol;
-            shifts[i] = ColumnType.pow2SizeOf(covType);
+            coveringNames.add(metadata.getColumnName(covCol));
+            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
+            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            coveringShifts.add(ColumnType.pow2SizeOf(covType));
+            coveringIndices.add(covCol);
+            coveringTypes.add(covType);
         }
-        indexer.configureCovering(names, nameTxns, tops, shifts, indices, types, coverCount,
-                metadata.getTimestampIndex());
+        indexer.configureCovering(coveringNames, coveringNameTxns, coveringTops, coveringShifts,
+                coveringIndices, coveringTypes, metadata.getTimestampIndex());
     }
 
     private void configureTimestampSetter() {
@@ -6108,7 +6114,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (IndexType.isPosting(indexType)) {
                 LPSZ pkFile = keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
                 long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(ff, pkFile);
-                if (fromPk > 0) sealTxn = fromPk;
+                if (fromPk >= 0) sealTxn = fromPk;
             }
             linkFile(ff,
                     valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, sealTxn),
@@ -11041,7 +11047,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
             for (int i = 0, n = denseIndexers.size(); i < n; i++) {
                 denseIndexers.getQuick(i).publishPendingPurges(
-                        messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy);
+                        messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, txWriter.getTxn());
             }
         }
     }

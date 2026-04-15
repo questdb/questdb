@@ -30,9 +30,12 @@ import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
@@ -60,19 +63,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public void publishPendingPurges(
-            MessageBus messageBus,
-            TableToken tableToken,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            int partitionBy
-    ) {
-        if (writer instanceof PostingIndexWriter piw) {
-            piw.publishPendingPurges(messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy);
-        }
-    }
-
-    @Override
     public void clear() {
         writer.clear();
     }
@@ -95,36 +85,19 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public void discardAndClose() {
-        // Close without sealing — used when index is being dropped.
-        if (writer instanceof PostingIndexWriter piw) {
-            piw.clearCovering();
-            piw.discard();
-        } else {
-            Misc.free(writer);
-        }
-        if (buffer != 0) {
-            fd = -1;
-            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_INDEX_READER);
-            buffer = 0;
-        }
-    }
-
-    @Override
     public void configureCovering(
-            String[] coveredColumnNames,
-            long[] coveredColumnNameTxns,
-            long[] coveredColumnTops,
-            int[] coveredColumnShifts,
-            int[] coveredColumnIndices,
-            int[] coveredColumnTypes,
-            int coverCount,
+            ObjList<CharSequence> coveredColumnNames,
+            LongList coveredColumnNameTxns,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
             int timestampColumnIndex
     ) {
         if (writer instanceof PostingIndexWriter piw) {
             piw.configureCovering(
                     coveredColumnNames, coveredColumnNameTxns, coveredColumnTops, coveredColumnShifts,
-                    coveredColumnIndices, coveredColumnTypes, coverCount, timestampColumnIndex);
+                    coveredColumnIndices, coveredColumnTypes, timestampColumnIndex);
         }
     }
 
@@ -172,6 +145,22 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         } catch (Throwable e) {
             this.close();
             throw e;
+        }
+    }
+
+    @Override
+    public void discardAndClose() {
+        // Close without sealing — used when index is being dropped.
+        if (writer instanceof PostingIndexWriter piw) {
+            piw.clearCovering();
+            piw.discard();
+        } else {
+            Misc.free(writer);
+        }
+        if (buffer != 0) {
+            fd = -1;
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_INDEX_READER);
+            buffer = 0;
         }
     }
 
@@ -224,6 +213,20 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public boolean isDistressed() {
         return distressed;
+    }
+
+    @Override
+    public void publishPendingPurges(
+            MessageBus messageBus,
+            TableToken tableToken,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy,
+            long currentTableTxn
+    ) {
+        if (writer instanceof PostingIndexWriter piw) {
+            piw.publishPendingPurges(messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy, currentTableTxn);
+        }
     }
 
     @Override

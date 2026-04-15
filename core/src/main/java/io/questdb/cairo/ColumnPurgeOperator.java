@@ -197,7 +197,7 @@ public class ColumnPurgeOperator implements Closeable {
                 path.trimTo(pathTrimToPartition);
                 long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                         ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
-                if (fromPk > 0) {
+                if (fromPk >= 0) {
                     sealTxn = fromPk;
                 }
             }

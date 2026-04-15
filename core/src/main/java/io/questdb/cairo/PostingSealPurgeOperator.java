@@ -146,7 +146,7 @@ public class PostingSealPurgeOperator implements Closeable {
         // so scanSealedFiles is the safe enumerator.
         final boolean[] coverRemoved = {true};
         final long targetSealTxn = task.getSealTxn();
-        final String columnName = task.getIndexColumnName();
+        final CharSequence columnName = task.getIndexColumnName();
         path.trimTo(pathPartitionLen);
         PostingIndexUtils.scanSealedFiles(ff, path, pathPartitionLen, columnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override

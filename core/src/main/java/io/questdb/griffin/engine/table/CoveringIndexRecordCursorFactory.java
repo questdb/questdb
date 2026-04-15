@@ -121,19 +121,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Function symbolFunction,
             @NotNull IntList columnIndexes,
             int @NotNull [] queryColToIncludeIdx,
-            boolean latestBy
-    ) {
-        this(metadata, dfcFactory, indexColumnIndex, symbolKey, symbolFunction, columnIndexes, queryColToIncludeIdx, latestBy, null);
-    }
-
-    public CoveringIndexRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
-            @NotNull PartitionFrameCursorFactory dfcFactory,
-            int indexColumnIndex,
-            int symbolKey,
-            Function symbolFunction,
-            @NotNull IntList columnIndexes,
-            int @NotNull [] queryColToIncludeIdx,
             boolean latestBy,
             @Nullable Function latestByFilter
     ) {

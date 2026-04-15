@@ -50,32 +50,6 @@ import static org.junit.Assert.*;
 
 public class CoveringIndexTest extends AbstractCairoTest {
 
-    /**
-     * Builds a minimal RecordMetadata for direct PostingIndexReader construction.
-     * Pads slots up to the highest covered index with placeholder LONG columns;
-     * each covered index gets the type the writer was given. Tests that bypass
-     * TableReader must supply this — the reader resolves covered-column types
-     * from live metadata, not from the .pci.
-     */
-    private static RecordMetadata coveringMetadata(int[] coveredIndices, int[] coveredTypes) {
-        int maxIdx = -1;
-        for (int idx : coveredIndices) {
-            if (idx > maxIdx) maxIdx = idx;
-        }
-        GenericRecordMetadata m = new GenericRecordMetadata();
-        for (int i = 0; i <= maxIdx; i++) {
-            int type = ColumnType.LONG;
-            for (int j = 0; j < coveredIndices.length; j++) {
-                if (coveredIndices[j] == i) {
-                    type = coveredTypes[j];
-                    break;
-                }
-            }
-            m.add(new TableColumnMetadata("c" + i, type));
-        }
-        return m;
-    }
-
     @Test
     public void testAlterTableAddIndexO3DuplicateInsert() throws Exception {
         assertMemoryLeak(() -> {
@@ -1035,18 +1009,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             PostingIndexUtils.coverInfoFileName(path, name, COLUMN_NAME_TXN_NONE);
             assertTrue(path.toString().contains("sym.pci"));
 
-            // .pc<N> is double-namespace: <includeIdx>.<coveredColumnNameTxn>.<sealTxn>.
-            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE);
-            assertTrue(path.toString().contains("sym.pc0.-1.-1"));
+            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, 0);
+            assertTrue(path.toString().contains("sym.pc0.0"));
 
-            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE);
-            assertTrue(path.toString().contains("sym.pc1.-1.-1"));
+            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, 0);
+            assertTrue(path.toString().contains("sym.pc1.0"));
 
-            // With column name txn on .pci
             PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, 5);
             assertTrue(path.toString().contains("sym.pci.5"));
 
-            // With non-trivial coveredColumnNameTxn and sealTxn on .pc<N>
             PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, 5, 7);
             assertTrue(path.toString().contains("sym.pc0.5.7"));
         }
@@ -1449,10 +1420,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // End-to-end SQL tests
-    // ===================================================================
-
     @Test
     public void testCoveringIndexLatestOnPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -1487,6 +1454,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price FROM t_lat WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
         });
     }
+
+    // ===================================================================
+    // End-to-end SQL tests
+    // ===================================================================
 
     @Test
     public void testCoveringIndexNextPartitionNullSymbolWal() throws Exception {
@@ -2024,10 +1995,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Fallback scenario tests: covering index NOT used
-    // ===================================================================
-
     @Test
     public void testCoveringIndexSidecarSurvivesPartitionSwitchWal() throws Exception {
         // Same partition-switch scenario through WAL.
@@ -2066,6 +2033,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, qty FROM t_switch_wal WHERE sym = 'A'");
         });
     }
+
+    // ===================================================================
+    // Fallback scenario tests: covering index NOT used
+    // ===================================================================
 
     @Test
     public void testCoveringIndexSidecarWrittenOnAlterAddIndex() throws Exception {
@@ -2178,10 +2149,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // DDL edge case tests
-    // ===================================================================
-
     @Test
     public void testCoveringIndexWithResidualFilterInList() throws Exception {
         assertMemoryLeak(() -> {
@@ -2215,6 +2182,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT /*+ no_covering */ price FROM t_resid_in WHERE sym IN ('A', 'B') AND price > 25");
         });
     }
+
+    // ===================================================================
+    // DDL edge case tests
+    // ===================================================================
 
     @Test
     public void testCoveringLatestOnBindVariable() throws Exception {
@@ -2308,10 +2279,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ===================================================================
-    // Type-specific covering column tests
-    // ===================================================================
-
     @Test
     public void testCoveringLatestOnMultiKeyWithSymbol() throws Exception {
         assertMemoryLeak(() -> {
@@ -2338,6 +2305,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT sym, tag, price FROM t_latest_mk_sym WHERE sym IN ('A', 'B') LATEST ON ts PARTITION BY sym");
         });
     }
+
+    // ===================================================================
+    // Type-specific covering column tests
+    // ===================================================================
 
     @Test
     public void testCoveringLatestOnMultiPartition() throws Exception {
@@ -4384,8 +4355,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== Coverage gap tests ====================
-
     @Test
     public void testCoveringQueryVarchar() throws Exception {
         // VARCHAR column in INCLUDE — end-to-end via FallbackRecord (column reads)
@@ -4429,6 +4398,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT ts, name FROM t_cover_varchar WHERE sym = 'A'");
         });
     }
+
+    // ==================== Coverage gap tests ====================
 
     @Test
     public void testCoveringQueryVarcharEmpty() throws Exception {
@@ -5374,8 +5345,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== FSST-compressed covered varchar/string tests ====================
-
     @Test
     public void testDistinctSymExplainPlan() throws Exception {
         assertMemoryLeak(() -> {
@@ -5403,6 +5372,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ==================== FSST-compressed covered varchar/string tests ====================
 
     @Test
     public void testDistinctSymFromPostingIndex() throws Exception {
@@ -5617,8 +5588,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== COUNT pushdown tests ====================
-
     @Test
     public void testDistinctWithNoIndexHintFallsBack() throws Exception {
         // no_index hint should prevent PostingIndex distinct
@@ -5650,6 +5619,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT /*+ no_index */ DISTINCT sym FROM t_dist_noidx ORDER BY sym");
         });
     }
+
+    // ==================== COUNT pushdown tests ====================
 
     @Test
     public void testDistinctWithNonIntervalFilterFallsBack() throws Exception {
@@ -5722,8 +5693,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== DISTINCT with WHERE tests ====================
-
     @Test
     public void testDistinctWithTimestampFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -5770,6 +5739,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT DISTINCT sym FROM t_dist_where WHERE ts >= '2024-01-02' ORDER BY sym");
         });
     }
+
+    // ==================== DISTINCT with WHERE tests ====================
 
     @Test
     public void testDistinctWithTimestampRangeNoMatches() throws Exception {
@@ -5884,8 +5855,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== additional coverage tests ====================
-
     @Test
     public void testFallbackInList5KeysMultiPartition() throws Exception {
         assertMemoryLeak(() -> {
@@ -5924,6 +5893,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT price, extra FROM t_in5 WHERE sym IN ('A', 'B', 'C', 'D', 'E')");
         });
     }
+
+    // ==================== additional coverage tests ====================
 
     @Test
     public void testFallbackInListWal() throws Exception {
@@ -6007,8 +5978,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== var-width page frame tests ====================
-
     @Test
     public void testFallbackStringWithNonCoveredColumn() throws Exception {
         // Selecting non-covered column alongside covered STRING forces fallback to regular scan
@@ -6037,6 +6006,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT label, extra FROM t_fb_string WHERE sym = 'X'");
         });
     }
+
+    // ==================== var-width page frame tests ====================
 
     @Test
     public void testFallbackVarcharWithNonCoveredColumn() throws Exception {
@@ -6335,8 +6306,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== end new optimization tests ====================
-
     @Test
     public void testIncludeParseMultipleColumns() throws Exception {
         assertMemoryLeak(() -> {
@@ -6359,6 +6328,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
         });
     }
+
+    // ==================== end new optimization tests ====================
 
     @Test
     public void testIncludeWithNonExistentColumnFails() throws Exception {
@@ -6634,8 +6605,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ---- Wide table and wide INCLUDE edge case tests ----
-
     @Test
     public void testLatestByArrayColumn() throws Exception {
         // LATEST BY with ARRAY covered column through CoveringRecord
@@ -6663,6 +6632,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
         });
     }
+
+    // ---- Wide table and wide INCLUDE edge case tests ----
 
     @Test
     public void testLatestByBinaryColumn() throws Exception {
@@ -7076,8 +7047,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== no_covering hint tests ====================
-
     @Test
     public void testMetadataPersistenceAcrossReopen() throws Exception {
         assertMemoryLeak(() -> {
@@ -7116,6 +7085,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
         });
     }
+
+    // ==================== no_covering hint tests ====================
 
     @Test
     public void testMultiPartitionAlterAndQuery() throws Exception {
@@ -7223,8 +7194,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== no_index hint tests ====================
-
     @Test
     public void testNoCoveringHint_DisablesCovering() throws Exception {
         assertMemoryLeak(() -> {
@@ -7258,6 +7227,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ==================== no_index hint tests ====================
 
     @Test
     public void testNoCoveringHint_InList() throws Exception {
@@ -7438,8 +7409,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== residual filter + covering index tests ====================
-
     @Test
     public void testNoIndexHint_LatestBy() throws Exception {
         assertMemoryLeak(() -> {
@@ -7475,6 +7444,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT /*+ no_index */ * FROM t_noidx_latest WHERE sym = 'A' LATEST ON ts PARTITION BY sym");
         });
     }
+
+    // ==================== residual filter + covering index tests ====================
 
     @Test
     public void testNoIndexHint_WithFilter() throws Exception {
@@ -7674,8 +7645,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // ==================== page frame cursor tests ====================
-
     @Test
     public void testPageFrameAggregationUuidIpv4() throws Exception {
         // Page frame aggregation for UUID and IPv4 types
@@ -7702,6 +7671,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT count(*) AS count FROM t_pf_uuid WHERE sym = 'A'");
         });
     }
+
+    // ==================== page frame cursor tests ====================
 
     @Test
     public void testPageFrameBinaryGroupBy() throws Exception {
@@ -8226,110 +8197,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSidecarVersioningAcrossSeals() throws Exception {
-        // Successive seals must create NEW versioned sidecar files
-        // (.pc<N>.<C>.<S>) rather than truncating the previous sealed
-        // version in place — otherwise a reader mmap'd to the prior
-        // sealed-version file would be invalidated.
-        assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getDbRoot())) {
-                String name = "cov_seal_versioning";
-                int plen = path.size();
-                int rowCount = 30;
-                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < rowCount; i++) {
-                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
-                    }
-                    FilesFacade ff = configuration.getFilesFacade();
-
-                    // First writer instance: write data and explicit seal.
-                    long firstSealTxn;
-                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
-                        writer.configureCovering(
-                                new long[]{colAddr},
-                                new long[]{0},
-                                new int[]{3},
-                                new int[]{2},
-                                new int[]{ColumnType.DOUBLE},
-                                1
-                        );
-                        for (int i = 0; i < 10; i++) {
-                            writer.add(i % 3, i);
-                        }
-                        writer.setMaxValue(9);
-                        writer.commit();
-                        writer.seal();
-                        firstSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                                ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
-                    }
-                    assertTrue("first seal must produce a positive sealTxn", firstSealTxn > 0);
-                    // Verify .pc0 at the first sealTxn is on disk.
-                    assertTrue("first-seal sidecar .pc0 must exist",
-                            ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
-                                    COLUMN_NAME_TXN_NONE, firstSealTxn)));
-
-                    // Second writer instance: reopen, write more data, force another seal.
-                    long secondSealTxn;
-                    try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration)) {
-                        writer2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
-                        writer2.configureCovering(
-                                new long[]{colAddr},
-                                new long[]{0},
-                                new int[]{3},
-                                new int[]{2},
-                                new int[]{ColumnType.DOUBLE},
-                                1
-                        );
-                        for (int i = 10; i < 30; i++) {
-                            writer2.add(i % 3, i);
-                        }
-                        writer2.setMaxValue(29);
-                        writer2.commit();
-                        writer2.seal();
-                        secondSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                                ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
-                    }
-                    assertTrue("second seal must advance sealTxn beyond the first",
-                            secondSealTxn > firstSealTxn);
-
-                    // The previous-seal .pc0 file must STILL exist on disk
-                    // after the second seal — the previous sealed version
-                    // stays untouched until the background purge job collects it.
-                    assertTrue("first-seal sidecar .pc0 must survive a subsequent seal",
-                            ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
-                                    COLUMN_NAME_TXN_NONE, firstSealTxn)));
-                    // And the second seal's .pc0 at the new sealTxn must exist too.
-                    assertTrue("second-seal sidecar .pc0 must exist at the new sealTxn",
-                            ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
-                                    COLUMN_NAME_TXN_NONE, secondSealTxn)));
-
-                    // Reader at the latest sealTxn sees ALL committed data.
-                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
-                        int totalRows = 0;
-                        for (int key = 0; key < 3; key++) {
-                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE);
-                            while (cc.hasNext()) {
-                                long rowId = cc.next();
-                                double covered = cc.getCoveredDouble(0);
-                                assertEquals("covered value must round-trip across the seal boundary",
-                                        100.0 + rowId, covered, 0.001);
-                                totalRows++;
-                            }
-                            Misc.free(cc);
-                        }
-                        assertEquals("reader must see every committed row across both seals", 30, totalRows);
-                    }
-                } finally {
-                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testRenameIndexedColumn() throws Exception {
         // Rename a column that has INDEX TYPE POSTING
         assertMemoryLeak(() -> {
@@ -8485,8 +8352,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 1: INCLUDE validation on WAL and CREATE TABLE paths ---
-
     @Test
     public void testShowColumnsWithPostingIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -8534,6 +8399,112 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     \tqty INT
                     ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                     """, "SHOW CREATE TABLE t_show");
+        });
+    }
+
+    // --- Issue 1: INCLUDE validation on WAL and CREATE TABLE paths ---
+
+    @Test
+    public void testSidecarVersioningAcrossSeals() throws Exception {
+        // Successive seals must create NEW versioned sidecar files
+        // (.pc<N>.<C>.<S>) rather than truncating the previous sealed
+        // version in place — otherwise a reader mmap'd to the prior
+        // sealed-version file would be invalidated.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cov_seal_versioning";
+                int plen = path.size();
+                int rowCount = 30;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
+                    }
+                    FilesFacade ff = configuration.getFilesFacade();
+
+                    // First writer instance: write data and explicit seal.
+                    long firstSealTxn;
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{2},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        for (int i = 0; i < 10; i++) {
+                            writer.add(i % 3, i);
+                        }
+                        writer.setMaxValue(9);
+                        writer.commit();
+                        writer.seal();
+                        firstSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                                ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    }
+                    assertTrue("first seal must produce a positive sealTxn", firstSealTxn > 0);
+                    // Verify .pc0 at the first sealTxn is on disk.
+                    assertTrue("first-seal sidecar .pc0 must exist",
+                            ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
+                                    COLUMN_NAME_TXN_NONE, firstSealTxn)));
+
+                    // Second writer instance: reopen, write more data, force another seal.
+                    long secondSealTxn;
+                    try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration)) {
+                        writer2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                        writer2.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{2},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        for (int i = 10; i < 30; i++) {
+                            writer2.add(i % 3, i);
+                        }
+                        writer2.setMaxValue(29);
+                        writer2.commit();
+                        writer2.seal();
+                        secondSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                                ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    }
+                    assertTrue("second seal must advance sealTxn beyond the first",
+                            secondSealTxn > firstSealTxn);
+
+                    // The previous-seal .pc0 file must STILL exist on disk
+                    // after the second seal — the previous sealed version
+                    // stays untouched until the background purge job collects it.
+                    assertTrue("first-seal sidecar .pc0 must survive a subsequent seal",
+                            ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
+                                    COLUMN_NAME_TXN_NONE, firstSealTxn)));
+                    // And the second seal's .pc0 at the new sealTxn must exist too.
+                    assertTrue("second-seal sidecar .pc0 must exist at the new sealTxn",
+                            ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
+                                    COLUMN_NAME_TXN_NONE, secondSealTxn)));
+
+                    // Reader at the latest sealTxn sees ALL committed data.
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
+                        int totalRows = 0;
+                        for (int key = 0; key < 3; key++) {
+                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE);
+                            while (cc.hasNext()) {
+                                long rowId = cc.next();
+                                double covered = cc.getCoveredDouble(0);
+                                assertEquals("covered value must round-trip across the seal boundary",
+                                        100.0 + rowId, covered, 0.001);
+                                totalRows++;
+                            }
+                            Misc.free(cc);
+                        }
+                        assertEquals("reader must see every committed row across both seals", 30, totalRows);
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
         });
     }
 
@@ -8607,8 +8578,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 2: LATEST BY + residual filter through covering index ---
-
     @Test
     public void testVarcharPageFrameCountMixed() throws Exception {
         // COUNT(*) with mixed VARCHAR + DOUBLE INCLUDE. The DOUBLE column provides
@@ -8639,6 +8608,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT COUNT(*) FROM t_vw_count WHERE sym = 'A'");
         });
     }
+
+    // --- Issue 2: LATEST BY + residual filter through covering index ---
 
     @Test
     public void testVarcharPageFrameDataCorrectness() throws Exception {
@@ -8695,8 +8666,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 3: Index restart skips already-indexed partitions ---
-
     @Test
     public void testVarcharPageFrameMultiPartition() throws Exception {
         assertMemoryLeak(() -> {
@@ -8732,7 +8701,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 4: Page frame with BINARY covered column (GROUP BY) ---
+    // --- Issue 3: Index restart skips already-indexed partitions ---
 
     @Test
     public void testVarcharPageFramePlan() throws Exception {
@@ -8764,7 +8733,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Issue 5: DISTINCT end-to-end ---
+    // --- Issue 4: Page frame with BINARY covered column (GROUP BY) ---
 
     @Test
     public void testVarcharPageFrameVectorizedGroupBy() throws Exception {
@@ -8806,6 +8775,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    // --- Issue 5: DISTINCT end-to-end ---
+
     @Test
     public void testVarcharPageFrameWithFilter() throws Exception {
         // Residual filter on covered DOUBLE column with VARCHAR also in INCLUDE
@@ -8835,8 +8806,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     "SELECT name, price FROM t_vw_filt WHERE sym = 'A' AND price > 20");
         });
     }
-
-    // --- Issue 6: Covered TIMESTAMP values correct through seal + delta compression ---
 
     @Test
     public void testWideInclude10Columns() throws Exception {
@@ -8891,7 +8860,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    // --- Auto-include designated timestamp in INCLUDE ---
+    // --- Issue 6: Covered TIMESTAMP values correct through seal + delta compression ---
 
     @Test
     public void testWideInclude20Columns() throws Exception {
@@ -8936,6 +8905,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """, "SELECT c0, c10, c19 FROM t_wide20 WHERE sym IN ('X', 'Y') ORDER BY c0");
         });
     }
+
+    // --- Auto-include designated timestamp in INCLUDE ---
 
     @Test
     public void testWideInclude20ColumnsMultiPartition() throws Exception {
@@ -9405,6 +9376,32 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     77.7\ttest
                     """, "SELECT uncovered1, uncovered3 FROM t_partial WHERE sym = 'A'");
         });
+    }
+
+    /**
+     * Builds a minimal RecordMetadata for direct PostingIndexReader construction.
+     * Pads slots up to the highest covered index with placeholder LONG columns;
+     * each covered index gets the type the writer was given. Tests that bypass
+     * TableReader must supply this — the reader resolves covered-column types
+     * from live metadata, not from the .pci.
+     */
+    private static RecordMetadata coveringMetadata(int[] coveredIndices, int[] coveredTypes) {
+        int maxIdx = -1;
+        for (int idx : coveredIndices) {
+            if (idx > maxIdx) maxIdx = idx;
+        }
+        GenericRecordMetadata m = new GenericRecordMetadata();
+        for (int i = 0; i <= maxIdx; i++) {
+            int type = ColumnType.LONG;
+            for (int j = 0; j < coveredIndices.length; j++) {
+                if (coveredIndices[j] == i) {
+                    type = coveredTypes[j];
+                    break;
+                }
+            }
+            m.add(new TableColumnMetadata("c" + i, type));
+        }
+        return m;
     }
 
     private void assertPlanDoesNotContain(String query) throws SqlException {
