@@ -7446,8 +7446,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
             lastParquetMetaFileSize = ff.length(path.$());
             addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
-            parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
-            return addr;
+            try {
+                parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
+                return addr;
+            } catch (CairoException e) {
+                ff.munmap(addr, lastParquetMetaFileSize, memoryTag);
+                throw e;
+            }
         } finally {
             path.trimTo(partitionDirLen);
         }

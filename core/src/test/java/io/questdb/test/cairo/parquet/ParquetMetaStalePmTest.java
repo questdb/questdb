@@ -33,11 +33,15 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Tests stale _pm detection and writer-side regeneration.
@@ -169,6 +173,48 @@ public class ParquetMetaStalePmTest extends AbstractCairoTest {
             execute("ALTER TABLE t CONVERT PARTITION TO NATIVE WHERE ts > 0");
 
             assertSql("count\n4\n", "SELECT count() FROM t");
+        });
+    }
+
+    @Test
+    public void testNoMmapLeakWhenOfFailsAfterRegeneration() throws Exception {
+        final AtomicBoolean interceptEnabled = new AtomicBoolean(false);
+        final AtomicBoolean intercepted = new AtomicBoolean(false);
+
+        final FilesFacade corruptingFf = new TestFilesFacadeImpl() {
+            @Override
+            public long length(LPSZ name) {
+                long len = super.length(name);
+                // After regeneration writes a valid _pm, return a truncated size
+                // so parquetMetaReader.of() fails on size validation (10 < 32).
+                if (interceptEnabled.get()
+                        && !intercepted.get()
+                        && len > 0
+                        && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
+                    intercepted.set(true);
+                    return 10;
+                }
+                return len;
+            }
+        };
+
+        assertMemoryLeak(corruptingFf, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            corruptPm("t");
+            interceptEnabled.set(true);
+
+            try {
+                execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
+                Assert.fail("expected CairoException from corrupted _pm size");
+            } catch (CairoException ignored) {
+                // Expected: parquetMetaReader.of() rejects the truncated _pm size.
+                // With the fix, the mmap from mapRO() is properly cleaned up.
+                // Without the fix, assertMemoryLeak() detects the leaked mmap.
+            }
         });
     }
 
