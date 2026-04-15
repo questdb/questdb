@@ -211,6 +211,40 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewRejectsNonZeroPassWindow() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        // first_value(...) IGNORE NULLS OVER (PARTITION BY ...) is a TWO_PASS window function;
+        // it cannot be maintained incrementally.
+        assertException(
+                "CREATE LIVE VIEW lv_bad AS" +
+                        " SELECT symbol, ts, first_value(price) ignore nulls over (partition by symbol) AS fv FROM trades",
+                17,
+                "live view select may only use window functions that support incremental refresh"
+        );
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
+    }
+
+    @Test
+    public void testCreateLiveViewRejectsWindowOrderedByNonTimestamp() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        // Ordering the window by a non-timestamp column forces the planner onto the cached
+        // window path, which requires sorting the full base dataset on every refresh.
+        assertException(
+                "CREATE LIVE VIEW lv_bad AS" +
+                        " SELECT symbol, price, ts, row_number() OVER (ORDER BY price) AS rn FROM trades",
+                17,
+                "live view select may only use window functions that support incremental refresh"
+        );
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
+    }
+
+    @Test
     public void testDropDuringRefreshDefersFree() throws Exception {
         assertMemoryLeak(() -> {
             createBaseTableAndLiveView();

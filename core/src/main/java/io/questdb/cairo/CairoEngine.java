@@ -115,6 +115,9 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -678,6 +681,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             CompiledQuery cq = compiler.compile(op.getSelectSql(), executionContext);
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
+                validateLiveViewWindowFunctions(factory, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
             }
         }
@@ -2135,6 +2139,25 @@ public class CairoEngine implements Closeable, WriterSource {
                 throw SqlException.$(0, "use drop()");
             default:
                 throw SqlException.$(0, "use ddl()");
+        }
+    }
+
+    private static void validateLiveViewWindowFunctions(RecordCursorFactory factory, int position) throws SqlException {
+        RecordCursorFactory f = factory;
+        while (f != null) {
+            if (f instanceof CachedWindowRecordCursorFactory) {
+                throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
+                        "this query requires caching or multi-pass evaluation");
+            }
+            if (f instanceof WindowRecordCursorFactory wf) {
+                ObjList<WindowFunction> fns = wf.getWindowFunctions();
+                for (int i = 0, n = fns.size(); i < n; i++) {
+                    if (fns.getQuick(i).getPassCount() != WindowFunction.ZERO_PASS) {
+                        throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
+                    }
+                }
+            }
+            f = f.getBaseFactory();
         }
     }
 
