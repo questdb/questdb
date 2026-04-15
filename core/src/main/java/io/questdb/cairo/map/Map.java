@@ -51,7 +51,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     /**
      * Decodes the value-region byte offset from an encoded batch entry. Combine
-     * with {@link #getEntryBase()} to obtain the absolute start address of the
+     * with {@link #probeBatch}'s result to obtain the absolute start address of the
      * value region for that entry. Per-function value columns can then be
      * addressed by adding the column's offset within the value region.
      */
@@ -88,14 +88,6 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     MapRecordCursor getCursor();
 
-    /**
-     * Returns the current base address against which entry offsets from
-     * {@link MapValue#getStartOffset()} are interpreted.
-     */
-    default long getEntryBase() {
-        throw new UnsupportedOperationException();
-    }
-
     @TestOnly
     default long getHeapSize() {
         return -1;
@@ -125,7 +117,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * Probes rows {@code batchStart..batchEnd-1} and writes packed longs into
      * {@code batchAddr}. Each packed long has the layout:
      * {@code [isNew:1][rowIndex:24][offset:39]}, where {@code offset} is the
-     * byte distance from {@link #getEntryBase()} to the <b>start of the value
+     * byte distance from Map's base address to the <b>start of the value
      * region</b> of that entry — not to the entry start. This keeps the
      * encoding uniform across fixed- and variable-size maps and lets
      * consumers address per-column values as
@@ -137,7 +129,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * loop; a mid-batch rehash would invalidate offsets already written into
      * {@code batchAddr} for earlier rows in the same batch.
      *
-     * @return the entryBase address valid for the written batch
+     * @return the baseValueAddress address valid for the written batch
      */
     long probeBatch(
             PageFrameMemoryRecord record,

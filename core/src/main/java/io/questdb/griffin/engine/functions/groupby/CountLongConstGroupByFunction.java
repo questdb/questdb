@@ -54,7 +54,7 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long entryBase,
+            long baseValueAddress,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -62,7 +62,7 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
         for (long i = 0; i < rowCount; i++) {
             long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
-            long addr = entryBase + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+            long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
             Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
         }
     }

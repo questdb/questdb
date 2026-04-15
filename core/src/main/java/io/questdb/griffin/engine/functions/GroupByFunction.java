@@ -110,17 +110,17 @@ public interface GroupByFunction extends Function, Mutable {
      * {@code [isNew:1][rowIndex:24][offset:39]}, where {@code offset} is the
      * value-region-start offset relative to {@code entryBase}.
      *
-     * @param record    page frame record, positioned via setRowIndex
-     * @param mapValue  pre-allocated packed flyweight, reused per row
-     * @param entryBase stable base address ({@link Map#getEntryBase()}), pre-resolved by the reducer
-     * @param batchAddr native pointer to {@code rowCount} packed longs (8 bytes each)
-     * @param rowCount  number of entries to process
-     * @param baseRowId absolute row id of the first row in the sub-batch
+     * @param record           page frame record, positioned via setRowIndex
+     * @param mapValue         pre-allocated packed flyweight, reused per row
+     * @param baseValueAddress stable base address for map values, pre-resolved by the reducer
+     * @param batchAddr        native pointer to {@code rowCount} packed longs (8 bytes each)
+     * @param rowCount         number of entries to process
+     * @param baseRowId        absolute row id of the first row in the sub-batch
      */
     default void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long entryBase,
+            long baseValueAddress,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -131,7 +131,7 @@ public interface GroupByFunction extends Function, Mutable {
             int rowIndex = Map.decodeBatchRowIndex(encoded);
             boolean isNew = Map.isNewBatchEntry(encoded);
             record.setRowIndex(rowIndex);
-            mapValue.of(entryBase + valueOffset);
+            mapValue.of(baseValueAddress + valueOffset);
             // TODO(puzpuzpuz): it's safe to always call computeNext on certain group by functions like count or sum;
             //   those functions work correctly when only computeNext is called on identity value state (setEmpty state)
             if (isNew) {

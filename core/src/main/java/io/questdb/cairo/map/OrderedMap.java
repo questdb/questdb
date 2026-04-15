@@ -303,11 +303,6 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
-    public long getEntryBase() {
-        return heapAddr;
-    }
-
-    @Override
     public long getHeapSize() {
         return heapLimit - heapAddr;
     }

@@ -344,7 +344,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         batchList.ensureCapacity(subBatchSize);
         final long batchAddr = batchList.getAddress();
 
-        long entryBase = map.getEntryBase();
         for (long batchStart = 0; batchStart < frameRowCount; batchStart += subBatchSize) {
             final long batchEnd = Math.min(batchStart + subBatchSize, frameRowCount);
             final long batchRows = batchEnd - batchStart;
@@ -354,14 +353,14 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             map.reserveCapacity(batchRows);
 
             // Probe phase — delegate to the map for inlined probe loop.
-            entryBase = map.probeBatch(record, mapSink, batchStart, batchEnd, batchAddr);
+            final long baseValueAddress = map.probeBatch(record, mapSink, batchStart, batchEnd, batchAddr);
 
             // Update phase — one call per function per sub-batch.
             for (int i = 0; i < functionCount; i++) {
                 functions.getQuick(i).computeKeyedBatch(
                         record,
                         mapValue,
-                        entryBase,
+                        baseValueAddress,
                         batchAddr,
                         batchRows,
                         baseRowId + batchStart

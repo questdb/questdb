@@ -84,15 +84,6 @@ public interface MapValue extends Record {
      */
     long getStartAddress();
 
-    /**
-     * Returns the offset of this entry relative to {@link Map#getEntryBase()}.
-     * Returns Long.MIN_VALUE if the entry cannot participate in batched dispatch
-     * (e.g. zero-key entries stored in separate memory).
-     */
-    default long getStartOffset() {
-        return Long.MIN_VALUE;
-    }
-
     long getTimestamp(int index);
 
     boolean isNew();

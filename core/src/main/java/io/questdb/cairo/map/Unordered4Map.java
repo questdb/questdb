@@ -222,11 +222,6 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     @Override
-    public long getEntryBase() {
-        return memStart;
-    }
-
-    @Override
     public int getKeyCapacity() {
         return keyCapacity;
     }

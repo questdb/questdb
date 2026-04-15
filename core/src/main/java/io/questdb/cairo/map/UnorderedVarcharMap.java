@@ -256,11 +256,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     }
 
     @Override
-    public long getEntryBase() {
-        return memStart;
-    }
-
-    @Override
     public long getHeapSize() {
         return memLimit - memStart + allocator.allocated();
     }
