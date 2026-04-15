@@ -79,6 +79,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int maxOpenPartitions;
     private final MessageBus messageBus;
     private final TableReaderMetadata metadata;
+    private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final int partitionBy;
     private final PartitionOverwriteControl partitionOverwriteControl;
     private final Path path;
@@ -95,10 +96,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean hasActiveColumns;
     private int openPartitionCount;
     private LongList openPartitionInfo;
-    private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<ParquetMetaPartitionDecoder> parquetMetaDecoders;
+    private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
-    private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private int partitionCount;
     private long rowCount;
     // When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
@@ -948,6 +948,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             case PartitionFormat.NATIVE:
                 int columnBase = getColumnBase(partitionIndex);
                 closePartitionColumns(columnBase);
+                // A partition that transitioned from PARQUET to NATIVE still has
+                // parquet resources (data.parquet mmap, _pm mmap, decoder) that
+                // must be released. The format slot is updated before this method
+                // runs, so we cannot rely on it to decide cleanup.
+                closeParquetPartition(partitionIndex);
                 break;
             default:
                 break;
@@ -970,6 +975,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 for (int i = 0; i < columnCount; i++) {
                     closePartitionColumn(oldBase, i);
                 }
+            } else if (getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+                closeParquetPartition(partitionIndex);
             }
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
@@ -1347,6 +1354,32 @@ public class TableReader implements Closeable, SymbolTableSource {
         return memory;
     }
 
+    /**
+     * Opens (or remaps) the _pm metadata file for the given partition and
+     * returns the parquet file size derived from its footer metadata.
+     */
+    private long openParquetMetadata(int partitionIndex, long partitionNameTxn) {
+        final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
+        assert parquetFileSize > 0;
+
+        path.trimTo(rootLen);
+        pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
+
+        // stat() the _pm file to get its actual size (field 3 is now parquet file size).
+        final long parquetMetaFileSize = ff.length(path.$());
+
+        MemoryCMR parquetMetaMem = parquetMetadataPartitions.getQuick(partitionIndex);
+        if (parquetMetaMem != null && parquetMetaMem != NullMemoryCMR.INSTANCE) {
+            parquetMetaMem.of(ff, path.$(), parquetMetaFileSize, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        } else {
+            parquetMetaMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER, false);
+            parquetMetadataPartitions.setQuick(partitionIndex, parquetMetaMem);
+        }
+
+        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaFileSize, parquetFileSize);
+        return parquetMetaReader.getParquetFileSize();
+    }
+
     private long openPartition0(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         if (txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
@@ -1621,16 +1654,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
                 final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
 
-                // Refresh the format slot when the partition was rewritten
-                // (nameTxn changed). A CONVERT PARTITION TO PARQUET/NATIVE
-                // rewrites the partition dir, changing its nameTxn.
-                if (openPartitionNameTxn != txPartitionNameTxn) {
-                    openPartitionInfo.setQuick(
-                            offset + PARTITIONS_SLOT_OFFSET_FORMAT,
-                            txFile.isPartitionParquet(txPartitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE
-                    );
-                }
-
                 if (!forceTruncate) {
                     if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
                         // We used to skip reloading partition size if the row count is the same and name txn is the same.
@@ -1700,6 +1723,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reloadAllSymbols() {
+        path.trimTo(rootLen);
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
                 SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
@@ -1917,32 +1941,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    /**
-     * Opens (or remaps) the _pm metadata file for the given partition and
-     * returns the parquet file size derived from its footer metadata.
-     */
-    private long openParquetMetadata(int partitionIndex, long partitionNameTxn) {
-        final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
-        assert parquetFileSize > 0;
-
-        path.trimTo(rootLen);
-        pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
-
-        // stat() the _pm file to get its actual size (field 3 is now parquet file size).
-        final long parquetMetaFileSize = ff.length(path.$());
-
-        MemoryCMR parquetMetaMem = parquetMetadataPartitions.getQuick(partitionIndex);
-        if (parquetMetaMem != null && parquetMetaMem != NullMemoryCMR.INSTANCE) {
-            parquetMetaMem.of(ff, path.$(), parquetMetaFileSize, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-        } else {
-            parquetMetaMem = new MemoryCMRDetachedImpl(ff, path.$(), parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER, false);
-            parquetMetadataPartitions.setQuick(partitionIndex, parquetMetaMem);
-        }
-
-        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaFileSize, parquetFileSize);
-        return parquetMetaReader.getParquetFileSize();
-    }
-
     private boolean reloadParquetFile(int partitionIndex, long partitionNameTxn, long parquetFileSize) {
         MemoryCMR parquetMetaMem = parquetMetadataPartitions.getQuick(partitionIndex);
         if (parquetMetaMem == null || parquetMetaMem == NullMemoryCMR.INSTANCE) {
@@ -1961,7 +1959,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             return false;
         }
         // Use parquet file size as MVCC token to find the matching footer.
-        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaFileSize, parquetFileSize);
+        try {
+            parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaFileSize, parquetFileSize);
+        } catch (CairoException e) {
+            return false;
+        }
 
         MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
         if (parquetMem == null || parquetMem == NullMemoryCMR.INSTANCE) {
@@ -1999,11 +2001,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerColumnIndex);
             String columnName = metadata.getColumnName(columnIndex);
             if (!(reader instanceof SymbolMapReaderImpl symbolMapReader)) {
-                reader = new SymbolMapReaderImpl(configuration, path, columnName, symbolTableNameTxn, 0);
+                reader = new SymbolMapReaderImpl(configuration, path.trimTo(rootLen), columnName, symbolTableNameTxn, 0);
             } else {
                 // Fully reopen the symbol map reader only when necessary
                 if (symbolMapReader.needsReopen(symbolTableNameTxn)) {
-                    symbolMapReader.of(configuration, path, columnName, symbolTableNameTxn, 0);
+                    symbolMapReader.of(configuration, path.trimTo(rootLen), columnName, symbolTableNameTxn, 0);
                 }
             }
         } else {

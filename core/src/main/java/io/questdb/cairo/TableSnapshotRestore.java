@@ -731,8 +731,13 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             try {
                 long parquetMetaFileSize = ParquetMetadataWriter.generate(Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(pmFd));
-                txWriter.setPartitionParquetFormat(partitionTs, parquetMetaFileSize);
+                txWriter.setPartitionParquetFormat(partitionTs, parquetFileSize);
                 LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", pmSize=").$(parquetMetaFileSize).I$();
+            } catch (Throwable t) {
+                // Remove partially written _pm file so a retry regenerates it.
+                tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                ff.remove(tablePath.$());
+                throw t;
             } finally {
                 ff.close(parquetFd);
                 ff.close(pmFd);

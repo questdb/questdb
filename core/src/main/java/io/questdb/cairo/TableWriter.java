@@ -1103,6 +1103,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     convertPartitionParquetToNative(txWriter.getPartitionTimestampByIndex(i));
                 }
             }
+            path.trimTo(pathSize);
 
             LOG.info().$("converting column [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", from=").$(ColumnType.nameOf(existingType))
@@ -1256,7 +1257,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 );
                 oldSymbolWriter.rebuildCapacity(
                         configuration,
-                        path,
+                        path.trimTo(pathSize),
                         columnName,
                         columnNameTxn,
                         newSymbolCapacity,
@@ -2003,6 +2004,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             openPartition(partitionTimestamp, txWriter.getTransientRowCount());
             setAppendPosition(txWriter.getTransientRowCount(), false);
         }
+        path.trimTo(pathSize);
+        other.trimTo(pathSize);
         return true;
     }
 
@@ -4736,10 +4739,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolNullFlag,
             int columnIndex
     ) {
-        MapWriter.createSymbolMapFiles(ff, ddlMem, path, name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+        MapWriter.createSymbolMapFiles(ff, ddlMem, path.trimTo(pathSize), name, columnNameTxn, symbolCapacity, symbolCacheFlag);
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
-                path,
+                path.trimTo(pathSize),
                 name,
                 columnNameTxn,
                 0,
@@ -7428,29 +7431,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastParquetMetaFileSize = ff.length(path.$());
         boolean needsRegeneration = lastParquetMetaFileSize <= 0;
         long addr = 0;
-        if (!needsRegeneration) {
-            addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
-            try {
-                parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
-                return addr;
-            } catch (CairoException e) {
-                ff.munmap(addr, lastParquetMetaFileSize, memoryTag);
-                addr = 0;
-                if (e.getErrno() != CairoException.STALE_PARQUET_METADATA) {
-                    throw e;
+        try {
+            if (!needsRegeneration) {
+                addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
+                try {
+                    parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
+                    return addr;
+                } catch (CairoException e) {
+                    ff.munmap(addr, lastParquetMetaFileSize, memoryTag);
+                    addr = 0;
+                    if (e.getErrno() != CairoException.STALE_PARQUET_METADATA) {
+                        throw e;
+                    }
                 }
             }
+            LOG.info()
+                    .$("regenerating stale _pm [path=").$(path)
+                    .$(", parquetFileSize=").$(parquetFileSize)
+                    .I$();
+            regenerateParquetMetadata(path, partitionDirLen, parquetFileSize);
+            path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
+            lastParquetMetaFileSize = ff.length(path.$());
+            addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
+            parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
+            return addr;
+        } finally {
+            path.trimTo(partitionDirLen);
         }
-        LOG.info()
-                .$("regenerating stale _pm [path=").$(path)
-                .$(", parquetFileSize=").$(parquetFileSize)
-                .I$();
-        regenerateParquetMetadata(path, partitionDirLen, parquetFileSize);
-        path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
-        lastParquetMetaFileSize = ff.length(path.$());
-        addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
-        parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
-        return addr;
     }
 
     private void openPartition(long timestamp, long rowCount) {
@@ -11247,7 +11254,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int column = 0; column < columnCount; column++) {
             if (metadata.getColumnType(column) > 0) {
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, column);
-                if (colTop != 0) {
+                if (colTop > 0) {
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, column, 0);
                 }
             }

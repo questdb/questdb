@@ -109,7 +109,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         frameFormats.add(frame.getFormat());
         ParquetDecoder decoder = frame.getParquetDecoder();
         parquetDecoders.add(decoder);
-        assert decoder == null || decoder.getFileSize() > 0 || frame.getFormat() != PartitionFormat.PARQUET;
+        assert (decoder != null && decoder.getFileSize() > 0) || frame.getFormat() != PartitionFormat.PARQUET;
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());

@@ -120,7 +120,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final DirectIntList parquetColumns = ctx.getParquetColumns();
         final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
         final PartitionDescriptor partitionDescriptor = ctx.getPartitionDescriptor();
-        long parquetSize = 0;
+        long parquetSize = parquetFileSize;
         long parquetMetaAddr = 0;
         long parquetMetaFileSize = 0;
         try {
