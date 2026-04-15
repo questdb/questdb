@@ -138,23 +138,21 @@ public final class PurgingOperator {
                                 }
 
                                 if (indexType != IndexType.NONE) {
-                                    // Remove sidecar files and sealed .pv BEFORE .pk deletion,
-                                    // since removeSidecarAndSealedFiles reads VALUE_FILE_TXN from .pk.
                                     if (IndexType.isPosting(indexType)) {
-                                        long sealTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                                                ff, PostingIndexUtils.keyFileName(path.trimTo(pathPartitionLen), columnName, columnVersion));
-                                        PostingIndexUtils.removeSidecarFiles(ff, path, pathPartitionLen, columnName, columnVersion);
-                                        if (sealTxn > 0 && sealTxn != columnVersion) {
-                                            ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(pathPartitionLen), columnName, sealTxn));
-                                            // Seal bumps columnNameTxn — sidecar files (.pci, .pc0, ...)
-                                            // are also written with the sealed txn.
-                                            PostingIndexUtils.removeSidecarFiles(ff, path, pathPartitionLen, columnName, sealTxn);
-                                        }
+                                        // Enumerate every sealed .pv / .pc<N> for this column
+                                        // instance across all on-disk sealTxn generations.
+                                        // removeAllSealedFiles tolerates missing files, so
+                                        // successive purge passes are idempotent.
+                                        PostingIndexUtils.removeAllSealedFiles(ff, path, pathPartitionLen, columnName, columnVersion);
+                                        IndexFactory.keyFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
+                                        columnPurged &= ff.removeQuiet(path.$());
+                                    } else {
+                                        // BITMAP keeps a single .v at columnVersion (no sealTxn axis).
+                                        IndexFactory.valueFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion, columnVersion);
+                                        columnPurged &= ff.removeQuiet(path.$());
+                                        IndexFactory.keyFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
+                                        columnPurged &= ff.removeQuiet(path.$());
                                     }
-                                    IndexFactory.valueFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    columnPurged &= ff.removeQuiet(path.$());
-                                    IndexFactory.keyFileName(indexType, path.trimTo(pathPartitionLen), columnName, columnVersion);
-                                    columnPurged &= ff.removeQuiet(path.$());
                                 }
                             } else {
                                 // This is removal of symbol files from the table root directory

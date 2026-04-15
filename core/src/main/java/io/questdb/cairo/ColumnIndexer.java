@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
@@ -32,6 +33,23 @@ import io.questdb.std.str.Path;
 
 
 public interface ColumnIndexer extends QuietCloseable {
+
+    /**
+     * Publishes every accumulated purge request (one per superseded
+     * sealed-version file set) onto the global {@code PostingSealPurgeQueue}.
+     * The background {@code PostingSealPurgeJob} persists each task and,
+     * when the {@link TxnScoreboard} confirms safety, calls
+     * {@code PostingSealPurgeOperator} to delete the files. Default no-op
+     * for index types that do not produce seal-versioned files (BITMAP).
+     */
+    default void publishPendingPurges(
+            MessageBus messageBus,
+            TableToken tableToken,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy
+    ) {
+    }
 
     default void clearCovering() {
         // no-op by default

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -66,6 +67,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
     protected int coverCount;
     protected int genCount;
     protected int keyCount;
+    // Live table metadata used to resolve covered-column types when sidecars
+    // open. May be null (e.g., low-level tests) — in that case the .pci file
+    // is treated as absent.
+    protected RecordMetadata metadata;
     protected long reloadGeneration; // incremented when valueMem is remapped; cursors check for staleness
     protected int[] sidecarColumnIndices;
     protected int[] sidecarColumnTypes;
@@ -180,11 +185,13 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             CharSequence columnName,
             long columnNameTxn,
             long partitionTxn,
-            long columnTop
+            long columnTop,
+            RecordMetadata metadata
     ) {
         this.columnTop = columnTop;
         this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
+        this.metadata = metadata;
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
         this.clock = configuration.getMillisecondClock();
         this.readerPartitionPath = path.toString();
@@ -215,12 +222,12 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             // valueFileTxn determines which .pv file to open.
             // -1 (COLUMN_NAME_TXN_NONE) or 0 (pre-upgrade zero-fill) = same as columnNameTxn.
             // After seal, set to the bumped txn of the sealed .pv file.
-            long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
+            long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
             this.valueFileTxn = (metaValueTxn <= 0) ? columnNameTxn : metaValueTxn;
 
             this.valueMem.of(
                     configuration.getFilesFacade(),
-                    PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, valueFileTxn),
+                    PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn, valueFileTxn),
                     valueMemSize,
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER
@@ -238,35 +245,27 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
     @Override
     public void reloadConditionally() {
-        // Check both pages for a higher sequence than cached
+        // Query-boundary pin: the reader stays on the sealTxn it was
+        // constructed with — never flips to a newly-sealed file mid-query
+        // (that would invalidate raw native pointers held by an in-flight
+        // cursor and SIGSEGV). The method:
+        //   1. Re-snapshots .pk metadata.
+        //   2. Extends valueMem if the snapshot still matches our sealTxn.
+        //   3. Otherwise no-op — needsFullReopen() reports the mismatch and
+        //      the caller issues a fresh of() between queries.
         Unsafe.getUnsafe().loadFence();
         long seqA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
         long seqB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
         long maxSeq = Math.max(seqA, seqB);
         if (maxSeq != keyFileSequence) {
             readIndexMetadataFromBestPage();
-
-            // Check if the value file txn changed (seal wrote a new .pv file)
-            long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
-            long newValueFileTxn = (metaValueTxn <= 0) ? columnTxn : metaValueTxn;
-            if (newValueFileTxn != valueFileTxn && readerPartitionPath != null && ff != null) {
-                // Value file changed — close old mapping and open new .pv.
-                // Old .pv file stays on disk for other readers with active cursors.
-                reloadGeneration++;
-                valueFileTxn = newValueFileTxn;
-                Misc.free(valueMem);
-                try (Path p = new Path().of(readerPartitionPath)) {
-                    valueMem.of(ff,
-                            PostingIndexUtils.valueFileName(p, readerColumnName, valueFileTxn),
-                            ff.getMapPageSize(), valueMemSize,
-                            MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
-                }
-                // Also reopen sidecar files for covering index
-                closeSidecarMems();
-                try (Path p = new Path().of(readerPartitionPath)) {
-                    openSidecarFilesIfPresent(p, readerColumnName, columnTxn);
-                }
-            } else if (valueMemSize > 0) {
+            // Only extend if the snapshot's sealTxn still matches our pinned
+            // mapping — otherwise the new valueMemSize describes a different
+            // file (a newly-sealed .pv) and applying it to our old mapping
+            // would either truncate or reach past the on-disk file end.
+            long metaValueTxn = keyMem.getLong(activePageOffset + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
+            long currentSealTxn = metaValueTxn <= 0 ? columnTxn : metaValueTxn;
+            if (currentSealTxn == valueFileTxn && valueMemSize > 0) {
                 long oldAddr = valueMem.addressOf(0);
                 ((MemoryCMR) this.valueMem).changeSize(valueMemSize);
                 if (valueMem.addressOf(0) != oldAddr) {
@@ -369,6 +368,12 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             path.trimTo(plen);
             return;
         }
+        // Without metadata we cannot resolve covered-column types, so fail
+        // closed: covering disabled, readers fall back to main column files.
+        if (metadata == null) {
+            path.trimTo(plen);
+            return;
+        }
         MemoryCMR infoMem = Vm.getCMRInstance();
         try {
             infoMem.of(ff, pciFile, ff.getMapPageSize(), 8, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
@@ -380,33 +385,44 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             if (count <= 0) {
                 return;
             }
-            long neededSize = 8 + (long) count * 8;
+            // .pci layout: magic(4B) + count(4B) + indices[count] (4B each).
+            // Types are looked up from the live RecordMetadata, not stored here.
+            long neededSize = 8 + (long) count * Integer.BYTES;
             infoMem.extend(neededSize);
             sidecarColumnIndices = new int[count];
             sidecarColumnTypes = new int[count];
+            int columnCount = metadata.getColumnCount();
             for (int i = 0; i < count; i++) {
-                sidecarColumnIndices[i] = infoMem.getInt(8 + (long) i * 8);
-                sidecarColumnTypes[i] = infoMem.getInt(8 + (long) i * 8 + 4);
+                int colIdx = infoMem.getInt(8 + (long) i * Integer.BYTES);
+                sidecarColumnIndices[i] = colIdx;
+                if (colIdx < 0 || colIdx >= columnCount) {
+                    throw CairoException.critical(0)
+                            .put("posting index .pci references missing column [colIdx=").put(colIdx)
+                            .put(", columnCount=").put(columnCount).put(']');
+                }
+                sidecarColumnTypes[i] = metadata.getColumnType(colIdx);
             }
             coverCount = count;
 
             sidecarMems = new MemoryMR[count];
-            boolean allSidecarsPresent = true;
+            int presentCount = 0;
             for (int c = 0; c < count; c++) {
-                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, columnNameTxn, c);
+                // coveredColumnNameTxn placeholder: a future change will
+                // resolve the per-cover-column txn from _cv.d.
+                LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, c, columnNameTxn, valueFileTxn);
                 if (ff.exists(pcFile)) {
                     sidecarMems[c] = Vm.getCMRInstance();
                     // Use -1 to map the full file via fd-based length check,
                     // avoiding stale length from ff.length(path).
                     sidecarMems[c].of(ff, pcFile, ff.getMapPageSize(), -1, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
-                } else {
-                    allSidecarsPresent = false;
+                    presentCount++;
                 }
+                // Missing sidecar leaves sidecarMems[c] = null; the cursor
+                // reports per-column availability via isCoveredAvailable, and
+                // the record-side dispatch falls back to the main column file.
                 path.trimTo(plen);
             }
-            if (!allSidecarsPresent) {
-                // Incomplete sidecar data (e.g., O3 rebuild without covering).
-                // Disable covering so the FallbackRecord reads column files.
+            if (presentCount == 0) {
                 closeSidecarMems();
                 coverCount = 0;
             }
@@ -568,7 +584,7 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                     // .pv file is protected from premature purge by the
                     // TxnScoreboard (reader's acquired txn covers it until the
                     // next reload).
-                    long metaValueTxn = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
+                    long metaValueTxn = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEAL_TXN);
                     long effectiveTxn = metaValueTxn > 0 ? metaValueTxn : this.valueFileTxn;
                     if (effectiveTxn != this.valueFileTxn) {
                         if (attempt == 0) {
@@ -920,6 +936,16 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         @Override
         public boolean hasCovering() {
             return coverCount > 0 && sidecarMems != null;
+        }
+
+        @Override
+        public boolean isCoveredAvailable(int includeIdx) {
+            return coverCount > 0
+                    && sidecarMems != null
+                    && includeIdx >= 0
+                    && includeIdx < sidecarMems.length
+                    && sidecarMems[includeIdx] != null
+                    && sidecarMems[includeIdx].size() > 0;
         }
 
         @Override

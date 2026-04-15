@@ -160,6 +160,15 @@ public interface IndexWriter extends Closeable, Mutable {
     void setMaxValue(long maxValue);
 
     /**
+     * Announces the publish-table-txn for the next seal that may trigger
+     * during this commit cycle. POSTING uses it to bound the scoreboard
+     * window when scheduling a purge of the previous sealed files. Default
+     * no-op for index types without seal-versioned files (BITMAP).
+     */
+    default void setPendingPublishTableTxn(long publishTableTxn) {
+    }
+
+    /**
      * Syncs the index files to disk.
      *
      * @param async true for async sync, false for sync

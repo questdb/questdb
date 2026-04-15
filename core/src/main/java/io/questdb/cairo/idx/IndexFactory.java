@@ -27,6 +27,7 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -58,6 +59,9 @@ public final class IndexFactory {
      * @param columnNameTxn column name transaction number
      * @param partitionTxn  partition transaction number
      * @param columnTop     column top value
+     * @param metadata      live table metadata used by POSTING covering to resolve
+     *                      covered-column types; ignored for BITMAP, may be {@code null}
+     *                      when covering is not needed
      * @return a new BitmapIndexReader instance
      * @throws CairoException if the index type is not supported
      */
@@ -69,15 +73,16 @@ public final class IndexFactory {
             CharSequence columnName,
             long columnNameTxn,
             long partitionTxn,
-            long columnTop
+            long columnTop,
+            RecordMetadata metadata
     ) {
         return switch (indexType) {
             case IndexType.BITMAP -> direction == BitmapIndexReader.DIR_FORWARD
                     ? new BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
             case IndexType.POSTING, IndexType.POSTING_DELTA -> direction == BitmapIndexReader.DIR_FORWARD
-                    ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
-                    : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
+                    ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata)
+                    : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata);
             case IndexType.NONE -> throw CairoException.critical(0)
                     .put("cannot create reader for index type NONE");
             default -> {
@@ -159,17 +164,18 @@ public final class IndexFactory {
     /**
      * Returns the value file name for the given index type.
      *
-     * @param indexType     the type of index (BITMAP, POSTING)
-     * @param path          the path to append the file name to
-     * @param columnName    the column name
-     * @param columnNameTxn the column name transaction number
+     * @param indexType            the type of index (BITMAP, POSTING)
+     * @param path                 the path to append the file name to
+     * @param columnName           the column name
+     * @param columnNameTxn        the column-instance txn (postingColumnNameTxn for POSTING)
+     * @param sealTxn              the sealed-version txn for POSTING; ignored for BITMAP
      * @return the path with the value file name appended
      */
-    public static LPSZ valueFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
+    public static LPSZ valueFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn, long sealTxn) {
         return switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
             case IndexType.POSTING, IndexType.POSTING_DELTA ->
-                    PostingIndexUtils.valueFileName(path, columnName, columnNameTxn);
+                    PostingIndexUtils.valueFileName(path, columnName, columnNameTxn, sealTxn);
             default -> {
                 CairoException e = CairoException.critical(0).put("unsupported index type: ");
                 IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);

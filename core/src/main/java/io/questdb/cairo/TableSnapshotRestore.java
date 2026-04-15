@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
@@ -823,8 +824,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             throw e;
         }
 
-        // Create empty .v file
-        LPSZ valueFileName = IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn);
+        // Create empty .v file. Fresh index: sealTxn starts equal to columnNameTxn (no seal yet).
+        LPSZ valueFileName = IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, columnNameTxn);
         if (!ff.touch(valueFileName)) {
             int errno = ff.errno();
             LOG.error().$("could not create index value file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(errno).I$();
@@ -1017,10 +1018,17 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     static void removeIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, byte indexType) {
+        // For POSTING, resolve the live sealTxn from .pk before removing. BITMAP ignores sealTxn.
+        long sealTxn = columnNameTxn;
+        if (IndexType.isPosting(indexType)) {
+            long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
+                    ff, PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
+            if (fromPk > 0) sealTxn = fromPk;
+        }
         // Remove .k file
         removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn));
 
         // Remove .v file
-        removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn));
+        removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, sealTxn));
     }
 }

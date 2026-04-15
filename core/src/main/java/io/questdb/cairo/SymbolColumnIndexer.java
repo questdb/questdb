@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -56,6 +57,19 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
         writer = IndexFactory.createWriter(indexType, configuration);
         bufferSize = 4096 * 1024;
         buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_INDEX_READER);
+    }
+
+    @Override
+    public void publishPendingPurges(
+            MessageBus messageBus,
+            TableToken tableToken,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy
+    ) {
+        if (writer instanceof PostingIndexWriter piw) {
+            piw.publishPendingPurges(messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy);
+        }
     }
 
     @Override

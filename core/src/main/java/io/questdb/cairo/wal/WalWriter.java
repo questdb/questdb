@@ -1025,9 +1025,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         tempPath.trimTo(tempPathTripLen);
         path.trimTo(pathSize);
-        // Symbol map files always use SYMBOL format (.k/.v)
-        IndexFactory.valueFileName(IndexType.BITMAP, tempPath, columnName, columnNameTxn);
-        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
+        // Symbol map files always use SYMBOL format (.k/.v); sealTxn is BITMAP-ignored.
+        IndexFactory.valueFileName(IndexType.BITMAP, tempPath, columnName, columnNameTxn, -1L);
+        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE, -1L);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
             // This is fine, Table Writer can rename or drop the column.
             LOG.info().$("failed to link value file [from=").$(tempPath)
@@ -1380,9 +1380,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // ACCESS_DENIED error, caused by the fact hard link destination file is open.
         // For those reasons we do not put maximum effort into removing the files here.
 
-        // Symbol map files always use SYMBOL format (.k/.v)
+        // Symbol map files always use SYMBOL format (.k/.v); sealTxn is BITMAP-ignored.
         path.trimTo(rootLen);
-        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE);
+        IndexFactory.valueFileName(IndexType.BITMAP, path, columnName, COLUMN_NAME_TXN_NONE, -1L);
         ff.removeQuiet(path.$());
 
         path.trimTo(rootLen);

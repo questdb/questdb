@@ -25,12 +25,18 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
@@ -153,7 +159,9 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 public final class PostingIndexUtils {
 
     public static final int BLOCK_CAPACITY = 64;
-    public static final int COVER_INFO_MAGIC = 0x50434930; // "PCI0"
+    // .pci magic — bumped from 0x50434930 ("PCI0") when the per-cover-column type
+    // field was removed. Readers resolve types from current metadata instead.
+    public static final int COVER_INFO_MAGIC = 0x50434931; // "PCI1"
     public static final int DENSE_STRIDE = 256;
     // Elias-Fano encoding: if the first 4 bytes of an encoded key blob equal this sentinel,
     // the blob uses Elias-Fano format. Otherwise, it is the legacy delta-FoR format.
@@ -184,10 +192,10 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_GEN_DIR = 64;
     public static final int PAGE_OFFSET_KEY_COUNT = 20;
     public static final int PAGE_OFFSET_MAX_VALUE = 24;
-    public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
     // Per-page offsets
+    public static final int PAGE_OFFSET_SEAL_TXN = 40; // 8 bytes: sealTxn — the sealed-version suffix used for .pv and .pc<N> filenames
+    public static final int PAGE_OFFSET_SEQUENCE_END = 4088;
     public static final int PAGE_OFFSET_SEQUENCE_START = 0;
-    public static final int PAGE_OFFSET_VALUE_FILE_TXN = 40; // 8 bytes: txn suffix for the .pv file
     public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
     // Double-buffered 4KB metadata pages (v2 format)
     public static final int PAGE_SIZE = 4096;
@@ -240,18 +248,25 @@ public final class PostingIndexUtils {
         return Math.max(efMax, deltaMax);
     }
 
-    public static LPSZ coverDataFileName(Path path, CharSequence name, long columnNameTxn, int includeIdx) {
+    public static LPSZ coverDataFileName(
+            Path path,
+            CharSequence name,
+            int includeIdx,
+            long coveredColumnNameTxn,
+            long sealTxn
+    ) {
         path.concat(name).put(".pc").put(includeIdx);
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
+        if (coveredColumnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(coveredColumnNameTxn);
         }
+        path.put('.').put(sealTxn);
         return path.$();
     }
 
-    public static LPSZ coverInfoFileName(Path path, CharSequence name, long columnNameTxn) {
+    public static LPSZ coverInfoFileName(Path path, CharSequence name, long postingColumnNameTxn) {
         path.concat(name).put(".pci");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
+        if (postingColumnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(postingColumnNameTxn);
         }
         return path.$();
     }
@@ -939,10 +954,18 @@ public final class PostingIndexUtils {
         return pageBase + PAGE_OFFSET_GEN_DIR + (long) genIndex * GEN_DIR_ENTRY_SIZE;
     }
 
-    public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {
+    /**
+     * Builds the full path to the key file (.pk).
+     * <p>
+     * Filename format: <code>&lt;name&gt;.pk.&lt;postingColumnNameTxn&gt;</code>.
+     * The .pk file is per-column-instance and never seal-versioned; it stores the
+     * current {@code sealTxn} as a metadata field so readers can locate the live
+     * .pv and .pc&lt;N&gt; files.
+     */
+    public static LPSZ keyFileName(Path path, CharSequence name, long postingColumnNameTxn) {
         path.concat(name).put(".pk");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
+        if (postingColumnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(postingColumnNameTxn);
         }
         return path.$();
     }
@@ -978,43 +1001,158 @@ public final class PostingIndexUtils {
         }
     }
 
-    public static long readValueFileTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
+    /**
+     * Same as {@link #readSealTxnFromKeyFile} but operates on an already-open file
+     * descriptor. Useful when the caller has just opened the .pk file for write
+     * and would otherwise pay an extra openRO/close pair.
+     * <p>
+     * Returns -1 if the file is too short or both metadata pages fail seq-lock validation.
+     */
+    public static long readSealTxnFromKeyFd(FilesFacade ff, long keyFd) {
+        long fileSize = ff.length(keyFd);
+        if (fileSize < KEY_FILE_RESERVED) {
+            return -1;
+        }
+        long seqA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+        long seqEndA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+        long seqB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
+        long seqEndB = ff.readNonNegativeLong(keyFd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
+
+        long pageOffset;
+        if (seqA == seqEndA && seqB == seqEndB) {
+            pageOffset = seqA >= seqB ? PAGE_A_OFFSET : PAGE_B_OFFSET;
+        } else if (seqA == seqEndA) {
+            pageOffset = PAGE_A_OFFSET;
+        } else if (seqB == seqEndB) {
+            pageOffset = PAGE_B_OFFSET;
+        } else {
+            return -1;
+        }
+        return ff.readNonNegativeLong(keyFd, pageOffset + PAGE_OFFSET_SEAL_TXN);
+    }
+
+    /**
+     * Reads the current {@code sealTxn} from a .pk file. Returns -1 if the file
+     * cannot be opened or both metadata pages fail the seq-lock validation.
+     * <p>
+     * Callers use this when they need to construct the path of the live .pv or
+     * .pc&lt;N&gt; files but only have the {@code postingColumnNameTxn}.
+     */
+    public static long readSealTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
         long fd = ff.openRO(keyFilePath);
         if (fd < 0) {
             return -1;
         }
         try {
-            // Read sequence from both pages, pick the one with higher valid sequence
-            long seqA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-            long seqEndA = ff.readNonNegativeLong(fd, PAGE_A_OFFSET + PAGE_OFFSET_SEQUENCE_END);
-            long seqB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_START);
-            long seqEndB = ff.readNonNegativeLong(fd, PAGE_B_OFFSET + PAGE_OFFSET_SEQUENCE_END);
-
-            long pageOffset;
-            if (seqA == seqEndA && seqB == seqEndB) {
-                pageOffset = seqA >= seqB ? PAGE_A_OFFSET : PAGE_B_OFFSET;
-            } else if (seqA == seqEndA) {
-                pageOffset = PAGE_A_OFFSET;
-            } else if (seqB == seqEndB) {
-                pageOffset = PAGE_B_OFFSET;
-            } else {
-                return -1;
-            }
-            return ff.readNonNegativeLong(fd, pageOffset + PAGE_OFFSET_VALUE_FILE_TXN);
+            return readSealTxnFromKeyFd(ff, fd);
         } finally {
             ff.close(fd);
         }
     }
 
-    public static void removeSidecarFiles(FilesFacade ff, Path path, int pathTrimTo, CharSequence columnName, long columnVersion) {
-        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, columnVersion);
+    /**
+     * Removes every sealed file ({@code .pv}, {@code .pci}, and every {@code .pc<N>})
+     * that belongs to a single POSTING column instance, across all on-disk seal
+     * generations. Used by DROP COLUMN and DROP INDEX paths where no future
+     * reader can need any of these files.
+     * <p>
+     * Note: this does NOT remove the .pk file — the caller decides whether to
+     * keep .pk (e.g., if the column instance survives in another partition).
+     */
+    public static void removeAllSealedFiles(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn
+    ) {
+        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
         if (ff.exists(pciFile)) {
-            int coverCount = readCoverCountFromInfoFile(ff, pciFile);
             ff.removeQuiet(pciFile);
-            for (int c = 0; c < coverCount; c++) {
-                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, columnVersion, c));
-            }
         }
+        path.trimTo(pathTrimTo);
+        scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, coveredColumnNameTxn, sealTxn));
+                path.trimTo(pathTrimTo);
+            }
+
+            @Override
+            public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+                ff.removeQuiet(valueFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn, sealTxn));
+                path.trimTo(pathTrimTo);
+            }
+        });
+        path.trimTo(pathTrimTo);
+    }
+
+    /**
+     * Removes all sidecar files (.pci and every {@code .pc<N>.<C>.<S>}) that
+     * belong to a single POSTING column instance.
+     * <p>
+     * The .pci file is identified by {@code postingColumnNameTxn}; the .pc&lt;N&gt;
+     * files are discovered via directory scan, so all surviving sealed
+     * generations are removed regardless of their {@code coveredColumnNameTxn}
+     * or {@code sealTxn} components.
+     */
+    public static void removeSidecarFiles(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn
+    ) {
+        LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
+        boolean hadPci = ff.exists(pciFile);
+        if (hadPci) {
+            ff.removeQuiet(pciFile);
+        }
+        path.trimTo(pathTrimTo);
+        scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                ff.removeQuiet(coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, coveredColumnNameTxn, sealTxn));
+                path.trimTo(pathTrimTo);
+            }
+
+            @Override
+            public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+                // Not removing .pv files here — caller controls .pv lifecycle.
+            }
+        });
+        path.trimTo(pathTrimTo);
+    }
+
+    /**
+     * Enumerates every sealed file that belongs to {@code columnName} in the
+     * directory pointed at by {@code path} (truncated to {@code pathTrimTo}).
+     * <p>
+     * The visitor is invoked once per matching .pv or .pc&lt;N&gt; file with the
+     * txn components parsed out of the filename. Other files in the directory
+     * (.pk, .pci, partition data) are ignored.
+     * <p>
+     * Used by purge and crash-recovery paths that must enumerate all sealed
+     * generations regardless of the writer's current {@code sealTxn}.
+     */
+    public static void scanSealedFiles(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            SealedFileVisitor visitor
+    ) {
+        path.trimTo(pathTrimTo);
+        StringSink fileName = Misc.getThreadLocalSink();
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+                return;
+            }
+            fileName.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+            parseSealedFileName(fileName, columnName, visitor);
+        });
+        path.trimTo(pathTrimTo);
     }
 
     /**
@@ -1050,11 +1188,28 @@ public final class PostingIndexUtils {
     // Elias-Fano encode/decode
     // ==================================================================================
 
-    public static LPSZ valueFileName(Path path, CharSequence name, long columnNameTxn) {
+    /**
+     * Builds the full path to a sealed value file (.pv).
+     * <p>
+     * Filename format: <code>&lt;name&gt;.pv.&lt;postingColumnNameTxn&gt;.&lt;sealTxn&gt;</code>,
+     * with {@code postingColumnNameTxn} omitted when it is
+     * {@code COLUMN_NAME_TXN_NONE} (matches the {@code .pk} / {@code .pci}
+     * convention). Each seal that the writer performs creates a new file at a
+     * higher {@code sealTxn}; older files survive until the purge job decides
+     * no reader still needs them.
+     * <p>
+     * The first sealed file (immediately after writer initialisation) uses
+     * {@code sealTxn = postingColumnNameTxn}.
+     */
+    public static LPSZ valueFileName(Path path, CharSequence name, long postingColumnNameTxn, long sealTxn) {
         path.concat(name).put(".pv");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
+        // Match .pk / .pci / BITMAP convention: skip the column-name txn when
+        // it is COLUMN_NAME_TXN_NONE. sealTxn is always present so two seals
+        // of the same column produce distinct filenames.
+        if (postingColumnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(postingColumnNameTxn);
         }
+        path.put('.').put(sealTxn);
         return path.$();
     }
 
@@ -1126,6 +1281,108 @@ public final class PostingIndexUtils {
         return (int) (pos - destAddr);
     }
 
+    /**
+     * Parses a directory entry name and dispatches to the visitor if it matches
+     * a sealed-file pattern for {@code columnName}.
+     * <p>
+     * Recognised patterns (segment indices use 0-based dot splits):
+     * <ul>
+     *   <li>{@code <columnName>.pv.<postingColumnNameTxn>.<sealTxn>} — value file</li>
+     *   <li>{@code <columnName>.pc<includeIdx>.<coveredColumnNameTxn>.<sealTxn>} — cover data file</li>
+     * </ul>
+     * Files that do not match (different column, .pk, .pci, partition data, etc.)
+     * are silently ignored.
+     */
+    private static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
+        int nameLen = columnName.length();
+        int fileLen = fileName.length();
+        if (fileLen < nameLen + 4) {
+            return;
+        }
+        for (int i = 0; i < nameLen; i++) {
+            if (fileName.charAt(i) != columnName.charAt(i)) {
+                return;
+            }
+        }
+        if (fileName.charAt(nameLen) != '.') {
+            return;
+        }
+        // After "<columnName>.", expect "pv." or "pc<int>."
+        int pos = nameLen + 1;
+        if (pos + 1 >= fileLen || fileName.charAt(pos) != 'p') {
+            return;
+        }
+        char kind = fileName.charAt(pos + 1);
+        if (kind != 'v' && kind != 'c') {
+            return;
+        }
+        pos += 2;
+        int includeIdx = -1;
+        if (kind == 'c') {
+            // Parse <includeIdx>
+            int idxStart = pos;
+            while (pos < fileLen && fileName.charAt(pos) != '.') {
+                char ch = fileName.charAt(pos);
+                if (ch < '0' || ch > '9') {
+                    return; // ".pci..." or other non-numeric — ignore
+                }
+                pos++;
+            }
+            if (pos == idxStart || pos >= fileLen) {
+                return;
+            }
+            try {
+                includeIdx = Numbers.parseInt(fileName, idxStart, pos);
+            } catch (NumericException e) {
+                return;
+            }
+        }
+        if (pos >= fileLen || fileName.charAt(pos) != '.') {
+            return;
+        }
+        pos++; // skip the dot before the first number
+
+        // Parse the first number
+        int firstStart = pos;
+        while (pos < fileLen && fileName.charAt(pos) != '.') {
+            pos++;
+        }
+        if (pos == firstStart) {
+            return;
+        }
+        long firstValue;
+        try {
+            firstValue = Numbers.parseLong(fileName, firstStart, pos);
+        } catch (NumericException e) {
+            return;
+        }
+
+        long columnNameTxn;
+        long sealTxn;
+        if (pos >= fileLen) {
+            columnNameTxn = COLUMN_NAME_TXN_NONE;
+            sealTxn = firstValue;
+        } else {
+            pos++; // skip the dot
+            int secondStart = pos;
+            if (secondStart >= fileLen) {
+                return;
+            }
+            try {
+                sealTxn = Numbers.parseLong(fileName, secondStart, fileLen);
+            } catch (NumericException e) {
+                return;
+            }
+            columnNameTxn = firstValue;
+        }
+
+        if (kind == 'v') {
+            visitor.onValueFile(columnNameTxn, sealTxn);
+        } else {
+            visitor.onCoverDataFile(includeIdx, columnNameTxn, sealTxn);
+        }
+    }
+
     private static void setBitWord(long baseAddr, long bitPos) {
         long wordAddr = baseAddr + ((bitPos >>> 6) << 3);
         int bitOffset = (int) (bitPos & 63);
@@ -1179,6 +1436,24 @@ public final class PostingIndexUtils {
             value |= Unsafe.getUnsafe().getLong(wordAddr + 8) << (64 - bitOffset);
         }
         return (numBits < 64) ? value & ((1L << numBits) - 1) : value;
+    }
+
+    /**
+     * Receives one callback per sealed file discovered by {@link #scanSealedFiles}.
+     * Implementations are typically used to enumerate orphan files for purge or
+     * crash recovery.
+     */
+    public interface SealedFileVisitor {
+
+        /**
+         * Called for each {@code .pc<includeIdx>.<coveredColumnNameTxn>.<sealTxn>} file.
+         */
+        void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn);
+
+        /**
+         * Called for each {@code .pv.<postingColumnNameTxn>.<sealTxn>} file.
+         */
+        void onValueFile(long postingColumnNameTxn, long sealTxn);
     }
 
     /**
@@ -1380,5 +1655,4 @@ public final class PostingIndexUtils {
             }
         }
     }
-
 }

@@ -49,7 +49,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null);
     }
 
     @Override

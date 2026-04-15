@@ -25,13 +25,16 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
@@ -46,6 +49,32 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
 
 public class CoveringIndexTest extends AbstractCairoTest {
+
+    /**
+     * Builds a minimal RecordMetadata for direct PostingIndexReader construction.
+     * Pads slots up to the highest covered index with placeholder LONG columns;
+     * each covered index gets the type the writer was given. Tests that bypass
+     * TableReader must supply this — the reader resolves covered-column types
+     * from live metadata, not from the .pci.
+     */
+    private static RecordMetadata coveringMetadata(int[] coveredIndices, int[] coveredTypes) {
+        int maxIdx = -1;
+        for (int idx : coveredIndices) {
+            if (idx > maxIdx) maxIdx = idx;
+        }
+        GenericRecordMetadata m = new GenericRecordMetadata();
+        for (int i = 0; i <= maxIdx; i++) {
+            int type = ColumnType.LONG;
+            for (int j = 0; j < coveredIndices.length; j++) {
+                if (coveredIndices[j] == i) {
+                    type = coveredTypes[j];
+                    break;
+                }
+            }
+            m.add(new TableColumnMetadata("c" + i, type));
+        }
+        return m;
+    }
 
     @Test
     public void testAlterTableAddIndexO3DuplicateInsert() throws Exception {
@@ -917,7 +946,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     // Reader: genCount=2, but per-gen sidecars exist
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         assertTrue(((CoveringRowCursor) cursor).hasCovering());
@@ -975,7 +1005,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     w2.commit();
                     // Verify ALL 30 covered values across both gens
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
                         CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cc.hasCovering());
                         for (int i = 0; i < 30; i++) {
@@ -1000,21 +1031,24 @@ public class CoveringIndexTest extends AbstractCairoTest {
             int plen = path.size();
             String name = "sym";
 
+            // .pci remains single-version (per postingColumnNameTxn).
             PostingIndexUtils.coverInfoFileName(path, name, COLUMN_NAME_TXN_NONE);
             assertTrue(path.toString().contains("sym.pci"));
 
-            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0);
-            assertTrue(path.toString().contains("sym.pc0"));
+            // .pc<N> is double-namespace: <includeIdx>.<coveredColumnNameTxn>.<sealTxn>.
+            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE);
+            assertTrue(path.toString().contains("sym.pc0.-1.-1"));
 
-            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1);
-            assertTrue(path.toString().contains("sym.pc1"));
+            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE);
+            assertTrue(path.toString().contains("sym.pc1.-1.-1"));
 
-            // With column name txn
+            // With column name txn on .pci
             PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, 5);
             assertTrue(path.toString().contains("sym.pci.5"));
 
-            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 5, 0);
-            assertTrue(path.toString().contains("sym.pc0.5"));
+            // With non-trivial coveredColumnNameTxn and sealTxn on .pc<N>
+            PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, 5, 7);
+            assertTrue(path.toString().contains("sym.pc0.5.7"));
         }
     }
 
@@ -1076,7 +1110,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     // Read back keys from second stride (key >= 256)
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}))) {
                         // Key 260 is in stride 1, local key 4
                         RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
@@ -2674,7 +2709,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     // Reader sees genCount=2 with per-gen sidecar data
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
@@ -2735,7 +2771,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     writer.commit();
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}))) {
                         // Key 0: only gen 0 data (rows 0,2)
                         CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cc.hasCovering());
@@ -2805,7 +2842,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     writer.commit();
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}))) {
                         // Key 1: rows 1,3,5,7,9,11,13,15,17,19
                         RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
@@ -2863,7 +2901,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     }
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.GEOSHORT}))) {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
@@ -4866,7 +4905,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     }
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.hasCovering());
@@ -6428,7 +6468,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     // Read: verify covering values for clean stride keys
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}))) {
                         // Key 0 is in stride 0 (clean stride) — should have correct covered value
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
@@ -7815,9 +7856,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     Path pciPath = path.trimTo(plen);
                     assertTrue(ff.exists(PostingIndexUtils.coverInfoFileName(pciPath, name, COLUMN_NAME_TXN_NONE)));
 
-                    // Verify both .pc0 and .pc1 exist
-                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0)));
-                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 1)));
+                    // Verify both .pc0 and .pc1 exist (initial state: coveredColumnNameTxn = sealTxn = COLUMN_NAME_TXN_NONE).
+                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE)));
+                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE)));
                 } finally {
                     Unsafe.free(colAddrDouble, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(colAddrInt, (long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -7865,7 +7906,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     // Read back with covering cursor — verify both row IDs and covered values
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
@@ -8174,8 +8216,112 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Verify .pci file exists
                     FilesFacade ff = configuration.getFilesFacade();
                     assertTrue(ff.exists(PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)));
-                    // Verify .pc0 file exists
-                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0)));
+                    // Verify .pc0 file exists (initial state: coveredColumnNameTxn = sealTxn = COLUMN_NAME_TXN_NONE).
+                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE)));
+                } finally {
+                    Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSidecarVersioningAcrossSeals() throws Exception {
+        // Successive seals must create NEW versioned sidecar files
+        // (.pc<N>.<C>.<S>) rather than truncating the previous sealed
+        // version in place — otherwise a reader mmap'd to the prior
+        // sealed-version file would be invalidated.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                String name = "cov_seal_versioning";
+                int plen = path.size();
+                int rowCount = 30;
+                long colAddr = Unsafe.malloc((long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < rowCount; i++) {
+                        Unsafe.getUnsafe().putDouble(colAddr + (long) i * Double.BYTES, 100.0 + i);
+                    }
+                    FilesFacade ff = configuration.getFilesFacade();
+
+                    // First writer instance: write data and explicit seal.
+                    long firstSealTxn;
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{2},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        for (int i = 0; i < 10; i++) {
+                            writer.add(i % 3, i);
+                        }
+                        writer.setMaxValue(9);
+                        writer.commit();
+                        writer.seal();
+                        firstSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                                ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    }
+                    assertTrue("first seal must produce a positive sealTxn", firstSealTxn > 0);
+                    // Verify .pc0 at the first sealTxn is on disk.
+                    assertTrue("first-seal sidecar .pc0 must exist",
+                            ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
+                                    COLUMN_NAME_TXN_NONE, firstSealTxn)));
+
+                    // Second writer instance: reopen, write more data, force another seal.
+                    long secondSealTxn;
+                    try (PostingIndexWriter writer2 = new PostingIndexWriter(configuration)) {
+                        writer2.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                        writer2.configureCovering(
+                                new long[]{colAddr},
+                                new long[]{0},
+                                new int[]{3},
+                                new int[]{2},
+                                new int[]{ColumnType.DOUBLE},
+                                1
+                        );
+                        for (int i = 10; i < 30; i++) {
+                            writer2.add(i % 3, i);
+                        }
+                        writer2.setMaxValue(29);
+                        writer2.commit();
+                        writer2.seal();
+                        secondSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                                ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    }
+                    assertTrue("second seal must advance sealTxn beyond the first",
+                            secondSealTxn > firstSealTxn);
+
+                    // The previous-seal .pc0 file must STILL exist on disk
+                    // after the second seal — the previous sealed version
+                    // stays untouched until the background purge job collects it.
+                    assertTrue("first-seal sidecar .pc0 must survive a subsequent seal",
+                            ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
+                                    COLUMN_NAME_TXN_NONE, firstSealTxn)));
+                    // And the second seal's .pc0 at the new sealTxn must exist too.
+                    assertTrue("second-seal sidecar .pc0 must exist at the new sealTxn",
+                            ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0,
+                                    COLUMN_NAME_TXN_NONE, secondSealTxn)));
+
+                    // Reader at the latest sealTxn sees ALL committed data.
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}))) {
+                        int totalRows = 0;
+                        for (int key = 0; key < 3; key++) {
+                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE);
+                            while (cc.hasNext()) {
+                                long rowId = cc.next();
+                                double covered = cc.getCoveredDouble(0);
+                                assertEquals("covered value must round-trip across the seal boundary",
+                                        100.0 + rowId, covered, 0.001);
+                                totalRows++;
+                            }
+                            Misc.free(cc);
+                        }
+                        assertEquals("reader must see every committed row across both seals", 30, totalRows);
+                    }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }

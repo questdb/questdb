@@ -1863,7 +1863,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 byte indexType = indexWriter.getIndexType();
                 dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
-                dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
         } catch (Throwable e) {
             LOG.error().$("append fix error [table=").$(tableWriter.getTableToken())
@@ -2194,7 +2194,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     byte indexType = indexWriter.getIndexType();
                     dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                     long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
-                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 }
             }
         } catch (Throwable e) {
@@ -2558,7 +2558,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 byte indexType = indexWriter.getIndexType();
                 dstKFd = openRW(ff, IndexFactory.keyFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
                 long valueTxn = resolvePostingValueFileTxn(ff, dstKFd, indexType, columnNameTxn);
-                dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+                dstVFd = openRW(ff, IndexFactory.valueFileName(indexType, pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn, valueTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
             }
 
             if (prefixType != O3_BLOCK_NONE) {
@@ -3292,34 +3292,18 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     }
 
     /**
-     * For posting indexes, the seal creates a versioned .pv.{txn} file and
-     * records that txn in the .pk metadata (VALUE_FILE_TXN). O3 append must
-     * open the correct versioned file, not the base .pv, to avoid a
-     * data/metadata mismatch that leads to SIGSEGV during sidecar rebuild.
-     * For non-posting indexes this is a no-op and returns columnNameTxn.
+     * For posting indexes, seal records the sealed-version txn (sealTxn) in the
+     * .pk metadata. O3 append must open the correct sealed .pv file, not the
+     * canonical one, to avoid a data/metadata mismatch that leads to SIGSEGV
+     * during sidecar rebuild. For non-posting indexes this is a no-op and
+     * returns columnNameTxn.
      */
-    private static long resolvePostingValueFileTxn(FilesFacade ff, long keyFd, byte indexType, long columnNameTxn) {
+    static long resolvePostingValueFileTxn(FilesFacade ff, long keyFd, byte indexType, long columnNameTxn) {
         if (!IndexType.isPosting(indexType)) {
             return columnNameTxn;
         }
-        long fileSize = ff.length(keyFd);
-        if (fileSize < PostingIndexUtils.KEY_FILE_RESERVED) {
-            return columnNameTxn;
-        }
-        long seqA = ff.readNonNegativeLong(keyFd, PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        long seqEndA = ff.readNonNegativeLong(keyFd, PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-        long seqB = ff.readNonNegativeLong(keyFd, PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-        long seqEndB = ff.readNonNegativeLong(keyFd, PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-
-        long pageOffset;
-        long validA = (seqA == seqEndA) ? seqA : 0;
-        long validB = (seqB == seqEndB) ? seqB : 0;
-        if (validA == 0 && validB == 0) {
-            return columnNameTxn;
-        }
-        pageOffset = (validB > validA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-        long valueTxn = ff.readNonNegativeLong(keyFd, pageOffset + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
-        return valueTxn > 0 ? valueTxn : columnNameTxn;
+        long sealTxn = PostingIndexUtils.readSealTxnFromKeyFd(ff, keyFd);
+        return sealTxn > 0 ? sealTxn : columnNameTxn;
     }
 
     @Override

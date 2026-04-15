@@ -28,6 +28,7 @@ package io.questdb.cairo.idx;
 import io.questdb.NullIndexFrameCursor;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.IndexFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -117,7 +118,7 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     @Override
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long partitionTxn, long columnTop) {
+    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long partitionTxn, long columnTop, RecordMetadata metadata) {
         this.partitionTxn = partitionTxn;
         this.columnTxn = columnNameTxn;
     }

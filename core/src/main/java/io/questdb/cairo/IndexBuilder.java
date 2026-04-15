@@ -96,7 +96,8 @@ public class IndexBuilder extends RebuildColumnBase {
                 // this close() closes the underlying file, but ddlMem object remains reusable
                 ddlMem.close();
             }
-            if (!ff.touch(IndexFactory.valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn))) {
+            // Fresh index file: sealTxn starts equal to columnNameTxn (no seal performed yet).
+            if (!ff.touch(IndexFactory.valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn))) {
                 LOG.error().$("could not create index [name=").$(path).I$();
                 throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
@@ -121,18 +122,16 @@ public class IndexBuilder extends RebuildColumnBase {
 
     private void removeIndexFiles(FilesFacade ff, CharSequence columnName, long columnNameTxn) {
         final int plen = path.size();
-        // Remove sealed .pv file if VALUE_FILE_TXN differs from columnNameTxn
         if (IndexType.isPosting(indexType)) {
-            long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                    ff, PostingIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn));
-            if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {
-                removeFile(ff, PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, valueFileTxn));
-            }
-            // Remove sidecar files
-            PostingIndexUtils.removeSidecarFiles(ff, path, plen, columnName, columnNameTxn);
+            // Enumerate every sealed .pv / .pc<N> for this column instance
+            // across all on-disk sealTxn generations.
+            PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
+            removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+        } else {
+            removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+            // BITMAP keeps a single .v at columnNameTxn (no sealTxn axis).
+            removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
         }
-        removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-        removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
     }
 
     protected void doReindex(

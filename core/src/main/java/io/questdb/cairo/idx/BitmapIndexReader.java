@@ -27,6 +27,7 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.IndexFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
@@ -101,13 +102,20 @@ public interface BitmapIndexReader extends Closeable {
 
     boolean isOpen();
 
+    default boolean needsReopen(long columnNameTxn, long partitionTxn) {
+        return !isOpen()
+                || getColumnTxn() != columnNameTxn
+                || getPartitionTxn() != partitionTxn;
+    }
+
     void of(
             CairoConfiguration configuration,
             @Transient Path path,
             CharSequence columnName,
             long columnNameTxn,
             long partitionTxn,
-            long columnTop
+            long columnTop,
+            RecordMetadata metadata
     );
 
     void reloadConditionally();

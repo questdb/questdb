@@ -427,7 +427,8 @@ public class PostingIndexBenchmarkSuite {
                     MemoryTag.MMAP_DEFAULT, config.getWriterFileOpenOpts())) {
                 PostingIndexWriter.initKeyMemory(mem, PostingIndexUtils.BLOCK_CAPACITY);
             }
-            ff.touch(PostingIndexUtils.valueFileName(path.trimTo(plen), "test", COL_TXN));
+            // Fresh file: sealTxn starts equal to postingColumnNameTxn (no seal performed yet).
+            ff.touch(PostingIndexUtils.valueFileName(path.trimTo(plen), "test", COL_TXN, COL_TXN));
         }
     }
 

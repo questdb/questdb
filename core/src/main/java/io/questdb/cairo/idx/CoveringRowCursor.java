@@ -124,6 +124,19 @@ public interface CoveringRowCursor extends RowCursor {
     boolean hasCovering();
 
     /**
+     * Returns true when sidecar data for the given covered column is mapped
+     * and usable. Returns false when this cursor has no covering at all, or
+     * when the specific {@code includeIdx} sidecar was missing at reader
+     * open (e.g., an ALTER TYPE on the covered column bumped its
+     * {@code coveredColumnNameTxn} and the writer has not yet sealed at the
+     * new namespace). Per-column dispatch uses this to choose between sidecar
+     * read and main-column-file fallback.
+     */
+    default boolean isCoveredAvailable(int includeIdx) {
+        return hasCovering();
+    }
+
+    /**
      * Bulk-decodes all covered column values for the current key into native memory.
      * For each include column, writes values contiguously starting at the given address.
      * The caller must ensure each buffer has room for getCoveredValueCount() elements.

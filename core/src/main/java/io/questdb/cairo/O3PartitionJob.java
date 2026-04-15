@@ -3228,9 +3228,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 LOG,
                                 tableWriter.getConfiguration().getWriterFileOpenOpts()
                         );
+                        long valueTxn = O3OpenColumnJob.resolvePostingValueFileTxn(ff, kFd, indexType, columnNameTxn);
                         vFd = openRW(
                                 ff,
-                                IndexFactory.valueFileName(indexType, path.trimTo(pLen), columnName, columnNameTxn),
+                                IndexFactory.valueFileName(indexType, path.trimTo(pLen), columnName, columnNameTxn, valueTxn),
                                 LOG,
                                 tableWriter.getConfiguration().getWriterFileOpenOpts()
                         );

@@ -53,7 +53,19 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long partitionTxn,
             long columnTop
     ) {
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, null);
+    }
+
+    public PostingIndexBwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            io.questdb.cairo.sql.RecordMetadata metadata
+    ) {
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata);
     }
 
     @Override

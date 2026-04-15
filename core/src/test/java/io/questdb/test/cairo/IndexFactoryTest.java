@@ -74,7 +74,7 @@ public class IndexFactoryTest extends AbstractCairoTest {
     public void testValueFileNameUnsupportedThrows() {
         try (Path path = new Path().put("/tmp/test/")) {
             try {
-                IndexFactory.valueFileName((byte) 99, path, "col", 0);
+                IndexFactory.valueFileName((byte) 99, path, "col", 0, 0);
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage().contains("unsupported index type"));
@@ -106,7 +106,7 @@ public class IndexFactoryTest extends AbstractCairoTest {
     public void testCreateReaderNoneThrows() {
         try (Path path = new Path().put("/tmp/test/")) {
             try {
-                IndexFactory.createReader(IndexType.NONE, 1, configuration, path, "col", 0, 0, 0);
+                IndexFactory.createReader(IndexType.NONE, 1, configuration, path, "col", 0, 0, 0, null);
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage().contains("cannot create reader"));
@@ -118,7 +118,7 @@ public class IndexFactoryTest extends AbstractCairoTest {
     public void testCreateReaderUnsupportedThrows() {
         try (Path path = new Path().put("/tmp/test/")) {
             try {
-                IndexFactory.createReader((byte) 99, 1, configuration, path, "col", 0, 0, 0);
+                IndexFactory.createReader((byte) 99, 1, configuration, path, "col", 0, 0, 0, null);
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage().contains("unsupported index type"));

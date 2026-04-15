@@ -25,7 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.idx.*;
+import io.questdb.cairo.idx.BitmapIndexBwdNullReader;
+import io.questdb.cairo.idx.BitmapIndexFwdNullReader;
+import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -326,32 +329,32 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
-        BitmapIndexReader indexReader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
-        if (indexReader != null) {
-            if (
-                    !indexReader.isOpen()
-                            || indexReader.getColumnTxn() != columnNameTxn
-                            || indexReader.getPartitionTxn() != partitionTxn
-            ) {
-                int plen = path.size();
-                try {
-                    indexReader.of(
-                            configuration,
-                            pathGenNativePartition(partitionIndex, partitionTxn),
-                            metadata.getColumnName(columnIndex),
-                            columnNameTxn,
-                            partitionTxn,
-                            getColumnTop(columnBase, columnIndex)
-                    );
-                } finally {
-                    path.trimTo(plen);
-                }
-            } else {
-                indexReader.reloadConditionally();
-            }
+        final BitmapIndexReader indexReader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader == null) {
+            return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
+        }
+
+        if (!indexReader.needsReopen(columnNameTxn, partitionTxn)) {
+            indexReader.reloadConditionally();
             return indexReader;
         }
-        return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
+
+        final int plen = path.size();
+        try {
+            pathGenNativePartition(partitionIndex, partitionTxn);
+            indexReader.of(
+                    configuration,
+                    path,
+                    metadata.getColumnName(columnIndex),
+                    columnNameTxn,
+                    partitionTxn,
+                    getColumnTop(columnBase, columnIndex),
+                    metadata
+            );
+        } finally {
+            path.trimTo(plen);
+        }
+        return indexReader;
     }
 
     public BitmapIndexReader getBitmapIndexReaderIfExists(int partitionIndex, int columnIndex, int direction) {
@@ -1007,7 +1010,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         metadata.getColumnName(columnIndex),
                         columnNameTxn,
                         partitionTxn,
-                        getColumnTop(columnBase, columnIndex)
+                        getColumnTop(columnBase, columnIndex),
+                        metadata
                 );
                 if (direction == BitmapIndexReader.DIR_BACKWARD) {
                     bitmapIndexes.setQuick(globalIndex, reader);
@@ -1752,7 +1756,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (metadata.isColumnIndexed(columnIndex)) {
                     BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader != null) {
-                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop);
+                        indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata);
                     }
                 } else {
                     Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));

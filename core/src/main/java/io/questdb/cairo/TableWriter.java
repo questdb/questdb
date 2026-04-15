@@ -3875,17 +3875,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             byte indexType = metadata.getColumnIndexType(columnIndex);
             if (IndexType.isIndexed(indexType)) {
-                valueFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn);
-                if (!ff.exists(partitionPath.$())) {
-                    throw CairoException.fileNotFound()
-                            .put("Index value file does not exist [file=")
-                            .put(partitionPath)
-                            .put(']');
-                }
+                // Verify .pk exists before trying to resolve sealTxn from it.
                 keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
                     throw CairoException.fileNotFound()
                             .put("Index key file does not exist [file=")
+                            .put(partitionPath)
+                            .put(']');
+                }
+                long sealTxn = columnNameTxn;
+                if (IndexType.isPosting(indexType)) {
+                    long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
+                            ff, keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn));
+                    if (fromPk > 0) sealTxn = fromPk;
+                }
+                valueFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn, sealTxn);
+                if (!ff.exists(partitionPath.$())) {
+                    throw CairoException.fileNotFound()
+                            .put("Index value file does not exist [file=")
                             .put(partitionPath)
                             .put(']');
                 }
@@ -4020,24 +4027,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     if (!isIndexedNow && wasIndexedAtDetached) {
                         long columnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, colIdx);
+                        long sealTxn = columnNameTxn;
                         if (IndexType.isPosting(indexTypeAtDetached)) {
-                            // Read VALUE_FILE_TXN before removing .pk, then remove sealed .pv and sidecars
-                            long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                            // Read sealTxn before removing .pk, then remove sealed .pv and sidecars
+                            long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                                     ff, keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
-                            if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {
-                                removeFileOrLog(ff, PostingIndexUtils.valueFileName(
-                                        detachedPath.trimTo(detachedPartitionRoot), columnName, valueFileTxn));
+                            if (fromPk > 0) {
+                                sealTxn = fromPk;
+                                if (fromPk != columnNameTxn) {
+                                    removeFileOrLog(ff, PostingIndexUtils.valueFileName(
+                                            detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn, fromPk));
+                                }
                             }
                             removeFileOrLog(ff, PostingIndexUtils.coverInfoFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
-                            for (int c = 0; c < 64; c++) {
-                                LPSZ pcFile = PostingIndexUtils.coverDataFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn, c);
-                                if (!ff.exists(pcFile)) break;
-                                removeFileOrLog(ff, pcFile);
-                            }
+                            // Enumerate every .pc<N>.<C>.<S> belonging to this column instance (any sealTxn).
+                            PostingIndexUtils.scanSealedFiles(ff, detachedPath, detachedPartitionRoot, columnName, new PostingIndexUtils.SealedFileVisitor() {
+                                @Override
+                                public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sTxn) {
+                                    detachedPath.trimTo(detachedPartitionRoot);
+                                    removeFileOrLog(ff, PostingIndexUtils.coverDataFileName(detachedPath, columnName, includeIdx, coveredColumnNameTxn, sTxn));
+                                }
+
+                                @Override
+                                public void onValueFile(long postingColumnNameTxn, long sTxn) {
+                                    // .pv is removed via the explicit valueFileName call below.
+                                }
+                            });
                         }
                         keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
                         removeFileOrLog(ff, detachedPath.$());
-                        valueFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
+                        valueFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn, sealTxn);
                         removeFileOrLog(ff, detachedPath.$());
                     } else if (isIndexedNow
                             && (!wasIndexedAtDetached || indexValueBlockCapacityNow != indexValueBlockCapacityDetached
@@ -4567,13 +4586,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 } else {
                     // No column top change (or posting index): hard link existing index files.
+                    long linkSealTxn = columnNameTxn;
+                    if (IndexType.isPosting(indexType)) {
+                        long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
+                                ff, keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
+                        if (fromPk > 0) linkSealTxn = fromPk;
+                    }
                     if (
                             !linkFile(ff,
                                     keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn),
                                     keyFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn)
                             ) || !linkFile(ff,
-                                    valueFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn),
-                                    valueFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn)
+                                    valueFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn, linkSealTxn),
+                                    valueFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn, linkSealTxn)
                             )) {
                         throw CairoException.critical(0)
                                 .put("index files do not exist [path=")
@@ -4649,7 +4674,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 ddlMem.close();
             }
-            if (!ff.touch(valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn))) {
+            // Fresh index file: sealTxn starts equal to columnNameTxn (no seal performed yet).
+            if (!ff.touch(valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn))) {
                 LOG.error().$("could not create index [name=").$(path)
                         .$(", errno=").$(ff.errno())
                         .I$();
@@ -6044,16 +6070,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             keyFileName(IndexType.BITMAP, path.trimTo(pathSize), columnName, symbolTableNameTxn),
                             keyFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn)
                     );
+                    // Symbol table files always use SYMBOL format (.k/.v); sealTxn is BITMAP-ignored.
                     linkFile(
                             ff,
-                            valueFileName(IndexType.BITMAP, path.trimTo(pathSize), columnName, symbolTableNameTxn),
-                            valueFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn)
+                            valueFileName(IndexType.BITMAP, path.trimTo(pathSize), columnName, symbolTableNameTxn, -1L),
+                            valueFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn, -1L)
                     );
                 } catch (Throwable e) {
                     ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     ff.removeQuiet(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     ff.removeQuiet(keyFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn));
-                    ff.removeQuiet(valueFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(valueFileName(IndexType.BITMAP, other.trimTo(pathSize), newName, newColumnNameTxn, -1L));
                     throw e;
                 }
                 purgingOperator.add(columnIndex, columnName, columnType, indexType, symbolTableNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
@@ -6076,18 +6103,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             linkFile(ff, iFile(path.trimTo(plen), columnName, columnNameTxn), iFile(other.trimTo(plen), newName, newColumnNameTxn));
         } else if (ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
             linkFile(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn), keyFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn));
-            linkFile(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn), valueFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn));
-            // Posting index seal creates a separate .pv.{valueFileTxn} file referenced
-            // by VALUE_FILE_TXN in the .pk metadata. Link it alongside the base .pv.
+            // For BITMAP, sealTxn is unused; for POSTING, resolve from .pk so we link the live sealed file.
+            long sealTxn = columnNameTxn;
             if (IndexType.isPosting(indexType)) {
                 LPSZ pkFile = keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
-                long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(ff, pkFile);
-                if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {
-                    linkFile(ff,
-                            PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, valueFileTxn),
-                            PostingIndexUtils.valueFileName(other.trimTo(plen), newName, valueFileTxn));
-                }
+                long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(ff, pkFile);
+                if (fromPk > 0) sealTxn = fromPk;
             }
+            linkFile(ff,
+                    valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, sealTxn),
+                    valueFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn, sealTxn));
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
@@ -6411,34 +6436,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Hard-links auxiliary posting index files (sealed .pv.{txn}, sidecar .pci/.pc*,
+     * Hard-links auxiliary posting index files (sealed .pv.{txns}, sidecar .pci/.pc*,
      * and distinct keys .pd) from the source partition directory to the destination.
      * The .pk and base .pv are already linked by the caller.
      */
     private void linkPostingIndexAuxFiles(int srcDirLen, int dstDirLen, CharSequence columnName, long columnNameTxn) {
-        // Sealed value file: read VALUE_FILE_TXN from .pk metadata
-        long valueTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+        // Sealed value file: read sealTxn from .pk metadata
+        long valueTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                 ff, keyFileName(IndexType.POSTING, path.trimTo(dstDirLen), columnName, columnNameTxn)
         );
         if (valueTxn > 0 && valueTxn != columnNameTxn) {
             linkFile(ff,
-                    IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), columnName, valueTxn),
-                    IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), columnName, valueTxn)
+                    IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), columnName, columnNameTxn, valueTxn),
+                    IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), columnName, columnNameTxn, valueTxn)
             );
         }
-        // Sidecar info file (.pci) and per-column data files (.pc0, .pc1, ...)
-        LPSZ pciSrc = PostingIndexUtils.coverInfoFileName(path.trimTo(srcDirLen), columnName, columnNameTxn);
+        // Sidecar info file (.pci) and per-column data files (.pc<N>.<C>.<S>).
+        // Enumerate every .pc<N>.<C>.<S> via directory scan so we cover all sealed generations
+        // and don't depend on the .pci's per-column count (which may not match the on-disk reality
+        // after ALTER on covered columns).
+        final int srcLen = srcDirLen;
+        final int dstLen = dstDirLen;
+        LPSZ pciSrc = PostingIndexUtils.coverInfoFileName(path.trimTo(srcLen), columnName, columnNameTxn);
         if (ff.exists(pciSrc)) {
-            int coverCount = PostingIndexUtils.readCoverCountFromInfoFile(ff, pciSrc);
             linkFile(ff, pciSrc,
-                    PostingIndexUtils.coverInfoFileName(other.trimTo(dstDirLen), columnName, columnNameTxn));
-            for (int c = 0; c < coverCount; c++) {
+                    PostingIndexUtils.coverInfoFileName(other.trimTo(dstLen), columnName, columnNameTxn));
+        }
+        PostingIndexUtils.scanSealedFiles(ff, path, srcLen, columnName, new PostingIndexUtils.SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
                 linkFile(ff,
-                        PostingIndexUtils.coverDataFileName(path.trimTo(srcDirLen), columnName, columnNameTxn, c),
-                        PostingIndexUtils.coverDataFileName(other.trimTo(dstDirLen), columnName, columnNameTxn, c)
+                        PostingIndexUtils.coverDataFileName(path.trimTo(srcLen), columnName, includeIdx, coveredColumnNameTxn, sealTxn),
+                        PostingIndexUtils.coverDataFileName(other.trimTo(dstLen), columnName, includeIdx, coveredColumnNameTxn, sealTxn)
                 );
             }
-        }
+
+            @Override
+            public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+                // .pv links are handled separately above.
+            }
+        });
     }
 
     private void lock() {
@@ -9851,11 +9888,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             removeFileOrLog(ff, iFile(path.trimTo(plen), columnName, columnNameTxn));
             if (IndexType.isIndexed(indexType)) {
                 if (IndexType.isPosting(indexType)) {
-                    removeSealedValueFile(indexType, columnName, columnNameTxn, plen);
-                    removeCoveringIndexFiles(columnName, columnNameTxn, plen);
+                    // Enumerate every sealed .pv / .pc<N> for this column
+                    // instance across all on-disk sealTxn generations.
+                    PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
                 }
                 removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-                removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+                if (!IndexType.isPosting(indexType)) {
+                    // BITMAP keeps a single .v at columnNameTxn (no sealTxn axis).
+                    removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
+                }
             }
             path.trimTo(pathSize);
         } else {
@@ -9867,28 +9908,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeCoveringIndexFiles(CharSequence columnName, long columnNameTxn, int plen) {
-        removeFileOrLog(ff, PostingIndexUtils.coverInfoFileName(path.trimTo(plen), columnName, columnNameTxn));
-        // Remove .pc0, .pc1, ... — try up to a reasonable limit
-        for (int c = 0; c < 64; c++) {
-            LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, columnNameTxn, c);
-            if (!ff.exists(pcFile)) {
-                break;
-            }
-            removeFileOrLog(ff, pcFile);
-        }
-    }
-
-    private void removeSealedValueFile(byte indexType, CharSequence columnName, long columnNameTxn, int plen) {
-        // Read VALUE_FILE_TXN from .pk metadata BEFORE the .pk is deleted.
-        // The sealed .pv.{valueFileTxn} has a different txn than the base .pv.
-        long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-        if (valueFileTxn > 0 && valueFileTxn != columnNameTxn) {
-            removeFileOrLog(ff, PostingIndexUtils.valueFileName(path.trimTo(plen), columnName, valueFileTxn));
-        }
-    }
-
     private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
         setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
@@ -9896,13 +9915,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         byte indexType = metadata.getColumnIndexType(columnIndex);
         if (IndexType.isIndexed(indexType)) {
             if (IndexType.isPosting(indexType)) {
-                // Read VALUE_FILE_TXN from .pk before deleting it, then remove
-                // the sealed .pv.{valueFileTxn} and sidecar files.
-                removeSealedValueFile(indexType, columnName, columnNameTxn, plen);
-                removeCoveringIndexFiles(columnName, columnNameTxn, plen);
+                // Enumerate every sealed .pv / .pc<N> for this column
+                // instance across all on-disk sealTxn generations.
+                PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
             }
             removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
-            removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+            if (!IndexType.isPosting(indexType)) {
+                removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
+            }
         }
         path.trimTo(pathSize);
     }
@@ -9973,12 +9993,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void removeSymbolMapFilesQuiet(CharSequence name, long columnNameTxn) {
-        // Symbol map files (.o, .c, .k, .v) in table root always use SYMBOL index format
+        // Symbol map files (.o, .c, .k, .v) in table root always use SYMBOL index format; sealTxn is BITMAP-ignored.
         try {
             removeFileOrLog(ff, offsetFileName(path.trimTo(pathSize), name, columnNameTxn));
             removeFileOrLog(ff, charFileName(path.trimTo(pathSize), name, columnNameTxn));
             removeFileOrLog(ff, keyFileName(IndexType.BITMAP, path.trimTo(pathSize), name, columnNameTxn));
-            removeFileOrLog(ff, valueFileName(IndexType.BITMAP, path.trimTo(pathSize), name, columnNameTxn));
+            removeFileOrLog(ff, valueFileName(IndexType.BITMAP, path.trimTo(pathSize), name, columnNameTxn, -1L));
         } finally {
             path.trimTo(pathSize);
         }
@@ -10997,14 +11017,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // memory and only publishes them to the memory-mapped files during commit().
         // Without this, readers see keyCount=0 until the writer is closed (seal).
         // BitmapIndexWriter.commit() is a no-op in NOSYNC mode, so this is safe.
+        //
+        // The publish-txn announced here is the one any in-process seal
+        // should record as the visibility boundary of its new sealed files.
+        final long publishTxn = txWriter.getTxn() + 1;
         for (int i = 0, n = denseIndexers.size(); i < n; i++) {
-            denseIndexers.getQuick(i).getWriter().commit();
+            ColumnIndexer indexer = denseIndexers.getQuick(i);
+            indexer.getWriter().setPendingPublishTableTxn(publishTxn);
+            indexer.getWriter().commit();
         }
         if (commitMode != CommitMode.NOSYNC) {
             final boolean async = commitMode == CommitMode.ASYNC;
             syncColumns0(async);
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 denseSymbolMapWriters.getQuick(i).sync(async);
+            }
+        }
+        // Forward each indexer's accumulated purge entries to the global
+        // queue. The background PostingSealPurgeJob persists them and runs
+        // the actual file deletion under the TxnScoreboard's supervision.
+        if (denseIndexers.size() > 0) {
+            long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+            for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+                denseIndexers.getQuick(i).publishPendingPurges(
+                        messageBus, tableToken, partitionTimestamp, partitionNameTxn, partitionBy);
             }
         }
     }

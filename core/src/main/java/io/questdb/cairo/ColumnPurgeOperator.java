@@ -154,18 +154,25 @@ public class ColumnPurgeOperator implements Closeable {
 
     private boolean couldNotRemoveIndexFiles(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
         if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
-            // Remove sidecar files and sealed .pv BEFORE deleting .pk,
-            // since removeSidecarFiles reads VALUE_FILE_TXN from the .pk file.
             if (IndexType.isPosting(indexType)) {
-                removeSidecarFiles(columnName, columnVersion, pathTrimToPartition);
-            }
-            path.trimTo(pathTrimToPartition);
-            if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
-                return true;
-            }
-            path.trimTo(pathTrimToPartition);
-            if (couldNotRemove(ff, IndexFactory.valueFileName(indexType, path, columnName, columnVersion))) {
-                return true;
+                // Enumerate every sealed .pv / .pc<N> for this column
+                // instance across all on-disk sealTxn generations, before
+                // .pk is removed. removeAllSealedFiles tolerates missing
+                // files, so a partially-removed prior attempt is recoverable.
+                PostingIndexUtils.removeAllSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
+                path.trimTo(pathTrimToPartition);
+                if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
+                    return true;
+                }
+            } else {
+                path.trimTo(pathTrimToPartition);
+                if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
+                    return true;
+                }
+                path.trimTo(pathTrimToPartition);
+                if (couldNotRemove(ff, IndexFactory.valueFileName(indexType, path, columnName, columnVersion, columnVersion))) {
+                    return true;
+                }
             }
         }
         // Always try legacy .k/.v (may remain after DROP INDEX or index type change)
@@ -183,8 +190,19 @@ public class ColumnPurgeOperator implements Closeable {
             if (ff.exists(IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
                 return true;
             }
+            // For POSTING, the live .pv has its sealTxn recorded in .pk. We need to check that file.
+            // For BITMAP, the second arg (sealTxn) is ignored.
+            long sealTxn = columnVersion;
+            if (IndexType.isPosting(indexType)) {
+                path.trimTo(pathTrimToPartition);
+                long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
+                if (fromPk > 0) {
+                    sealTxn = fromPk;
+                }
+            }
             path.trimTo(pathTrimToPartition);
-            if (ff.exists(IndexFactory.valueFileName(indexType, path, columnName, columnVersion))) {
+            if (ff.exists(IndexFactory.valueFileName(indexType, path, columnName, columnVersion, sealTxn))) {
                 return true;
             }
         }
@@ -195,18 +213,6 @@ public class ColumnPurgeOperator implements Closeable {
         }
         path.trimTo(pathTrimToPartition);
         return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
-    }
-
-    private void removeSidecarFiles(CharSequence columnName, long columnVersion, int pathTrimToPartition) {
-        PostingIndexUtils.removeSidecarFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
-        // Also try to remove sealed .pv.{valueFileTxn} if it differs from columnVersion
-        path.trimTo(pathTrimToPartition);
-        long valueFileTxn = PostingIndexUtils.readValueFileTxnFromKeyFile(
-                ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
-        if (valueFileTxn > 0 && valueFileTxn != columnVersion) {
-            path.trimTo(pathTrimToPartition);
-            ff.removeQuiet(PostingIndexUtils.valueFileName(path, columnName, valueFileTxn));
-        }
     }
 
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {

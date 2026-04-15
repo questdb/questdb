@@ -898,7 +898,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                 // Truncate the value file to be shorter than what metadata claims
                 try (Path valPath = new Path().of(configuration.getDbRoot())) {
-                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE);
+                    // No seal has run yet, so sealTxn == postingColumnNameTxn (both COLUMN_NAME_TXN_NONE).
+                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE);
                     long fd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
                     Assert.assertTrue("could not open value file", fd > 0);
                     try {
@@ -1092,7 +1093,8 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 // (as if seal wrote new gen data but crashed before updating the metadata page)
                 FilesFacade ff = configuration.getFilesFacade();
                 try (Path valPath = new Path().of(configuration.getDbRoot())) {
-                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE);
+                    // No seal has run yet, so sealTxn == postingColumnNameTxn (both COLUMN_NAME_TXN_NONE).
+                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE);
                     long newSize = metadataValueMemSize + 4096;
                     long fd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
                     Assert.assertTrue("could not open value file", fd > 0);
@@ -1898,7 +1900,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         // Rollback to midpoint
                         writer.rollbackValues(base + 99);
 
-                        long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                        long txn = PostingIndexUtils.readSealTxnFromKeyFile(
                                 ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_multi", COLUMN_NAME_TXN_NONE));
                         Assert.assertTrue("round " + round + ": txn should increase", txn > prevTxn);
                         prevTxn = txn;
@@ -2163,7 +2165,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             writer.commit();
 
                             if ((commit + 1) % checkEvery == 0) {
-                                reader.reloadConditionally();
+                                // Simulate a query-boundary reload. Within a query the reader
+                                // stays pinned to its construction-time sealTxn (Principle 5);
+                                // a fresh of() is the contract for switching generations.
+                                reader.of(configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null);
 
                                 // Verify both pages have valid sequences (no corruption)
                                 long keyBase = reader.getKeyBaseAddress();
@@ -2273,8 +2278,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(200, count);
 
-                        // After reload, reader sees the new (rolled-back) state
-                        reader.reloadConditionally();
+                        reader.of(configuration, path.trimTo(plen), "rb_reader", COLUMN_NAME_TXN_NONE, -1, 0, null);
                         RowCursor cursor2 = reader.getCursor(0, 0, Long.MAX_VALUE);
                         count = 0;
                         while (cursor2.hasNext()) {
@@ -2475,11 +2479,11 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Seal to create a .pv.1 file
                     writer.seal();
 
-                    long txnAfterSeal = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                    long txnAfterSeal = PostingIndexUtils.readSealTxnFromKeyFile(
                             ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE));
                     Assert.assertTrue("seal should set VALUE_FILE_TXN > 0", txnAfterSeal > 0);
 
-                    LPSZ sealedFile = PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterSeal);
+                    LPSZ sealedFile = PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE, txnAfterSeal);
                     Assert.assertTrue("sealed .pv file should exist", ff.exists(sealedFile));
 
                     // Write more data, then rollback
@@ -2491,18 +2495,18 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     writer.rollbackValues(149);
 
-                    long txnAfterRollback = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                    long txnAfterRollback = PostingIndexUtils.readSealTxnFromKeyFile(
                             ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE));
                     Assert.assertTrue("rollback should bump VALUE_FILE_TXN",
                             txnAfterRollback > txnAfterSeal);
 
                     // Old sealed .pv file should still exist on disk (for concurrent readers)
                     Assert.assertTrue("old sealed .pv should remain on disk",
-                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterSeal)));
+                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE, txnAfterSeal)));
 
                     // New .pv file should exist
                     Assert.assertTrue("new .pv file should exist after rollback",
-                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", txnAfterRollback)));
+                            ff.exists(PostingIndexUtils.valueFileName(path.trimTo(plen), "rb_newfile", COLUMN_NAME_TXN_NONE, txnAfterRollback)));
                 }
 
                 // Verify data correctness via reader
@@ -2768,7 +2772,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Rollback to 5 — all values >= 10, none survive → triggers truncate
                     writer.rollbackValues(5);
 
-                    long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                    long txn = PostingIndexUtils.readSealTxnFromKeyFile(
                             ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "rb_zero_nf", COLUMN_NAME_TXN_NONE));
                     Assert.assertTrue("truncate via rollback should set VALUE_FILE_TXN > 0", txn > 0);
 
@@ -3649,7 +3653,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     writer.truncate();
 
-                    long txn = PostingIndexUtils.readValueFileTxnFromKeyFile(
+                    long txn = PostingIndexUtils.readSealTxnFromKeyFile(
                             ff, PostingIndexUtils.keyFileName(path.trimTo(plen), "trunc_nf", COLUMN_NAME_TXN_NONE));
                     Assert.assertTrue("truncate should set VALUE_FILE_TXN > 0", txn > 0);
 
