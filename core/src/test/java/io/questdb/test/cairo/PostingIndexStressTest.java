@@ -875,9 +875,6 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
     @Test
     public void testCorruptedValueFileRecovery() throws Exception {
-        // Write data and seal, then truncate the value file shorter than what
-        // the metadata claims. Opening a reader should throw CairoException
-        // or handle gracefully (not SIGSEGV).
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final int plen = path.size();
@@ -896,10 +893,14 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     }
                 }
 
-                // Truncate the value file to be shorter than what metadata claims
+                // Truncate the value file to be shorter than what metadata claims.
+                // close() runs seal(), so the live .pv is at the sealTxn recorded in .pk.
                 try (Path valPath = new Path().of(configuration.getDbRoot())) {
-                    // No seal has run yet, so sealTxn == postingColumnNameTxn (both COLUMN_NAME_TXN_NONE).
-                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE);
+                    long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(valPath, name, COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue("sealTxn should be readable", liveSealTxn >= 0);
+                    valPath.of(configuration.getDbRoot());
+                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, liveSealTxn);
                     long fd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
                     Assert.assertTrue("could not open value file", fd > 0);
                     try {
