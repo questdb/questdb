@@ -147,11 +147,20 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
+            // Defensive: cursor.of() currently only calls Function.init() and toTop(),
+            // which do not throw on the happy path; kept to maintain the cursor-contract.
             cursor.close();
             throw th;
         }
     }
 
+    /**
+     * Fill rows are synthesized per {@code hasNext()} from PREV snapshots, the
+     * keys map, and bucket state; they have no row id, so {@code recordAt()}
+     * has no meaningful slot to land on. The cursor-path equivalent only
+     * advertised random access through an outer Sort wrapper that materialized
+     * the entire result — the fill cursor itself never has.
+     */
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
@@ -407,7 +416,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 }
 
                 if (dataTs < nextBucketTimestamp && hasPendingRow) {
-                    // DST fall-back: emit data row as-is
+                    // Defensive: the async GROUP BY upstream emits exactly one row per
+                    // (bucket, key), so this branch is unreachable in practice. Kept to
+                    // preserve the cursor-contract semantics around DST fall-back.
                     hasPendingRow = false;
                     fillRecord.isGapFilling = false;
                     if (hasPrevFill) {
@@ -641,6 +652,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 case ColumnType.DECIMAL32 -> record.getDecimal32(col);
                 case ColumnType.DECIMAL64 -> record.getDecimal64(col);
                 default ->
+                        // Defensive: the optimizer gate rejects unsupported PREV source types
+                        // before reaching here and routes those queries to the legacy path.
                         throw new UnsupportedOperationException("unsupported column type for PREV fill: " + ColumnType.nameOf(type));
             };
         }
@@ -668,6 +681,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             return fillModes.getQuick(col);
         }
 
+        /**
+         * The default null/0/NaN returns at the tail of each getter are defensive:
+         * the GROUP BY pipeline always supplies a fill mode (FILL_KEY, FILL_PREV_SELF,
+         * cross-column, or FILL_CONSTANT) for every output column, so those branches
+         * are unreachable in practice.
+         */
         private class FillRecord implements Record {
             boolean isGapFilling;
 

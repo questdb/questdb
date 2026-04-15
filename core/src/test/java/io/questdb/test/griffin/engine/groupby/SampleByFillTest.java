@@ -11,6 +11,125 @@ import org.junit.Test;
 public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
+    public void testExplainFillRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (1.0, '2024-01-01T01:00:00.000000Z')");
+            // FROM+TO drive the range attribute in toPlan().
+            assertPlanNoLeakCheck(
+                    "SELECT sum(val), ts FROM x " +
+                            "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
+                    """
+                            Sample By Fill
+                              range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
+                              stride: '1h'
+                                Sort
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts,'2024-01-01T00:00:00.000Z')]
+                                      values: [sum(val)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: x
+                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T03:59:59.999999Z")]
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testFillConstDecimal128Value() throws Exception {
+        assertMemoryLeak(() -> {
+            // Non-keyed FILL with a DECIMAL128 constant covers
+            // FillRecord.getDecimal128 FILL_CONSTANT branch.
+            execute("CREATE TABLE x (val DECIMAL(19, 0), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(cast('1' AS DECIMAL(19,0)), '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('3' AS DECIMAL(19,0)), '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            first\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            42\t2024-01-01T01:00:00.000000Z
+                            3\t2024-01-01T02:00:00.000000Z
+                            """,
+                    "SELECT first(val), ts FROM x SAMPLE BY 1h FILL(cast('42' as DECIMAL(19,0))) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillConstDecimal256Value() throws Exception {
+        assertMemoryLeak(() -> {
+            // Non-keyed FILL with a DECIMAL256 constant covers
+            // FillRecord.getDecimal256 FILL_CONSTANT branch.
+            execute("CREATE TABLE x (val DECIMAL(39, 0), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(cast('1' AS DECIMAL(39,0)), '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('3' AS DECIMAL(39,0)), '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            first\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            42\t2024-01-01T01:00:00.000000Z
+                            3\t2024-01-01T02:00:00.000000Z
+                            """,
+                    "SELECT first(val), ts FROM x SAMPLE BY 1h FILL(cast('42' as DECIMAL(39,0))) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillConstLong256Value() throws Exception {
+        assertMemoryLeak(() -> {
+            // Non-keyed FILL with a LONG256 constant covers the FILL_CONSTANT
+            // branch in FillRecord.getLong256 / getLong256A / getLong256B.
+            execute("CREATE TABLE x (val LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(cast('0x01' AS LONG256), '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('0x03' AS LONG256), '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            first\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            66\t2024-01-01T01:00:00.000000Z
+                            3\t2024-01-01T02:00:00.000000Z
+                            """,
+                    "SELECT first(val), ts FROM x SAMPLE BY 1h FILL(cast('0x42' as LONG256)) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillIPv4Keyed() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed SAMPLE BY with an IPv4 key column and FILL(NULL).
+            // Covers FillRecord.getIPv4 FILL_KEY branch plus the default null
+            // returns used for aggregate columns of absent keys.
+            execute("CREATE TABLE traffic (ip IPV4, bytes LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO traffic VALUES " +
+                    "('10.0.0.1', 100, '2024-01-01T00:00:00.000000Z')," +
+                    "('10.0.0.2', 200, '2024-01-01T00:00:00.000000Z')," +
+                    "('10.0.0.2', 210, '2024-01-01T01:00:00.000000Z')," +
+                    "('10.0.0.1', 110, '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tip\tsum
+                            2024-01-01T00:00:00.000000Z\t10.0.0.1\t100
+                            2024-01-01T00:00:00.000000Z\t10.0.0.2\t200
+                            2024-01-01T01:00:00.000000Z\t10.0.0.2\t210
+                            2024-01-01T01:00:00.000000Z\t10.0.0.1\tnull
+                            2024-01-01T02:00:00.000000Z\t10.0.0.1\t110
+                            2024-01-01T02:00:00.000000Z\t10.0.0.2\tnull
+                            """,
+                    "SELECT ts, ip, sum(bytes) FROM traffic SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
     public void testFillNullDstFallback() throws Exception {
         assertMemoryLeak(() -> {
             // Dense data: one row every 10 minutes around Europe/Riga DST fall-back 2021-10-31.
@@ -557,6 +676,42 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     "SELECT ts, avg(value) FROM test SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '00:00'",
                     "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevAllNumericTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            // FLOAT, CHAR and DECIMAL8/16/32/64 aggregates with FILL(PREV)
+            // cover the remaining readColumnAsLongBits branches. Two rows 2h
+            // apart create a 1h gap at 01:00 that must carry forward each
+            // column's previous value.
+            execute("CREATE TABLE types (" +
+                    "f FLOAT, " +
+                    "c CHAR, " +
+                    "d8 DECIMAL(2, 0), " +
+                    "d16 DECIMAL(4, 0), " +
+                    "d32 DECIMAL(9, 0), " +
+                    "d64 DECIMAL(18, 0), " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO types VALUES " +
+                    "(1.5, 'A', cast('11' AS DECIMAL(2,0)), cast('1111' AS DECIMAL(4,0)), " +
+                    "cast('111111' AS DECIMAL(9,0)), cast('111111111111' AS DECIMAL(18,0)), " +
+                    "'2024-01-01T00:00:00.000000Z')," +
+                    "(2.5, 'B', cast('22' AS DECIMAL(2,0)), cast('2222' AS DECIMAL(4,0)), " +
+                    "cast('222222' AS DECIMAL(9,0)), cast('222222222222' AS DECIMAL(18,0)), " +
+                    "'2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tfirst\tfirst1\tfirst2\tfirst3\tfirst4\tfirst5
+                            2024-01-01T00:00:00.000000Z\t1.5\tA\t11\t1111\t111111\t111111111111
+                            2024-01-01T01:00:00.000000Z\t1.5\tA\t11\t1111\t111111\t111111111111
+                            2024-01-01T02:00:00.000000Z\t2.5\tB\t22\t2222\t222222\t222222222222
+                            """,
+                    "SELECT ts, first(f), first(c), first(d8), first(d16), first(d32), first(d64) " +
+                            "FROM types SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR"
             );
         });
     }
