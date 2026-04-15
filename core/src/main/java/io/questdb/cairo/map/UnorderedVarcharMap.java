@@ -379,6 +379,37 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     }
 
     @Override
+    public long probeBatchFiltered(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        assert free >= batchEnd - batchStart;
+
+        final int directColumnIndex = mapSink.getDirectColumnIndex();
+        if (directColumnIndex >= 0) {
+            return probeBatchFilteredUnsafe(record, directColumnIndex, rowIdsAddr, batchStart, batchEnd, batchAddr);
+        }
+
+        for (long p = batchStart; p < batchEnd; p++) {
+            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
+            record.setRowIndex(r);
+            mapSink.copy(record, key);
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) key.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() + KEY_SIZE - memStart, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return memStart;
+    }
+
+    @Override
     public void reopen(int keyCapacity, long heapSize) {
         if (memStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
@@ -573,6 +604,29 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 }
             }
         }
+    }
+
+    private long probeBatchFilteredUnsafe(
+            PageFrameMemoryRecord record,
+            int columnIndex,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        for (long p = batchStart; p < batchEnd; p++) {
+            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
+            record.setRowIndex(r);
+            key.putVarchar(record.getVarcharA(columnIndex));
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) key.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() + KEY_SIZE - memStart, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return memStart;
     }
 
     private long probeBatchUnsafe(

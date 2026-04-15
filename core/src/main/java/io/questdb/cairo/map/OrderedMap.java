@@ -356,6 +356,21 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public long probeBatchFiltered(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        if (keySize != -1) {
+            return probeBatchFilteredFixedSize(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
+        }
+        return probeBatchFilteredVarSize(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
+    }
+
+    @Override
     public void reopen(int keyCapacity, long heapSize) {
         if (heapAddr == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
@@ -596,6 +611,62 @@ public class OrderedMap implements Map, Reopenable {
             rawOffset = Numbers.decodeLowInt(slotValue);
         }
         return asNew(keyWriter, index, hashCodeLo, value);
+    }
+
+    private long probeBatchFilteredFixedSize(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        final long alignedEntrySize = Bytes.align8b(keySize + valueSize);
+        final long requiredBytes = (batchEnd - batchStart) * alignedEntrySize;
+        if (kPos + requiredBytes > heapLimit) {
+            resize(requiredBytes, kPos);
+        }
+
+        final Key k = key;
+        for (long p = batchStart; p < batchEnd; p++) {
+            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
+            record.setRowIndex(r);
+            k.startAddr = kPos;
+            k.appendAddr = kPos;
+            mapSink.copy(record, k);
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getValueAddress() - heapAddr, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return heapAddr;
+    }
+
+    private long probeBatchFilteredVarSize(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        for (long p = batchStart; p < batchEnd; p++) {
+            final long r = Unsafe.getUnsafe().getLong(rowIdsAddr + (p << 3));
+            record.setRowIndex(r);
+            final MapKey k = withKey();
+            mapSink.copy(record, k);
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
+            if (v.isNew() && batchEmptyValueStart != 0) {
+                v.copyRawValue(batchEmptyValueStart);
+            }
+            long encoded = Map.encodeBatchEntry(r, v.getValueAddress() - heapAddr, v.isNew());
+            Unsafe.getUnsafe().putLong(batchAddr, encoded);
+            batchAddr += Long.BYTES;
+        }
+        return heapAddr;
     }
 
     private long probeBatchFixedSize(

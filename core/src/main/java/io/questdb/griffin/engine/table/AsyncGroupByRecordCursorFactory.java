@@ -264,6 +264,56 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    private static void aggregateFilteredNonShardedBatched(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        final Map map = fragment.reopenMap();
+        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+        final DirectLongList batchList = atom.getBatchList(slotId);
+        final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final int functionCount = functions.size();
+        final int batchSize = atom.getBatchSize();
+        final long rowCount = rows.size();
+        final long rowIdsAddr = rows.getAddress();
+
+        batchList.ensureCapacity(batchSize);
+        final long batchAddr = batchList.getAddress();
+
+        for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize) {
+            final long batchEnd = Math.min(batchStart + batchSize, rowCount);
+            final long batchRows = batchEnd - batchStart;
+
+            map.reserveCapacity(batchRows);
+
+            // Probe phase — rowIdsAddr[batchStart..batchEnd) holds the filtered frame-relative row ids.
+            final long baseValueAddress = map.probeBatchFiltered(
+                    record,
+                    mapSink,
+                    rowIdsAddr,
+                    batchStart,
+                    batchEnd,
+                    batchAddr
+            );
+
+            for (int i = 0; i < functionCount; i++) {
+                functions.getQuick(i).computeKeyedBatch(
+                        record,
+                        mapValue,
+                        baseValueAddress,
+                        batchAddr,
+                        batchRows,
+                        baseRowId
+                );
+            }
+        }
+    }
+
     private static void aggregateFilteredSharded(
             PageFrameMemoryRecord record,
             DirectLongList rows,
@@ -301,29 +351,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
-    private static void aggregateNonSharded(
-            PageFrameMemoryRecord record,
-            long frameRowCount,
-            long baseRowId,
-            GroupByFunctionsUpdater functionUpdater,
-            GroupByMapFragment fragment,
-            RecordSink mapSink
-    ) {
-        final Map map = fragment.reopenMap();
-        for (long r = 0; r < frameRowCount; r++) {
-            record.setRowIndex(r);
-
-            final MapKey key = map.withKey();
-            mapSink.copy(record, key);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                functionUpdater.updateNew(value, record, baseRowId + r);
-            } else {
-                functionUpdater.updateExisting(value, record, baseRowId + r);
-            }
-        }
-    }
-
     private static void aggregateNonShardedBatched(
             PageFrameMemoryRecord record,
             long frameRowCount,
@@ -355,7 +382,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             // Probe phase — delegate to the map for inlined probe loop.
             final long baseValueAddress = map.probeBatch(record, mapSink, batchStart, batchEnd, batchAddr);
 
-            // Update phase — one call per function per sub-batch.
+            // Update phase — one call per function per sub-batch. The encoded rowIndex in each
+            // batch entry is already the frame-relative row id, so computeKeyedBatch computes
+            // the global row id as baseRowId + rowIndex.
             for (int i = 0; i < functionCount; i++) {
                 functions.getQuick(i).computeKeyedBatch(
                         record,
@@ -363,7 +392,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                         baseValueAddress,
                         batchAddr,
                         batchRows,
-                        baseRowId + batchStart
+                        baseRowId
                 );
             }
         }
@@ -463,10 +492,16 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             if (isParquetFrame) {
                 filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
+            // Late materialization installs a PageFrameFilteredMemoryRecord whose setRowIndex()
+            // auto-advances an internal compact index. The batched probe/update split calls
+            // setRowIndex multiple times per row, which would desync that counter, so fall back
+            // to the per-row path in that case.
+            boolean lateMaterialized = false;
             if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {
                 PageFrameFilteredMemoryRecord filteredMemoryRecord = filterCtx.getPageFrameFilteredMemoryRecord(slotId);
                 filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;
+                lateMaterialized = true;
             }
 
             if (atom.isSharded()) {
@@ -477,7 +512,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             long baseRowId = record.getRowId();
 
             if (fragment.isNotSharded()) {
-                aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                if (lateMaterialized) {
+                    aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                } else {
+                    aggregateFilteredNonShardedBatched(record, rows, baseRowId, atom, slotId, fragment, mapSink);
+                }
             } else {
                 aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
             }

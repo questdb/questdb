@@ -140,6 +140,29 @@ public interface Map extends Mutable, Closeable, Reopenable {
     );
 
     /**
+     * Filtered variant of {@link #probeBatch}. Iterates positions
+     * {@code p = batchStart..batchEnd-1} in the row-id list at
+     * {@code rowIdsAddr} (packed longs, 8 bytes each) and probes each
+     * {@code r = Unsafe.getLong(rowIdsAddr + p * 8)}. The encoded row index
+     * in each batch entry is the frame-relative {@code r}, not {@code p}, so
+     * downstream {@code computeKeyedBatch} consumers can set
+     * {@link PageFrameMemoryRecord#setRowIndex} directly from it.
+     * <p>
+     * All the reservation and rehash constraints from {@link #probeBatch}
+     * apply here as well.
+     *
+     * @return the baseValueAddress valid for the written batch
+     */
+    long probeBatchFiltered(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    );
+
+    /**
      * Reopens previously closed map with given key capacity and initial heap size.
      * Heap size value is ignored if the map does not use heap to store keys and values, e.g. {@link Unordered8Map}.
      */
