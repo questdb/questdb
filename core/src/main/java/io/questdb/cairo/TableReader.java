@@ -1612,7 +1612,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                             }
                         } else {
                             closePartition(partitionIndex);
+                            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT,
+                                    txFile.isPartitionParquet(partitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
                         }
+                    } else {
+                        // Partition is not open; refresh the format so getPartitionFormat()
+                        // returns the correct value after a CONVERT PARTITION.
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT,
+                                txFile.isPartitionParquet(partitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
                     }
                     partitionIndex++;
                 }
@@ -1680,8 +1687,15 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 }
                             }
                         }
-                    } else if (openPartitionSize > -1) {
-                        closePartition(partitionIndex);
+                    } else {
+                        if (openPartitionSize > -1) {
+                            closePartition(partitionIndex);
+                        }
+                        // Refresh the format even for closed partitions so
+                        // getPartitionFormat() returns the correct value after
+                        // a CONVERT PARTITION (nameTxn changes on conversion).
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT,
+                                txFile.isPartitionParquet(txPartitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
                     }
                     changed = true;
                 } else if (openPartitionSize > -1 && txPartitionSize > -1) { // Don't force re-open if not yet opened
