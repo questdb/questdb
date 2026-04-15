@@ -32,6 +32,7 @@ open module io.questdb.test {
     requires static java.management;
     requires io.questdb.client;
     requires jdk.management;
+    requires java.net.http;
     requires org.checkerframework.checker.qual;
 
     uses io.questdb.griffin.FunctionFactory;
