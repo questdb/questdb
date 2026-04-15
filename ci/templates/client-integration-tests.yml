@@ -1,0 +1,64 @@
+steps:
+  - checkout: self
+    fetchDepth: 1
+    lfs: false
+    submodules: false
+
+  - bash: |
+      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk build-essential zip
+      JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+    displayName: "Install JDK and build tools"
+
+  - bash: mkdir -p "$HOME/.m2/repository"
+    displayName: "Ensure .m2/repository exists"
+
+  - task: Cache@2
+    displayName: "Cache .m2/repository"
+    continueOnError: true
+    inputs:
+      key: '"questdb_client_integration" | "$(Agent.OS)" | "maven"'
+      restoreKeys: |
+        "questdb_client_integration" | "$(Agent.OS)" | "maven"
+      path: $(MAVEN_CACHE_FOLDER)
+
+  - template: detect-local-client.yml
+
+  - task: Maven@3
+    displayName: "Build server JAR"
+    inputs:
+      mavenPomFile: "pom.xml"
+      jdkVersionOption: "1.17"
+      goals: "package"
+      options: "--batch-mode -Dmaven.test.skip=true -pl core -am $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+
+  # Clone client main separately — the submodule above is only for building
+  # the server. Tests run against client main to catch server regressions.
+  - bash: git clone --depth 1 https://github.com/questdb/java-questdb-client.git client-main
+    displayName: "Clone java-questdb-client main"
+
+  - template: run-client-tests.yml
+    parameters:
+      configName: default
+      authEnabled: "false"
+
+  - template: run-client-tests.yml
+    parameters:
+      configName: authenticated
+      authEnabled: "true"
+
+  # --- On failure: archive logs ---
+  - task: ArchiveFiles@2
+    displayName: "Tests failed -- Compress logs"
+    condition: failed()
+    inputs:
+      rootFolderOrFile: "logs"
+      includeRootFolder: false
+      archiveFile: $(ARCHIVED_LOGS)
+  - task: PublishBuildArtifacts@1
+    displayName: "Tests failed -- Upload logs"
+    condition: failed()
+    inputs:
+      pathToPublish: $(ARCHIVED_LOGS)
+      artifactName: ClientIntegrationTestsLogs

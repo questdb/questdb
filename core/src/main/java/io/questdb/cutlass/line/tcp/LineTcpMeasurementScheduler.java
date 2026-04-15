@@ -81,7 +81,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
     private final LineWalAppender lineWalAppender;
     private final long[] loadByWriterThread;
-    private final NetworkIOJob[] netIoJobs;
+    private final ObjList<NetworkIOJob> netIoJobs;
     private final Path path = new Path();
     private final MPSequence[] pubSeq;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
@@ -110,12 +110,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
             this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
             this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
             final int networkSharedPoolSize = sharedPoolNetwork.getWorkerCount();
-            this.netIoJobs = new NetworkIOJob[networkSharedPoolSize];
+            this.netIoJobs = new ObjList<>(networkSharedPoolSize);
             this.tableNameSinks = new StringSink[networkSharedPoolSize];
             for (int i = 0; i < networkSharedPoolSize; i++) {
                 tableNameSinks[i] = new StringSink();
                 NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
-                netIoJobs[i] = netIoJob;
+                netIoJobs.add(netIoJob);
                 sharedPoolNetwork.assign(i, netIoJob);
                 sharedPoolNetwork.freeOnExit(netIoJob);
             }
@@ -183,7 +183,8 @@ public class LineTcpMeasurementScheduler implements Closeable {
                     configuration.isStringToCharCastAllowed(),
                     configuration.getTimestampUnit(),
                     sink,
-                    cairoConfiguration.getMaxFileNameLength()
+                    cairoConfiguration.getMaxFileNameLength(),
+                    cairoConfiguration.getMaxSqlRecompileAttempts()
             );
         } catch (Throwable t) {
             close();
@@ -204,16 +205,16 @@ public class LineTcpMeasurementScheduler implements Closeable {
         Misc.free(path);
         Misc.free(ddlMem);
         for (int i = 0, n = assignedTables.length; i < n; i++) {
-            Misc.freeObjList(assignedTables[i]);
-            assignedTables[i].clear();
+            if (assignedTables[i] != null) {
+                Misc.freeObjList(assignedTables[i]);
+                assignedTables[i].clear();
+            }
         }
         //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = queue.length; i < n; i++) {
             Misc.free(queue[i]);
         }
-        for (int i = 0, n = netIoJobs.length; i < n; i++) {
-            netIoJobs[i].close();
-        }
+        Misc.freeObjList(netIoJobs);
         Misc.free(sink);
     }
 
