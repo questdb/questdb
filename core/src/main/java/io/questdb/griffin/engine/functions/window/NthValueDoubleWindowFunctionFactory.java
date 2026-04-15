@@ -85,10 +85,6 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             throw SqlException.$(argPositions.getQuick(1), "nth_value n must be a positive integer");
         }
 
-        if (windowContext.isIgnoreNulls()) {
-            throw SqlException.$(position, "nth_value() does not support IGNORE NULLS");
-        }
-
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
         if (rowsHi < rowsLo) {

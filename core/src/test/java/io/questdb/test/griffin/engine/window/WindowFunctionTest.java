@@ -11119,7 +11119,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tval\tbucket
                             1970-01-01T00:00:00.000001Z\t10.0\t1
@@ -11128,7 +11128,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t40.0\t2
                             1970-01-01T00:00:00.000005Z\t50.0\t3
                             """),
-                    "select ts, val, ntile(3) over (order by ts) bucket from tab"
+                    "select ts, val, ntile(3) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -11139,7 +11142,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\ti\tbucket
                             1970-01-01T00:00:00.000001Z\t1\t1
@@ -11148,7 +11151,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t1
                             1970-01-01T00:00:00.000005Z\t2\t2
                             """),
-                    "select ts, i, ntile(2) over (partition by i order by ts) bucket from tab"
+                    "select ts, i, ntile(2) over (partition by i order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -11159,14 +11165,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tbucket
                             1970-01-01T00:00:00.000001Z\t1
                             1970-01-01T00:00:00.000002Z\t1
                             1970-01-01T00:00:00.000003Z\t1
                             """),
-                    "select ts, ntile(1) over (order by ts) bucket from tab"
+                    "select ts, ntile(1) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -11177,13 +11186,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tbucket
                             1970-01-01T00:00:00.000001Z\t1
                             1970-01-01T00:00:00.000002Z\t2
                             """),
-                    "select ts, ntile(5) over (order by ts) bucket from tab"
+                    "select ts, ntile(5) over (order by ts) bucket from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -11195,7 +11207,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "select ntile(0) over (order by ts) from tab",
-                    -1,
+                    13,
                     "bucket count must be a positive integer",
                     sqlExecutionContext
             );
@@ -11209,7 +11221,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "select ntile(4) over (order by ts rows between 1 preceding and current row) from tab",
-                    -1,
+                    7,
                     "ntile() does not support framing",
                     sqlExecutionContext
             );
@@ -11222,14 +11234,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tval\tcd
                             1970-01-01T00:00:00.000001Z\t10.0\t0.3333333333333333
                             1970-01-01T00:00:00.000002Z\t20.0\t0.6666666666666666
                             1970-01-01T00:00:00.000003Z\t30.0\t1.0
                             """),
-                    "select ts, val, cume_dist() over (order by ts) cd from tab"
+                    "select ts, val, cume_dist() over (order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -11240,7 +11255,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1), (2, 1), (3, 2), (4, 2), (5, 3)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tval\tcd
                             1970-01-01T00:00:00.000001Z\t1\t0.4
@@ -11249,7 +11264,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t0.8
                             1970-01-01T00:00:00.000005Z\t3\t1.0
                             """),
-                    "select ts, val, cume_dist() over (order by val) cd from tab"
+                    "select ts, val, cume_dist() over (order by val) cd from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -11260,7 +11278,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\ti\tcd
                             1970-01-01T00:00:00.000001Z\t1\t0.3333333333333333
@@ -11269,7 +11287,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t0.5
                             1970-01-01T00:00:00.000005Z\t2\t1.0
                             """),
-                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab"
+                    "select ts, i, cume_dist() over (partition by i order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -11280,14 +11301,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tcd
                             1970-01-01T00:00:00.000001Z\t1.0
                             1970-01-01T00:00:00.000002Z\t1.0
                             1970-01-01T00:00:00.000003Z\t1.0
                             """),
-                    "select ts, cume_dist() over () cd from tab"
+                    "select ts, cume_dist() over () cd from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11298,12 +11322,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tcd
                             1970-01-01T00:00:00.000001Z\t1.0
                             """),
-                    "select ts, cume_dist() over (order by ts) cd from tab"
+                    "select ts, cume_dist() over (order by ts) cd from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -11314,7 +11341,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
@@ -11323,7 +11350,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t30.0
                             1970-01-01T00:00:00.000005Z\t30.0
                             """),
-                    "select ts, nth_value(val, 3) over (order by ts) nv from tab"
+                    "select ts, nth_value(val, 3) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11334,14 +11364,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t10.0
                             1970-01-01T00:00:00.000002Z\t10.0
                             1970-01-01T00:00:00.000003Z\t10.0
                             """),
-                    "select ts, nth_value(val, 1) over (order by ts) nv from tab"
+                    "select ts, nth_value(val, 1) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11352,7 +11385,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
@@ -11361,7 +11394,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\tnull
                             1970-01-01T00:00:00.000005Z\t2\t50.0
                             """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab"
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11372,7 +11408,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tnv1\tnv2
                             1970-01-01T00:00:00.000001Z\t10.0\tnull
@@ -11381,7 +11417,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, " +
                             "nth_value(val, 1) over (order by ts rows between current row and current row) nv1, " +
                             "nth_value(val, 2) over (order by ts rows between current row and current row) nv2 " +
-                            "from tab"
+                            "from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11392,7 +11431,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\t10.0
@@ -11401,7 +11440,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t30.0
                             """),
-                    "select ts, nth_value(val, 1) over (order by ts rows between 2 preceding and current row) nv from tab"
+                    "select ts, nth_value(val, 1) over (order by ts rows between 2 preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11412,7 +11454,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\t20.0
@@ -11421,7 +11463,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t2\t50.0
                             1970-01-01T00:00:00.000005Z\t2\t50.0
                             """),
-                    "select ts, i, nth_value(val, 2) over (partition by i) nv from tab"
+                    "select ts, i, nth_value(val, 2) over (partition by i) nv from tab",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -11432,13 +11477,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             """),
-                    "select ts, nth_value(val, 10) over (order by ts) nv from tab"
+                    "select ts, nth_value(val, 10) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11450,7 +11498,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "select nth_value(val, 0) over (order by ts) from tab",
-                    -1,
+                    22,
                     "nth_value n must be a positive integer",
                     sqlExecutionContext
             );
@@ -11463,14 +11511,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, null), (2, 20.0), (3, 30.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
                             1970-01-01T00:00:00.000002Z\tnull
                             1970-01-01T00:00:00.000003Z\tnull
                             """),
-                    "select ts, nth_value(val, 1) over (order by ts) nv from tab"
+                    "select ts, nth_value(val, 1) over (order by ts) nv from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11482,7 +11533,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "select nth_value(val, 2) ignore nulls over (order by ts) from tab",
-                    -1,
+                    25,
                     "RESPECT/IGNORE NULLS is not supported for current window function",
                     sqlExecutionContext
             );
@@ -11495,7 +11546,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tnv
                             1970-01-01T00:00:00.000001Z\tnull
@@ -11504,7 +11555,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000004Z\t20.0
                             1970-01-01T00:00:00.000005Z\t20.0
                             """),
-                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) nv from tab"
+                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11515,7 +11569,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 2, 40.0), (5, 2, 50.0), (6, 2, 60.0)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\ti\tnv
                             1970-01-01T00:00:00.000001Z\t1\tnull
@@ -11525,7 +11579,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             1970-01-01T00:00:00.000005Z\t2\t50.0
                             1970-01-01T00:00:00.000006Z\t2\t50.0
                             """),
-                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab"
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
             );
         });
     }
@@ -11537,9 +11594,254 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "select cume_dist() over (order by ts rows between 1 preceding and current row) from tab",
-                    -1,
+                    7,
                     "cume_dist() does not support framing",
                     sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsNonConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i int) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(i) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a constant",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(-5) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileRejectsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select ntile(null) over (order by ts) from tab",
+                    13,
+                    "bucket count must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNtileWithoutOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tbucket
+                            1970-01-01T00:00:00.000001Z\t10.0\t1
+                            1970-01-01T00:00:00.000002Z\t20.0\t1
+                            1970-01-01T00:00:00.000003Z\t30.0\t2
+                            1970-01-01T00:00:00.000004Z\t40.0\t2
+                            """),
+                    "select ts, val, ntile(2) over () bucket from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsNonConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double, i int) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, i) over (order by ts) from tab",
+                    22,
+                    "nth_value n must be a constant",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, -1) over (order by ts) from tab",
+                    22,
+                    "nth_value n must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRejectsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertExceptionNoLeakCheck(
+                    "select nth_value(val, null) over (order by ts) from tab",
+                    22,
+                    "nth_value n must be a positive integer",
+                    sqlExecutionContext
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 30), (3, 20)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t10\t1.0
+                            1970-01-01T00:00:00.000002Z\t30\t0.3333333333333333
+                            1970-01-01T00:00:00.000003Z\t20\t0.6666666666666666
+                            """),
+                    "select ts, val, cume_dist() over (order by val desc) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistMultiColumnOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, a long, b long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 100), (2, 1, 200), (3, 2, 100)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ta\tb\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t100\t0.3333333333333333
+                            1970-01-01T00:00:00.000002Z\t1\t200\t0.6666666666666666
+                            1970-01-01T00:00:00.000003Z\t2\t100\t1.0
+                            """),
+                    "select ts, a, b, cume_dist() over (order by a, b) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistPartitionedWithPeers() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 1), (5, 2, 1)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t1\t1\t0.6666666666666666
+                            1970-01-01T00:00:00.000002Z\t1\t1\t0.6666666666666666
+                            1970-01-01T00:00:00.000003Z\t1\t2\t1.0
+                            1970-01-01T00:00:00.000004Z\t2\t1\t1.0
+                            1970-01-01T00:00:00.000005Z\t2\t1\t1.0
+                            """),
+                    "select ts, i, val, cume_dist() over (partition by i order by val) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNtileToPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertPlanNoLeakCheck(
+                    "select ts, ntile(3) over (order by ts) from tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(3) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select ts, i, ntile(2) over (partition by i order by ts) from tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [ntile(2) over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistToPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertPlanNoLeakCheck(
+                    "select ts, cume_dist() over (order by ts) from tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [cume_dist() over (order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select ts, cume_dist() over () from tab",
+                    """
+                            Window
+                              functions: [cume_dist() over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueToPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (partition by [i] rows between 2 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
             );
         });
     }
