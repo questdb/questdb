@@ -26,21 +26,27 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class SumFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public SumFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = arg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
     }
 
     @Override
@@ -71,6 +77,44 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
         mapValue.putFloat(valueIndex, value);
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddress,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct float column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final float value = Unsafe.getUnsafe().getFloat(argAddr + (rowIndex << 2));
+                if (!Float.isNaN(value)) {
+                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final float current = Unsafe.getUnsafe().getFloat(addr);
+                    Unsafe.getUnsafe().putFloat(addr, !Float.isNaN(current) ? current + value : value);
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final float value = arg.getFloat(record);
+                if (!Float.isNaN(value)) {
+                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final float current = Unsafe.getUnsafe().getFloat(addr);
+                    Unsafe.getUnsafe().putFloat(addr, !Float.isNaN(current) ? current + value : value);
+                }
+            }
+        }
     }
 
     @Override

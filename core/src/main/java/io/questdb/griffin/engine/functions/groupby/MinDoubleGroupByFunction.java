@@ -26,22 +26,29 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public MinDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = arg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
     }
 
     @Override
@@ -58,6 +65,47 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putDouble(valueIndex, arg.getDouble(record));
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddress,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // Mirrors computeNext: replace the accumulator only when the new value is
+        // strictly less, or when the accumulator is still the null sentinel (NaN/inf).
+        // NaN arg values naturally short-circuit because NaN comparisons are always false.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct double column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final double value = Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3));
+                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final double current = Unsafe.getUnsafe().getDouble(addr);
+                if (value < current || Numbers.isNull(current)) {
+                    Unsafe.getUnsafe().putDouble(addr, value);
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final double value = arg.getDouble(record);
+                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final double current = Unsafe.getUnsafe().getDouble(addr);
+                if (value < current || Numbers.isNull(current)) {
+                    Unsafe.getUnsafe().putDouble(addr, value);
+                }
+            }
+        }
     }
 
     @Override

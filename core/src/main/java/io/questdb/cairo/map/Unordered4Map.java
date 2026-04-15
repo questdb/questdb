@@ -315,7 +315,11 @@ public class Unordered4Map implements Map, Reopenable {
 
         final int directColumnIndex = mapSink.getDirectColumnIndex();
         if (directColumnIndex >= 0) {
-            return probeBatchUnsafe(record.getPageAddress(directColumnIndex), batchStart, batchEnd, batchAddr);
+            // Zero page address means a column top; fall through to the sink-based path.
+            final long columnAddr = record.getPageAddress(directColumnIndex);
+            if (columnAddr != 0) {
+                return probeBatchUnsafe(columnAddr, batchStart, batchEnd, batchAddr);
+            }
         }
 
         for (long r = batchStart; r < batchEnd; r++) {
@@ -377,7 +381,11 @@ public class Unordered4Map implements Map, Reopenable {
 
         final int directColumnIndex = mapSink.getDirectColumnIndex();
         if (directColumnIndex >= 0) {
-            return probeBatchFilteredUnsafe(record.getPageAddress(directColumnIndex), rowIdsAddr, batchStart, batchEnd, batchAddr);
+            // Zero page address means a column top; fall through to the sink-based path.
+            final long columnAddr = record.getPageAddress(directColumnIndex);
+            if (columnAddr != 0) {
+                return probeBatchFilteredUnsafe(columnAddr, rowIdsAddr, batchStart, batchEnd, batchAddr);
+            }
         }
 
         for (long p = batchStart; p < batchEnd; p++) {

@@ -26,25 +26,69 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class BitAndShortGroupByFunction extends ShortFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public BitAndShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = arg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putShort(valueIndex, arg.getShort(record));
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddress,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // bit_and has no short NULL sentinel and its identity element is all-ones,
+        // so the etalon (all-zeros) is not a usable seed value. We dispatch on isNew
+        // to set the first row's value directly and bit-AND for every subsequent row.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct short column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final short value = Unsafe.getUnsafe().getShort(argAddr + (rowIndex << 1));
+                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final short current = Unsafe.getUnsafe().getShort(addr);
+                Unsafe.getUnsafe().putShort(addr, Map.isNewBatchEntry(encoded) ? value : (short) (current & value));
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final short value = arg.getShort(record);
+                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final short current = Unsafe.getUnsafe().getShort(addr);
+                Unsafe.getUnsafe().putShort(addr, Map.isNewBatchEntry(encoded) ? value : (short) (current & value));
+            }
+        }
     }
 
     @Override

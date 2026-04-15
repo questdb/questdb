@@ -26,22 +26,29 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public AvgShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = arg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
     }
 
     @Override
@@ -66,10 +73,56 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     }
 
     @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddress,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // Two-slot layout: [sum:long][count:long]. setEmpty seeds (LONG_NULL, 0),
+        // so new entries need computeFirst semantics (value, 1) instead of addLong
+        // which would land on LONG_NULL + value.
+        final long sumOffset = mapValue.getOffset(valueIndex);
+        final long countOffset = mapValue.getOffset(valueIndex + 1);
+        // Fast path: arg is a direct short column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final short value = Unsafe.getUnsafe().getShort(argAddr + (rowIndex << 1));
+                final long valueBase = baseValueAddress + Map.decodeBatchOffset(encoded);
+                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final short value = arg.getShort(record);
+                final long valueBase = baseValueAddress + Map.decodeBatchOffset(encoded);
+                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
+            }
+        }
+    }
+
+    @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final short value = arg.getShort(record);
         mapValue.addLong(valueIndex, value);
         mapValue.addLong(valueIndex + 1, 1);
+    }
+
+    private static void applyAvg(long sumAddr, long countAddr, short value, boolean isNew) {
+        if (isNew) {
+            Unsafe.getUnsafe().putLong(sumAddr, value);
+            Unsafe.getUnsafe().putLong(countAddr, 1L);
+        } else {
+            Unsafe.getUnsafe().putLong(sumAddr, Unsafe.getUnsafe().getLong(sumAddr) + value);
+            Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1L);
+        }
     }
 
     @Override

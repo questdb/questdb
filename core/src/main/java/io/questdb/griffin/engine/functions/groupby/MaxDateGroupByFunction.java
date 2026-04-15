@@ -26,22 +26,29 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxDateGroupByFunction extends DateFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final int argColumnIndex;
     private int valueIndex;
 
     public MaxDateGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.argColumnIndex = arg instanceof ColumnFunction cf ? cf.getColumnIndex() : -1;
     }
 
     @Override
@@ -58,6 +65,39 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putLong(valueIndex, arg.getLong(record));
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddress,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // LONG_NULL == Long.MIN_VALUE, so Math.max handles every LONG_NULL combination naturally.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct date column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
+                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                Unsafe.getUnsafe().putLong(addr, Math.max(value, Unsafe.getUnsafe().getLong(addr)));
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final long value = arg.getDate(record);
+                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                Unsafe.getUnsafe().putLong(addr, Math.max(value, Unsafe.getUnsafe().getLong(addr)));
+            }
+        }
     }
 
     @Override

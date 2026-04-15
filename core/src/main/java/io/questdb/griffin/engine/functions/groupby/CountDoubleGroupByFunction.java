@@ -25,10 +25,14 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
@@ -55,6 +59,44 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
+        }
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddress,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // setEmpty stores 0, matching the identity for count; finite rows add 1.
+        // Note: count(double) mirrors computeNext and uses Numbers.isFinite (rejects NaN/+inf/-inf).
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct double column with data on the current frame.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final double value = Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3));
+                if (Numbers.isFinite(value)) {
+                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final double value = arg.getDouble(record);
+                if (Numbers.isFinite(value)) {
+                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+                }
+            }
         }
     }
 
