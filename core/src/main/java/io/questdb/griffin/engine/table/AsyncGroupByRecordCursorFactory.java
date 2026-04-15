@@ -338,14 +338,14 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final DirectLongList batchList = atom.getBatchList(slotId);
         final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
         final int functionCount = functions.size();
-        final int subBatchSize = 2048;
+        final int batchSize = atom.getBatchSize();
 
         // Size the batch buffer once — probeBatch writes via the raw base address, never advancing pos.
-        batchList.ensureCapacity(subBatchSize);
+        batchList.ensureCapacity(batchSize);
         final long batchAddr = batchList.getAddress();
 
-        for (long batchStart = 0; batchStart < frameRowCount; batchStart += subBatchSize) {
-            final long batchEnd = Math.min(batchStart + subBatchSize, frameRowCount);
+        for (long batchStart = 0; batchStart < frameRowCount; batchStart += batchSize) {
+            final long batchEnd = Math.min(batchStart + batchSize, frameRowCount);
             final long batchRows = batchEnd - batchStart;
 
             // Must reserve capacity before probeBatch: probeBatch packs entry offsets relative to the

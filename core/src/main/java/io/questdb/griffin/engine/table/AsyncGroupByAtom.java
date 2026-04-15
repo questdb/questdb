@@ -65,6 +65,7 @@ import java.io.Closeable;
 
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+    private final int batchSize;
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
@@ -211,11 +212,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             // Pre-allocate per-worker batch scratch buffers and flyweights for batched dispatch.
             // The owner uses slotId -1 which maps to index 0; worker slots 0..N-1 map to 1..N.
-            final int subBatchSize = 2048; // TODO: make configurable
+            this.batchSize = configuration.getGroupByBatchSize();
             perWorkerBatchLists = new ObjList<>(workerCount + 1);
             perWorkerBatchMapValues = new ObjList<>(workerCount + 1);
             for (int i = 0; i < workerCount + 1; i++) {
-                perWorkerBatchLists.extendAndSet(i, new DirectLongList(subBatchSize, MemoryTag.NATIVE_DEFAULT));
+                perWorkerBatchLists.extendAndSet(i, new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT));
                 perWorkerBatchMapValues.extendAndSet(i, new FlyweightPackedMapValue(valueTypes));
             }
         } catch (Throwable th) {
@@ -278,6 +279,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     public FlyweightPackedMapValue getBatchMapValue(int slotId) {
         // slotId -1 (owner) maps to index 0, worker slots 0..N-1 map to 1..N
         return perWorkerBatchMapValues.getQuick(slotId + 1);
+    }
+
+    public int getBatchSize() {
+        return batchSize;
     }
 
     public GroupByMapFragment getFragment(int slotId) {

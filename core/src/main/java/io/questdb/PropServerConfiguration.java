@@ -161,6 +161,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double cairoAutoScaleSymbolCapacityThreshold;
     private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
+    private final int cairoGroupByBatchSize;
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;
     private final long cairoGroupByPresizeMaxCapacity;
@@ -2036,6 +2037,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             final int defaultReduceQueueCapacity = Math.min(4 * queryWorkers, 256);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByBatchSize = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 2048);
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByTopKQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY, defaultReduceQueueCapacity));
@@ -3642,6 +3644,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getGroupByAllocatorMaxChunkSize() {
             return sqlGroupByAllocatorMaxChunkSize;
+        }
+
+        @Override
+        public int getGroupByBatchSize() {
+            return cairoGroupByBatchSize;
         }
 
         @Override

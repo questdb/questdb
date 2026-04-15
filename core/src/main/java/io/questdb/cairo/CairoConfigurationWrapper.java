@@ -362,6 +362,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByBatchSize() {
+        return getDelegate().getGroupByBatchSize();
+    }
+
+    @Override
     public int getGroupByMapCapacity() {
         return getDelegate().getGroupByMapCapacity();
     }

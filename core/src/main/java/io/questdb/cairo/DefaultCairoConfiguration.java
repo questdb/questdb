@@ -383,6 +383,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByBatchSize() {
+        return 2048;
+    }
+
+    @Override
     public int getGroupByMapCapacity() {
         return 1024;
     }

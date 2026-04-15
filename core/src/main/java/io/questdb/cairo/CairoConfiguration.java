@@ -278,6 +278,8 @@ public interface CairoConfiguration {
 
     long getGroupByAllocatorMaxChunkSize();
 
+    int getGroupByBatchSize();
+
     int getGroupByMapCapacity();
 
     int getGroupByMergeShardQueueCapacity();

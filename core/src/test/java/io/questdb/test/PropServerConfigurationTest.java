@@ -320,6 +320,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
+        Assert.assertEquals(2048, configuration.getCairoConfiguration().getGroupByBatchSize());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isGroupByPresizeEnabled());
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxCapacity());
@@ -2173,6 +2174,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4096, configuration.getVectorAggregateQueueCapacity());
         Assert.assertEquals(8, configuration.getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(4, configuration.getPageFrameReduceColumnListCapacity());
+        Assert.assertEquals(512, configuration.getGroupByBatchSize());
         Assert.assertEquals(2048, configuration.getGroupByMergeShardQueueCapacity());
         Assert.assertEquals(100, configuration.getGroupByShardingThreshold());
         Assert.assertEquals(1000, configuration.getGroupByParallelTopKThreshold());
