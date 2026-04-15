@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.BinarySequence;
@@ -110,9 +111,9 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     private final int maxResizes;
     private final int memoryTag;
     private final UnorderedVarcharMapRecord record;
-    private final UnorderedVarcharMapValue value;
-    private final UnorderedVarcharMapValue value2;
-    private final UnorderedVarcharMapValue value3;
+    private final FlyweightPackedMapValue value;
+    private final FlyweightPackedMapValue value2;
+    private final FlyweightPackedMapValue value3;
     private final long valueSize;
     private long batchEmptyValueStart;
     private int free;
@@ -197,9 +198,9 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             memLimit = memStart + sizeBytes;
             keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag);
 
-            value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
-            value2 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
-            value3 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
+            value = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            value2 = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            value3 = new FlyweightPackedMapValue(valueSize, valueOffsets);
 
             record = new UnorderedVarcharMapRecord(valueSize, valueOffsets, value, valueTypes);
             cursor = new UnorderedVarcharMapCursor(record, this);
@@ -366,7 +367,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         for (long r = batchStart; r < batchEnd; r++) {
             record.setRowIndex(r);
             mapSink.copy(record, key);
-            final UnorderedVarcharMapValue v = (UnorderedVarcharMapValue) key.createValue();
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) key.createValue();
             if (v.isNew() && batchEmptyValueStart != 0) {
                 v.copyRawValue(batchEmptyValueStart);
             }
@@ -436,9 +437,9 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         final long buf = Unsafe.malloc(valueSize, memoryTag);
         Vect.memset(buf, valueSize, 0);
         // Populate the empty value into the scratch buffer using value as a flyweight.
-        // updateEmpty() only writes to value addresses (valueAddress + offset), so it never
-        // touches the key region — passing buf - KEY_SIZE as the entry start is safe.
-        value.of(buf - KEY_SIZE, buf + valueSize, false);
+        // updateEmpty() only writes to value addresses (valueAddress + offset), so the
+        // entry address is irrelevant here.
+        value.of(buf);
         updater.updateEmpty(value);
         // If the resulting value region is all zeros, we don't need a per-entry memcpy
         // since fresh slots are already zeroed by clear().
@@ -487,13 +488,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return packedHashSizeFlags & 0x7fffffffffffffffL;
     }
 
-    private UnorderedVarcharMapValue asNew(
+    private FlyweightPackedMapValue asNew(
             long startAddress,
             long hash,
             long keyPtrWithUnstableFlag,
             int keySize,
             long keyHashSizeFlags,
-            UnorderedVarcharMapValue value
+            FlyweightPackedMapValue value
     ) {
         Unsafe.getUnsafe().putLong(startAddress, keyHashSizeFlags);
         if ((keyPtrWithUnstableFlag & PTR_UNSTABLE_MASK) == 0) {
@@ -549,13 +550,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return getStartAddress(memStart, index);
     }
 
-    private UnorderedVarcharMapValue probe0(
+    private FlyweightPackedMapValue probe0(
             long startAddress,
             long hash,
             long ptrWithUnstableFlag,
             int size,
             long packedHashSizeFlagsToFind,
-            UnorderedVarcharMapValue value
+            FlyweightPackedMapValue value
     ) {
         long ptr = ptrWithUnstableFlag & PTR_MASK;
         final long comparablePackedHashSizeFlagsToFind = makePackComparable(packedHashSizeFlagsToFind);
@@ -584,7 +585,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         for (long r = batchStart; r < batchEnd; r++) {
             record.setRowIndex(r);
             key.putVarchar(record.getVarcharA(columnIndex));
-            final UnorderedVarcharMapValue v = (UnorderedVarcharMapValue) key.createValue();
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) key.createValue();
             if (v.isNew() && batchEmptyValueStart != 0) {
                 v.copyRawValue(batchEmptyValueStart);
             }
@@ -595,7 +596,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return memStart;
     }
 
-    private UnorderedVarcharMapValue probeReadOnly(long startAddress, long ptr, long size, long packedHashSizeFlagsToFind, UnorderedVarcharMapValue value) {
+    private FlyweightPackedMapValue probeReadOnly(long startAddress, long ptr, long size, long packedHashSizeFlagsToFind, FlyweightPackedMapValue value) {
         long comparablePackedHashSizeFlagsToFind = makePackComparable(packedHashSizeFlagsToFind);
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
@@ -660,8 +661,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         nResizes++;
     }
 
-    private UnorderedVarcharMapValue valueOf(long startAddress, boolean newValue, UnorderedVarcharMapValue value) {
-        return value.of(startAddress, memLimit, newValue);
+    private FlyweightPackedMapValue valueOf(long startAddress, boolean newValue, FlyweightPackedMapValue value) {
+        return value.of(startAddress, startAddress + KEY_SIZE, newValue);
     }
 
     static boolean isAscii(byte flags) {
@@ -931,7 +932,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             // no-op
         }
 
-        private MapValue findValue(long ptrWithUnstableFlag, int size, byte flags, UnorderedVarcharMapValue value) {
+        private MapValue findValue(long ptrWithUnstableFlag, int size, byte flags, FlyweightPackedMapValue value) {
             long ptr = ptrWithUnstableFlag & PTR_MASK;
             long hash = Hash.hashMem64(ptr, size);
             long index = hash & mask;

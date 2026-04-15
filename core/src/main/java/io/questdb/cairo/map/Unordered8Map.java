@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -95,9 +96,9 @@ public class Unordered8Map implements Map, Reopenable {
     private final int maxResizes;
     private final int memoryTag;
     private final Unordered8MapRecord record;
-    private final Unordered8MapValue value;
-    private final Unordered8MapValue value2;
-    private final Unordered8MapValue value3;
+    private final FlyweightPackedMapValue value;
+    private final FlyweightPackedMapValue value2;
+    private final FlyweightPackedMapValue value3;
     private final long valueSize;
     private long batchEmptyValueStart;
     private int free;
@@ -174,9 +175,9 @@ public class Unordered8Map implements Map, Reopenable {
             memLimit = memStart + entrySize * this.keyCapacity;
             zeroMemStart = memLimit; // zero key lives right after the hash table
 
-            value = new Unordered8MapValue(valueSize, valueOffsets);
-            value2 = new Unordered8MapValue(valueSize, valueOffsets);
-            value3 = new Unordered8MapValue(valueSize, valueOffsets);
+            value = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            value2 = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            value3 = new FlyweightPackedMapValue(valueSize, valueOffsets);
 
             record = new Unordered8MapRecord(valueSize, valueOffsets, value, valueTypes);
             cursor = new Unordered8MapCursor(record, this);
@@ -421,9 +422,9 @@ public class Unordered8Map implements Map, Reopenable {
         final long buf = Unsafe.malloc(valueSize, memoryTag);
         Vect.memset(buf, valueSize, 0);
         // Populate the empty value into the scratch buffer using value as a flyweight.
-        // updateEmpty() only writes to value addresses (valueAddress + offset), so it never
-        // touches the key region — passing buf - KEY_SIZE as the entry start is safe.
-        value.of(buf - KEY_SIZE, buf + valueSize, false);
+        // updateEmpty() only writes to value addresses (valueAddress + offset), so the
+        // entry address is irrelevant here.
+        value.of(buf);
         updater.updateEmpty(value);
         // If the resulting value region is all zeros, we don't need a per-entry memcpy
         // since fresh slots are already zeroed by clear().
@@ -465,7 +466,7 @@ public class Unordered8Map implements Map, Reopenable {
         return key;
     }
 
-    private Unordered8MapValue asNew(long startAddress, long key, long hashCode, Unordered8MapValue value) {
+    private FlyweightPackedMapValue asNew(long startAddress, long key, long hashCode, FlyweightPackedMapValue value) {
         Unsafe.getUnsafe().putLong(startAddress, key);
         if (--free == 0) {
             try {
@@ -604,8 +605,8 @@ public class Unordered8Map implements Map, Reopenable {
         nResizes++;
     }
 
-    private Unordered8MapValue valueOf(long startAddress, boolean newValue, Unordered8MapValue value) {
-        return value.of(startAddress, memLimit, newValue);
+    private FlyweightPackedMapValue valueOf(long startAddress, boolean newValue, FlyweightPackedMapValue value) {
+        return value.of(startAddress, startAddress + KEY_SIZE, newValue);
     }
 
     long entrySize() {
@@ -812,7 +813,7 @@ public class Unordered8Map implements Map, Reopenable {
             return valueOf(zeroMemStart, true, value);
         }
 
-        private MapValue findValue(Unordered8MapValue value) {
+        private MapValue findValue(FlyweightPackedMapValue value) {
             if (key == 0) {
                 return hasZero ? valueOf(zeroMemStart, false, value) : null;
             }

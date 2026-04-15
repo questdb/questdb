@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -110,9 +111,9 @@ public class OrderedMap implements Map, Reopenable {
     private final int maxResizes;
     private final MergeFunction mergeRef;
     private final OrderedMapRecord record;
-    private final OrderedMapValue value;
-    private final OrderedMapValue value2;
-    private final OrderedMapValue value3;
+    private final FlyweightPackedMapValue value;
+    private final FlyweightPackedMapValue value2;
+    private final FlyweightPackedMapValue value3;
     private final int valueColumnCount;
     private final long valueSize;
     private long batchEmptyValueStart;
@@ -236,9 +237,9 @@ public class OrderedMap implements Map, Reopenable {
             }
             this.valueSize = valueSize;
 
-            value = new OrderedMapValue(valueSize, valueOffsets);
-            value2 = new OrderedMapValue(valueSize, valueOffsets);
-            value3 = new OrderedMapValue(valueSize, valueOffsets);
+            value = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            value2 = new FlyweightPackedMapValue(valueSize, valueOffsets);
+            value3 = new FlyweightPackedMapValue(valueSize, valueOffsets);
 
             if (keySize + valueSize >= heapLimit - heapAddr) {
                 throw CairoException.nonCritical()
@@ -403,9 +404,9 @@ public class OrderedMap implements Map, Reopenable {
         final long buf = Unsafe.malloc(valueSize, heapMemoryTag);
         Vect.memset(buf, valueSize, 0);
         // Populate the empty value into the scratch buffer using value as a flyweight.
-        // updateEmpty() only writes through valueAddress, so passing buf for both
-        // startAddress and valueAddress is safe.
-        value.of(buf, buf, buf + valueSize, false);
+        // updateEmpty() only writes through valueAddress, so the entry address is
+        // irrelevant here.
+        value.of(buf);
         updater.updateEmpty(value);
         batchEmptyValueStart = buf;
     }
@@ -446,7 +447,7 @@ public class OrderedMap implements Map, Reopenable {
         return ((long) rawOffset - 1) << 3;
     }
 
-    private OrderedMapValue asNew(Key keyWriter, int index, int hashCodeLo, OrderedMapValue value) {
+    private FlyweightPackedMapValue asNew(Key keyWriter, int index, int hashCodeLo, FlyweightPackedMapValue value) {
         // Align current pointer to 8 bytes, so that we can store compressed offsets.
         kPos = Bytes.align8b(keyWriter.appendAddr + valueSize);
         long offsetAddr = offsetsAddr + ((long) index << 3);
@@ -574,7 +575,7 @@ public class OrderedMap implements Map, Reopenable {
         }
     }
 
-    private OrderedMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
+    private FlyweightPackedMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, FlyweightPackedMapValue value) {
         long offsetAddr = offsetsAddr + ((long) index << 3);
         // Read offset and hash as a single 64-bit value to reduce memory accesses.
         // Layout: [rawOffset (4 bytes) | hashCodeLo (4 bytes)]
@@ -621,7 +622,7 @@ public class OrderedMap implements Map, Reopenable {
             k.startAddr = kPos;
             k.appendAddr = kPos;
             mapSink.copy(record, k);
-            final OrderedMapValue v = (OrderedMapValue) k.createValue();
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
             if (v.isNew() && batchEmptyValueStart != 0) {
                 v.copyRawValue(batchEmptyValueStart);
             }
@@ -643,7 +644,7 @@ public class OrderedMap implements Map, Reopenable {
             record.setRowIndex(r);
             final MapKey k = withKey();
             mapSink.copy(record, k);
-            final OrderedMapValue v = (OrderedMapValue) k.createValue();
+            final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
             if (v.isNew() && batchEmptyValueStart != 0) {
                 v.copyRawValue(batchEmptyValueStart);
             }
@@ -657,7 +658,7 @@ public class OrderedMap implements Map, Reopenable {
         return heapAddr;
     }
 
-    private OrderedMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
+    private FlyweightPackedMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, FlyweightPackedMapValue value) {
         long offsetAddr = offsetsAddr + ((long) index << 3);
         // Read offset and hash as a single 64-bit value to reduce memory accesses.
         long slotValue = Unsafe.getUnsafe().getLong(offsetAddr);
@@ -748,8 +749,8 @@ public class OrderedMap implements Map, Reopenable {
         return delta;
     }
 
-    private OrderedMapValue valueOf(long startAddr, long valueAddr, boolean newValue, OrderedMapValue value) {
-        return value.of(startAddr, valueAddr, heapLimit, newValue);
+    private FlyweightPackedMapValue valueOf(long startAddr, long valueAddr, boolean newValue, FlyweightPackedMapValue value) {
+        return value.of(startAddr, valueAddr, newValue);
     }
 
     long keySize() {
@@ -1009,7 +1010,7 @@ public class OrderedMap implements Map, Reopenable {
             return probe0(this, index, hashCodeLo, keySize, value);
         }
 
-        private MapValue findValue(OrderedMapValue value) {
+        private MapValue findValue(FlyweightPackedMapValue value) {
             long keySize = commit();
             long hashCode = hash();
             int hashCodeLo = Numbers.decodeLowInt(hashCode);

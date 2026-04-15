@@ -38,25 +38,34 @@ import io.questdb.std.Long256Util;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A flyweight map value over a densely packed value region, matching the
  * per-column layout used by {@link Map} implementations.
- * Column addresses are computed as {@code ptr + valueOffsets[index]}.
+ * Column addresses are computed as {@code valueAddress + valueOffsets[index]}.
  * <p>
- * Used by the batched keyed GROUP BY dispatch path to keep all value-column
- * accesses monomorphic regardless of the underlying map type.
+ * Used by {@link Map} implementations that store value columns at a fixed
+ * offset from the entry start, as well as by the batched keyed GROUP BY
+ * dispatch path to keep all value-column accesses monomorphic regardless of
+ * the underlying map type.
  */
 public class FlyweightPackedMapValue implements FlyweightMapValue {
     private final long[] valueOffsets;
     private final long valueSize;
     private Decimal128 decimal128;
     private Decimal256 decimal256;
+    // Start address of the entry this flyweight is positioned at. Only
+    // meaningful when set via the three-argument of(entryAddress, valueAddress,
+    // isNew) form; left stale by the single-argument of(valueAddress) form
+    // used on the batched dispatch path.
+    private long entryAddress;
     private boolean isNew;
     private Long256Impl long256;
-    private long ptr;
+    private long valueAddress;
 
-    public FlyweightPackedMapValue(ColumnTypes valueTypes) {
+    public FlyweightPackedMapValue(@NotNull ColumnTypes valueTypes) {
         final int columnCount = valueTypes.getColumnCount();
         this.valueOffsets = new long[columnCount];
         long offset = 0;
@@ -70,6 +79,11 @@ public class FlyweightPackedMapValue implements FlyweightMapValue {
             offset += size;
         }
         this.valueSize = offset;
+    }
+
+    public FlyweightPackedMapValue(long valueSize, long @Nullable [] valueOffsets) {
+        this.valueSize = valueSize;
+        this.valueOffsets = valueOffsets;
     }
 
     @Override
@@ -118,21 +132,16 @@ public class FlyweightPackedMapValue implements FlyweightMapValue {
     @Override
     public void copyFrom(MapValue srcValue) {
         final FlyweightPackedMapValue other = (FlyweightPackedMapValue) srcValue;
-        Vect.memcpy(ptr, other.ptr, valueSize);
+        Vect.memcpy(valueAddress, other.valueAddress, valueSize);
+    }
+
+    public void copyRawValue(long ptr) {
+        Vect.memcpy(valueAddress, ptr, valueSize);
     }
 
     @Override
     public long getAddress(int index) {
-        return ptr + valueOffsets[index];
-    }
-
-    /**
-     * Returns the byte offset of the value column at {@code valueIndex} within
-     * the value region. Used by {@code computeKeyedBatch} overrides to hoist a
-     * compile-time-constant offset out of their hot loop.
-     */
-    public long getOffset(int valueIndex) {
-        return valueOffsets[valueIndex];
+        return valueAddress + valueOffsets[index];
     }
 
     @Override
@@ -251,6 +260,15 @@ public class FlyweightPackedMapValue implements FlyweightMapValue {
         return long256;
     }
 
+    /**
+     * Returns the byte offset of the value column at {@code valueIndex} within
+     * the value region. Used by {@code computeKeyedBatch} overrides to hoist a
+     * compile-time-constant offset out of their hot loop.
+     */
+    public long getOffset(int valueIndex) {
+        return valueOffsets[valueIndex];
+    }
+
     @Override
     public short getShort(int index) {
         return Unsafe.getUnsafe().getShort(getAddress(index));
@@ -263,12 +281,16 @@ public class FlyweightPackedMapValue implements FlyweightMapValue {
 
     @Override
     public long getStartAddress() {
-        throw new UnsupportedOperationException();
+        return entryAddress;
     }
 
     @Override
     public long getTimestamp(int index) {
         return getLong(index);
+    }
+
+    public long getValueAddress() {
+        return valueAddress;
     }
 
     @Override
@@ -307,8 +329,15 @@ public class FlyweightPackedMapValue implements FlyweightMapValue {
     }
 
     @Override
-    public void of(long ptr) {
-        this.ptr = ptr;
+    public void of(long valueAddress) {
+        this.valueAddress = valueAddress;
+    }
+
+    public FlyweightPackedMapValue of(long entryAddress, long valueAddress, boolean isNew) {
+        this.entryAddress = entryAddress;
+        this.valueAddress = valueAddress;
+        this.isNew = isNew;
+        return this;
     }
 
     @Override
@@ -405,11 +434,6 @@ public class FlyweightPackedMapValue implements FlyweightMapValue {
     @Override
     public void putTimestamp(int index, long value) {
         putLong(index, value);
-    }
-
-    @Override
-    public void setMapRecordHere() {
-        throw new UnsupportedOperationException();
     }
 
     @Override

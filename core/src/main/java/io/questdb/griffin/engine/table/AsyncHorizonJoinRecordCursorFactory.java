@@ -479,7 +479,7 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
             long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
-            long matchRowId = Long.MIN_VALUE;
+            long matchRowId;
             if (keyedAsOfJoin) {
                 matchRowId = slaveTimeFrameHelper.findKeyedAsOfMatch(
                         asOfRowId,

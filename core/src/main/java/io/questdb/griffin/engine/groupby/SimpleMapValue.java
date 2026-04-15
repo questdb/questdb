@@ -399,11 +399,6 @@ public class SimpleMapValue implements MapValue, Mutable, QuietCloseable {
         putLong(index, value);
     }
 
-    @Override
-    public void setMapRecordHere() {
-        throw new UnsupportedOperationException();
-    }
-
     public void setNew(boolean isNew) {
         this.isNew = isNew;
     }
