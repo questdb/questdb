@@ -32,6 +32,8 @@ impl<T: Copy + NativeType> MaxMin<T> {
     pub fn new() -> Self {
         MaxMin { max: None, min: None }
     }
+
+    #[inline(always)]
     pub fn update(&mut self, x: T) {
         self.max = Some(if let Some(max) = self.max {
             cmp::max_by(max, x, |x, y| x.ord(y))
@@ -43,6 +45,35 @@ impl<T: Copy + NativeType> MaxMin<T> {
         } else {
             x
         });
+    }
+}
+
+#[derive(Debug)]
+pub struct FastMaxMin<T> {
+    pub max: T,
+    pub min: T,
+}
+
+impl<T: Copy + NativeType> FastMaxMin<T> {
+    pub fn new(min: T, max: T) -> Self {
+        FastMaxMin { max: min, min: max }
+    }
+
+    #[inline(always)]
+    pub fn update(&mut self, x: T) {
+        if x.ord(&self.max) == cmp::Ordering::Greater {
+            self.max = x;
+        } else if x.ord(&self.min) == cmp::Ordering::Less {
+            self.min = x;
+        }
+    }
+
+    pub fn to_minmax_stats(&self, has_non_null: bool) -> MaxMin<T> {
+        if has_non_null {
+            MaxMin { max: Some(self.max), min: Some(self.min) }
+        } else {
+            MaxMin::new()
+        }
     }
 }
 

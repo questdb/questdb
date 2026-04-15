@@ -18,7 +18,6 @@ use std::fmt::Debug;
 use std::hash::Hash;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
-use crate::parquet_write::encoders::helpers::{DefLevelsMeta, FlatValidity, PartitionChunkView};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_dict_rle_pages, encode_primitive_def_levels, ExactSizedIter, MaxMin,
@@ -30,318 +29,11 @@ use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::schema::Repetition;
-use parquet2::statistics::{
-    serialize_statistics, FixedLenStatistics, ParquetStatistics, PrimitiveStatistics,
-};
+use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
 use parquet2::write::DynIter;
 use qdb_core::col_type::nulls;
 use rapidhash::RapidHashMap;
-
-#[inline]
-fn segment_num_rows<T>(segments: &[PartitionChunkView<'_, T>]) -> usize {
-    segments.iter().map(PartitionChunkView::num_rows).sum()
-}
-
-#[inline]
-fn segment_column_top<T>(segments: &[PartitionChunkView<'_, T>]) -> usize {
-    segments
-        .iter()
-        .map(|segment| segment.adjusted_column_top)
-        .sum()
-}
-
-fn encode_segmented_def_levels<T, F>(
-    buffer: &mut Vec<u8>,
-    segments: &[PartitionChunkView<'_, T>],
-    options: WriteOptions,
-    mut is_present: F,
-) -> ParquetResult<DefLevelsMeta>
-where
-    F: FnMut(&T) -> bool,
-{
-    let mut validity = FlatValidity::new();
-    let num_rows = segment_num_rows(segments);
-    validity.reset(num_rows);
-    for segment in segments {
-        for _ in 0..segment.adjusted_column_top {
-            validity.push_null();
-        }
-        for value in segment.slice {
-            if is_present(value) {
-                validity.push_present();
-            } else {
-                validity.push_null();
-            }
-        }
-    }
-    Ok(validity.encode_def_levels(buffer, options.version)?)
-}
-
-pub fn decimal_segments_to_page_plain<T>(
-    segments: &[PartitionChunkView<'_, T>],
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<Page>
-where
-    T: Nullable + NativeType + Debug,
-{
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
-
-    let num_rows = segment_num_rows(segments);
-    let mut buffer = vec![];
-    let def_levels =
-        encode_segmented_def_levels(&mut buffer, segments, options, |value| !value.is_null())?;
-    let null_count = def_levels.null_count;
-    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
-
-    let mut statistics = MaxMin::new();
-    for segment in segments {
-        for &value in segment.slice.iter().filter(|value| !value.is_null()) {
-            if options.write_statistics {
-                statistics.update(value);
-            }
-            if let Some(ref mut h) = bloom_hashes {
-                h.insert(hash_native(value));
-            }
-            buffer.extend_from_slice(value.to_bytes().as_ref());
-        }
-    }
-
-    let statistics = if options.write_statistics {
-        let s = &FixedLenStatistics {
-            primitive_type: primitive_type.clone(),
-            null_count: Some(null_count as i64),
-            distinct_count: None,
-            max_value: statistics.max.map(|x| x.to_bytes().as_ref().to_vec()),
-            min_value: statistics.min.map(|x| x.to_bytes().as_ref().to_vec()),
-        } as &dyn parquet2::statistics::Statistics;
-        Some(serialize_statistics(s))
-    } else {
-        None
-    };
-
-    build_plain_page(
-        buffer,
-        num_rows,
-        null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        Encoding::Plain,
-        false,
-    )
-    .map(Page::Data)
-}
-
-pub fn int_segments_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
-    segments: &[PartitionChunkView<'_, T>],
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<Page>
-where
-    P: NativeType + num_traits::AsPrimitive<i64>,
-    T: Nullable + num_traits::AsPrimitive<P> + Debug,
-    MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
-{
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
-
-    let num_rows = segment_num_rows(segments);
-    let mut buffer = vec![];
-    let def_levels =
-        encode_segmented_def_levels(&mut buffer, segments, options, |value| !value.is_null())?;
-    let null_count = def_levels.null_count;
-    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
-    let non_null_count = num_rows - null_count;
-
-    let statistics = if options.write_statistics || bloom_hashes.is_some() {
-        let mut statistics = MaxMin::new();
-        for segment in segments {
-            for &value in segment.slice.iter().filter(|value| !value.is_null()) {
-                let parquet_value: P = value.as_();
-                if options.write_statistics {
-                    statistics.update_stats(parquet_value);
-                }
-                if let Some(ref mut h) = bloom_hashes {
-                    h.insert(hash_native(parquet_value));
-                }
-            }
-        }
-        options
-            .write_statistics
-            .then(|| build_statistics(Some(null_count as i64), statistics, primitive_type.clone()))
-    } else {
-        None
-    };
-
-    match encoding {
-        Encoding::Plain => {
-            buffer.reserve(size_of::<P>() * non_null_count);
-            for segment in segments {
-                for value in segment.slice.iter().filter(|value| !value.is_null()) {
-                    let parquet_value: P = value.as_();
-                    buffer.extend_from_slice(parquet_value.to_bytes().as_ref());
-                }
-            }
-        }
-        Encoding::DeltaBinaryPacked => {
-            let iterator = segments.iter().flat_map(|segment| {
-                segment
-                    .slice
-                    .iter()
-                    .filter(|value| !value.is_null())
-                    .map(|value| {
-                        let parquet_value: P = value.as_();
-                        parquet_value.as_()
-                    })
-            });
-            let iterator = ExactSizedIter::new(iterator, non_null_count);
-            if size_of::<P>() <= 4 {
-                encode_i32(iterator, &mut buffer);
-            } else {
-                encode(iterator, &mut buffer);
-            }
-        }
-        other => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported encoding {other:?} while writing an int column"
-            ))
-        }
-    }
-
-    build_plain_page(
-        buffer,
-        num_rows,
-        null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        encoding,
-        false,
-    )
-    .map(Page::Data)
-}
-
-pub fn int_segments_to_page_notnull<T, P>(
-    segments: &[PartitionChunkView<'_, T>],
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-    bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<Page>
-where
-    P: NativeType + num_traits::AsPrimitive<i64>,
-    T: Default + num_traits::AsPrimitive<P> + Debug,
-{
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
-
-    let num_rows = segment_num_rows(segments);
-    let column_top = segment_column_top(segments);
-    let statistics = match (options.write_statistics, bloom_hashes) {
-        (true, Some(h)) => {
-            let mut statistics = MaxMin::new();
-            for segment in segments {
-                for value in segment.slice {
-                    let parquet_value: P = value.as_();
-                    statistics.update(parquet_value);
-                    h.insert(hash_native(parquet_value));
-                }
-            }
-            Some(build_statistics(
-                Some(column_top as i64),
-                statistics,
-                primitive_type.clone(),
-            ))
-        }
-        (true, None) => {
-            let mut statistics = MaxMin::new();
-            for segment in segments {
-                for value in segment.slice {
-                    statistics.update(value.as_());
-                }
-            }
-            Some(build_statistics(
-                Some(column_top as i64),
-                statistics,
-                primitive_type.clone(),
-            ))
-        }
-        (false, Some(h)) => {
-            for segment in segments {
-                for value in segment.slice {
-                    h.insert(hash_native(value.as_()));
-                }
-            }
-            None
-        }
-        (false, None) => None,
-    };
-
-    let mut buffer = Vec::new();
-    match encoding {
-        Encoding::Plain => {
-            buffer.reserve(size_of::<P>() * num_rows);
-            let default_bytes = {
-                let parquet_value: P = T::default().as_();
-                parquet_value.to_bytes().as_ref().to_vec()
-            };
-            for segment in segments {
-                for _ in 0..segment.adjusted_column_top {
-                    buffer.extend_from_slice(&default_bytes);
-                }
-                for value in segment.slice {
-                    let parquet_value: P = value.as_();
-                    buffer.extend_from_slice(parquet_value.to_bytes().as_ref());
-                }
-            }
-        }
-        Encoding::DeltaBinaryPacked => {
-            let default_value: i64 = {
-                let parquet_value: P = T::default().as_();
-                parquet_value.as_()
-            };
-            let iterator = segments.iter().flat_map(|segment| {
-                std::iter::repeat_n(default_value, segment.adjusted_column_top).chain(
-                    segment.slice.iter().map(|value| {
-                        let parquet_value: P = value.as_();
-                        parquet_value.as_()
-                    }),
-                )
-            });
-            let iterator = ExactSizedIter::new(iterator, num_rows);
-            if size_of::<P>() <= 4 {
-                encode_i32(iterator, &mut buffer);
-            } else {
-                encode(iterator, &mut buffer);
-            }
-        }
-        other => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported encoding {other:?} while writing an int column"
-            ))
-        }
-    }
-
-    build_plain_page(
-        buffer,
-        num_rows,
-        column_top,
-        0,
-        statistics,
-        primitive_type,
-        options,
-        encoding,
-        true,
-    )
-    .map(Page::Data)
-}
 
 pub fn int_slice_to_page_nullable<T, P, const UNSIGNED_STATS: bool>(
     slice: &[T],
@@ -657,7 +349,7 @@ where
     buffer
 }
 
-fn build_statistics<P: NativeType>(
+pub(crate) fn build_statistics<P: NativeType>(
     null_count: Option<i64>,
     statistics: MaxMin<P>,
     primitive_type: PrimitiveType,
@@ -698,22 +390,6 @@ pub trait SimdEncodable: NativeType {
     /// Encode data with delta encoding. Override for types that support it.
     fn encode_delta(_slice: &[Self], _non_null_count: usize, _buffer: &mut Vec<u8>) -> bool {
         false // Not supported by default
-    }
-
-    /// Encode data with delta encoding across multiple logical chunk segments.
-    fn encode_delta_segments(
-        segments: &[PartitionChunkView<'_, Self>],
-        non_null_count: usize,
-        buffer: &mut Vec<u8>,
-    ) -> bool
-    where
-        Self: Sized,
-    {
-        if segments.len() == 1 {
-            Self::encode_delta(segments[0].slice, non_null_count, buffer)
-        } else {
-            false
-        }
     }
 
     /// Encode data values, dispatching to Plain or Delta based on encoding.
@@ -760,6 +436,14 @@ pub trait SimdEncodable: NativeType {
             other => Err(fmt_err!(Unsupported, "unsupported encoding {other:?}")),
         }
     }
+
+    fn min() -> Self {
+        unimplemented!("min() must be implemented by SimdEncodable types to compute statistics")
+    }
+
+    fn max() -> Self {
+        unimplemented!("max() must be implemented by SimdEncodable types to compute statistics")
+    }
 }
 
 impl SimdEncodable for i64 {
@@ -785,17 +469,12 @@ impl SimdEncodable for i64 {
         true
     }
 
-    fn encode_delta_segments(
-        segments: &[PartitionChunkView<'_, Self>],
-        non_null_count: usize,
-        buffer: &mut Vec<u8>,
-    ) -> bool {
-        let iterator = segments
-            .iter()
-            .flat_map(|segment| segment.slice.iter().filter(|&&x| x != nulls::LONG).copied());
-        let iterator = ExactSizedIter::new(iterator, non_null_count);
-        encode(iterator, buffer);
-        true
+    fn min() -> Self {
+        i64::MIN
+    }
+
+    fn max() -> Self {
+        i64::MAX
     }
 }
 
@@ -825,21 +504,12 @@ impl SimdEncodable for i32 {
         true
     }
 
-    fn encode_delta_segments(
-        segments: &[PartitionChunkView<'_, Self>],
-        non_null_count: usize,
-        buffer: &mut Vec<u8>,
-    ) -> bool {
-        let iterator = segments.iter().flat_map(|segment| {
-            segment
-                .slice
-                .iter()
-                .filter(|&&x| x != nulls::INT)
-                .map(|&x| x as i64)
-        });
-        let iterator = ExactSizedIter::new(iterator, non_null_count);
-        encode_i32(iterator, buffer);
-        true
+    fn min() -> Self {
+        i32::MIN
+    }
+
+    fn max() -> Self {
+        i32::MAX
     }
 }
 
@@ -858,6 +528,14 @@ impl SimdEncodable for f64 {
     fn is_null(&self) -> bool {
         self.is_nan()
     }
+
+    fn min() -> Self {
+        f64::MIN
+    }
+
+    fn max() -> Self {
+        f64::MAX
+    }
 }
 
 impl SimdEncodable for f32 {
@@ -875,84 +553,14 @@ impl SimdEncodable for f32 {
     fn is_null(&self) -> bool {
         self.is_nan()
     }
-}
 
-/// Generic page encoder for nullable SIMD-backed chunk segments.
-pub fn slice_segments_to_page_simd<T: SimdEncodable>(
-    segments: &[PartitionChunkView<'_, T>],
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<Page> {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
-
-    let num_rows = segment_num_rows(segments);
-    let mut buffer = vec![];
-    let def_levels =
-        encode_segmented_def_levels(&mut buffer, segments, options, |value| !value.is_null())?;
-    let null_count = def_levels.null_count;
-    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
-    let non_null_count = num_rows - null_count;
-
-    let statistics = if options.write_statistics {
-        let mut statistics = MaxMin::new();
-        for segment in segments {
-            for &value in segment.slice.iter().filter(|value| !value.is_null()) {
-                statistics.update(value);
-                if let Some(ref mut h) = bloom_hashes {
-                    h.insert(hash_native(value));
-                }
-            }
-        }
-        Some(build_statistics(
-            Some(null_count as i64),
-            statistics,
-            primitive_type.clone(),
-        ))
-    } else {
-        if let Some(ref mut h) = bloom_hashes {
-            for segment in segments {
-                for &value in segment.slice.iter().filter(|value| !value.is_null()) {
-                    h.insert(hash_native(value));
-                }
-            }
-        }
-        None
-    };
-
-    match encoding {
-        Encoding::Plain => {
-            buffer.reserve(size_of::<T>() * non_null_count);
-            for segment in segments {
-                for value in segment.slice.iter().filter(|value| !value.is_null()) {
-                    buffer.extend_from_slice(value.to_bytes().as_ref());
-                }
-            }
-        }
-        Encoding::DeltaBinaryPacked => {
-            if !T::encode_delta_segments(segments, non_null_count, &mut buffer) {
-                return Err(fmt_err!(
-                    Unsupported,
-                    "delta encoding not supported for this type"
-                ));
-            }
-        }
-        other => return Err(fmt_err!(Unsupported, "unsupported encoding {other:?}")),
+    fn min() -> Self {
+        f32::MIN
     }
 
-    build_plain_page(
-        buffer,
-        num_rows,
-        null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        encoding,
-        false,
-    )
-    .map(Page::Data)
+    fn max() -> Self {
+        f32::MAX
+    }
 }
 
 /// Generic SIMD-optimized page encoder for nullable columns.

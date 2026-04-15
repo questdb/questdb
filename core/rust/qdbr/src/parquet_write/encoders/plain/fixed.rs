@@ -3,13 +3,12 @@ use std::sync::{Arc, Mutex};
 
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::encoders::helpers::{
-    collect_partition_chunk_views, rows_per_primitive_page, slice_partition_chunk_views,
-    FlatValidity, PartitionChunkView,
+    page_chunk_views, rows_per_primitive_page, FlatValidity, PageRowWindow,
 };
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{
-    build_plain_page, encode_primitive_def_levels, transmute_slice, BinaryMaxMinStats,
+    build_plain_page, encode_primitive_def_levels, BinaryMaxMinStats,
 };
 use parquet2::bloom_filter::hash_byte;
 use parquet2::encoding::Encoding;
@@ -30,16 +29,6 @@ pub fn encode_fixed_len_bytes<const N: usize>(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
-    let segments = collect_partition_chunk_views(
-        columns,
-        first_partition_start,
-        last_partition_end,
-        |column| {
-            // SAFETY: Data originates from JNI/Java memory-mapped column data, which is
-            // page-aligned. The byte content represents valid `[u8; N]` values.
-            Ok(unsafe { transmute_slice(column.primary_data) })
-        },
-    )?;
     encode_column_chunk(
         columns,
         first_partition_start,
@@ -47,9 +36,11 @@ pub fn encode_fixed_len_bytes<const N: usize>(
         rows_per_page,
         bloom_set,
         |window, bloom| {
-            let page_segments = slice_partition_chunk_views(&segments, window);
             bytes_segments_to_page::<N>(
-                &page_segments,
+                columns,
+                first_partition_start,
+                last_partition_end,
+                window,
                 reverse,
                 options,
                 primitive_type.clone(),
@@ -105,54 +96,64 @@ fn encode_fixed_plain<const N: usize>(
 }
 
 fn bytes_segments_to_page<const N: usize>(
-    segments: &[PartitionChunkView<'_, [u8; N]>],
+    columns: &[Column],
+    first_partition_start: usize,
+    last_partition_end: usize,
+    window: PageRowWindow,
     reverse: bool,
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    let num_rows: usize = segments.iter().map(PartitionChunkView::num_rows).sum();
     let null_value = fixed_null_value::<N>();
-    let mut buffer = vec![];
+    let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
-    for segment in segments {
-        for _ in 0..segment.adjusted_column_top {
+    let mut buffer = Vec::with_capacity(N * num_rows);
+    let mut stats = BinaryMaxMinStats::new(&primitive_type);
+
+    // SAFETY: Column data originates from JNI/Java memory-mapped buffers which are page-aligned.
+    let views = unsafe {
+        page_chunk_views::<[u8; N]>(columns, first_partition_start, last_partition_end, window)
+    };
+
+    // Single pass: build validity bitmap, stats, bloom, and encoded values together.
+    for view in views {
+        for _ in 0..view.adjusted_column_top {
             validity.push_null();
         }
-        for &value in segment.slice {
+        for &value in view.slice {
             if value == null_value {
                 validity.push_null();
             } else {
                 validity.push_present();
+                if reverse {
+                    let mut reversed = [0u8; N];
+                    for (i, &b) in value.iter().rev().enumerate() {
+                        reversed[i] = b;
+                    }
+                    buffer.extend_from_slice(&reversed);
+                    stats.update(&reversed);
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_byte(reversed));
+                    }
+                } else {
+                    buffer.extend_from_slice(&value);
+                    stats.update(&value);
+                    if let Some(ref mut h) = bloom_hashes {
+                        h.insert(hash_byte(value));
+                    }
+                }
             }
         }
     }
-    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
-    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+
+    // Encode def levels into the reserved prefix, then close any gap.
+    let mut def_buf = Vec::new();
+    let def_levels = validity.encode_def_levels(&mut def_buf, options.version)?;
     let null_count = def_levels.null_count;
-    let mut stats = BinaryMaxMinStats::new(&primitive_type);
-    if reverse {
-        for segment in segments {
-            encode_fixed_plain_be(
-                segment.slice,
-                &mut buffer,
-                null_value,
-                &mut stats,
-                bloom_hashes.as_deref_mut(),
-            );
-        }
-    } else {
-        for segment in segments {
-            encode_fixed_plain(
-                segment.slice,
-                &mut buffer,
-                null_value,
-                &mut stats,
-                bloom_hashes.as_deref_mut(),
-            );
-        }
-    }
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+    buffer.splice(0..0, def_buf);
 
     build_plain_page(
         buffer,

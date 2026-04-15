@@ -2,6 +2,7 @@ use std::cmp;
 
 use crate::parquet::error::ParquetResult;
 use crate::parquet_write::schema::Column;
+use crate::parquet_write::util::transmute_slice;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PageRowWindow {
@@ -182,68 +183,59 @@ impl<T> PartitionChunkView<'_, T> {
     }
 }
 
-/// Build borrowed typed partition chunk views for the selected column chunk without
-/// materializing a whole-chunk value buffer.
-pub fn collect_partition_chunk_views<'a, T, F>(
+/// Lazily yield typed partition chunk views for a single page window. Combines
+/// chunk-slice computation, byte transmutation, and page-window slicing into one
+/// iterator — no intermediate `Vec` needed.
+///
+/// SAFETY: Each column's `primary_data` must contain valid `T` values with correct
+/// alignment (guaranteed for JNI/Java memory-mapped column data which is page-aligned).
+pub unsafe fn page_chunk_views<'a, T: 'a>(
     columns: &'a [Column],
     first_partition_start: usize,
     last_partition_end: usize,
-    mut transmuter: F,
-) -> ParquetResult<Vec<PartitionChunkView<'a, T>>>
-where
-    F: FnMut(&'a Column) -> ParquetResult<&'a [T]>,
-{
-    let mut views = Vec::with_capacity(columns.len());
-
-    for (column, chunk) in columns.iter().zip(column_chunk_slices(
-        columns,
-        first_partition_start,
-        last_partition_end,
-    )) {
-        let typed = transmuter(column)?;
-        views.push(PartitionChunkView {
-            adjusted_column_top: chunk.adjusted_column_top,
-            slice: &typed[chunk.lower_bound..chunk.upper_bound],
-        });
-    }
-
-    Ok(views)
-}
-
-pub fn slice_partition_chunk_views<'a, T>(
-    views: &[PartitionChunkView<'a, T>],
     window: PageRowWindow,
-) -> Vec<PartitionChunkView<'a, T>> {
+) -> impl Iterator<Item = PartitionChunkView<'a, T>> {
     let mut remaining_offset = window.row_offset;
     let mut remaining_rows = window.row_count;
-    let mut page_views = Vec::with_capacity(views.len());
 
-    for view in views {
-        let view_rows = view.num_rows();
-        if remaining_offset >= view_rows {
-            remaining_offset -= view_rows;
-            continue;
-        }
-        if remaining_rows == 0 {
-            break;
-        }
+    columns
+        .iter()
+        .zip(column_chunk_slices(
+            columns,
+            first_partition_start,
+            last_partition_end,
+        ))
+        .filter_map(move |(column, chunk)| {
+            if remaining_rows == 0 {
+                return None;
+            }
 
-        let rows_in_view = cmp::min(view_rows - remaining_offset, remaining_rows);
-        let skip_data_rows = remaining_offset.saturating_sub(view.adjusted_column_top);
-        let available_top_rows = view.adjusted_column_top.saturating_sub(remaining_offset);
-        let top_rows = cmp::min(available_top_rows, rows_in_view);
-        let data_rows = rows_in_view - top_rows;
+            let typed: &[T] = transmute_slice(column.primary_data);
+            let view = PartitionChunkView {
+                adjusted_column_top: chunk.adjusted_column_top,
+                slice: &typed[chunk.lower_bound..chunk.upper_bound],
+            };
+            let view_rows = view.num_rows();
 
-        page_views.push(PartitionChunkView {
-            adjusted_column_top: top_rows,
-            slice: &view.slice[skip_data_rows..skip_data_rows + data_rows],
-        });
+            if remaining_offset >= view_rows {
+                remaining_offset -= view_rows;
+                return None;
+            }
 
-        remaining_rows -= rows_in_view;
-        remaining_offset = 0;
-    }
+            let rows_in_view = cmp::min(view_rows - remaining_offset, remaining_rows);
+            let skip_data_rows = remaining_offset.saturating_sub(view.adjusted_column_top);
+            let available_top_rows = view.adjusted_column_top.saturating_sub(remaining_offset);
+            let top_rows = cmp::min(available_top_rows, rows_in_view);
+            let data_rows = rows_in_view - top_rows;
 
-    page_views
+            remaining_rows -= rows_in_view;
+            remaining_offset = 0;
+
+            Some(PartitionChunkView {
+                adjusted_column_top: top_rows,
+                slice: &view.slice[skip_data_rows..skip_data_rows + data_rows],
+            })
+        })
 }
 
 /// Borrowed view of one partition's contribution to a variable-length column
