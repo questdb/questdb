@@ -109,6 +109,11 @@ public interface GroupByFunction extends Function, Mutable {
      * Each packed long in {@code batchAddr} has the layout:
      * {@code [isNew:1][rowIndex:24][offset:39]}, where {@code offset} is the
      * value-region-start offset relative to {@code entryBase}.
+     * <p>
+     * New entries are pre-initialized to the function's identity state via
+     * {@link #setEmpty(MapValue)} (see {@link io.questdb.cairo.map.Map#setBatchEmptyValue}),
+     * so overrides may safely skip the {@code isNew} branch when
+     * {@code computeNext} on the empty state yields the right result.
      *
      * @param record           page frame record, positioned via setRowIndex
      * @param mapValue         pre-allocated packed flyweight, reused per row
