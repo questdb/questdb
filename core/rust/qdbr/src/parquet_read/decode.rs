@@ -1185,7 +1185,7 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, _, ColumnTypeTag::Byte) => {
+        (Encoding::Plain, _, _, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -1193,7 +1193,7 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte) => {
+        (Encoding::DeltaBinaryPacked, _, _, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -1209,7 +1209,7 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
             _,
-            ColumnTypeTag::Byte,
+            ColumnTypeTag::Byte | ColumnTypeTag::Boolean,
         ) => {
             let dict_decoder = BasePrimitiveDictDecoder::<i64, i8>::try_new(dict_page)?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
@@ -2051,8 +2051,8 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        // -- Type conversion: Double → Byte (range-checked) --
-        (Encoding::Plain, _, ColumnTypeTag::Byte) => {
+        // -- Type conversion: Double → Byte/Boolean (range-checked) --
+        (Encoding::Plain, _, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
             clear_aux_buffers(bufs);
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
@@ -2069,7 +2069,7 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
         (
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
-            ColumnTypeTag::Byte,
+            ColumnTypeTag::Byte | ColumnTypeTag::Boolean,
         ) => {
             clear_aux_buffers(bufs);
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
@@ -2292,8 +2292,8 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        // -- Type conversion: Float → Byte (range-checked) --
-        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Byte) => {
+        // -- Type conversion: Float → Byte/Boolean (range-checked) --
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -2310,7 +2310,7 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             Encoding::RleDictionary | Encoding::PlainDictionary,
             Some(dict_page),
             PhysicalType::Float,
-            ColumnTypeTag::Byte,
+            ColumnTypeTag::Byte | ColumnTypeTag::Boolean,
         ) => {
             let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                 dict_page,

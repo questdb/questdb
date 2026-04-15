@@ -1891,6 +1891,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(columnIndex);
                     long srcAuxSize = rowGroupBuffers.getChunkAuxSize(columnIndex);
 
+                    if (srcDataSize == 0 && srcAuxSize == 0) {
+                        // Column fully topped (all NULL in this row group).
+                        // Rust reset the buffers. The empty native file with
+                        // column_top from the column version is correct.
+                        continue;
+                    }
+
                     if (ColumnType.isVarSize(tableColumnType)) {
                         // Target is var-size (same type, fixed→var via Rust post_convert,
                         // or Symbol→varchar with data already in VARCHAR_SLICE format).
@@ -1899,7 +1906,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Symbol→String: decoded as VARCHAR_SLICE, convert to STRING format.
                             final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
                             final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
-                            long stringAuxSize = rowGroupRowCount * Long.BYTES;
+                            // STRING aux uses N+1 offsets (sentinel at position N = total data size).
+                            long stringAuxSize = (rowGroupRowCount + 1) * Long.BYTES;
                             long stringAuxBuf = Unsafe.malloc(stringAuxSize, MemoryTag.NATIVE_DEFAULT);
                             long stringDataSize = O3PartitionJob.estimateStringDataSizeFromVarcharSlice(srcAuxPtr, (int) rowGroupRowCount);
                             long stringDataBuf = Unsafe.malloc(stringDataSize, MemoryTag.NATIVE_DEFAULT);
@@ -1910,6 +1918,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             } finally {
                                 Unsafe.free(stringAuxBuf, stringAuxSize, MemoryTag.NATIVE_DEFAULT);
                                 Unsafe.free(stringDataBuf, stringDataSize, MemoryTag.NATIVE_DEFAULT);
+                            }
+                        } else if (srcAuxSize == 0 && srcDataPtr != 0) {
+                            // Fixed→var: Rust decoded as source fixed type (no aux).
+                            // Convert fixed data to target var format in Java.
+                            final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
+                            final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
+                            ColumnTypeDriver ctd = ColumnType.getDriver(tableColumnType);
+                            long auxSize = ctd.getAuxVectorSize((int) rowGroupRowCount);
+                            long auxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_DEFAULT);
+                            try {
+                                if (ColumnType.isVarchar(tableColumnType)) {
+                                    long dataSize = O3PartitionJob.estimateVarcharDataSize(parquetColumnType, (int) rowGroupRowCount);
+                                    long dataBuf = dataSize > 0 ? Unsafe.malloc(dataSize, MemoryTag.NATIVE_DEFAULT) : 0;
+                                    try {
+                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf);
+                                        if (dataBuf != 0) {
+                                            appendBuffer(dstDataFd, dataBuf, dataSize);
+                                        }
+                                        appendBuffer(dstAuxFd, auxBuf, auxSize);
+                                    } finally {
+                                        if (dataBuf != 0) {
+                                            Unsafe.free(dataBuf, dataSize, MemoryTag.NATIVE_DEFAULT);
+                                        }
+                                    }
+                                } else {
+                                    long dataSize = O3PartitionJob.estimateStringDataSize(parquetColumnType, (int) rowGroupRowCount);
+                                    long dataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_DEFAULT);
+                                    try {
+                                        O3PartitionJob.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf);
+                                        appendBuffer(dstDataFd, dataBuf, dataSize);
+                                        appendBuffer(dstAuxFd, auxBuf, auxSize);
+                                    } finally {
+                                        Unsafe.free(dataBuf, dataSize, MemoryTag.NATIVE_DEFAULT);
+                                    }
+                                }
+                            } finally {
+                                Unsafe.free(auxBuf, auxSize, MemoryTag.NATIVE_DEFAULT);
                             }
                         } else {
                             ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(tableColumnType);
@@ -1951,7 +1996,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 try {
                                     O3PartitionJob.convertVarColumnToFixed(
                                             effectiveSrcType, firstTargetType,
-                                            srcDataPtr, srcDataSize, srcAuxPtr,
+                                            srcDataPtr, srcAuxPtr,
                                             (int) rowGroupRowCount, tmpBuf
                                     );
 
@@ -1968,7 +2013,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 try {
                                     O3PartitionJob.convertVarColumnToFixed(
                                             effectiveSrcType, tableColumnType,
-                                            srcDataPtr, srcDataSize, srcAuxPtr,
+                                            srcDataPtr, srcAuxPtr,
                                             (int) rowGroupRowCount, fixBuf
                                     );
                                     appendBuffer(dstFixFd, fixBuf, fixSize);
@@ -5640,9 +5685,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     openPartition(prevTimestamp, newTransientRowCount);
                     setAppendPosition(newTransientRowCount, false);
                 } else {
-                    partitionTimestampHi = index != 0
-                            ? txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp)
-                            : Long.MIN_VALUE;
+                    partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp);
                 }
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;

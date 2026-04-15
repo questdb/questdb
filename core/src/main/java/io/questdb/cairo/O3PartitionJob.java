@@ -1768,7 +1768,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
-    private static void convertFixedColumnToString(
+    static void convertFixedColumnToString(
             int srcType,
             long srcDataPtr,
             int rowCount,
@@ -1802,7 +1802,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
-    private static void convertFixedColumnToVarchar(
+    static void convertFixedColumnToVarchar(
             int srcType,
             long srcDataPtr,
             int rowCount,
@@ -1860,7 +1860,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
-    private static long estimateStringDataSize(int srcType, int rowCount) {
+    static long estimateStringDataSize(int srcType, int rowCount) {
         // 4 bytes length prefix + maxChars * 2 bytes UTF-16LE per row.
         // Null values use only 4 bytes.
         int maxCharsPerRow = switch (srcType) {
@@ -1880,7 +1880,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return (long) (Integer.BYTES + maxCharsPerRow * Character.BYTES) * rowCount;
     }
 
-    private static long estimateVarcharDataSize(int srcType, int rowCount) {
+    static long estimateVarcharDataSize(int srcType, int rowCount) {
         // Only spilled values (>9 UTF-8 bytes) consume data buffer space.
         int maxBytesPerRow = switch (srcType) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR -> 0;
@@ -1909,7 +1909,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         switch (srcType) {
             case ColumnType.BOOLEAN -> sink.put(Unsafe.getUnsafe().getByte(srcDataPtr + rowIndex) != 0);
-            case ColumnType.BYTE -> sink.put((int) Unsafe.getUnsafe().getByte(srcDataPtr + rowIndex));
+            case ColumnType.BYTE -> sink.put(Unsafe.getUnsafe().getByte(srcDataPtr + rowIndex));
             case ColumnType.SHORT -> sink.put(Unsafe.getUnsafe().getShort(srcDataPtr + ((long) rowIndex << 1)));
             case ColumnType.CHAR -> {
                 char val = Unsafe.getUnsafe().getChar(srcDataPtr + ((long) rowIndex << 1));
@@ -2025,7 +2025,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int srcType,
             int dstType,
             long dataPtr,
-            long dataSize,
             long auxPtr,
             int rowCount,
             long dstPtr
@@ -2118,6 +2117,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 dstDataOffset += Character.BYTES;
             }
         }
+        // Write sentinel entry: STRING aux uses N+1 offsets where aux[N] = total data size.
+        Unsafe.getUnsafe().putLong(dstAuxPtr + (long) rowCount * Long.BYTES, dstDataOffset);
     }
 
     /**
@@ -2755,7 +2756,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // Convert VARCHAR_SLICE format to STRING format.
                             long stringDataSize = estimateStringDataSizeFromVarcharSlice(columnAuxPtr, rowGroupSize);
                             long stringDataBuf = Unsafe.malloc(stringDataSize, MemoryTag.NATIVE_O3);
-                            long stringAuxSize = (long) rowGroupSize * Long.BYTES;
+                            // STRING aux uses N+1 offsets (sentinel at position N = total data size).
+                            long stringAuxSize = (long) (rowGroupSize + 1) * Long.BYTES;
                             long stringAuxBuf = Unsafe.malloc(stringAuxSize, MemoryTag.NATIVE_O3);
 
                             nullBufs.setQuick(bi4, stringAuxBuf);
@@ -2825,7 +2827,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long tmpSize = (long) rowGroupSize * ColumnType.sizeOf(firstTargetType);
                             long tmpBuf = Unsafe.malloc(tmpSize, MemoryTag.NATIVE_O3);
                             try {
-                                convertVarColumnToFixed(srcType, firstTargetType, columnDataPtr, columnDataSize, columnAuxPtr, rowGroupSize, tmpBuf);
+                                convertVarColumnToFixed(srcType, firstTargetType, columnDataPtr, columnAuxPtr, rowGroupSize, tmpBuf);
                                 long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
                                 long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
                                 nullBufs.setQuick(bi4, fixBuf);
@@ -2840,7 +2842,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
                             nullBufs.setQuick(bi4, fixBuf);
                             nullBufs.setQuick(bi4 + 1, fixSize);
-                            convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnDataSize, columnAuxPtr, rowGroupSize, fixBuf);
+                            convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf);
                             columnDataPtr = fixBuf;
                         }
                     } else if (columnDataPtr == 0) {
@@ -3853,7 +3855,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (ColumnType.isSymbol(srcTag) && !ColumnType.isVarchar(columnType)) {
                             long stringDataSize = estimateStringDataSizeFromVarcharSlice(columnAuxPtr, rowGroupSize);
                             long stringDataBuf = Unsafe.malloc(stringDataSize, MemoryTag.NATIVE_O3);
-                            long stringAuxSize = (long) rowGroupSize * Long.BYTES;
+                            // STRING aux uses N+1 offsets (sentinel at position N = total data size).
+                            long stringAuxSize = (long) (rowGroupSize + 1) * Long.BYTES;
                             long stringAuxBuf = Unsafe.malloc(stringAuxSize, MemoryTag.NATIVE_O3);
                             tmpBufs[ai * 4] = stringAuxBuf;
                             tmpBufs[ai * 4 + 1] = stringAuxSize;
@@ -3901,7 +3904,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long tmpSize = (long) rowGroupSize * ColumnType.sizeOf(firstTargetType);
                             long tmpBuf = Unsafe.malloc(tmpSize, MemoryTag.NATIVE_O3);
                             try {
-                                convertVarColumnToFixed(srcType, firstTargetType, columnDataPtr, columnDataSize, columnAuxPtr, rowGroupSize, tmpBuf);
+                                convertVarColumnToFixed(srcType, firstTargetType, columnDataPtr, columnAuxPtr, rowGroupSize, tmpBuf);
                                 long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
                                 long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
                                 tmpBufs[ai * 4] = fixBuf;
@@ -3916,7 +3919,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
                             tmpBufs[ai * 4] = fixBuf;
                             tmpBufs[ai * 4 + 1] = fixSize;
-                            convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnDataSize, columnAuxPtr, rowGroupSize, fixBuf);
+                            convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf);
                             columnDataPtr = fixBuf;
                         }
                     } else if (columnDataPtr == 0) {

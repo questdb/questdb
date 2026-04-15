@@ -47,7 +47,6 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         }
         if (readerMetadata instanceof TableReaderMetadata trm) {
             columnMapping.setWriterIndexToDenseIndex(trm.getWriterIndexToDenseIndexMap());
-            columnMapping.setFirstConversionTargets(trm.getFirstConversionTargetsMap());
         }
     }
 

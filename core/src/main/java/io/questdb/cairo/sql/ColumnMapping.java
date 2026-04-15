@@ -41,11 +41,6 @@ import io.questdb.std.Mutable;
  */
 public class ColumnMapping implements Mutable {
     private final IntList data = new IntList();
-    // Nullable. Maps writerIndex → first intermediate type tag for columns with
-    // chained type conversions (e.g. SYMBOL→TIMESTAMP→DOUBLE). The first conversion
-    // target type (TIMESTAMP) determines string parsing semantics. Set only for
-    // table reader cursors that have parquet partitions with multi-hop ALTER COLUMN TYPE.
-    private IntIntHashMap firstConversionTargets;
     // Nullable. Set only for table reader cursors to enable type-converted column lookup.
     private IntIntHashMap writerIndexToDenseIndex;
 
@@ -57,14 +52,12 @@ public class ColumnMapping implements Mutable {
     @Override
     public void clear() {
         data.clear();
-        firstConversionTargets = null;
         writerIndexToDenseIndex = null;
     }
 
     public void copyFrom(ColumnMapping other) {
         data.clear();
         data.addAll(other.data);
-        firstConversionTargets = other.firstConversionTargets;
         writerIndexToDenseIndex = other.writerIndexToDenseIndex;
     }
 
@@ -74,13 +67,6 @@ public class ColumnMapping implements Mutable {
 
     public int getColumnIndex(int i) {
         return data.getQuick(2 * i);
-    }
-
-    public int getFirstConversionTarget(int writerIndex) {
-        if (firstConversionTargets != null) {
-            return firstConversionTargets.get(writerIndex);
-        }
-        return -1;
     }
 
     public int getDenseIndexForWriterIndex(int writerIndex) {
@@ -96,10 +82,6 @@ public class ColumnMapping implements Mutable {
 
     public boolean hasWriterIndexToDenseIndex() {
         return writerIndexToDenseIndex != null;
-    }
-
-    public void setFirstConversionTargets(IntIntHashMap map) {
-        this.firstConversionTargets = map;
     }
 
     public void setWriterIndexToDenseIndex(IntIntHashMap map) {

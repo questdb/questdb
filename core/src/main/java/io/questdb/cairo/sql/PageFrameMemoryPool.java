@@ -73,11 +73,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // Contains [parquet_column_index, column_type] pairs.
     private final DirectIntList parquetColumns;
     private final PartitionDecoder parquetDecoder;
-    // Per-column first conversion target type for chained type conversions.
-    // Indexed by query column index; -1 means no intermediate (direct conversion).
-    // When positive, the var→fixed parse step targets this type first, then the
-    // result is cast to the final target type.
-    private final IntList intermediateTypes;
     // Per-column source type tag for fixed→var type-cast columns.
     // Indexed by query column index; -1 means no type cast.
     private final IntList sourceColumnTypes;
@@ -98,7 +93,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             fromParquetColumnIndexes = new IntList(16);
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
             parquetDecoder = new PartitionDecoder();
-            intermediateTypes = new IntList();
             sourceColumnTypes = new IntList();
         } catch (Throwable th) {
             close();
@@ -144,7 +138,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getAuxPageSizes(),
                     columnOffset,
                     false,
-                    null,
                     null
             );
         } else if (format == PartitionFormat.PARQUET) {
@@ -168,8 +161,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetBuffers.auxPageSizes,
                     0, // parquet buffers use 0 offset since they're frame-specific
                     hasTypeCasts,
-                    sourceColumnTypes,
-                    intermediateTypes
+                    sourceColumnTypes
             );
         }
     }
@@ -375,7 +367,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         final int readParquetColumnCount = columnMapping.getColumnCount();
-        intermediateTypes.setAll(readParquetColumnCount, -1);
         sourceColumnTypes.setAll(readParquetColumnCount, -1);
         hasTypeCasts = false;
         for (int i = 0; i < readParquetColumnCount; i++) {
@@ -398,7 +389,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         final int readParquetColumnCount = columnMapping.getColumnCount();
-        intermediateTypes.setAll(readParquetColumnCount, -1);
         sourceColumnTypes.setAll(readParquetColumnCount, -1);
         hasTypeCasts = false;
         for (int i = 0; i < readParquetColumnCount; i++) {
@@ -429,9 +419,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 final int sourceTag = ColumnType.tagOf(sourceType);
                 final int targetTag = ColumnType.tagOf(targetType);
 
-                // Look up intermediate type for chained conversions (e.g. SYMBOL→TIMESTAMP→DOUBLE).
-                int firstTarget = columnMapping.getFirstConversionTarget(columnWriterIndex);
-
                 if (ColumnType.isSymbol(sourceTag) && !ColumnType.isSymbol(targetTag)) {
                     // Symbol → non-symbol: decode as VARCHAR_SLICE, Java converts lazily.
                     // For Symbol→VARCHAR, the fallthrough below handles it (VARCHAR_SLICE is native format).
@@ -441,9 +428,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         parquetColumns.add(ColumnType.VARCHAR_SLICE);
                         // Negative VARCHAR tag signals var→fixed/var→string conversion.
                         sourceColumnTypes.setQuick(i, -ColumnType.VARCHAR);
-                        if (firstTarget > 0 && ColumnType.tagOf(firstTarget) != targetTag) {
-                            intermediateTypes.setQuick(i, firstTarget);
-                        }
                         hasTypeCasts = true;
                         return;
                     }
@@ -474,9 +458,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     // Negative value signals var→fixed direction.
                     // -1 remains the "no conversion" sentinel.
                     sourceColumnTypes.setQuick(i, -ColumnType.tagOf(sourceType));
-                    if (firstTarget > 0 && ColumnType.tagOf(firstTarget) != targetTag) {
-                        intermediateTypes.setQuick(i, firstTarget);
-                    }
                     hasTypeCasts = true;
                     return;
                 }

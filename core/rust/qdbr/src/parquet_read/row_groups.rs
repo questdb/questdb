@@ -17,7 +17,7 @@ use parquet2::encoding::Encoding;
 use parquet2::metadata::FileMetaData;
 use parquet2::read::{SlicePageReader, SlicedDataPage, SlicedDictPage, SlicedPage};
 use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
 use std::{cmp, mem::size_of, ptr, slice};
 
 // The metadata fields are accessed from Java.
@@ -109,21 +109,23 @@ fn post_convert(
     bufs: &mut ColumnChunkBuffers,
 ) -> ParquetResult<()> {
     match (src_tag, dst_tag) {
+        (ColumnTypeTag::Boolean, ColumnTypeTag::Byte) => {
+            // Same physical size (1 byte), no expansion needed.
+        }
+        (ColumnTypeTag::Boolean, ColumnTypeTag::Short) => {
+            expand_bool::<i16>(&mut bufs.data_vec)?;
+        }
         (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
-            // Expand 1-byte boolean values (0/1) to 4-byte i32 values.
-            let n = bufs.data_vec.len();
-            if n == 0 {
-                return Ok(());
-            }
-            let needed = n * size_of::<i32>();
-            bufs.data_vec.reserve(needed - n)?;
-            unsafe { bufs.data_vec.set_len(needed) };
-            let ptr = bufs.data_vec.as_mut_ptr();
-            // Iterate backwards so wider writes don't overwrite unread bytes.
-            for i in (0..n).rev() {
-                let val = unsafe { *ptr.add(i) } as i32;
-                unsafe { (ptr.add(i * size_of::<i32>()) as *mut i32).write_unaligned(val) };
-            }
+            expand_bool::<i32>(&mut bufs.data_vec)?;
+        }
+        (ColumnTypeTag::Boolean, ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+            expand_bool::<i64>(&mut bufs.data_vec)?;
+        }
+        (ColumnTypeTag::Boolean, ColumnTypeTag::Float) => {
+            expand_bool::<f32>(&mut bufs.data_vec)?;
+        }
+        (ColumnTypeTag::Boolean, ColumnTypeTag::Double) => {
+            expand_bool::<f64>(&mut bufs.data_vec)?;
         }
         (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) => {
             // Date milliseconds → Timestamp microseconds: multiply by 1000.
@@ -143,6 +145,24 @@ fn post_convert(
     }
     bufs.data_ptr = bufs.data_vec.as_mut_ptr();
     bufs.data_size = bufs.data_vec.len();
+    Ok(())
+}
+
+/// Expand 1-byte boolean values (0/1) to wider `T` values in place.
+/// Iterates backwards so wider writes don't overwrite unread bytes.
+fn expand_bool<T: From<u8> + Copy>(data: &mut AcVec<u8>) -> ParquetResult<()> {
+    let n = data.len();
+    if n == 0 {
+        return Ok(());
+    }
+    let needed = n * size_of::<T>();
+    data.reserve(needed - n)?;
+    unsafe { data.set_len(needed) };
+    let ptr = data.as_mut_ptr();
+    for i in (0..n).rev() {
+        let val = T::from(unsafe { *ptr.add(i) });
+        unsafe { (ptr.add(i * size_of::<T>()) as *mut T).write_unaligned(val) };
+    }
     Ok(())
 }
 
@@ -285,14 +305,16 @@ impl ParquetDecoder {
                 column_type = to_column_type;
             }
 
-            // Allow requesting VarcharSlice when the file stores Varchar.
-            // VarcharSlice is a zero-copy decode format for Varchar data.
-            if column_type.tag() == ColumnTypeTag::Varchar
+            // Allow requesting VarcharSlice when the file stores Varchar or String.
+            // VarcharSlice is a zero-copy decode format; parquet stores both as UTF-8.
+            if (column_type.tag() == ColumnTypeTag::Varchar
+                || column_type.tag() == ColumnTypeTag::String)
                 && to_column_type.tag() == ColumnTypeTag::VarcharSlice
             {
                 column_type = to_column_type;
             }
 
+            let original_column_type = column_type;
             let src_tag = column_type.tag();
             if column_type != to_column_type {
                 // Allow fixed-to-fixed type conversions (ALTER COLUMN TYPE).
@@ -322,14 +344,26 @@ impl ParquetDecoder {
                     // Date ↔ Timestamp (needs post-decode scaling)
                     (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) |
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
-                    // Int ↔ Boolean
-                    (ColumnTypeTag::Int, ColumnTypeTag::Boolean) => {
+                    // Timestamp nano ↔ micro (needs post-decode scaling)
+                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Timestamp) |
+                    // Fixed → Boolean
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
+                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
+                     ColumnTypeTag::Float | ColumnTypeTag::Double,
+                     ColumnTypeTag::Boolean) => {
                         column_type = to_column_type;
                     }
                     // Boolean → Int: decode as boolean, post-expand to i32
                     (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
                         // Keep column_type as Boolean for decode; post-processing
                         // expands the 1-byte boolean values to 4-byte integers.
+                    }
+                    // Boolean → other fixed types: decode as boolean, post-expand
+                    (ColumnTypeTag::Boolean,
+                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Long |
+                     ColumnTypeTag::Float | ColumnTypeTag::Double |
+                     ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+                        // Keep column_type as Boolean for decode; post_convert expands.
                     }
                     // Fixed → var-size (VARCHAR, STRING): decode as source fixed type,
                     // post_convert produces the target var-size format.
@@ -347,6 +381,13 @@ impl ParquetDecoder {
                         if is_var_to_fixed_target(dst) =>
                     {
                         // Keep column_type as source var type; Java converts.
+                    }
+                    // String ↔ Varchar ↔ Symbol: parquet stores all three as
+                    // BYTE_ARRAY (UTF-8), so we just remap to the target type
+                    // and decode directly.
+                    (ColumnTypeTag::String | ColumnTypeTag::Varchar | ColumnTypeTag::Symbol,
+                     ColumnTypeTag::String | ColumnTypeTag::Varchar) => {
+                        column_type = to_column_type;
                     }
                     // Array pass-through: same element type and dimensions.
                     (src_t, dst_t) if src_t == dst_t
@@ -406,6 +447,19 @@ impl ParquetDecoder {
 
             // Post-decode conversions that cannot be handled by the decode dispatch.
             post_convert(src_tag, to_column_type.tag(), column_chunk_bufs)?;
+
+            // Timestamp nano ↔ micro scaling (post_convert can't distinguish
+            // these since both have the same Timestamp tag).
+            if original_column_type != to_column_type
+                && src_tag == ColumnTypeTag::Timestamp
+                && to_column_type.tag() == ColumnTypeTag::Timestamp
+            {
+                let src_nano = original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+                let dst_nano = to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+                if src_nano != dst_nano {
+                    scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
+                }
+            }
         }
 
         Ok(decoded)
@@ -475,13 +529,16 @@ impl ParquetDecoder {
                 column_type = to_column_type;
             }
 
-            // Allow requesting VarcharSlice when the file stores Varchar.
-            if column_type.tag() == ColumnTypeTag::Varchar
+            // Allow requesting VarcharSlice when the file stores Varchar or String.
+            // VarcharSlice is a zero-copy decode format; parquet stores both as UTF-8.
+            if (column_type.tag() == ColumnTypeTag::Varchar
+                || column_type.tag() == ColumnTypeTag::String)
                 && to_column_type.tag() == ColumnTypeTag::VarcharSlice
             {
                 column_type = to_column_type;
             }
 
+            let original_column_type = column_type;
             let src_tag = column_type.tag();
             if column_type != to_column_type {
                 match (src_tag, to_column_type.tag()) {
@@ -508,14 +565,26 @@ impl ParquetDecoder {
                     // Date ↔ Timestamp (needs post-decode scaling)
                     (ColumnTypeTag::Date, ColumnTypeTag::Timestamp) |
                     (ColumnTypeTag::Timestamp, ColumnTypeTag::Date) |
-                    // Int ↔ Boolean
-                    (ColumnTypeTag::Int, ColumnTypeTag::Boolean) => {
+                    // Timestamp nano ↔ micro (needs post-decode scaling)
+                    (ColumnTypeTag::Timestamp, ColumnTypeTag::Timestamp) |
+                    // Fixed → Boolean
+                    (ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int |
+                     ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp |
+                     ColumnTypeTag::Float | ColumnTypeTag::Double,
+                     ColumnTypeTag::Boolean) => {
                         column_type = to_column_type;
                     }
                     // Boolean → Int: decode as boolean, post-expand to i32
                     (ColumnTypeTag::Boolean, ColumnTypeTag::Int) => {
                         // Keep column_type as Boolean for decode; post-processing
                         // expands the 1-byte boolean values to 4-byte integers.
+                    }
+                    // Boolean → other fixed types: decode as boolean, post-expand
+                    (ColumnTypeTag::Boolean,
+                     ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Long |
+                     ColumnTypeTag::Float | ColumnTypeTag::Double |
+                     ColumnTypeTag::Date | ColumnTypeTag::Timestamp) => {
+                        // Keep column_type as Boolean for decode; post_convert expands.
                     }
                     // Fixed → var-size (VARCHAR, STRING): decode as source fixed type,
                     // post_convert produces the target var-size format.
@@ -533,6 +602,13 @@ impl ParquetDecoder {
                         if is_var_to_fixed_target(dst) =>
                     {
                         // Keep column_type as source var type; Java converts.
+                    }
+                    // String ↔ Varchar ↔ Symbol: parquet stores all three as
+                    // BYTE_ARRAY (UTF-8), so we just remap to the target type
+                    // and decode directly.
+                    (ColumnTypeTag::String | ColumnTypeTag::Varchar | ColumnTypeTag::Symbol,
+                     ColumnTypeTag::String | ColumnTypeTag::Varchar) => {
+                        column_type = to_column_type;
                     }
                     // Array pass-through: same element type and dimensions.
                     (src_t, dst_t) if src_t == dst_t
@@ -595,6 +671,19 @@ impl ParquetDecoder {
 
             // Post-decode conversions that cannot be handled by the decode dispatch.
             post_convert(src_tag, to_column_type.tag(), column_chunk_bufs)?;
+
+            // Timestamp nano ↔ micro scaling (post_convert can't distinguish
+            // these since both have the same Timestamp tag).
+            if original_column_type != to_column_type
+                && src_tag == ColumnTypeTag::Timestamp
+                && to_column_type.tag() == ColumnTypeTag::Timestamp
+            {
+                let src_nano = original_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+                let dst_nano = to_column_type.has_flag(QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG);
+                if src_nano != dst_nano {
+                    scale_i64_in_place(&mut column_chunk_bufs.data_vec, 1000, src_nano);
+                }
+            }
         }
 
         Ok(output_count)
@@ -1071,9 +1160,11 @@ impl ParquetDecoder {
                     column_idx
                 )
             })?;
-            // Allow Varchar->VarcharSlice and Symbol->Varchar/VarcharSlice remapping.
+            // Allow Varchar/String->VarcharSlice and Symbol->Varchar/VarcharSlice remapping.
+            // Parquet stores String, Varchar and Symbol all as UTF-8 BYTE_ARRAY.
             let types_match = column_type == to_column_type
-                || (column_type.tag() == ColumnTypeTag::Varchar
+                || ((column_type.tag() == ColumnTypeTag::Varchar
+                    || column_type.tag() == ColumnTypeTag::String)
                     && to_column_type.tag() == ColumnTypeTag::VarcharSlice)
                 || (column_type.tag() == ColumnTypeTag::Symbol
                     && (to_column_type.tag() == ColumnTypeTag::Varchar

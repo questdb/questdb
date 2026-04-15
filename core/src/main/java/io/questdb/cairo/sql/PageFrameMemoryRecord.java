@@ -89,9 +89,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected int frameIndex = -1;
     // True when any column in the current frame needs lazy fixed→var conversion.
     protected boolean hasTypeCasts;
-    // Per-column first conversion target type for chained type conversions.
-    // Set from PageFrameMemoryPool during init(); null when hasTypeCasts is false.
-    protected IntList intermediateTypes;
     // Letters are used for parquet buffer reference counting in PageFrameMemoryPool.
     // RECORD_A_LETTER (0) stands for record A, RECORD_B_LETTER (1) stands for record B.
     protected byte letter;
@@ -237,11 +234,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
-                    return v != 0 && v != Numbers.LONG_NULL;
-                }
                 return convertVarToBool(-srcTag, columnIndex);
             }
         }
@@ -257,11 +249,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
-                    return v == Numbers.LONG_NULL ? 0 : (byte) v;
-                }
                 return convertVarToByte(-srcTag, columnIndex);
             }
         }
@@ -277,11 +264,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
-                    return v == Numbers.LONG_NULL ? 0 : (char) v;
-                }
                 return convertVarToChar(-srcTag, columnIndex);
             }
         }
@@ -357,28 +339,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    double result = convertVarChainedToDouble(intermediate, -srcTag, columnIndex);
-                    if (rowIndex == 0) {
-                        System.err.println("DEBUG getDouble chained: col=" + columnIndex + " srcTag=" + srcTag + " intermediate=" + intermediate + " result=" + result);
-                    }
-                    return result;
-                }
-                double result = convertVarToDouble(-srcTag, columnIndex);
-                if (rowIndex == 0) {
-                    System.err.println("DEBUG getDouble var→fixed: col=" + columnIndex + " srcTag=" + srcTag + " result=" + result);
-                }
-                return result;
+                return convertVarToDouble(-srcTag, columnIndex);
             }
         }
         final long address = pageAddresses.get(columnOffset + columnIndex);
         if (address != 0) {
-            double result = Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
-            if (hasTypeCasts && rowIndex == 0) {
-                System.err.println("DEBUG getDouble raw: col=" + columnIndex + " srcTag=" + sourceColumnTypes.getQuick(columnIndex) + " result=" + result + " address=" + address);
-            }
-            return result;
+            return Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
         }
         return NullMemoryCMR.INSTANCE.getDouble(0);
     }
@@ -388,14 +354,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
-                    if (v != Numbers.LONG_NULL && ColumnType.tagOf(intermediate) == ColumnType.TIMESTAMP) {
-                        return v / 1000; // micros to millis
-                    }
-                    return v;
-                }
                 return convertVarToDate(-srcTag, columnIndex);
             }
         }
@@ -407,10 +365,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    return convertVarChainedToFloat(intermediate, -srcTag, columnIndex);
-                }
                 return convertVarToFloat(-srcTag, columnIndex);
             }
         }
@@ -466,11 +420,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
-                    return v == Numbers.LONG_NULL ? Numbers.IPv4_NULL : (int) v;
-                }
                 return convertVarToIPv4(-srcTag, columnIndex);
             }
         }
@@ -486,11 +435,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
-                    return v == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) v;
-                }
                 return convertVarToInt(-srcTag, columnIndex);
             }
         }
@@ -511,10 +455,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    return convertVarChainedToLong(intermediate, -srcTag, columnIndex);
-                }
                 return convertVarToLong(-srcTag, columnIndex);
             }
         }
@@ -596,11 +536,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
-                    return v == Numbers.LONG_NULL ? 0 : (short) v;
-                }
                 return convertVarToShort(-srcTag, columnIndex);
             }
         }
@@ -705,14 +640,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (hasTypeCasts) {
             int srcTag = sourceColumnTypes.getQuick(columnIndex);
             if (srcTag < -1) {
-                int intermediate = intermediateTypes != null ? intermediateTypes.getQuick(columnIndex) : -1;
-                if (intermediate > 0) {
-                    long v = convertVarChainedToLong(intermediate, -srcTag, columnIndex);
-                    if (v != Numbers.LONG_NULL && ColumnType.tagOf(intermediate) == ColumnType.DATE) {
-                        return v * 1000; // millis to micros
-                    }
-                    return v;
-                }
                 return convertVarToTimestamp(-srcTag, columnIndex);
             }
         }
@@ -770,7 +697,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.pageSizes = frameMemory.getPageSizes();
         this.auxPageSizes = frameMemory.getAuxPageSizes();
         this.columnOffset = frameMemory.getColumnOffset();
-        this.intermediateTypes = null;
         if (this.hasTypeCasts) {
             // Copy source column types from PageFrameMemory.
             final int n = frameMemory.getColumnCount();
@@ -868,63 +794,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         utf8ViewsB.extendAndSet(columnIndex, view = new Utf8SplitString(this));
         return view;
-    }
-
-    private double convertVarChainedToDouble(int intermediateTag, int srcTag, int columnIndex) {
-        return switch (intermediateTag) {
-            case ColumnType.FLOAT -> {
-                float v = convertVarToFloat(srcTag, columnIndex);
-                yield Float.isNaN(v) ? Double.NaN : v;
-            }
-            case ColumnType.DOUBLE -> convertVarToDouble(srcTag, columnIndex);
-            default -> {
-                long v = convertVarChainedToLong(intermediateTag, srcTag, columnIndex);
-                yield v == Numbers.LONG_NULL ? Double.NaN : (double) v;
-            }
-        };
-    }
-
-    private float convertVarChainedToFloat(int intermediateTag, int srcTag, int columnIndex) {
-        return switch (intermediateTag) {
-            case ColumnType.FLOAT -> convertVarToFloat(srcTag, columnIndex);
-            case ColumnType.DOUBLE -> {
-                double v = convertVarToDouble(srcTag, columnIndex);
-                yield Double.isNaN(v) ? Float.NaN : (float) v;
-            }
-            default -> {
-                long v = convertVarChainedToLong(intermediateTag, srcTag, columnIndex);
-                yield v == Numbers.LONG_NULL ? Float.NaN : (float) v;
-            }
-        };
-    }
-
-    private long convertVarChainedToLong(int intermediateTag, int srcTag, int columnIndex) {
-        return switch (intermediateTag) {
-            case ColumnType.BOOLEAN -> convertVarToBool(srcTag, columnIndex) ? 1L : 0L;
-            case ColumnType.BYTE -> convertVarToByte(srcTag, columnIndex);
-            case ColumnType.SHORT -> convertVarToShort(srcTag, columnIndex);
-            case ColumnType.CHAR -> convertVarToChar(srcTag, columnIndex);
-            case ColumnType.INT -> {
-                int v = convertVarToInt(srcTag, columnIndex);
-                yield v == Numbers.INT_NULL ? Numbers.LONG_NULL : v;
-            }
-            case ColumnType.IPv4 -> {
-                int v = convertVarToIPv4(srcTag, columnIndex);
-                yield v == Numbers.IPv4_NULL ? Numbers.LONG_NULL : v;
-            }
-            case ColumnType.LONG -> convertVarToLong(srcTag, columnIndex);
-            case ColumnType.DATE -> convertVarToDate(srcTag, columnIndex);
-            case ColumnType.TIMESTAMP -> convertVarToTimestamp(srcTag, columnIndex);
-            case ColumnType.FLOAT -> {
-                float v = convertVarToFloat(srcTag, columnIndex);
-                yield Float.isNaN(v) ? Numbers.LONG_NULL : (long) v;
-            }
-            case ColumnType.DOUBLE -> {
-                double v = convertVarToDouble(srcTag, columnIndex);
-                yield Double.isNaN(v) ? Numbers.LONG_NULL : (long) v;
-            }
-            default -> Numbers.LONG_NULL;
-        };
     }
 
     private boolean convertVarToBool(int srcTag, int columnIndex) {
@@ -1074,7 +943,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         sink.clear();
         switch (srcType) {
             case ColumnType.BOOLEAN -> sink.put(Unsafe.getUnsafe().getByte(address + rowIndex) != 0);
-            case ColumnType.BYTE -> sink.put((int) Unsafe.getUnsafe().getByte(address + rowIndex));
+            case ColumnType.BYTE -> sink.put(Unsafe.getUnsafe().getByte(address + rowIndex));
             case ColumnType.SHORT -> sink.put(Unsafe.getUnsafe().getShort(address + (rowIndex << 1)));
             case ColumnType.CHAR -> {
                 char val = Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
@@ -1399,15 +1268,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             DirectLongList auxPageLimits,
             int columnOffset,
             boolean hasTypeCasts,
-            IntList sourceColumnTypes,
-            IntList intermediateTypes
+            IntList sourceColumnTypes
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
         this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.hasTypeCasts = hasTypeCasts;
         this.sourceColumnTypes = sourceColumnTypes;
-        this.intermediateTypes = intermediateTypes;
         this.rowIdOffset = rowIdOffset;
         this.pageAddresses = pageAddresses;
         this.auxPageAddresses = auxPageAddresses;
