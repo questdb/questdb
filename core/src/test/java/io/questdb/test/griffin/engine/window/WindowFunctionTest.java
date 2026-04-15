@@ -11317,15 +11317,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCumeDistSingleRow() throws Exception {
+    public void testCumeDistTwoRows() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
-            execute("insert into tab values (1, 10.0)");
+            execute("insert into tab values (1, 10.0), (2, 20.0)");
 
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
                             ts\tcd
-                            1970-01-01T00:00:00.000001Z\t1.0
+                            1970-01-01T00:00:00.000001Z\t0.5
+                            1970-01-01T00:00:00.000002Z\t1.0
                             """),
                     "select ts, cume_dist() over (order by ts) cd from tab",
                     "ts",
@@ -11477,13 +11478,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, 10.0), (2, 20.0)");
 
+            // n=2 resolves on row 2 (20.0); n=3 and n=10 never resolve (NULL everywhere) —
+            // confirms the n>totalRows boundary lies exactly at n<=totalRows.
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
-                            ts\tnv
-                            1970-01-01T00:00:00.000001Z\tnull
-                            1970-01-01T00:00:00.000002Z\tnull
+                            ts\tnv2\tnv3\tnv10
+                            1970-01-01T00:00:00.000001Z\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\t20.0\tnull\tnull
                             """),
-                    "select ts, nth_value(val, 10) over (order by ts) nv from tab",
+                    "select ts, " +
+                            "nth_value(val, 2) over (order by ts) nv2, " +
+                            "nth_value(val, 3) over (order by ts) nv3, " +
+                            "nth_value(val, 10) over (order by ts) nv10 " +
+                            "from tab",
                     "ts",
                     false,
                     true
@@ -11499,7 +11506,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select nth_value(val, 0) over (order by ts) from tab",
                     22,
-                    "nth_value n must be a positive integer",
+                    "n must be a positive integer",
                     sqlExecutionContext
             );
         });
@@ -11511,14 +11518,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
             execute("insert into tab values (1, null), (2, 20.0), (3, 30.0)");
 
+            // nth_value(val, 1) captures the NULL at row 1 and propagates it (default RESPECT NULLS).
+            // nth_value(val, 2) picks up 20.0 at row 2 — confirms nv1's NULL output is not a trivial constant.
             assertQueryNoLeakCheck(
                     replaceTimestampSuffix1("""
-                            ts\tnv
-                            1970-01-01T00:00:00.000001Z\tnull
-                            1970-01-01T00:00:00.000002Z\tnull
-                            1970-01-01T00:00:00.000003Z\tnull
+                            ts\tnv1\tnv2
+                            1970-01-01T00:00:00.000001Z\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\tnull\t20.0
+                            1970-01-01T00:00:00.000003Z\tnull\t20.0
                             """),
-                    "select ts, nth_value(val, 1) over (order by ts) nv from tab",
+                    "select ts, " +
+                            "nth_value(val, 1) over (order by ts) nv1, " +
+                            "nth_value(val, 2) over (order by ts) nv2 " +
+                            "from tab",
                     "ts",
                     false,
                     true
@@ -11673,7 +11685,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select nth_value(val, i) over (order by ts) from tab",
                     22,
-                    "nth_value n must be a constant",
+                    "n must be a constant",
                     sqlExecutionContext
             );
         });
@@ -11687,7 +11699,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select nth_value(val, -1) over (order by ts) from tab",
                     22,
-                    "nth_value n must be a positive integer",
+                    "n must be a positive integer",
                     sqlExecutionContext
             );
         });
@@ -11701,7 +11713,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select nth_value(val, null) over (order by ts) from tab",
                     22,
-                    "nth_value n must be a positive integer",
+                    "n must be a positive integer",
                     sqlExecutionContext
             );
         });
@@ -11767,6 +11779,60 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, val, cume_dist() over (partition by i order by val) cd from tab",
                     "ts",
                     true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCumeDistAllPeers() throws Exception {
+        // All rows share the same ORDER BY value — single peer group covers the entire partition.
+        // Exercises the CumeDistFunction.pass2 path where prevRank never transitions and every
+        // deferred row gets the tentative 1.0.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 7), (2, 7), (3, 7)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tval\tcd
+                            1970-01-01T00:00:00.000001Z\t7\t1.0
+                            1970-01-01T00:00:00.000002Z\t7\t1.0
+                            1970-01-01T00:00:00.000003Z\t7\t1.0
+                            """),
+                    "select ts, val, cume_dist() over (order by val) cd from tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedByTwoColumns() throws Exception {
+        // Exercises multi-key RecordSink / partition map encoding. Data uses 4 distinct (a,b)
+        // partitions interleaved by timestamp so map lookups actually matter.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, a long, b long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 1, 10.0), (2, 1, 2, 20.0), (3, 2, 1, 30.0), (4, 2, 2, 40.0), " +
+                    "(5, 1, 1, 50.0), (6, 1, 2, 60.0), (7, 2, 1, 70.0), (8, 2, 2, 80.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ta\tb\tnv
+                            1970-01-01T00:00:00.000001Z\t1\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t2\tnull
+                            1970-01-01T00:00:00.000003Z\t2\t1\tnull
+                            1970-01-01T00:00:00.000004Z\t2\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t1\t1\t50.0
+                            1970-01-01T00:00:00.000006Z\t1\t2\t60.0
+                            1970-01-01T00:00:00.000007Z\t2\t1\t70.0
+                            1970-01-01T00:00:00.000008Z\t2\t2\t80.0
+                            """),
+                    "select ts, a, b, nth_value(val, 2) over (partition by a, b order by ts) nv from tab",
+                    "ts",
+                    false,
                     true
             );
         });

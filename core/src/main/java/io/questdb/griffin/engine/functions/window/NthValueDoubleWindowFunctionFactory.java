@@ -78,11 +78,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         Function nFunc = args.get(1);
         if (!nFunc.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(1), "nth_value n must be a constant");
+            throw SqlException.$(argPositions.getQuick(1), "n must be a constant");
         }
         int n = nFunc.getInt(null);
         if (n <= 0) {
-            throw SqlException.$(argPositions.getQuick(1), "nth_value n must be a positive integer");
+            throw SqlException.$(argPositions.getQuick(1), "n must be a positive integer");
         }
 
         long rowsLo = windowContext.getRowsLo();
@@ -325,7 +325,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
 
         @Override
         public int getPassCount() {
-            return ZERO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
