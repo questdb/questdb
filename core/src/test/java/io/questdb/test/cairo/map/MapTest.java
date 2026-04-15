@@ -998,10 +998,10 @@ public class MapTest extends AbstractCairoTest {
                     final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertEquals(expectedIsNew[i], Map.isNewBatchEntry(encoded));
                     final long offset = Map.decodeBatchOffset(encoded);
-                    final MapValue value = map.valueAt(entryBase + offset);
                     // Newly inserted entries were prefilled with the sentinel via setBatchEmptyValue.
                     // Duplicates reference existing entries that were also created via the same path.
-                    Assert.assertEquals(sentinel, value.getLong(0));
+                    // batchAddr offsets now point at the start of the value region.
+                    Assert.assertEquals(sentinel, Unsafe.getUnsafe().getLong(entryBase + offset));
                 }
 
                 // Clear the empty value pattern so subsequent tests don't leak the scratch buffer.
@@ -1035,8 +1035,7 @@ public class MapTest extends AbstractCairoTest {
                     final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
                     Assert.assertTrue(Map.isNewBatchEntry(encoded));
                     final long offset = Map.decodeBatchOffset(encoded);
-                    final MapValue value = map.valueAt(entryBase + offset);
-                    Assert.assertEquals(0L, value.getLong(0));
+                    Assert.assertEquals(0L, Unsafe.getUnsafe().getLong(entryBase + offset));
                 }
 
                 // Clearing a null updater must be a no-op and idempotent.

@@ -22,8 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.map;
+package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -34,23 +39,37 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-final class OrderedMapValue implements MapValue {
+/**
+ * A flyweight map value over a densely packed value region, matching the
+ * per-column layout used by {@link Map} implementations.
+ * Column addresses are computed as {@code ptr + valueOffsets[index]}.
+ * <p>
+ * Used by the batched keyed GROUP BY dispatch path to keep all value-column
+ * accesses monomorphic regardless of the underlying map type.
+ */
+public class FlyweightPackedMapValue implements FlyweightMapValue {
     private final long[] valueOffsets;
     private final long valueSize;
-    // Flyweights are lazily-initialized to avoid allocations
-    // in case when decimal/long256 are not present in the query.
     private Decimal128 decimal128;
     private Decimal256 decimal256;
-    private long limit;
+    private boolean isNew;
     private Long256Impl long256;
-    private boolean newValue;
-    private OrderedMapRecord record; // double-linked
-    private long startAddress; // key-value pair start address
-    private long valueAddress;
+    private long ptr;
 
-    public OrderedMapValue(long valueSize, long[] valueOffsets) {
-        this.valueSize = valueSize;
-        this.valueOffsets = valueOffsets;
+    public FlyweightPackedMapValue(ColumnTypes valueTypes) {
+        final int columnCount = valueTypes.getColumnCount();
+        this.valueOffsets = new long[columnCount];
+        long offset = 0;
+        for (int i = 0; i < columnCount; i++) {
+            valueOffsets[i] = offset;
+            final int columnType = valueTypes.getColumnType(i);
+            final int size = ColumnType.sizeOf(columnType);
+            if (size <= 0) {
+                throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+            }
+            offset += size;
+        }
+        this.valueSize = offset;
     }
 
     @Override
@@ -87,7 +106,7 @@ final class OrderedMapValue implements MapValue {
     public void addLong256(int index, Long256 value) {
         Long256 acc = getLong256A(index);
         Long256Util.add(acc, value);
-        Long256.putLong256(value, getAddress(index));
+        Long256.putLong256(acc, getAddress(index));
     }
 
     @Override
@@ -97,14 +116,23 @@ final class OrderedMapValue implements MapValue {
     }
 
     @Override
-    public void copyFrom(MapValue value) {
-        OrderedMapValue other = (OrderedMapValue) value;
-        Vect.memcpy(valueAddress, other.valueAddress, valueSize);
+    public void copyFrom(MapValue srcValue) {
+        final FlyweightPackedMapValue other = (FlyweightPackedMapValue) srcValue;
+        Vect.memcpy(ptr, other.ptr, valueSize);
     }
 
     @Override
     public long getAddress(int index) {
-        return valueAddress + valueOffsets[index];
+        return ptr + valueOffsets[index];
+    }
+
+    /**
+     * Returns the byte offset of the value column at {@code valueIndex} within
+     * the value region. Used by {@code computeKeyedBatch} overrides to hoist a
+     * compile-time-constant offset out of their hot loop.
+     */
+    public long getOffset(int valueIndex) {
+        return valueOffsets[valueIndex];
     }
 
     @Override
@@ -129,10 +157,10 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public void getDecimal128(int index, Decimal128 sink) {
-        long address = getAddress(index);
+        final long addr = getAddress(index);
         sink.ofRaw(
-                Unsafe.getUnsafe().getLong(address),
-                Unsafe.getUnsafe().getLong(address + 8L)
+                Unsafe.getUnsafe().getLong(addr),
+                Unsafe.getUnsafe().getLong(addr + 8L)
         );
     }
 
@@ -229,8 +257,13 @@ final class OrderedMapValue implements MapValue {
     }
 
     @Override
+    public long getSizeInBytes() {
+        return valueSize;
+    }
+
+    @Override
     public long getStartAddress() {
-        return startAddress;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -240,7 +273,7 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public boolean isNew() {
-        return newValue;
+        return isNew;
     }
 
     @Override
@@ -274,22 +307,23 @@ final class OrderedMapValue implements MapValue {
     }
 
     @Override
+    public void of(long ptr) {
+        this.ptr = ptr;
+    }
+
+    @Override
     public void putBool(int index, boolean value) {
         putByte(index, (byte) (value ? 1 : 0));
     }
 
     @Override
     public void putByte(int index, byte value) {
-        final long p = getAddress(index);
-        assert p + 1L <= limit;
-        Unsafe.getUnsafe().putByte(p, value);
+        Unsafe.getUnsafe().putByte(getAddress(index), value);
     }
 
     @Override
     public void putChar(int index, char value) {
-        final long p = getAddress(index);
-        assert p + 2L <= limit;
-        Unsafe.getUnsafe().putChar(p, value);
+        Unsafe.getUnsafe().putChar(getAddress(index), value);
     }
 
     @Override
@@ -333,30 +367,22 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public void putDouble(int index, double value) {
-        final long p = getAddress(index);
-        assert p + 8L <= limit;
-        Unsafe.getUnsafe().putDouble(p, value);
+        Unsafe.getUnsafe().putDouble(getAddress(index), value);
     }
 
     @Override
     public void putFloat(int index, float value) {
-        final long p = getAddress(index);
-        assert p + 4L <= limit;
-        Unsafe.getUnsafe().putFloat(p, value);
+        Unsafe.getUnsafe().putFloat(getAddress(index), value);
     }
 
     @Override
     public void putInt(int index, int value) {
-        final long p = getAddress(index);
-        assert p + 4L <= limit;
-        Unsafe.getUnsafe().putInt(p, value);
+        Unsafe.getUnsafe().putInt(getAddress(index), value);
     }
 
     @Override
     public void putLong(int index, long value) {
-        final long p = getAddress(index);
-        assert p + 8L <= limit;
-        Unsafe.getUnsafe().putLong(p, value);
+        Unsafe.getUnsafe().putLong(getAddress(index), value);
     }
 
     @Override
@@ -368,9 +394,7 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public void putLong256(int index, Long256 value) {
-        final long p = getAddress(index);
-        assert p + 32L <= limit;
-        Long256.putLong256(value, p);
+        Long256.putLong256(value, getAddress(index));
     }
 
     @Override
@@ -385,7 +409,12 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public void setMapRecordHere() {
-        record.of(startAddress);
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setNew(boolean isNew) {
+        this.isNew = isNew;
     }
 
     private Decimal128 getDecimal128() {
@@ -407,26 +436,5 @@ final class OrderedMapValue implements MapValue {
             long256 = new Long256Impl();
         }
         return long256;
-    }
-
-    void copyRawValue(long ptr) {
-        Vect.memcpy(valueAddress, ptr, valueSize);
-    }
-
-    long getValueAddress() {
-        return valueAddress;
-    }
-
-    void linkRecord(OrderedMapRecord record) {
-        this.record = record;
-        record.setLimit(limit);
-    }
-
-    OrderedMapValue of(long startAddress, long valueAddress, long limit, boolean newValue) {
-        this.startAddress = startAddress;
-        this.valueAddress = valueAddress;
-        this.limit = limit;
-        this.newValue = newValue;
-        return this;
     }
 }

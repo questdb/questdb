@@ -53,6 +53,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
@@ -335,23 +336,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final Map map = fragment.reopenMap();
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
-        final int subBatchSize = 2048;
-
-        // Pre-resolve per-function value byte offsets once per frame.
+        final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
         final int functionCount = functions.size();
-        long entryBase = map.getEntryBase();
-        // Use a dummy valueAt to compute byte offsets.
-        final MapValue tmpValue = map.valueAt(entryBase);
-        // TODO(puzpuzpuz): get rid of GC here
-        final long[] valueByteOffsets = new long[functionCount];
-        for (int i = 0; i < functionCount; i++) {
-            valueByteOffsets[i] = tmpValue.getAddress(functions.getQuick(i).getValueIndex()) - entryBase;
-        }
+        final int subBatchSize = 2048;
 
         // Size the batch buffer once — probeBatch writes via the raw base address, never advancing pos.
         batchList.ensureCapacity(subBatchSize);
         final long batchAddr = batchList.getAddress();
 
+        long entryBase = map.getEntryBase();
         for (long batchStart = 0; batchStart < frameRowCount; batchStart += subBatchSize) {
             final long batchEnd = Math.min(batchStart + subBatchSize, frameRowCount);
             final long batchRows = batchEnd - batchStart;
@@ -367,9 +360,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             for (int i = 0; i < functionCount; i++) {
                 functions.getQuick(i).computeKeyedBatch(
                         record,
-                        map,
+                        mapValue,
                         entryBase,
-                        valueByteOffsets[i],
                         batchAddr,
                         batchRows,
                         baseRowId + batchStart

@@ -375,7 +375,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             if (v.isNew() && batchEmptyValueStart != 0) {
                 v.copyRawValue(batchEmptyValueStart);
             }
-            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() - memStart, v.isNew());
+            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() + KEY_SIZE - memStart, v.isNew());
             Unsafe.getUnsafe().putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
@@ -593,7 +593,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             if (v.isNew() && batchEmptyValueStart != 0) {
                 v.copyRawValue(batchEmptyValueStart);
             }
-            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() - memStart, v.isNew());
+            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() + KEY_SIZE - memStart, v.isNew());
             Unsafe.getUnsafe().putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }

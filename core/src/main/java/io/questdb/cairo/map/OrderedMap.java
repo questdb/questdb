@@ -630,7 +630,7 @@ public class OrderedMap implements Map, Reopenable {
             if (v.isNew() && batchEmptyValueStart != 0) {
                 v.copyRawValue(batchEmptyValueStart);
             }
-            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() - heapAddr, v.isNew());
+            long encoded = Map.encodeBatchEntry(r, v.getValueAddress() - heapAddr, v.isNew());
             Unsafe.getUnsafe().putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }
@@ -655,7 +655,7 @@ public class OrderedMap implements Map, Reopenable {
             // Heap may have been reallocated mid-loop; offsets are invariant under realloc
             // because Unsafe.realloc preserves the relative layout, so we encode against
             // the latest heapAddr and return it as entryBase at the end.
-            long encoded = Map.encodeBatchEntry(r, v.getStartAddress() - heapAddr, v.isNew());
+            long encoded = Map.encodeBatchEntry(r, v.getValueAddress() - heapAddr, v.isNew());
             Unsafe.getUnsafe().putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
         }

@@ -50,8 +50,10 @@ public interface Map extends Mutable, Closeable, Reopenable {
     int BATCH_ROW_INDEX_SHIFT = 39;
 
     /**
-     * Decodes the entry byte offset from an encoded batch entry. Combine with
-     * {@link #getEntryBase()} to obtain the absolute entry address.
+     * Decodes the value-region byte offset from an encoded batch entry. Combine
+     * with {@link #getEntryBase()} to obtain the absolute start address of the
+     * value region for that entry. Per-function value columns can then be
+     * addressed by adding the column's offset within the value region.
      */
     static long decodeBatchOffset(long encoded) {
         return encoded & BATCH_OFFSET_MASK;
@@ -122,7 +124,12 @@ public interface Map extends Mutable, Closeable, Reopenable {
     /**
      * Probes rows {@code batchStart..batchEnd-1} and writes packed longs into
      * {@code batchAddr}. Each packed long has the layout:
-     * {@code [isNew:1][rowIndex:24][offset:39]}.
+     * {@code [isNew:1][rowIndex:24][offset:39]}, where {@code offset} is the
+     * byte distance from {@link #getEntryBase()} to the <b>start of the value
+     * region</b> of that entry — not to the entry start. This keeps the
+     * encoding uniform across fixed- and variable-size maps and lets
+     * consumers address per-column values as
+     * {@code entryBase + offset + valueOffsets[valueIndex]}.
      * <p>
      * Callers must invoke {@link #reserveCapacity(long)} with at least
      * {@code batchEnd - batchStart} beforehand. Inlined implementations rely on

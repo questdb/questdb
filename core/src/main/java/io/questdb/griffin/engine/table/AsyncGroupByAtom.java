@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -70,12 +71,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
+    private final ObjList<DirectLongList> perWorkerBatchLists;
+    private final ObjList<FlyweightPackedMapValue> perWorkerBatchMapValues;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
     // Initialized lazily.
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
-    private final ObjList<DirectLongList> perWorkerBatchLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final GroupByShardingContext shardingCtx;
     // Initialized lazily.
@@ -207,12 +209,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             perWorkerLongTopKLists = new ObjList<>(workerCount);
             perWorkerLongTopKLists.setAll(workerCount, null);
 
-            // Pre-allocate per-worker batch scratch buffers for batched dispatch.
+            // Pre-allocate per-worker batch scratch buffers and flyweights for batched dispatch.
+            // The owner uses slotId -1 which maps to index 0; worker slots 0..N-1 map to 1..N.
             final int subBatchSize = 2048; // TODO: make configurable
             perWorkerBatchLists = new ObjList<>(workerCount + 1);
-            // +1 for the owner slot (-1 maps to index 0)
+            perWorkerBatchMapValues = new ObjList<>(workerCount + 1);
             for (int i = 0; i < workerCount + 1; i++) {
                 perWorkerBatchLists.extendAndSet(i, new DirectLongList(subBatchSize, MemoryTag.NATIVE_DEFAULT));
+                perWorkerBatchMapValues.extendAndSet(i, new FlyweightPackedMapValue(valueTypes));
             }
         } catch (Throwable th) {
             close();
@@ -269,6 +273,11 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     public DirectLongList getBatchList(int slotId) {
         // slotId -1 (owner) maps to index 0, worker slots 0..N-1 map to 1..N
         return perWorkerBatchLists.getQuick(slotId + 1);
+    }
+
+    public FlyweightPackedMapValue getBatchMapValue(int slotId) {
+        // slotId -1 (owner) maps to index 0, worker slots 0..N-1 map to 1..N
+        return perWorkerBatchMapValues.getQuick(slotId + 1);
     }
 
     public GroupByMapFragment getFragment(int slotId) {

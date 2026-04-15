@@ -77,12 +77,21 @@ public interface MapValue extends Record {
     short getShort(int index);
 
     /**
-     * Depending on Map implementation, returns either the key-value pair start address (FastMap)
+     * Depending on Map implementation, returns either the key-value pair start address (OrderedMap)
      * or the value address (other Maps).
      * <p>
      * In any case, the returned value can be used to make a {@link Map#valueAt(long)} call.
      */
     long getStartAddress();
+
+    /**
+     * Returns the offset of this entry relative to {@link Map#getEntryBase()}.
+     * Returns Long.MIN_VALUE if the entry cannot participate in batched dispatch
+     * (e.g. zero-key entries stored in separate memory).
+     */
+    default long getStartOffset() {
+        return Long.MIN_VALUE;
+    }
 
     long getTimestamp(int index);
 
@@ -135,14 +144,5 @@ public interface MapValue extends Record {
     void setMapRecordHere();
 
     default void setNew(boolean isNew) {
-    }
-
-    /**
-     * Returns the offset of this entry relative to {@link Map#getEntryBase()}.
-     * Returns Long.MIN_VALUE if the entry cannot participate in batched dispatch
-     * (e.g. zero-key entries stored in separate memory).
-     */
-    default long getStartOffset() {
-        return Long.MIN_VALUE;
     }
 }

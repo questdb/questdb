@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
@@ -52,16 +53,16 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
-            Map map,
+            FlyweightPackedMapValue mapValue,
             long entryBase,
-            long valueByteOffset,
             long batchAddr,
             long rowCount,
             long baseRowId
     ) {
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
         for (long i = 0; i < rowCount; i++) {
             long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
-            long addr = entryBase + Map.decodeBatchOffset(encoded) + valueByteOffset;
+            long addr = entryBase + Map.decodeBatchOffset(encoded) + valueColumnOffset;
             Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
         }
     }

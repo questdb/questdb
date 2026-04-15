@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -98,41 +99,45 @@ public interface GroupByFunction extends Function, Mutable {
     /**
      * Aggregates {@code rowCount} input values into per-row output entries
      * in the keyed GROUP BY path. The default implementation loops over the
-     * batch and delegates to {@link #computeFirst}/{@link #computeNext}.
+     * batch and delegates to {@link #computeFirst}/{@link #computeNext}
+     * through a {@link FlyweightPackedMapValue} flyweight, keeping map-value
+     * dispatch monomorphic regardless of the underlying map type.
      * Individual functions may override with tight loops for direct column
-     * arguments.
+     * arguments. Overrides that need a per-function value-column offset should
+     * hoist it out of the hot loop via {@link FlyweightPackedMapValue#getOffset(int)}.
      * <p>
      * Each packed long in {@code batchAddr} has the layout:
-     * {@code [isNew:1][rowIndex:24][offset:39]}.
+     * {@code [isNew:1][rowIndex:24][offset:39]}, where {@code offset} is the
+     * value-region-start offset relative to {@code entryBase}.
      *
-     * @param record          page frame record, positioned via setRowIndex
-     * @param map             the map owning the entries (used by the default implementation)
-     * @param entryBase       stable base address ({@link Map#getEntryBase()}), pre-resolved by the reducer
-     * @param valueByteOffset byte offset of this function's value slot from the entry start,
-     *                        pre-resolved by the reducer
-     * @param batchAddr       native pointer to {@code rowCount} packed longs (8 bytes each)
-     * @param rowCount        number of entries to process
-     * @param baseRowId       absolute row id of the first row in the sub-batch
+     * @param record    page frame record, positioned via setRowIndex
+     * @param mapValue  pre-allocated packed flyweight, reused per row
+     * @param entryBase stable base address ({@link Map#getEntryBase()}), pre-resolved by the reducer
+     * @param batchAddr native pointer to {@code rowCount} packed longs (8 bytes each)
+     * @param rowCount  number of entries to process
+     * @param baseRowId absolute row id of the first row in the sub-batch
      */
     default void computeKeyedBatch(
             PageFrameMemoryRecord record,
-            Map map,
+            FlyweightPackedMapValue mapValue,
             long entryBase,
-            long valueByteOffset,
             long batchAddr,
             long rowCount,
             long baseRowId
     ) {
         for (long i = 0; i < rowCount; i++) {
             long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
-            long offset = Map.decodeBatchOffset(encoded);
+            long valueOffset = Map.decodeBatchOffset(encoded);
             int rowIndex = Map.decodeBatchRowIndex(encoded);
+            boolean isNew = Map.isNewBatchEntry(encoded);
             record.setRowIndex(rowIndex);
-            MapValue value = map.valueAt(entryBase + offset);
-            if (Map.isNewBatchEntry(encoded)) {
-                computeFirst(value, record, baseRowId + rowIndex);
+            mapValue.of(entryBase + valueOffset);
+            // TODO(puzpuzpuz): it's safe to always call computeNext on certain group by functions like count or sum;
+            //   those functions work correctly when only computeNext is called on identity value state (setEmpty state)
+            if (isNew) {
+                computeFirst(mapValue, record, baseRowId + rowIndex);
             } else {
-                computeNext(value, record, baseRowId + rowIndex);
+                computeNext(mapValue, record, baseRowId + rowIndex);
             }
         }
     }
