@@ -58,7 +58,7 @@ public class BarFunctionFactory implements FunctionFactory {
     ) {
         // Each bar character is 3 bytes in UTF-8
         final int maxWidth = configuration.getStrFunctionMaxBufferLength() / 3;
-        return new BarFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3), maxWidth);
+        return new BarFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3), maxWidth, argPositions.getQuick(3));
     }
 
     private static class BarFunction extends VarcharFunction implements QuaternaryFunction {
@@ -69,13 +69,15 @@ public class BarFunctionFactory implements FunctionFactory {
         private final Utf8StringSink sinkB = new Utf8StringSink();
         private final Function valueFunc;
         private final Function widthFunc;
+        private final int widthPosition;
 
-        private BarFunction(Function valueFunc, Function minFunc, Function maxFunc, Function widthFunc, int maxWidth) {
+        private BarFunction(Function valueFunc, Function minFunc, Function maxFunc, Function widthFunc, int maxWidth, int widthPosition) {
             this.valueFunc = valueFunc;
             this.minFunc = minFunc;
             this.maxFunc = maxFunc;
             this.widthFunc = widthFunc;
             this.maxWidth = maxWidth;
+            this.widthPosition = widthPosition;
         }
 
         @Override
@@ -133,7 +135,7 @@ public class BarFunctionFactory implements FunctionFactory {
             }
 
             if (width > maxWidth) {
-                throw CairoException.nonCritical()
+                throw CairoException.nonCritical().position(widthPosition)
                         .put("breached memory limit set for ").put(SIGNATURE)
                         .put(" [maxWidth=").put(maxWidth)
                         .put(", requestedWidth=").put(width).put(']');

@@ -49,8 +49,8 @@ class TextChartGroupByFunction extends VarcharFunction implements UnaryFunction,
     private final Function arg;
     private final char[] chars;
     private final int functionPosition;
-    private final int maxValues;
     private final @Nullable Function maxFunc;
+    private final int maxValues;
     private final @Nullable Function minFunc;
     private final String name;
     private final ObjList<DirectUtf8Sink> sinks = new ObjList<>();

@@ -247,7 +247,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, 30);
         assertMemoryLeak(() -> assertException(
                 "SELECT bar(50, 0, 100, 100)",
-                0,
+                23,
                 "breached memory limit set for bar(DDDI)"
         ));
     }
