@@ -286,89 +286,6 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         genLookup.setMemoryBudget(budget);
     }
 
-    public void updateKeyCount() {
-        final long deadline = clock.getTicks() + spinLockTimeoutMs;
-        long prevSeqStartA = Long.MIN_VALUE;
-        long prevSeqStartB = Long.MIN_VALUE;
-        while (true) {
-            Unsafe.getUnsafe().loadFence();
-            long seqStartA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-            long seqStartB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-
-            long bestPage = (seqStartB > seqStartA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-            long otherPage = (bestPage == PostingIndexUtils.PAGE_A_OFFSET) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
-
-            for (int attempt = 0; attempt < 2; attempt++) {
-                long tryPage = (attempt == 0) ? bestPage : otherPage;
-
-                long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
-                if (seqStart <= keyFileSequence) {
-                    if (attempt == 0) {
-                        continue;
-                    }
-                    return; // no update available on either page
-                }
-                Unsafe.getUnsafe().loadFence();
-
-                int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
-                int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
-                long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
-
-                Unsafe.getUnsafe().loadFence();
-                long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
-
-                if (seqStart == seqEnd && keyCount >= this.keyCount
-                        && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
-                    // If VALUE_FILE_TXN changed (seal created a new .pv file),
-                    // fall through to reloadConditionally() for full file reopen.
-                    long metaValueTxn = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
-                    long effectiveTxn = metaValueTxn > 0 ? metaValueTxn : this.valueFileTxn;
-                    if (effectiveTxn != this.valueFileTxn) {
-                        reloadConditionally();
-                        return;
-                    }
-
-                    genLookup.snapshotMetadata(keyMem, genCount, tryPage);
-
-                    Unsafe.getUnsafe().loadFence();
-                    if (keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) != seqStart) {
-                        break; // page overwritten during snapshot, re-pick best page
-                    }
-
-                    if (valueMemSize > 0) {
-                        long oldAddr = valueMem.addressOf(0);
-                        ((MemoryCMR) valueMem).changeSize(valueMemSize);
-                        if (valueMem.addressOf(0) != oldAddr) {
-                            reloadGeneration++;
-                        }
-                    }
-                    this.activePageOffset = tryPage;
-                    this.keyFileSequence = seqStart;
-                    this.valueMemSize = valueMemSize;
-                    this.keyCount = keyCount;
-                    this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
-                    this.genCount = genCount;
-                    return;
-                }
-            }
-
-            // If sequence starts haven't changed since the previous iteration,
-            // no writer is active and the corruption won't self-heal — stop spinning.
-            if (seqStartA == prevSeqStartA && seqStartB == prevSeqStartB) {
-                LOG.critical().$(INDEX_CORRUPT).$(" [both pages invalid, no active writer, updateKeyCount]").$();
-                return;
-            }
-            prevSeqStartA = seqStartA;
-            prevSeqStartB = seqStartB;
-
-            if (clock.getTicks() > deadline) {
-                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, updateKeyCount]").$();
-                return;
-            }
-            Os.pause();
-        }
-    }
-
     private void closeSidecarMems() {
         if (sidecarMems != null) {
             for (int i = 0; i < sidecarMems.length; i++) {
@@ -564,6 +481,10 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
                         break; // page overwritten during snapshot, re-pick best page
                     }
 
+                    // Snapshot validated — invalidate cached lookup index so
+                    // next query rebuilds it from the fresh arrays.
+                    genLookup.invalidateLookupIndex();
+
                     this.activePageOffset = tryPage;
                     this.keyFileSequence = seqStart;
                     this.valueMemSize = valueMemSize;
@@ -601,6 +522,107 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
         // Gen dir was already snapshotted into genLookup during readIndexMetadataFromBestPage.
         // Only rebuild the lookup index (tier1/tier2) if genCount changed.
         genLookup.buildLookupIfNeeded(valueMem, keyCount, genCount);
+    }
+
+    protected void updateKeyCount() {
+        final long deadline = clock.getTicks() + spinLockTimeoutMs;
+        long prevSeqStartA = Long.MIN_VALUE;
+        long prevSeqStartB = Long.MIN_VALUE;
+        while (true) {
+            Unsafe.getUnsafe().loadFence();
+            long seqStartA = keyMem.getLong(PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+            long seqStartB = keyMem.getLong(PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+
+            long bestPage = (seqStartB > seqStartA) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+            long otherPage = (bestPage == PostingIndexUtils.PAGE_A_OFFSET) ? PostingIndexUtils.PAGE_B_OFFSET : PostingIndexUtils.PAGE_A_OFFSET;
+
+            for (int attempt = 0; attempt < 2; attempt++) {
+                long tryPage = (attempt == 0) ? bestPage : otherPage;
+
+                long seqStart = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START);
+                if (seqStart <= keyFileSequence) {
+                    if (attempt == 0) {
+                        continue;
+                    }
+                    return; // no update available on either page
+                }
+                Unsafe.getUnsafe().loadFence();
+
+                int keyCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_KEY_COUNT);
+                int genCount = keyMem.getInt(tryPage + PostingIndexUtils.PAGE_OFFSET_GEN_COUNT);
+                long valueMemSize = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_MEM_SIZE);
+
+                Unsafe.getUnsafe().loadFence();
+                long seqEnd = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_END);
+
+                if (seqStart == seqEnd && keyCount >= this.keyCount
+                        && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
+                    // If VALUE_FILE_TXN changed (seal created a new .pv file),
+                    // do NOT switch to the new .pv mid-query — that would close
+                    // the old mmap and break any cursor still holding raw
+                    // pointers into it. Instead, fall through to try the other
+                    // page (which may still carry a consistent old-txn update
+                    // from flushAllPending) and otherwise keep the current
+                    // snapshot. Full file reopen happens at TableReader.reload()
+                    // between queries, when no cursors are outstanding. The old
+                    // .pv file is protected from premature purge by the
+                    // TxnScoreboard (reader's acquired txn covers it until the
+                    // next reload).
+                    long metaValueTxn = keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_VALUE_FILE_TXN);
+                    long effectiveTxn = metaValueTxn > 0 ? metaValueTxn : this.valueFileTxn;
+                    if (effectiveTxn != this.valueFileTxn) {
+                        if (attempt == 0) {
+                            continue; // try the other page — may have a same-txn update
+                        }
+                        return; // both pages point at a newer txn; stay on current snapshot
+                    }
+
+                    genLookup.snapshotMetadata(keyMem, genCount, tryPage);
+
+                    Unsafe.getUnsafe().loadFence();
+                    if (keyMem.getLong(tryPage + PostingIndexUtils.PAGE_OFFSET_SEQUENCE_START) != seqStart) {
+                        break; // page overwritten during snapshot, re-pick best page
+                    }
+
+                    // Snapshot validated — now commit. Invalidate the cached
+                    // lookup index so the next query rebuilds it from the fresh
+                    // arrays. (We deliberately avoid invalidating it inside
+                    // snapshotMetadata so a failed snapshot path doesn't wipe
+                    // the lookup index without a replacement.)
+                    genLookup.invalidateLookupIndex();
+
+                    if (valueMemSize > 0) {
+                        long oldAddr = valueMem.addressOf(0);
+                        ((MemoryCMR) valueMem).changeSize(valueMemSize);
+                        if (valueMem.addressOf(0) != oldAddr) {
+                            reloadGeneration++;
+                        }
+                    }
+                    this.activePageOffset = tryPage;
+                    this.keyFileSequence = seqStart;
+                    this.valueMemSize = valueMemSize;
+                    this.keyCount = keyCount;
+                    this.keyCountIncludingNulls = columnTop > 0 ? keyCount + 1 : keyCount;
+                    this.genCount = genCount;
+                    return;
+                }
+            }
+
+            // If sequence starts haven't changed since the previous iteration,
+            // no writer is active and the corruption won't self-heal — stop spinning.
+            if (seqStartA == prevSeqStartA && seqStartB == prevSeqStartB) {
+                LOG.critical().$(INDEX_CORRUPT).$(" [both pages invalid, no active writer, updateKeyCount]").$();
+                return;
+            }
+            prevSeqStartA = seqStartA;
+            prevSeqStartB = seqStartB;
+
+            if (clock.getTicks() > deadline) {
+                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, updateKeyCount]").$();
+                return;
+            }
+            Os.pause();
+        }
     }
 
     /**
@@ -1081,12 +1103,14 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
             int compLen = hi - lo;
 
             int needed = compLen * 8;
-            if (fsstDecompBufAddr == 0 || fsstDecompBufCapacity < needed) {
-                if (fsstDecompBufAddr != 0) {
-                    Unsafe.free(fsstDecompBufAddr, fsstDecompBufCapacity, MemoryTag.NATIVE_INDEX_READER);
-                }
+            if (fsstDecompBufCapacity < needed) {
+                fsstDecompBufAddr = Unsafe.realloc(
+                        fsstDecompBufAddr,
+                        fsstDecompBufCapacity,
+                        needed,
+                        MemoryTag.NATIVE_INDEX_READER
+                );
                 fsstDecompBufCapacity = needed;
-                fsstDecompBufAddr = Unsafe.malloc(needed, MemoryTag.NATIVE_INDEX_READER);
             }
             return FSST.decompressBytes(table, compAddr, compLen, fsstDecompBufAddr);
         }
@@ -1606,12 +1630,13 @@ public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
 
         protected void ensureDecodeWorkspaceCapacity(int count) {
             if (count > decodeWorkspaceCapacity) {
-                if (decodeWorkspaceAddr != 0) {
-                    Unsafe.free(decodeWorkspaceAddr, (long) decodeWorkspaceCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-                    decodeWorkspaceAddr = 0;
-                }
+                decodeWorkspaceAddr = Unsafe.realloc(
+                        decodeWorkspaceAddr,
+                        (long) decodeWorkspaceCapacity * Long.BYTES,
+                        (long) count * Long.BYTES,
+                        MemoryTag.NATIVE_INDEX_READER
+                );
                 decodeWorkspaceCapacity = count;
-                decodeWorkspaceAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
             }
         }
 

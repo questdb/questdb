@@ -368,6 +368,18 @@ public class PostingGenLookup implements Closeable {
         return tier;
     }
 
+    /**
+     * Invalidates the cached lookup index (tier1/tier2). Called by the reader
+     * AFTER {@link #snapshotMetadata} has been validated via post-snapshot seq
+     * recheck, so that a subsequent query rebuilds the index from the freshly
+     * captured metadata arrays.
+     */
+    void invalidateLookupIndex() {
+        freeTier1();
+        freeTier2();
+        builtForGenCount = 0;
+    }
+
     boolean isPerKeyMode() {
         return tier == TIER_PER_KEY;
     }
@@ -412,9 +424,5 @@ public class PostingGenLookup implements Closeable {
             genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
             genSidecarOffsets[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET);
         }
-        // Free stale lookup index; buildLookupIfNeeded will rebuild
-        freeTier1();
-        freeTier2();
-        builtForGenCount = 0;
     }
 }

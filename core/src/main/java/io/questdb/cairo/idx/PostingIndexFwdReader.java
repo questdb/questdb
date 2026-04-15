@@ -95,19 +95,19 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int currentBlock;
         private int currentGen;
         private long cursorReloadGeneration;
-        private long efHighStart;
+        private long efHighOffset;
         private int efHighWordIdx;
         private int efL;
         private long efLowMask;
-        private long efLowStart;
+        private long efLowOffset;
         private int efNumHighWords;
         private int efOutputCount;
         private int efTotalCount;
-        private long encodedAddr;
         private int encodedBlockCount;
+        private long encodedOffset;
         private long flatBaseValue;
         private int flatBitWidth;
-        private long flatDataBase;
+        private long flatDataOffset;
         private int flatRemaining;
         private int flatStartIdx;
         private boolean isEFMode;
@@ -117,11 +117,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private long maxValue;
         private long minValue;
         private long next;
-        private long packedDataAddr;
-        private long srcBitWidthsAddr;
-        private long srcFirstValuesAddr;
-        private long srcMinDeltasAddr;
-        private long srcValueCountsAddr;
+        private long packedDataOffset;
+        private long srcBitWidthsOffset;
+        private long srcFirstValuesOffset;
+        private long srcMinDeltasOffset;
+        private long srcValueCountsOffset;
         private int totalValueCount;
 
         @Override
@@ -334,16 +334,17 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         private void decodeNextBlock() {
             int b = currentBlock;
-            int count = Unsafe.getUnsafe().getByte(srcValueCountsAddr + b) & 0xFF;
-            int bitWidth = Unsafe.getUnsafe().getByte(srcBitWidthsAddr + b) & 0xFF;
+            long baseAddr = valueMem.addressOf(0);
+            int count = Unsafe.getUnsafe().getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
+            int bitWidth = Unsafe.getUnsafe().getByte(baseAddr + srcBitWidthsOffset + b) & 0xFF;
             int numDeltas = count - 1;
 
-            long firstValue = Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) b * Long.BYTES);
+            long firstValue = Unsafe.getUnsafe().getLong(baseAddr + srcFirstValuesOffset + (long) b * Long.BYTES);
             currentBlock++;
 
             if (bitWidth == 0) {
                 long minD = numDeltas > 0
-                        ? Unsafe.getUnsafe().getLong(srcMinDeltasAddr + (long) b * Long.BYTES)
+                        ? Unsafe.getUnsafe().getLong(baseAddr + srcMinDeltasOffset + (long) b * Long.BYTES)
                         : 0;
                 constantDeltaValue = firstValue;
                 constantDeltaStep = minD;
@@ -356,10 +357,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 ensureBuffer(count);
                 Unsafe.getUnsafe().putLong(blockBufferAddr, firstValue);
                 if (numDeltas > 0) {
-                    long minD = Unsafe.getUnsafe().getLong(srcMinDeltasAddr + (long) b * Long.BYTES);
+                    long minD = Unsafe.getUnsafe().getLong(baseAddr + srcMinDeltasOffset + (long) b * Long.BYTES);
                     long scratchAddr = blockBufferAddr + Long.BYTES;
-                    BitpackUtils.unpackAllValues(packedDataAddr, numDeltas, bitWidth, minD, scratchAddr);
-                    packedDataAddr += BitpackUtils.packedDataSize(numDeltas, bitWidth);
+                    BitpackUtils.unpackAllValues(baseAddr + packedDataOffset, numDeltas, bitWidth, minD, scratchAddr);
+                    packedDataOffset += BitpackUtils.packedDataSize(numDeltas, bitWidth);
                     long cumulative = firstValue;
                     for (int i = 0; i < numDeltas; i++) {
                         cumulative += Unsafe.getUnsafe().getLong(scratchAddr + (long) i * Long.BYTES);
@@ -377,14 +378,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // Accumulates across multiple high-bits words to fill the buffer.
             ensureBuffer(PostingIndexUtils.PACKED_BATCH_SIZE);
             int totalBuf = 0;
+            long baseAddr = valueMem.addressOf(0);
 
             // Load low-bits window at current position
             long lowBitPos = (long) efOutputCount * efL;
-            long lowWordAddr = efLowStart + ((lowBitPos >>> 6) << 3);
+            long lowWordAddr = baseAddr + efLowOffset + ((lowBitPos >>> 6) << 3);
             int lowBitOffset = (int) (lowBitPos & 63);
 
             while (efHighWordIdx < efNumHighWords && efOutputCount < efTotalCount && totalBuf < blockBufferCapacity) {
-                long word = Unsafe.getUnsafe().getLong(efHighStart + (long) efHighWordIdx * 8);
+                long word = Unsafe.getUnsafe().getLong(baseAddr + efHighOffset + (long) efHighWordIdx * 8);
                 if (word == 0) {
                     efHighWordIdx++;
                     continue;
@@ -436,7 +438,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private void decodeNextFlatBatch() {
             int batch = Math.min(flatRemaining, PostingIndexUtils.PACKED_BATCH_SIZE);
             ensureBuffer(batch);
-            BitpackUtils.unpackValuesFrom(flatDataBase, flatStartIdx, batch, flatBitWidth, flatBaseValue, blockBufferAddr);
+            long baseAddr = valueMem.addressOf(0);
+            BitpackUtils.unpackValuesFrom(baseAddr + flatDataOffset, flatStartIdx, batch, flatBitWidth, flatBaseValue, blockBufferAddr);
             flatStartIdx += batch;
             flatRemaining -= batch;
             blockBufferPos = 0;
@@ -446,10 +449,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private void ensureBuffer(int count) {
             if (count <= blockBufferCapacity) return;
             int newCap = Math.max(count, MIN_BUFFER_CAPACITY);
-            if (blockBufferAddr != 0) {
-                Unsafe.free(blockBufferAddr, (long) blockBufferCapacity * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
-            }
-            blockBufferAddr = Unsafe.malloc((long) newCap * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+            blockBufferAddr = Unsafe.realloc(
+                    blockBufferAddr,
+                    (long) blockBufferCapacity * Long.BYTES,
+                    (long) newCap * Long.BYTES,
+                    MemoryTag.NATIVE_INDEX_READER
+            );
             blockBufferCapacity = newCap;
         }
 
@@ -481,6 +486,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             cacheSidecarKeyAddrs(stride, localKey);
             int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
             int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);
+            long strideFileOffset = genFileOffset + siSize + strideOff;
             long strideAddr = genAddr + siSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
             byte mode = Unsafe.getUnsafe().getByte(strideAddr);
@@ -543,7 +549,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.isFlatMode = true;
                 this.flatBitWidth = bitWidth;
                 this.flatBaseValue = baseValue;
-                this.flatDataBase = dataAddr;
+                this.flatDataOffset = strideFileOffset + flatHeaderSize;
                 this.encodedBlockCount = 0;
                 this.currentBlock = 0;
                 this.sidecarStrideKeyStart = effectiveStart - startCount;
@@ -575,7 +581,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
             int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
-            this.encodedAddr = strideAddr + deltaHeaderSize + dataOffset;
+            this.encodedOffset = strideFileOffset + deltaHeaderSize + dataOffset;
 
             readDeltaBlockMetadata();
         }
@@ -635,7 +641,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) start * Integer.BYTES);
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) start * Integer.BYTES);
-            this.encodedAddr = genAddr + headerSize + dataOffset;
+            this.encodedOffset = genFileOffset + headerSize + dataOffset;
 
             readDeltaBlockMetadata();
         }
@@ -674,7 +680,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
             int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
-            this.encodedAddr = genAddr + headerSize + dataOffset;
+            this.encodedOffset = genFileOffset + headerSize + dataOffset;
 
             readDeltaBlockMetadata();
         }
@@ -685,20 +691,21 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            long pos = encodedAddr;
-            int firstWord = Unsafe.getUnsafe().getInt(pos);
+            long baseAddr = valueMem.addressOf(0);
+            long pos = encodedOffset;
+            int firstWord = Unsafe.getUnsafe().getInt(baseAddr + pos);
             if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
                 pos += 4;
-                efTotalCount = Unsafe.getUnsafe().getInt(pos);
+                efTotalCount = Unsafe.getUnsafe().getInt(baseAddr + pos);
                 pos += 4;
-                efL = Unsafe.getUnsafe().getByte(pos) & 0xFF;
+                efL = Unsafe.getUnsafe().getByte(baseAddr + pos) & 0xFF;
                 pos += 1;
-                long u = Unsafe.getUnsafe().getLong(pos);
+                long u = Unsafe.getUnsafe().getLong(baseAddr + pos);
                 pos += 8;
                 efLowMask = (efL < 64) ? (1L << efL) - 1 : -1L;
-                efLowStart = pos;
+                efLowOffset = pos;
                 int lowBytes = PostingIndexUtils.efLowBytesAligned(efTotalCount, efL);
-                efHighStart = pos + lowBytes;
+                efHighOffset = pos + lowBytes;
                 efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
                 efHighWordIdx = 0;
                 efOutputCount = 0;
@@ -717,33 +724,33 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             pos += 4;
 
-            srcValueCountsAddr = pos;
+            srcValueCountsOffset = pos;
             pos += firstWord;
 
-            srcFirstValuesAddr = pos;
+            srcFirstValuesOffset = pos;
             pos += (long) firstWord * Long.BYTES;
 
-            srcMinDeltasAddr = pos;
+            srcMinDeltasOffset = pos;
             pos += (long) firstWord * Long.BYTES;
 
-            srcBitWidthsAddr = pos;
+            srcBitWidthsOffset = pos;
             pos += firstWord;
 
             // packedOffsets only present for multi-block keys
-            long srcPackedOffsetsAddr = 0;
+            long srcPackedOffsetsOffset = 0;
             if (firstWord > 1) {
-                srcPackedOffsetsAddr = pos;
+                srcPackedOffsetsOffset = pos;
                 pos += (long) firstWord * Integer.BYTES;
             }
 
-            long packedDataStart = pos;
+            long packedDataStartOffset = pos;
 
             int startBlock = 0;
             if (minValue > 0 && firstWord > 1) {
                 int lo = 0, hi = firstWord - 1;
                 while (lo < hi) {
                     int mid = (lo + hi + 1) >>> 1;
-                    if (Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) mid * Long.BYTES) <= minValue) {
+                    if (Unsafe.getUnsafe().getLong(baseAddr + srcFirstValuesOffset + (long) mid * Long.BYTES) <= minValue) {
                         lo = mid;
                     } else {
                         hi = mid - 1;
@@ -754,11 +761,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             int skippedValueCount = 0;
             for (int b = 0; b < startBlock; b++) {
-                skippedValueCount += Unsafe.getUnsafe().getByte(srcValueCountsAddr + b) & 0xFF;
+                skippedValueCount += Unsafe.getUnsafe().getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
             }
             // Use packedOffsets for O(1) jump to startBlock's packed data
             if (startBlock > 0) {
-                packedDataStart += Unsafe.getUnsafe().getInt(srcPackedOffsetsAddr + (long) startBlock * Integer.BYTES);
+                packedDataStartOffset += Unsafe.getUnsafe().getInt(baseAddr + srcPackedOffsetsOffset + (long) startBlock * Integer.BYTES);
             }
             this.sidecarStrideKeyStart += skippedValueCount;
             this.denseVarKeyStartCount += skippedValueCount;
@@ -769,7 +776,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int endBlock = firstWord;
             if (maxValue < Long.MAX_VALUE && firstWord > 0) {
                 for (int b = startBlock; b < firstWord; b++) {
-                    if (Unsafe.getUnsafe().getLong(srcFirstValuesAddr + (long) b * Long.BYTES) > maxValue) {
+                    if (Unsafe.getUnsafe().getLong(baseAddr + srcFirstValuesOffset + (long) b * Long.BYTES) > maxValue) {
                         endBlock = b;
                         break;
                     }
@@ -777,7 +784,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
 
             this.encodedBlockCount = endBlock;
-            this.packedDataAddr = packedDataStart;
+            this.packedDataOffset = packedDataStartOffset;
             this.currentBlock = startBlock;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
