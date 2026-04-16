@@ -5,10 +5,10 @@ steps:
     submodules: false
 
   - bash: |
-      sudo apt-get update && sudo apt-get install -y openjdk-17-jdk build-essential zip
-      JAVA_PATH="/usr/lib/jvm/java-17-openjdk-amd64"
+      sudo apt-get update && sudo apt-get install -y openjdk-25-jdk build-essential zip
+      JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
       echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
-      echo "##vso[task.setvariable variable=JAVA_HOME_17_X64]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
     displayName: "Install JDK and build tools"
 
   - bash: mkdir -p "$HOME/.m2/repository"
@@ -29,7 +29,7 @@ steps:
     displayName: "Build server JAR"
     inputs:
       mavenPomFile: "pom.xml"
-      jdkVersionOption: "1.17"
+      jdkVersionOption: "1.25"
       goals: "package"
       options: "--batch-mode -Dmaven.test.skip=true -pl core -am $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
 

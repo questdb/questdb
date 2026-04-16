@@ -46,11 +46,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.tool_cache }}/Java_Temurin-Hotspot_jdk
-          key: java-temurin-17-${{ runner.os }}-${{ runner.arch }}
+          key: java-temurin-25-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-java@v4
         with:
           distribution: "temurin"
-          java-version: "17"
+          java-version: "25"
       - name: Cache Maven installation and repository
         id: maven-cache
         uses: actions/cache@v4
@@ -111,11 +111,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.tool_cache }}/Java_Temurin-Hotspot_jdk
-          key: java-temurin-17-${{ runner.os }}-${{ runner.arch }}
+          key: java-temurin-25-${{ runner.os }}-${{ runner.arch }}
       - uses: actions/setup-java@v4
         with:
           distribution: "temurin"
-          java-version: "17"
+          java-version: "25"
       - name: Cache Maven installation and repository
         id: maven-cache
         uses: actions/cache@v4

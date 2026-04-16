@@ -123,10 +123,10 @@ to JIT functionality, use an x86-64 machine or run an x86-64 JDK under Rosetta e
 ### Setting up Java and `JAVA_HOME`
 
 `JAVA_HOME` is required by Maven. It is possible to have multiple versions of
-Java on the same platform. Please set up `JAVA_HOME` to point to Java 17.
+Java on the same platform. Please set up `JAVA_HOME` to point to Java 25.
 Other versions of Java will not work. If you are new to Java please check
 that `JAVA_HOME` is pointing to the root of the Java directory:
-`C:\Users\me\dev\jdk-17` and **not** `C:\Users\me\dev\jdk-17\bin\java`.
+`C:\Users\me\dev\jdk-25` and **not** `C:\Users\me\dev\jdk-25\bin\java`.
 
 Linux/macOS
 

@@ -38,7 +38,7 @@ steps:
     displayName: "Run client tests (${{ parameters.configName }} config)"
     inputs:
       mavenPomFile: "client-main/core/pom.xml"
-      jdkVersionOption: "1.17"
+      jdkVersionOption: "1.25"
       goals: "test"
       options: "--batch-mode -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
     env:

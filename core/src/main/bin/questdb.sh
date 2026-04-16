@@ -362,6 +362,12 @@ function start {
     -XX:+UnlockExperimentalVMOptions
     -XX:+AlwaysPreTouch
     -XX:+UseParallelGC
+    --sun-misc-unsafe-memory-access=allow
+    --enable-native-access=io.questdb
+    --add-opens=java.base/java.lang=io.questdb
+    --add-opens=java.base/java.lang.reflect=io.questdb
+    --add-opens=java.base/java.nio=io.questdb
+    --add-opens=java.base/java.time.zone=io.questdb
     ${PROFILER_AGENT}
     ${JVM_PREPEND}
     "
