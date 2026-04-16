@@ -53,7 +53,7 @@ import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUti
 public class FloatGroupByFunctionKeyedBatchTest {
     private static final int ARG_COLUMN_INDEX = 0;
     private static final float[] ARG_VALUES = {
-            1.5f, Float.NaN, -2.5f, 100.0f, 0.0f, Float.POSITIVE_INFINITY, -1.0f, 7.7f
+            1.5f, Float.NaN, -2.5f, Float.NEGATIVE_INFINITY, -0.0f, Float.POSITIVE_INFINITY, -1.0f, 7.7f
     };
 
     @Test

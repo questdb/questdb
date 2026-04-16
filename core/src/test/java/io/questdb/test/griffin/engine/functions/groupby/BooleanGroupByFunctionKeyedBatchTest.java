@@ -45,50 +45,82 @@ import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUti
  */
 public class BooleanGroupByFunctionKeyedBatchTest {
     private static final int ARG_COLUMN_INDEX = 0;
+    private static final byte[] ARG_VALUES_ALL_FALSE = {
+            (byte) 0, (byte) 0, (byte) 0, (byte) 0,
+            (byte) 0, (byte) 0, (byte) 0, (byte) 0
+    };
+    private static final byte[] ARG_VALUES_ALL_TRUE = {
+            (byte) 1, (byte) 1, (byte) 1, (byte) 1,
+            (byte) 1, (byte) 1, (byte) 1, (byte) 1
+    };
     // Alternate true/false to keep bit-level value diversity across the batch.
-    private static final byte[] ARG_VALUES = {
+    private static final byte[] ARG_VALUES_MIXED = {
             (byte) 1, (byte) 0, (byte) 1, (byte) 0,
             (byte) 0, (byte) 1, (byte) 1, (byte) 0
     };
 
     @Test
+    public void testFirstBooleanAllFalse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), false, ARG_VALUES_ALL_FALSE));
+    }
+
+    @Test
+    public void testFirstBooleanAllTrue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), false, ARG_VALUES_ALL_TRUE));
+    }
+
+    @Test
     public void testFirstBooleanFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
-                new FirstBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), true));
+                new FirstBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), true, ARG_VALUES_MIXED));
     }
 
     @Test
     public void testFirstBooleanIndirectArg() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
-                new FirstBooleanGroupByFunction(new IndirectBoolArg(ARG_COLUMN_INDEX)), false));
+                new FirstBooleanGroupByFunction(new IndirectBoolArg(ARG_COLUMN_INDEX)), false, ARG_VALUES_MIXED));
     }
 
     @Test
     public void testFirstBooleanSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
-                new FirstBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), false));
+                new FirstBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), false, ARG_VALUES_MIXED));
+    }
+
+    @Test
+    public void testLastBooleanAllFalse() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), false, ARG_VALUES_ALL_FALSE));
+    }
+
+    @Test
+    public void testLastBooleanAllTrue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), false, ARG_VALUES_ALL_TRUE));
     }
 
     @Test
     public void testLastBooleanFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
-                new LastBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), true));
+                new LastBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), true, ARG_VALUES_MIXED));
     }
 
     @Test
     public void testLastBooleanIndirectArg() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
-                new LastBooleanGroupByFunction(new IndirectBoolArg(ARG_COLUMN_INDEX)), false));
+                new LastBooleanGroupByFunction(new IndirectBoolArg(ARG_COLUMN_INDEX)), false, ARG_VALUES_MIXED));
     }
 
     @Test
     public void testLastBooleanSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
-                new LastBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), false));
+                new LastBooleanGroupByFunction(BooleanColumn.newInstance(ARG_COLUMN_INDEX)), false, ARG_VALUES_MIXED));
     }
 
-    private static void testEquivalence(GroupByFunction function, boolean fastPath) {
+    private static void testEquivalence(GroupByFunction function, boolean fastPath, byte[] argValues) {
         assertEquivalence(function, fastPath, Byte.BYTES,
-                allocArgBuffer(ARG_VALUES), ARG_VALUES.length);
+                allocArgBuffer(argValues), argValues.length);
     }
 }

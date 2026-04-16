@@ -54,7 +54,7 @@ import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUti
 public class DoubleGroupByFunctionKeyedBatchTest {
     private static final int ARG_COLUMN_INDEX = 0;
     private static final double[] ARG_VALUES = {
-            1.5, Double.NaN, -2.5, 100.0, 0.0, Double.POSITIVE_INFINITY, -1.0, 7.7
+            1.5, Double.NaN, -2.5, Double.NEGATIVE_INFINITY, -0.0, Double.POSITIVE_INFINITY, -1.0, 7.7
     };
 
     @Test
