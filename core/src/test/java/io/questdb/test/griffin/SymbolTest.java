@@ -137,7 +137,7 @@ public class SymbolTest extends AbstractCairoTest {
                     ") timestamp (timestamp)");
             execute("insert into x select" +
                     " rnd_symbol(100, 2, 4, 2) sym," +
-                    " '2024-03-05T12:13'::timestamp timestamp NOT NULL" +
+                    " '2024-03-05T12:13'::timestamp timestamp" +
                     " from long_sequence(51)");
             engine.releaseAllWriters();
             assertQueryNoLeakCheck(

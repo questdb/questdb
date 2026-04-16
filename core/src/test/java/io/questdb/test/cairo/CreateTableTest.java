@@ -634,7 +634,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableWithInvalidArrayType() throws Exception {
-        assertMemoryLeak(() -> assertException("create table x (ts timestamp NOT NULL, arr varchar[]);", 34, "unsupported array element type [type=VARCHAR]"));
+        assertMemoryLeak(() -> assertException("create table x (ts timestamp NOT NULL, arr varchar[]);", 43, "unsupported array element type [type=VARCHAR]"));
     }
 
     @Test

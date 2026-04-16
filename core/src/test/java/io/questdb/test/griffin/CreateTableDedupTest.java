@@ -166,37 +166,37 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             String createPrefix = "create table a (ts timestamp NOT NULL, i int, s symbol, l long, str string)";
             assertException(
                     createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);",
-                    121,
+                    130,
                     "deduplication is possible only on WAL tables"
             );
             assertException(
                     createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (;",
-                    127,
+                    136,
                     "literal expected"
             );
             assertException(
                     createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (a);",
-                    127,
+                    136,
                     "deduplicate key column not found [column=a]"
             );
             assertException(
                     createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);",
-                    127,
+                    136,
                     "deduplicate key list must include dedicated timestamp column"
             );
             assertException(
                     createPrefix + " timestamp(ts) partition by day wal deduplicate KEYS (s);",
-                    114,
+                    123,
                     "expected 'upsert'"
             );
             assertException(
                     createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT (s);",
-                    121,
+                    130,
                     "expected 'keys'"
             );
             assertException(
                     createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS",
-                    125,
+                    134,
                     "column list expected"
             );
         });
@@ -206,7 +206,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     public void testCreateTableWithArrayDedupKey() throws Exception {
         assertMemoryLeak(() -> assertException("CREATE TABLE x (ts TIMESTAMP NOT NULL, arr DOUBLE[])" +
                         " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)",
-                101, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
+                110, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
     }
 
     @Test

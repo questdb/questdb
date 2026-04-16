@@ -9816,7 +9816,7 @@ create table tab as (
         try {
             assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
                 connection.setAutoCommit(false);
-                connection.prepareStatement("CREATE TABLE tab (ts TIMESTAMP NOT NULL, s INT)").execute();
+                connection.prepareStatement("CREATE TABLE tab (ts TIMESTAMP, s INT)").execute();
                 connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-05T11:12:22.116234Z', 1)").execute();//monday
                 connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-06T16:42:00.333999Z', 2)").execute();//tuesday
                 connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-07T03:52:00.999999Z', 3)").execute();//wednesday

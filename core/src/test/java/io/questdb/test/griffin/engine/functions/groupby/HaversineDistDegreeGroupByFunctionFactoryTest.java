@@ -41,7 +41,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void test10Rows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 double latDegree = -5;
@@ -74,7 +74,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void test10RowsAndNullAtEnd() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 double latDegree = -5;
@@ -108,8 +108,8 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void test2DistancesAtEquator() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab1 (lat double, lon double, k timestamp NOT NULL)");
-            execute("create table tab2 (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab1 (lat double, lon double, k timestamp)");
+            execute("create table tab2 (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab1")) {
                 double lonDegree = 0;
@@ -168,7 +168,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void test3Rows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 double latDegree = 1;
@@ -1273,7 +1273,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testAllNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 for (int i = 0; i < 2; i++) {
@@ -1297,7 +1297,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testCircumferenceAtEquator() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 double lonDegree = -180;
@@ -1328,7 +1328,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testNegativeLatLon() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 double latDegree = -1;
@@ -1359,7 +1359,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testOneNullAtEnd() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 TableWriter.Row r;
@@ -1395,7 +1395,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testOneNullAtTop() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 TableWriter.Row r = w.newRow();
@@ -1430,7 +1430,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testOneNullInMiddle() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 TableWriter.Row r = w.newRow();
@@ -1462,7 +1462,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testOneNullsInMiddle() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 TableWriter.Row r = w.newRow();
@@ -1498,7 +1498,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testPositiveLatLon() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (lat double, lon double, k timestamp NOT NULL)");
+            execute("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 double latDegree = 1;

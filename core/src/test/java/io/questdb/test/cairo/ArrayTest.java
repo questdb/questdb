@@ -1540,7 +1540,7 @@ public class ArrayTest extends AbstractCairoTest {
         assertException("CREATE TABLE tango (ts TIMESTAMP NOT NULL, arr DOUBLE[])" +
                         " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
                         " DEDUP UPSERT KEYS (ts, arr)",
-                107,
+                116,
                 "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"
         );
     }

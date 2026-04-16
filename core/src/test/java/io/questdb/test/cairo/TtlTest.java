@@ -145,46 +145,46 @@ public class TtlTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[69] missing argument, should be <number> <unit> or <number_with_unit>", e.getMessage());
+            assertEquals("[78] missing argument, should be <number> <unit> or <number_with_unit>", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL X");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be <number> <unit> but was X", e.getMessage());
+            assertEquals("[79] invalid syntax, should be <number> <unit> but was X", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 12");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[72] missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected", e.getMessage());
+            assertEquals("[81] missing unit, 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)' expected", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1 NONE");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[72] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was 'NONE'",
+            assertEquals("[81] invalid unit, expected 'HOUR(S)', 'DAY(S)', 'WEEK(S)', 'MONTH(S)' or 'YEAR(S)', but was 'NONE'",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid argument, should be <number> <unit> or <number_with_unit>",
+            assertEquals("[79] invalid argument, should be <number> <unit> or <number_with_unit>",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL H");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be <number> <unit> but was H",
+            assertEquals("[79] invalid syntax, should be <number> <unit> but was H",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 1G");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[71] invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was 'G'",
+            assertEquals("[80] invalid time unit, expecting 'H', 'D', 'W', 'M' or 'Y', but was 'G'",
                     e.getMessage());
         }
     }
@@ -453,74 +453,74 @@ public class TtlTest extends AbstractCairoTest {
     public void testGranularityInvalidCreate() throws Exception {
         assertException(
                 "CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY TTL 1 HOUR",
-                69,
+                78,
                 "TTL value must be an integer multiple of partition size"
         );
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY TTL 25 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[69] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[78] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK TTL 1 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY WEEK TTL 12 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY MONTH TTL 1 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[80] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY MONTH TTL 30 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[80] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY MONTH TTL 4 WEEK");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[71] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[80] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR TTL 1000 HOUR");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR TTL 365 DAY");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR TTL 52 WEEK");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY YEAR TTL 13 MONTH");
             fail("Accepted a TTL that's too fine-grained for partition size");
         } catch (SqlException e) {
-            assertEquals("[70] TTL value must be an integer multiple of partition size", e.getMessage());
+            assertEquals("[79] TTL value must be an integer multiple of partition size", e.getMessage());
         }
     }
 
@@ -647,42 +647,42 @@ public class TtlTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL -1 HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] invalid syntax, should be <number> <unit> but was -",
+            assertEquals("[79] invalid syntax, should be <number> <unit> but was -",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 HOURS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 2147483648. Max value: 2147483647",
+            assertEquals("[79] value out of range: 2147483648. Max value: 2147483647",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 89_478_486 DAYS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 89478486 days. Max value: 89478485 days",
+            assertEquals("[79] value out of range: 89478486 days. Max value: 89478485 days",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 12_782_641 WEEKS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 12782641 weeks. Max value: 12782640 weeks",
+            assertEquals("[79] value out of range: 12782641 weeks. Max value: 12782640 weeks",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 2_147_483_648 MONTHS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 2147483648. Max value: 2147483647",
+            assertEquals("[79] value out of range: 2147483648. Max value: 2147483647",
                     e.getMessage());
         }
         try {
             execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR TTL 178_956_971 YEARS");
             fail("Invalid syntax accepted");
         } catch (SqlException e) {
-            assertEquals("[70] value out of range: 178956971 years. Max value: 178956970 years",
+            assertEquals("[79] value out of range: 178956971 years. Max value: 178956970 years",
                     e.getMessage());
         }
     }

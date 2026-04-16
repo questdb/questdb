@@ -2121,7 +2121,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         "t TIMESTAMP NOT NULL, " +
                         "`bool.flag` BOOLEAN) " +
                         "timestamp(t) " +
-                        "partition by MONTH", 29, "new column name contains invalid characters"
+                        "partition by MONTH", 38, "new column name contains invalid characters"
         ));
     }
 
@@ -4082,7 +4082,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testExecuteQuery() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select * from (select rnd_int() x from long_sequence(20)) timestamp(x)", 68, "not a TIMESTAMP NOT NULL"));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select * from (select rnd_int() x from long_sequence(20)) timestamp(x)", 68, "not a TIMESTAMP"));
     }
 
     @Test
@@ -4512,7 +4512,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> testInsertAsSelect(
                 expectedData,
-                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, h SHORT, i DATE, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP NOT NULL, o BYTE, p BINARY)",
+                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, h SHORT, i DATE, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY)",
                 "insert into x " +
                         "select" +
                         " rnd_int()," +
@@ -4570,7 +4570,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> testInsertAsSelect(
                 expectedData,
-                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, h SHORT, i DATE, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP NOT NULL, o BYTE, p BINARY)",
+                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, h SHORT, i DATE, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY)",
                 "insert into x (a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p) " +
                         "select" +
                         " rnd_int()," +
@@ -4754,7 +4754,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> testInsertAsSelect(
                 expectedData,
-                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP NOT NULL, o BYTE, p BINARY)",
+                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY)",
                 "insert into x (e,n)" +
                         "select" +
                         " rnd_double(2)," +
@@ -4802,7 +4802,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> testInsertAsSelect(
                 expectedData,
-                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP NOT NULL, o BYTE, p BINARY)",
+                "create table x (a INT, b INT, c BOOLEAN, d STRING, e DOUBLE, f FLOAT, g SHORT, j TIMESTAMP, k SYMBOL, l LONG, m LONG, n TIMESTAMP, o BYTE, p BINARY)",
                 "insert into x (e,g)" +
                         "select" +
                         " rnd_double(2)," +
@@ -4935,7 +4935,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         JUMLG\t-640305320\t
                         MLLEO\t2011884585\t
                         """,
-                "create table x (a SYMBOL, b INT, n TIMESTAMP NOT NULL)",
+                "create table x (a SYMBOL, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -4981,7 +4981,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         \t1060917944\t
                         \t2060263242\t
                         """,
-                "create table x (a STRING, b INT, n TIMESTAMP NOT NULL)",
+                "create table x (a STRING, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -5065,7 +5065,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectInconvertibleList1() throws Exception {
         assertMemoryLeak(() -> testInsertAsSelectError(
-                "create table x (a INT, b INT, n TIMESTAMP NOT NULL)",
+                "create table x (a INT, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -5079,7 +5079,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectInconvertibleList2() throws Exception {
         assertMemoryLeak(() -> testInsertAsSelectError(
-                "create table x (a BYTE, b INT, n TIMESTAMP NOT NULL)",
+                "create table x (a BYTE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -5092,7 +5092,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectInconvertibleList3() throws Exception {
         assertMemoryLeak(() -> testInsertAsSelectError(
-                "create table x (a BYTE, b INT, n TIMESTAMP NOT NULL)",
+                "create table x (a BYTE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -5105,7 +5105,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectInconvertibleList4() throws Exception {
         assertMemoryLeak(() -> testInsertAsSelectError(
-                "create table x (a DATE, b INT, n TIMESTAMP NOT NULL)",
+                "create table x (a DATE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -5119,7 +5119,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectInconvertibleList5() throws Exception {
         assertMemoryLeak(() -> testInsertAsSelectError(
-                "create table x (a FLOAT, b INT, n TIMESTAMP NOT NULL)",
+                "create table x (a FLOAT, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -5648,7 +5648,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 """;
 
         assertMemoryLeak(() -> {
-            execute("create table xy (ts timestamp NOT NULL)");
+            execute("create table xy (ts timestamp)");
             // execute insert with nanos - we expect the nanos to be truncated
             execute("insert into xy(ts) values ('2020-01-10T12:00:01.111143123Z')");
 

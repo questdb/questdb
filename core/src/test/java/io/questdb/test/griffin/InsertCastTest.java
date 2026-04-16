@@ -1440,7 +1440,7 @@ public class InsertCastTest extends AbstractCairoTest {
     @Test
     public void testInsertNullDateIntoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x(ts timestamp NOT NULL)");
+            execute("create table x(ts timestamp)");
             execute("insert into x values (cast(null as date))");
             assertSql(
                     "ts\n" +
