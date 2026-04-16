@@ -87,7 +87,17 @@ Discussion during `/gsd-discuss-phase 12` locked the accepted/rejected shapes. I
 
 - **`PREV(timestamp_col)`** — the designated timestamp column. The timestamp getter short-circuits on `col == timestampIndex` so the cross-col path was a dead pointer; reject at compile time. Message: `"PREV cannot reference the designated timestamp column"` at `rhs.position`.
 - **`PREV(target_col)` where `target_col` is the same output column** — equivalent to bare PREV (self-prev). Alias internally to `FILL_PREV_SELF` rather than `fillModes[col] = col`, eliminating one dead snapshot slot. No user-visible change, cleaner internal state. (This is not a rejection — it's a compile-time rewrite.)
-- **`PREV(b)` where `b` is itself a PREV-filled column (chain)** — transitive PREV semantics are unclear and not supported by the snapshot infrastructure. Reject with `"PREV source must be an aggregate or key column, not another PREV"` at `rhs.position`.
+- **Chain: `PREV(b)` where `b` is itself cross-col PREV** — chains are well-defined at runtime (snapshot contains data values only, every cross-col is one-hop to source's last data value, no cycles at runtime), but the resulting "data semantics" can be surprising when a user expects `LAG`-style "displayed semantics". Keep the grammar narrow until a clear use case emerges. Detection rule: **after `fillModes` is fully built, reject any column `col` where `fillModes[col] >= 0 AND fillModes[fillModes[col]] >= 0`**. Sketch (~6 lines, at the end of the per-column build loop in `SqlCodeGenerator.generateFill`):
+  ```java
+  for (int col = 0; col < columnCount; col++) {
+      int mode = fillModes.getQuick(col);
+      if (mode >= 0 && fillModes.getQuick(mode) >= 0) {
+          throw SqlException.$(fillValuesExprs.getQuick(0).position,
+                  "FILL(PREV) chains are not supported: source column is itself a cross-column PREV");
+      }
+  }
+  ```
+  Rule accepts: `PREV(b)` where b is FILL_CONSTANT (NULL or constant), FILL_PREV_SELF (bare PREV), FILL_KEY (key column). Rule rejects: true mutual cycles (`PREV(b), PREV(a)`) and multi-hop chains (`PREV(b), PREV(c), PREV`) when the source is itself cross-col. Position points at the FILL clause (generic); see Claude's Discretion below for precise-position variant.
 - **Malformed PREV shapes — single unified rejection:**
   - `PREV(func_call)` — `rhs.type != LITERAL`.
   - `PREV(a, b)` — `paramCount > 1`.
@@ -102,7 +112,10 @@ For each rejected shape, add one positive and one negative test in `SampleByFill
 
 - `testFillPrevRejectTimestamp` (negative) — `FILL(PREV(ts))` raises the documented error.
 - `testFillPrevSelfAlias` (positive) — `FILL(PREV(a))` where `a` is the target column — confirm output matches bare `FILL(PREV)` semantics and the plan shows the aliased mode.
-- `testFillPrevRejectChain` (negative) — `FILL(PREV(b), PREV(a))` where b→a chain is detected and rejected.
+- `testFillPrevRejectMutualChain` (negative) — `FILL(PREV(b), PREV(a))` mutual cycle detected and rejected.
+- `testFillPrevRejectThreeHopChain` (negative) — `FILL(PREV(b), PREV(c), PREV)` where a→b→c, rejected.
+- `testFillPrevAcceptPrevToSelfPrev` (positive) — `FILL(PREV(b), PREV)` where b is bare PREV (FILL_PREV_SELF) — accepted, not a chain under the rule.
+- `testFillPrevAcceptPrevToConstant` (positive) — `FILL(PREV(b), NULL)` and `FILL(PREV(b), 42.0)` — accepted, source is FILL_CONSTANT.
 - `testFillPrevRejectFuncArg`, `testFillPrevRejectMultiArg`, `testFillPrevRejectNoArg`, `testFillPrevRejectBindVar` — the four shapes of malformed PREV.
 - `testFillPrevRejectTypeMismatch` — `FILL(PREV(long_col))` filling a DOUBLE target.
 
@@ -272,7 +285,7 @@ Downstream agents MUST read these before planning or implementing.
 - **D-04:** Bare `PREV` inside per-column list means self-prev for that slot. Keep and document.
 - **D-05:** `PREV(ts)` — reject at compile time with positioned error.
 - **D-06:** `PREV(self)` — alias internally to `FILL_PREV_SELF` (not rejection, just internal normalization).
-- **D-07:** `PREV(b)` where b is itself PREV-filled (chain) — reject at compile time.
+- **D-07:** Chain rejection — reject iff `fillModes[col] >= 0 AND fillModes[fillModes[col]] >= 0` (source column is itself cross-col PREV). Accepts `PREV(b)` where b is FILL_CONSTANT / FILL_PREV_SELF / FILL_KEY. Simplest variant (~6 lines) with generic FILL-clause position. Chains are runtime-safe (no cycles, snapshot is one-hop to source's last data value) but "data semantics" diverge from `LAG`-style "displayed semantics" in rare consecutive-gap cases — keep the grammar narrow until a clear use case emerges.
 - **D-08:** Malformed PREV shapes (non-LITERAL rhs, paramCount != 1) — single unified rejection at `fillExpr.position`. Bind variables covered by this rule.
 - **D-09:** Type-tag mismatch between PREV source and target — reject at compile time.
 
@@ -282,6 +295,7 @@ Downstream agents MUST read these before planning or implementing.
 ### Claude's discretion
 - Exception vs sentinel for the fallback signal mechanism — both work; plan decides based on what's cleanest to thread through the three call sites.
 - Error-message wording for rejected grammar shapes — use positioned `SqlException.$(position, "message").put(...)` style, pick clear messages; exact wording at implementation time.
+- Chain rejection — precise-position variant (~10 lines, remembers `ExpressionNode` per column so the error points at the specific offending `PREV(...)`) vs the simplest ~6-line variant with generic FILL-clause position. Both produce identical behavior; plan picks based on how much the UX upgrade is worth for a rare error path.
 
 ## Deferred ideas
 

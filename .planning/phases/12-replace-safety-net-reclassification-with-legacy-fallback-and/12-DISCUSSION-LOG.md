@@ -50,6 +50,43 @@
 
 **User's choice:** Reject chains at compile time.
 
+**Revisit (2026-04-17):** User asked to explore chains in more detail. Investigation revealed:
+- Runtime is safe: `savePrevValues` only fires on data rows, never on fill rows. Every cross-col PREV is one-hop to `simplePrev[source]` = source's last data value. No cycles, no infinite loops.
+- The earlier "reject all chains" framing was based on a wrong mental model ("transitive PREV semantics unclear / not supported by snapshot infrastructure"). The snapshot infrastructure handles all cross-col patterns correctly via the existing `prevSourceCols` build (adds both target and source).
+- The real tradeoff is "data semantics" (current impl: PREV reads source's last actual data value, ignoring any fills between) vs "displayed semantics" (hypothetical: PREV reads source's previous output row, which may be a fill). These diverge only in rare cases with consecutive gap buckets.
+
+Refined options:
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Reject chains — simplest 6-line variant | Post-pass check: `if (fillModes[col] >= 0 && fillModes[fillModes[col]] >= 0)` → reject with generic FILL-clause position. Catches mutual cycles and multi-hop chains. Accepts PREV to FILL_CONSTANT / FILL_PREV_SELF / FILL_KEY sources. | ✓ |
+| Reject chains — precise-position 10-line variant | Same rule, remembers ExpressionNode per column for precise error position. Better UX. | |
+| Accept all, document 'data' semantics | No compile-time restriction. Add comments + lock-in tests for 3-hop / mutual / to-constant cases. | |
+
+**User's final choice:** Reject chains — simplest 6-line variant. Keep grammar narrow until clear use case emerges; "data vs displayed" divergence is hidden from users by the restriction.
+
+**Refined detection rule:**
+```java
+for (int col = 0; col < columnCount; col++) {
+    int mode = fillModes.getQuick(col);
+    if (mode >= 0 && fillModes.getQuick(mode) >= 0) {
+        throw SqlException.$(fillValuesExprs.getQuick(0).position,
+                "FILL(PREV) chains are not supported: source column is itself a cross-column PREV");
+    }
+}
+```
+
+Accept examples confirmed:
+- `FILL(PREV(b), PREV)` — b is FILL_PREV_SELF (-2). Not a chain.
+- `FILL(PREV(b), NULL)` — b is FILL_CONSTANT (-1). Not a chain.
+- `FILL(PREV(city), PREV)` — city is FILL_KEY (-3). Not a chain.
+
+Reject examples confirmed:
+- `FILL(PREV(b), PREV(a))` — mutual cycle (both cross-col).
+- `FILL(PREV(b), PREV(c), PREV)` — three-hop chain where a→b→c.
+
+Precise-position variant kept under Claude's Discretion in CONTEXT.md — planner/executor can upgrade if UX improvement is deemed worthwhile.
+
 ### Malformed PREV shapes — function arg, multi-arg, no-arg
 
 | Option | Description | Selected |
