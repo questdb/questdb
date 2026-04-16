@@ -67,6 +67,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         if (c == null) {
             c = new Cursor();
         }
+        c.isPooled = false;
         return initCursor(c, key, minValue, maxValue);
     }
 
@@ -110,6 +111,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         protected long next;
         protected long position;
         protected long valueCount;
+        private boolean isPooled;
         private long maxValue;
         private long minValue;
         private long nullCount;
@@ -119,8 +121,9 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
         @Override
         public void close() {
-            if (freeCursors.count() < MAX_CACHED_FREE_CURSORS) {
+            if (!isPooled && freeCursors.count() < MAX_CACHED_FREE_CURSORS) {
                 freeCursors.push(this);
+                isPooled = true;
             }
         }
 

@@ -98,7 +98,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
         @Override
         public void close() {
             Misc.freeObjListAndClear(cursors);
-            currentCursor = Misc.free(currentCursor);
+            currentCursor = null;
         }
 
         @Override

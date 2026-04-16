@@ -71,6 +71,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             NullCursor nc;
             if (freeNullCursors.size() > 0) {
                 nc = freeNullCursors.popLast();
+                nc.isPooled = false;
             } else {
                 nc = new NullCursor();
             }
@@ -84,6 +85,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             Cursor c;
             if (freeCursors.size() > 0) {
                 c = freeCursors.popLast();
+                c.isPooled = false;
             } else {
                 c = new Cursor();
             }
@@ -98,12 +100,14 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         protected long minValue;
         protected long next;
         protected long valueCount;
+        boolean isPooled;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
 
         @Override
         public void close() {
-            if (freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                isPooled = true;
                 freeCursors.add(this);
             }
         }
@@ -209,7 +213,8 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
         @Override
         public void close() {
-            if (freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            if (!isPooled && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                isPooled = true;
                 freeNullCursors.add(this);
             }
         }

@@ -60,6 +60,7 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
         NullCursor c;
         if (freeCursors.size() > 0) {
             c = freeCursors.popLast();
+            c.isPooled = false;
         } else {
             c = new NullCursor(this.freeCursors);
         }
@@ -121,6 +122,7 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
 
     private static class NullCursor implements RowCursor {
         private final ObjList<NullCursor> pool;
+        private boolean isPooled;
         private long value;
 
         NullCursor(ObjList<NullCursor> freeCursors) {
@@ -129,8 +131,9 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
 
         @Override
         public void close() {
-            if (pool.size() < MAX_CACHED_FREE_CURSORS) {
+            if (pool.size() < MAX_CACHED_FREE_CURSORS && !isPooled) {
                 pool.add(this);
+                isPooled = true;
             }
         }
 

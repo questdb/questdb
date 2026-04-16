@@ -86,6 +86,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             Cursor c;
             if (freeCursors.size() > 0) {
                 c = freeCursors.popLast();
+                c.isPooled = false;
             } else {
                 c = new Cursor();
             }
@@ -124,6 +125,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int flatStartIdx;
         private boolean isEFMode;
         private boolean isFlatMode;
+        private boolean isPooled;
         private int lookupEnd;
         private int lookupPos;
         private long maxValue;
@@ -147,7 +149,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // Inter-cursor cache reuse is near-zero anyway (different blocks
             // on reacquire), so the savings would be only one malloc amortized
             // over a full scan — not worth the worst-case retention.
-            if (freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
                 freeCursors.add(this);

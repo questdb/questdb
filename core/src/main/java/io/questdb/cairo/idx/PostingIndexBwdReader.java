@@ -87,6 +87,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             Cursor c;
             if (freeCursors.size() > 0) {
                 c = freeCursors.popLast();
+                c.isPooled = false;
             } else {
                 c = new Cursor();
             }
@@ -122,6 +123,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private int flatStartIdx;
         private boolean isEFMode;
         private boolean isFlatMode;
+        private boolean isPooled;
         private int lookupEnd;
         private int lookupPos;
         private long maxValue;
@@ -145,7 +147,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // Retaining data-scaled buffers would pin memory proportional to
             // historical peak, multiplied across pool slots × partitions ×
             // concurrent table readers.
-            if (freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            if (!isPooled && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                isPooled = true;
                 closeCoveringResources();
                 if (efRankDirAddr != 0) {
                     Unsafe.free(efRankDirAddr, (long) efRankDirCapacity * Integer.BYTES, MemoryTag.NATIVE_INDEX_READER);
