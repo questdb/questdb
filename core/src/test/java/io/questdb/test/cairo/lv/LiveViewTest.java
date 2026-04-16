@@ -211,6 +211,41 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewRejectsDedupBase() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, symbol)");
+        drainWalQueue();
+
+        // Incremental refresh reads the pre-dedup WAL row stream; rows dropped or replaced
+        // at apply time would be double-counted, so DEDUP base tables are rejected for V1.
+        assertException(
+                "CREATE LIVE VIEW lv_bad AS" +
+                        " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades",
+                17,
+                "live view cannot be created over a base table with DEDUP keys"
+        );
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
+    }
+
+    @Test
+    public void testCreateLiveViewRejectsJoin() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        execute("CREATE TABLE refs (symbol SYMBOL, name STRING, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        assertException(
+                "CREATE LIVE VIEW lv_bad AS" +
+                        " SELECT t.symbol, t.price, t.ts, row_number() OVER () AS rn" +
+                        " FROM trades t JOIN refs r ON (symbol)",
+                17,
+                "live view select must be a simple scan of a single WAL base table"
+        );
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
+    }
+
+    @Test
     public void testCreateLiveViewRejectsNonZeroPassWindow() throws Exception {
         execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR WAL");
@@ -223,6 +258,37 @@ public class LiveViewTest extends AbstractCairoTest {
                         " SELECT symbol, ts, first_value(price) ignore nulls over (partition by symbol) AS fv FROM trades",
                 17,
                 "live view select may only use window functions that support incremental refresh"
+        );
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
+    }
+
+    @Test
+    public void testCreateLiveViewRejectsSubquery() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        assertException(
+                "CREATE LIVE VIEW lv_bad AS" +
+                        " SELECT symbol, price, ts, row_number() OVER () AS rn" +
+                        " FROM (SELECT symbol, price, ts FROM trades)",
+                27,
+                "live view requires a single base table in FROM clause"
+        );
+        Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
+    }
+
+    @Test
+    public void testCreateLiveViewRejectsWhereClause() throws Exception {
+        execute("CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY HOUR WAL");
+        drainWalQueue();
+
+        assertException(
+                "CREATE LIVE VIEW lv_bad AS" +
+                        " SELECT symbol, price, ts, row_number() OVER () AS rn FROM trades WHERE price > 100",
+                17,
+                "live view select cannot use a WHERE clause yet"
         );
         Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv_bad"));
     }

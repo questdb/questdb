@@ -78,10 +78,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return didWork;
     }
 
-    // TODO(live-view): zero-GC + algorithmic — recompiles the SELECT, rebuilds the factory, and runs a fresh cursor
-    //  on every WAL commit. SqlCompiler.compile() and factory construction allocate heavily. Incremental refresh
-    //  (WalTxnRangeLoader + computeNext()) removes the recompile entirely; until then, at minimum cache the
-    //  compiled factory on LiveViewInstance and reuse the cursor across refreshes.
+    // TODO(live-view): full recompute on every WAL commit. Caching the compiled factory avoids the SQL recompile
+    //  but the factory's cursor still scans every base-table row. A real incremental path reads just the rows
+    //  committed since lastProcessedSeqTxn from the WAL segment (see WalSegmentPageFrameCursor) and drives the
+    //  compiled factory's WindowFunction instances via computeNext(). The state preservation for window
+    //  functions across refreshes still needs design work, so the incremental path is a follow-up.
     private void refreshInstance(LiveViewInstance instance, long seqTxn) {
         if (!instance.tryLockForRefresh()) {
             // A concurrent drop or refresh holds the latch; skip this turn and let the other
@@ -92,13 +93,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.isDropped() || instance.isInvalid()) {
                 return;
             }
-            String selectSql = instance.getDefinition().getViewSql();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery cq = compiler.compile(selectSql, executionContext);
-                try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                    try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                        instance.refresh(cursor);
+            try {
+                RecordCursorFactory factory = instance.getCompiledFactory();
+                if (factory == null) {
+                    // First refresh: compile the SELECT once and cache the factory on the instance.
+                    // Subsequent refreshes reuse this factory, skipping the SQL parse/plan/codegen path.
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
+                        factory = cq.getRecordCursorFactory();
                     }
+                    instance.setCompiledFactory(factory);
+                }
+                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                    instance.refresh(cursor);
                 }
             } catch (Throwable t) {
                 LOG.error().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())

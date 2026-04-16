@@ -1,0 +1,404 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo.lv;
+
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.wal.WalReader;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+/**
+ * Page frame cursor over a single {@code [rowLo, rowHi)} slice of one WAL segment.
+ * Opens a {@link WalReader} per {@link #of} call, mmaps the segment's column files,
+ * and exposes a single NATIVE-format {@link PageFrame} whose addresses resolve to
+ * those mmaps directly. Symbol resolution is delegated to the WalReader, which
+ * reads the hardlinked clean-symbol files and the segment's local {@code _event}
+ * diffs.
+ * <p>
+ * The designated timestamp column is special-cased: WAL stores it as a 128-bit
+ * (timestamp, rowId) pair, so the cursor extracts 8-byte timestamps into a
+ * pinned buffer to match the layout downstream readers expect.
+ * <p>
+ * Column tops are not considered: WAL segments are always written with a fixed
+ * schema, so any schema drift between segments triggers a full recompute in the
+ * caller rather than being handled here.
+ * <p>
+ * This cursor yields at most one frame per call to {@link #of}; iteration of
+ * larger-than-page-frame row ranges is not supported yet.
+ */
+public class WalSegmentPageFrameCursor implements PageFrameCursor {
+    private static final long TIMESTAMP_PAIR_BYTES = 16L;
+    private final int columnCount;
+    private final IntList columnIndexes;
+    private final ColumnMapping columnMapping = new ColumnMapping();
+    private final IntList columnSizeShifts;
+    private final CairoConfiguration configuration;
+    private final MemoryCARWImpl extractedTimestampMem;
+    private final SingleFrame frame = new SingleFrame();
+    private final LongList pageAddresses = new LongList();
+    private final LongList pageSizes = new LongList();
+    private final ObjList<WalSymbolTable> symbolTables = new ObjList<>();
+    private boolean consumed;
+    private WalReader reader;
+    private long rowHi;
+    private long rowLo;
+
+    public WalSegmentPageFrameCursor(
+            @NotNull CairoConfiguration configuration,
+            @Transient @NotNull IntList columnIndexes,
+            @Transient @NotNull IntList columnSizeShifts
+    ) {
+        assert columnIndexes.size() == columnSizeShifts.size();
+        this.configuration = configuration;
+        this.columnCount = columnIndexes.size();
+        this.columnIndexes = new IntList(columnCount);
+        this.columnIndexes.addAll(columnIndexes);
+        this.columnSizeShifts = new IntList(columnCount);
+        this.columnSizeShifts.addAll(columnSizeShifts);
+        // Pinned scratch buffer for extracted timestamps. 64 KiB base page is
+        // small enough to start cheap and doubles as needed.
+        this.extractedTimestampMem = new MemoryCARWImpl(
+                64L * 1024L,
+                Integer.MAX_VALUE,
+                MemoryTag.NATIVE_DEFAULT
+        );
+    }
+
+    @Override
+    public void calculateSize(RecordCursor.Counter counter) {
+        if (!consumed) {
+            counter.add(rowHi - rowLo);
+        }
+    }
+
+    @Override
+    public void close() {
+        reader = Misc.free(reader);
+        Misc.free(extractedTimestampMem);
+    }
+
+    @Override
+    public ColumnMapping getColumnMapping() {
+        return columnMapping;
+    }
+
+    @Override
+    public long getRemainingRowsInInterval() {
+        return consumed ? 0L : (rowHi - rowLo);
+    }
+
+    @Override
+    public StaticSymbolTable getSymbolTable(int columnIndex) {
+        return symbolTables.getQuick(columnIndex);
+    }
+
+    @Override
+    public boolean isExternal() {
+        return false;
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        // The refresh path is single-threaded and WalReader.getSymbolValue() does not
+        // mutate state, so returning the cached instance is safe.
+        return symbolTables.getQuick(columnIndex);
+    }
+
+    @Override
+    public @Nullable PageFrame next(long skipTarget) {
+        if (consumed || rowHi == rowLo) {
+            return null;
+        }
+        consumed = true;
+        return frame;
+    }
+
+    /**
+     * Opens the WAL segment at {@code <dbRoot>/<tableToken>/<walName>/<segmentId>} and
+     * prepares a single-frame view of rows {@code [rowLo, rowHi)}. The segment must
+     * have been physically written with at least {@code segmentRowCount} rows.
+     * <p>
+     * The {@code metadata} argument supplies the {@code writerIndex} for each query
+     * column in {@link #getColumnMapping()}; pass the live view's base-table
+     * {@link RecordMetadata}.
+     * <p>
+     * Reuses internal buffers across calls; callers should {@link #close()} the
+     * cursor when all segments have been consumed.
+     */
+    public WalSegmentPageFrameCursor of(
+            @NotNull TableToken tableToken,
+            @NotNull CharSequence walName,
+            int segmentId,
+            long segmentRowCount,
+            long rowLo,
+            long rowHi,
+            @NotNull RecordMetadata metadata
+    ) {
+        assert rowLo >= 0 && rowHi >= rowLo && rowHi <= segmentRowCount;
+        reader = Misc.free(reader);
+        reader = new WalReader(configuration, tableToken, walName, segmentId, segmentRowCount);
+        reader.openSegment();
+        this.rowLo = rowLo;
+        this.rowHi = rowHi;
+        computeFrame(metadata);
+        toTop();
+        return this;
+    }
+
+    @Override
+    public long size() {
+        return rowHi - rowLo;
+    }
+
+    @Override
+    public boolean supportsSizeCalculation() {
+        return true;
+    }
+
+    @Override
+    public void toTop() {
+        consumed = false;
+    }
+
+    private void computeFrame(RecordMetadata metadata) {
+        columnMapping.clear();
+        pageAddresses.setPos(2 * columnCount);
+        pageSizes.setPos(2 * columnCount);
+        if (symbolTables.size() < columnCount) {
+            symbolTables.setPos(columnCount);
+        }
+        extractedTimestampMem.jumpTo(0);
+
+        for (int i = 0; i < columnCount; i++) {
+            final int walColumnIndex = columnIndexes.getQuick(i);
+            final int columnType = reader.getColumnType(walColumnIndex);
+            columnMapping.addColumn(walColumnIndex, metadata.getWriterIndex(walColumnIndex));
+
+            // Matches WalReader.getPrimaryColumnIndex: two slots per column, offset by 2
+            // for the implicit (row-id, timestamp) sentinel pair at the start.
+            final int dataIdx = walColumnIndex * 2 + 2;
+            final MemoryCR colMem = reader.getColumn(dataIdx);
+
+            if (walColumnIndex == reader.getTimestampIndex()) {
+                final long dst = extractTimestamps(colMem);
+                pageAddresses.setQuick(2 * i, dst);
+                pageAddresses.setQuick(2 * i + 1, 0);
+                pageSizes.setQuick(2 * i, (rowHi - rowLo) << 3);
+                pageSizes.setQuick(2 * i + 1, 0);
+            } else if (ColumnType.isVarSize(columnType)) {
+                final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                final MemoryCR auxCol = reader.getColumn(dataIdx + 1);
+                final long auxBase = auxCol.getPageAddress(0);
+                final long auxOffsetLo = driver.getAuxVectorOffset(rowLo);
+                final long auxOffsetHi = driver.getAuxVectorOffset(rowHi);
+                // Data size is measured from the full aux vector (offset 0): the aux
+                // entries store absolute data offsets, so consumers add them to the
+                // data vector's base address. The frame's data address is therefore
+                // the full base too, not a slice-relative pointer.
+                final long dataSize = rowHi > 0
+                        ? driver.getDataVectorSizeAt(auxBase, rowHi - 1)
+                        : 0;
+                final long dataAddr = dataSize > 0 ? colMem.getPageAddress(0) : 0;
+                pageAddresses.setQuick(2 * i, dataAddr);
+                pageAddresses.setQuick(2 * i + 1, auxBase + auxOffsetLo);
+                pageSizes.setQuick(2 * i, dataSize);
+                pageSizes.setQuick(2 * i + 1, auxOffsetHi - auxOffsetLo);
+            } else {
+                final int sh = columnSizeShifts.getQuick(i);
+                assert sh >= 0 : "fixed-size column expects a non-negative size shift";
+                final long address = colMem.getPageAddress(0);
+                final long offset = rowLo << sh;
+                pageAddresses.setQuick(2 * i, address + offset);
+                pageAddresses.setQuick(2 * i + 1, 0);
+                pageSizes.setQuick(2 * i, (rowHi - rowLo) << sh);
+                pageSizes.setQuick(2 * i + 1, 0);
+            }
+
+            if (ColumnType.tagOf(columnType) == ColumnType.SYMBOL) {
+                WalSymbolTable symTab = symbolTables.getQuick(i);
+                if (symTab == null) {
+                    symTab = new WalSymbolTable();
+                    symbolTables.setQuick(i, symTab);
+                }
+                symTab.of(walColumnIndex, reader);
+            } else {
+                symbolTables.setQuick(i, null);
+            }
+        }
+    }
+
+    private long extractTimestamps(MemoryCR colMem) {
+        final long rowCount = rowHi - rowLo;
+        final long bytes = rowCount << 3;
+        if (bytes == 0) {
+            return 0;
+        }
+        extractedTimestampMem.extend(bytes);
+        extractedTimestampMem.jumpTo(bytes);
+        final long src = colMem.getPageAddress(0) + rowLo * TIMESTAMP_PAIR_BYTES;
+        final long dst = extractedTimestampMem.getAddress();
+        for (long r = 0; r < rowCount; r++) {
+            Unsafe.getUnsafe().putLong(
+                    dst + (r << 3),
+                    Unsafe.getUnsafe().getLong(src + r * TIMESTAMP_PAIR_BYTES)
+            );
+        }
+        return dst;
+    }
+
+    private static final class WalSymbolTable implements StaticSymbolTable {
+        private WalReader reader;
+        private int walColumnIndex;
+
+        @Override
+        public boolean containsNullValue() {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            // The WAL symbol map does not expose an exact count without walking
+            // the backing IntObjHashMap; consumers of live view refresh only need
+            // key->value resolution, so an upper-bound sentinel is enough.
+            return Integer.MAX_VALUE;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            // Live view refresh only performs key->value resolution.
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+
+        public void of(int walColumnIndex, WalReader reader) {
+            this.walColumnIndex = walColumnIndex;
+            this.reader = reader;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return reader.getSymbolValue(walColumnIndex, key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return reader.getSymbolValue(walColumnIndex, key);
+        }
+    }
+
+    private final class SingleFrame implements PageFrame {
+
+        @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return pageAddresses.getQuick(2 * columnIndex + 1);
+        }
+
+        @Override
+        public long getAuxPageSize(int columnIndex) {
+            return pageSizes.getQuick(2 * columnIndex + 1);
+        }
+
+        @Override
+        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+            throw new UnsupportedOperationException("bitmap indices are not available on WAL segments");
+        }
+
+        @Override
+        public int getColumnCount() {
+            return columnCount;
+        }
+
+        @Override
+        public byte getFormat() {
+            return PartitionFormat.NATIVE;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return pageAddresses.getQuick(2 * columnIndex);
+        }
+
+        @Override
+        public long getPageSize(int columnIndex) {
+            return pageSizes.getQuick(2 * columnIndex);
+        }
+
+        @Override
+        public PartitionDecoder getParquetPartitionDecoder() {
+            return null;
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return -1;
+        }
+
+        @Override
+        public int getParquetRowGroupHi() {
+            return -1;
+        }
+
+        @Override
+        public int getParquetRowGroupLo() {
+            return -1;
+        }
+
+        @Override
+        public long getPartitionHi() {
+            return rowHi - rowLo;
+        }
+
+        @Override
+        public int getPartitionIndex() {
+            return 0;
+        }
+
+        @Override
+        public long getPartitionLo() {
+            return 0;
+        }
+    }
+}

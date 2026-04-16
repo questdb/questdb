@@ -114,7 +114,9 @@ import io.questdb.griffin.engine.ops.CreateLiveViewOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -676,12 +678,24 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken baseTableToken,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        // reject DEDUP base tables: incremental refresh reads raw WAL segments, which
+        // contain the pre-dedup row stream and cannot be reconciled with the applied
+        // base table state. See LiveViewRefreshJob for the incremental refresh design.
+        try (TableMetadata baseMetadata = getTableMetadata(baseTableToken)) {
+            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+                if (baseMetadata.isDedupKey(i)) {
+                    throw SqlException.$(op.getViewNamePosition(),
+                            "live view cannot be created over a base table with DEDUP keys");
+                }
+            }
+        }
+
         // compile the SELECT to validate and get metadata
         GenericRecordMetadata metadata;
         try (SqlCompiler compiler = getSqlCompiler()) {
             CompiledQuery cq = compiler.compile(op.getSelectSql(), executionContext);
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
-                validateLiveViewWindowFunctions(factory, op.getViewNamePosition());
+                validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
             }
         }
@@ -2142,22 +2156,53 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private static void validateLiveViewWindowFunctions(RecordCursorFactory factory, int position) throws SqlException {
-        RecordCursorFactory f = factory;
-        while (f != null) {
-            if (f instanceof CachedWindowRecordCursorFactory) {
-                throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
-                        "this query requires caching or multi-pass evaluation");
+    private static void validateLiveViewFactory(
+            RecordCursorFactory factory,
+            TableToken baseTableToken,
+            int position
+    ) throws SqlException {
+        // SqlCompiler wraps every compiled query in a QueryProgress factory for registry tracking;
+        // unwrap it (and any other transparent wrappers that expose getBaseFactory()) so we can
+        // reason about the actual query shape.
+        RecordCursorFactory root = factory;
+        while (root instanceof QueryProgress) {
+            root = root.getBaseFactory();
+        }
+        if (root instanceof CachedWindowRecordCursorFactory) {
+            throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
+                    "this query requires caching or multi-pass evaluation");
+        }
+        if (!(root instanceof WindowRecordCursorFactory wf)) {
+            throw SqlException.$(position, "live view select must contain at least one window function");
+        }
+        // incremental refresh only handles window functions that emit a value per input row
+        // without looking ahead or buffering state across multiple passes
+        ObjList<WindowFunction> fns = wf.getWindowFunctions();
+        for (int i = 0, n = fns.size(); i < n; i++) {
+            if (fns.getQuick(i).getPassCount() != WindowFunction.ZERO_PASS) {
+                throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
             }
-            if (f instanceof WindowRecordCursorFactory wf) {
-                ObjList<WindowFunction> fns = wf.getWindowFunctions();
-                for (int i = 0, n = fns.size(); i < n; i++) {
-                    if (fns.getQuick(i).getPassCount() != WindowFunction.ZERO_PASS) {
-                        throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
-                    }
-                }
+        }
+
+        // V1 incremental refresh drives window functions manually over rows read directly
+        // from WAL segments, so the factory tree must be exactly:
+        //     WindowRecordCursorFactory -> PageFrameRecordCursorFactory
+        // with no filter, join, projection or grouping in between. See LiveViewRefreshJob.
+        for (RecordCursorFactory f = wf.getBaseFactory(); f != null; f = f.getBaseFactory()) {
+            boolean hasFilter = f.getFilter() != null
+                    || (f instanceof PageFrameRecordCursorFactory pfrcf && pfrcf.hasFilter());
+            if (hasFilter) {
+                throw SqlException.$(position, "live view select cannot use a WHERE clause yet");
             }
-            f = f.getBaseFactory();
+        }
+        RecordCursorFactory base = wf.getBaseFactory();
+        if (!(base instanceof PageFrameRecordCursorFactory) || base.getBaseFactory() != null) {
+            throw SqlException.$(position, "live view select must be a simple scan of a single WAL base table; " +
+                    "joins, subqueries, GROUP BY, ORDER BY and LIMIT are not supported yet");
+        }
+        TableToken scannedToken = base.getTableToken();
+        if (scannedToken == null || !scannedToken.equals(baseTableToken)) {
+            throw SqlException.$(position, "live view select must read from the declared base table");
         }
     }
 

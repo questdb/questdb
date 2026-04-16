@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 
@@ -54,9 +55,16 @@ public class LiveViewInstance implements QuietCloseable {
     private final ReadWriteLock lock = new ReentrantReadWriteLock(true);
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
     private final InMemoryTable table = new InMemoryTable();
+    // Cached factory from the bootstrap compile. Window functions carry state across rows
+    // (e.g., row_number() counter), so incremental refresh must reuse the same function
+    // instances — reset on every refresh would restart the counters. Accessed only while
+    // the refresh latch is held, so no volatile is needed.
+    private RecordCursorFactory compiledFactory;
     private volatile boolean dropped;
     private volatile String invalidationReason;
     private boolean isClosed;
+    // -1 means the view has not been bootstrapped yet; the next refresh must run a full
+    // recompute and capture the base table's seqTxn at the start of the compile.
     private volatile long lastProcessedSeqTxn = -1;
 
     public LiveViewInstance(LiveViewDefinition definition) {
@@ -75,10 +83,15 @@ public class LiveViewInstance implements QuietCloseable {
             if (!isClosed) {
                 isClosed = true;
                 Misc.free(table);
+                compiledFactory = Misc.free(compiledFactory);
             }
         } finally {
             lock.writeLock().unlock();
         }
+    }
+
+    public RecordCursorFactory getCompiledFactory() {
+        return compiledFactory;
     }
 
     public LiveViewDefinition getDefinition() {
@@ -195,6 +208,18 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
+    /**
+     * Stores the factory produced by the bootstrap compile so that subsequent incremental
+     * refreshes can reuse its window function instances. Must be called while the refresh
+     * latch is held. Frees any previously cached factory.
+     */
+    public void setCompiledFactory(RecordCursorFactory factory) {
+        if (compiledFactory != factory) {
+            Misc.free(compiledFactory);
+            compiledFactory = factory;
+        }
+    }
+
     public void setLastProcessedSeqTxn(long seqTxn) {
         this.lastProcessedSeqTxn = seqTxn;
     }
@@ -227,6 +252,7 @@ public class LiveViewInstance implements QuietCloseable {
                 if (!isClosed) {
                     isClosed = true;
                     Misc.free(table);
+                    compiledFactory = Misc.free(compiledFactory);
                 }
             } finally {
                 lock.writeLock().unlock();

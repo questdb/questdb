@@ -156,6 +156,10 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         return null;
     }
 
+    public boolean hasFilter() {
+        return filter != null;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;
