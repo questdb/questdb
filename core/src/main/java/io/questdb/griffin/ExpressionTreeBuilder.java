@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
+import io.questdb.std.IntStack;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -33,7 +34,10 @@ import java.util.Deque;
 public final class ExpressionTreeBuilder implements ExpressionParserListener {
 
     private final Deque<ExpressionNode> argStack = new ArrayDeque<>();
+    private final IntStack argStackBottomStack = new IntStack();
     private final Deque<IQueryModel> modelStack = new ArrayDeque<>();
+    // parseExpr() is reentrant; nested parses must not consume outer operands.
+    private int argStackBottom;
     private IQueryModel model;
 
     @Override
@@ -55,15 +59,15 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
             case 0:
                 break;
             case 1:
-                node.rhs = argStack.poll();
+                node.rhs = pollArg();
                 break;
             case 2:
-                node.rhs = argStack.poll();
-                node.lhs = argStack.poll();
+                node.rhs = pollArg();
+                node.lhs = pollArg();
                 break;
             default:
                 for (int i = 0; i < node.paramCount; i++) {
-                    node.args.add(argStack.poll());
+                    node.args.add(pollArg());
                 }
                 break;
         }
@@ -71,26 +75,35 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
     }
 
     public ExpressionNode poll() {
-        return argStack.poll();
+        return argStack.size() > argStackBottom ? argStack.poll() : null;
     }
 
     void popModel() {
         this.model = modelStack.poll();
+        this.argStackBottom = argStackBottomStack.notEmpty() ? argStackBottomStack.pop() : 0;
     }
 
     void pushModel(IQueryModel model) {
         if (this.model != null) {
             modelStack.push(this.model);
         }
+        argStackBottomStack.push(argStackBottom);
+        argStackBottom = argStack.size();
         this.model = model;
     }
 
     void reset() {
         argStack.clear();
+        argStackBottom = 0;
+        argStackBottomStack.clear();
         modelStack.clear();
     }
 
     int size() {
-        return argStack.size();
+        return argStack.size() - argStackBottom;
+    }
+
+    private ExpressionNode pollArg() {
+        return argStack.size() > argStackBottom ? argStack.poll() : null;
     }
 }

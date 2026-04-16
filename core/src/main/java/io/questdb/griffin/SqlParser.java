@@ -3094,6 +3094,9 @@ public class SqlParser {
             } else {
                 lexer.unparseLast();
             }
+            if (lo == null && hi == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "limit expression expected");
+            }
             model.setLimit(lo, hi);
         } else {
             lexer.unparseLast();
@@ -4032,6 +4035,10 @@ public class SqlParser {
 
                     if (isSelectKeyword(tok)) {
                         throw SqlException.$(lexer.getPosition(), "reserved name");
+                    }
+
+                    if (Chars.equals(tok, ')') && !(subQueryMode || createTableMode || copyMode || createViewMode)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
                     }
 
                     lexer.unparseLast();
