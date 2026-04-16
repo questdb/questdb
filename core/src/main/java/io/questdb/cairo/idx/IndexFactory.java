@@ -31,40 +31,14 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.idx.PostingIndexUtils.BLOCK_CAPACITY;
 
-
-/**
- * Factory for creating index readers and writers based on index type.
- * <p>
- * This class provides a centralized way to instantiate the appropriate
- * index implementation based on the column's index type.
- */
 public final class IndexFactory {
 
     private IndexFactory() {
-        // Utility class, no instances
     }
 
-    /**
-     * Creates a new index reader for the given index type and direction.
-     *
-     * @param indexType     the type of index (BITMAP, POSTING)
-     * @param direction     the read direction (BitmapIndexReader.DIR_FORWARD or DIR_BACKWARD)
-     * @param configuration Cairo configuration
-     * @param path          base path to the index files
-     * @param columnName    name of the column
-     * @param columnNameTxn column name transaction number
-     * @param partitionTxn  partition transaction number
-     * @param columnTop     column top value
-     * @param metadata      live table metadata used by POSTING covering to resolve
-     *                      covered-column types; ignored for BITMAP, may be {@code null}
-     *                      when covering is not needed
-     * @return a new BitmapIndexReader instance
-     * @throws CairoException if the index type is not supported
-     */
     public static BitmapIndexReader createReader(
             byte indexType,
             int direction,
@@ -83,104 +57,47 @@ public final class IndexFactory {
             case IndexType.POSTING, IndexType.POSTING_DELTA -> direction == BitmapIndexReader.DIR_FORWARD
                     ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata)
                     : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata);
-            case IndexType.NONE -> throw CairoException.critical(0)
-                    .put("cannot create reader for index type NONE");
-            default -> {
-                CairoException e = CairoException.critical(0).put("unsupported index type: ");
-                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
-                throw e;
-            }
+            default -> throw unsupportedIndexType(indexType);
         };
     }
 
-    /**
-     * Creates a new, uninitialized index writer for the given index type.
-     * The writer must be initialized using one of the {@code of()} methods before use.
-     *
-     * @param indexType     the type of index (BITMAP, POSTING)
-     * @param configuration Cairo configuration
-     * @return a new IndexWriter instance
-     * @throws CairoException if the index type is not supported
-     */
     public static IndexWriter createWriter(byte indexType, CairoConfiguration configuration) {
         return switch (indexType) {
             case IndexType.BITMAP -> new BitmapIndexWriter(configuration);
             case IndexType.POSTING -> new PostingIndexWriter(configuration);
             case IndexType.POSTING_DELTA -> new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_DELTA);
-            case IndexType.NONE -> throw CairoException.critical(0)
-                    .put("cannot create writer for index type NONE");
-            default -> {
-                CairoException e = CairoException.critical(0).put("unsupported index type: ");
-                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
-                throw e;
-            }
+            default -> throw unsupportedIndexType(indexType);
         };
     }
 
-    /**
-     * Initializes the key memory for a new index of the given type.
-     *
-     * @param indexType     the type of index (BITMAP, POSTING)
-     * @param keyMem        the memory to initialize
-     * @param blockCapacity the value block capacity (used by BITMAP type)
-     * @throws CairoException if the index type is not supported
-     */
+    // blockCapacity is only meaningful for BITMAP; POSTING uses its own constant.
     public static void initKeyMemory(byte indexType, MemoryMA keyMem, int blockCapacity) {
         switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexWriter.initKeyMemory(keyMem, blockCapacity);
             case IndexType.POSTING, IndexType.POSTING_DELTA -> PostingIndexWriter.initKeyMemory(keyMem, BLOCK_CAPACITY);
-            case IndexType.NONE -> throw CairoException.critical(0)
-                    .put("cannot initialize key memory for index type NONE");
-            default -> {
-                CairoException e = CairoException.critical(0).put("unsupported index type: ");
-                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
-                throw e;
-            }
+            default -> throw unsupportedIndexType(indexType);
         }
     }
 
-    /**
-     * Returns the key file name for the given index type.
-     *
-     * @param indexType     the type of index (BITMAP, POSTING)
-     * @param path          the path to append the file name to
-     * @param columnName    the column name
-     * @param columnNameTxn the column name transaction number
-     * @return the path with the key file name appended
-     */
     public static LPSZ keyFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn) {
         return switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
             case IndexType.POSTING, IndexType.POSTING_DELTA ->
                     PostingIndexUtils.keyFileName(path, columnName, columnNameTxn);
-            default -> {
-                CairoException e = CairoException.critical(0).put("unsupported index type: ");
-                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
-                throw e;
-            }
+            default -> throw unsupportedIndexType(indexType);
         };
     }
 
-    /**
-     * Returns the value file name for the given index type.
-     *
-     * @param indexType            the type of index (BITMAP, POSTING)
-     * @param path                 the path to append the file name to
-     * @param columnName           the column name
-     * @param columnNameTxn        the column-instance txn (postingColumnNameTxn for POSTING)
-     * @param sealTxn              the sealed-version txn for POSTING; ignored for BITMAP
-     * @return the path with the value file name appended
-     */
     public static LPSZ valueFileName(byte indexType, Path path, CharSequence columnName, long columnNameTxn, long sealTxn) {
         return switch (indexType) {
             case IndexType.BITMAP -> BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
             case IndexType.POSTING, IndexType.POSTING_DELTA ->
                     PostingIndexUtils.valueFileName(path, columnName, columnNameTxn, sealTxn);
-            default -> {
-                CairoException e = CairoException.critical(0).put("unsupported index type: ");
-                IndexType.putName((StringSink) e.getFlyweightMessage(), indexType);
-                throw e;
-            }
+            default -> throw unsupportedIndexType(indexType);
         };
+    }
+
+    private static CairoException unsupportedIndexType(byte indexType) {
+        return CairoException.critical(0).put("unsupported index type: ").put(IndexType.nameOf(indexType));
     }
 }
