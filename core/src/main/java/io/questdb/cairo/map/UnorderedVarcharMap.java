@@ -382,7 +382,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         // Caller must have pre-reserved at least (batchEnd - batchStart) free slots via
         // reserveCapacity(). A mid-batch rehash reallocates memStart and reindexes entries,
         // which would invalidate offsets already packed into batchAddr for earlier rows.
-        assert free >= batchEnd - batchStart;
+        assert free > batchEnd - batchStart;
 
         final int directColumnIndex = mapSink.getDirectColumnIndex();
         if (directColumnIndex >= 0) {
@@ -412,7 +412,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long batchEnd,
             long batchAddr
     ) {
-        assert free >= batchEnd - batchStart;
+        assert free > batchEnd - batchStart;
 
         final int directColumnIndex = mapSink.getDirectColumnIndex();
         if (directColumnIndex >= 0) {
@@ -455,8 +455,10 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
     @Override
     public void reserveCapacity(long additionalKeys) {
-        if (free < additionalKeys) {
-            long required = keyCapacity + (long) Math.ceil((additionalKeys - free) / loadFactor);
+        // +1: guarantee free > additionalKeys on return so that asNew's --free == 0
+        // rehash never fires on the last insertion within a probeBatch.
+        if (free <= additionalKeys) {
+            long required = keyCapacity + (long) Math.ceil((additionalKeys - free + 1) / loadFactor);
             rehash(Numbers.ceilPow2(required));
         }
     }

@@ -1052,6 +1052,71 @@ public class MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReserveCapacityStrictContract() throws Exception {
+        // OrderedMap inherits the no-op default — only the unordered maps need the
+        // strict free > additionalKeys contract. UnorderedVarcharMap.probeBatch
+        // routes inserts through asNew, which rehashes when --free == 0; without
+        // the strict contract, the last insertion in a batch would reallocate
+        // memStart and invalidate offsets already packed into batchAddr.
+        Assume.assumeTrue(mapType != MapType.ORDERED_MAP);
+        TestUtils.assertMemoryLeak(() -> {
+            // keyCapacity=16, loadFactor=0.5: constructor rounds actual capacity up
+            // to 32, yielding an initial free of 16.
+            final int initialKeyCapacity = 32;
+            final int initialFree = 16;
+            final int batchRows = 5;
+            final int prefill = initialFree - batchRows;
+
+            final int[] batchKeys = new int[batchRows];
+            for (int i = 0; i < batchRows; i++) {
+                batchKeys[i] = 1_000 + i;
+            }
+
+            try (
+                    Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 16, 0.5, 24);
+                    DirectLongList batch = new DirectLongList(batchRows, MemoryTag.NATIVE_DEFAULT);
+                    TestPageFrameRecord testRecord = new TestPageFrameRecord(mapType, batchKeys)
+            ) {
+                Assert.assertEquals(initialKeyCapacity, map.getKeyCapacity());
+
+                // Pre-fill so that free == batchRows exactly, hitting the boundary
+                // case where the old contract left reserveCapacity as a no-op.
+                // Starts at 1 so the zero-key slot in Unordered4Map/Unordered8Map
+                // (which doesn't consume a free hash-table slot) stays untouched.
+                for (int i = 1; i <= prefill; i++) {
+                    MapKey key = map.withKey();
+                    populateKey(key, i);
+                    Assert.assertTrue(key.createValue().isNew());
+                }
+                Assert.assertEquals(prefill, map.size());
+                Assert.assertEquals(initialKeyCapacity, map.getKeyCapacity());
+
+                // At free == batchRows, reserveCapacity must rehash to guarantee
+                // free > batchRows on return.
+                map.reserveCapacity(batchRows);
+                final int capAfterReserve = map.getKeyCapacity();
+                Assert.assertTrue(capAfterReserve > initialKeyCapacity);
+
+                batch.setPos(batchRows);
+                final RecordSink sink = new TestRecordSink(columnTypeForMapType(), -1);
+                final long entryBase = map.probeBatch(testRecord, sink, 0, batchRows, batch.getAddress());
+
+                // probeBatch must not trigger a rehash — reserveCapacity already
+                // left enough headroom for all batchRows insertions.
+                Assert.assertEquals(capAfterReserve, map.getKeyCapacity());
+                Assert.assertEquals(prefill + batchRows, map.size());
+
+                for (int i = 0; i < batchRows; i++) {
+                    final long encoded = Unsafe.getUnsafe().getLong(batch.getAddress() + ((long) i << 3));
+                    Assert.assertTrue(Map.isNewBatchEntry(encoded));
+                    final long offset = Map.decodeBatchOffset(encoded);
+                    Assert.assertNotNull(map.valueAt(entryBase + offset));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRestoreInitialCapacity() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
