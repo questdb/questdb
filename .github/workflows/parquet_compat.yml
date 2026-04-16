@@ -17,8 +17,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
           cache: 'maven'
+      - name: Detect local client profile
+        id: client
+        uses: ./.github/actions/detect-local-client
       - name: Build distribution
-        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
+        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks' ${{ steps.client.outputs.client_profile }}
       - name: Unpack distribution
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB

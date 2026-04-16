@@ -1,0 +1,25 @@
+# Shared step: detect whether the java-questdb-client submodule should be built
+# locally (SNAPSHOT version) or fetched from Maven Central (release version).
+name: 'Detect local client profile'
+description: 'Sets client_profile output to -Plocal-client when questdb.client.version is a SNAPSHOT'
+outputs:
+  client_profile:
+    description: 'Maven profile flag (-Plocal-client or empty)'
+    value: ${{ steps.detect.outputs.client_profile }}
+runs:
+  using: 'composite'
+  steps:
+    - id: detect
+      shell: bash
+      run: |
+        CLIENT_VERSION=$(sed -n 's/.*<questdb.client.version>\(.*\)<\/questdb.client.version>.*/\1/p' core/pom.xml)
+        echo "questdb.client.version=$CLIENT_VERSION"
+        if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
+          echo "SNAPSHOT version detected, activating local-client profile"
+          git config --global --add safe.directory /__w/questdb/questdb
+          git submodule update --init java-questdb-client
+          echo "client_profile=-Plocal-client" >> "$GITHUB_OUTPUT"
+        else
+          echo "Release version detected, using Maven Central"
+          echo "client_profile=" >> "$GITHUB_OUTPUT"
+        fi

@@ -205,6 +205,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns an independent cursor for the given consumer ID. Idempotent —
+     * same sharedId always returns the same cursor instance.
+     *
+     * @param executionContext SQL execution context
+     * @param sharedId         unique consumer identifier (0-based)
+     * @return cursor for the given consumer
+     */
+    default RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Returns the original filter expression that can be stolen by parent factories.
      * When {@link #supportsFilterStealing()} returns true, this method should return
      * the original expression of the stolen filter.
@@ -327,6 +339,16 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * @return true if page frame cursor is supported
      */
     default boolean supportsPageFrameCursor() {
+        return false;
+    }
+
+    /**
+     * Returns true if this factory supports multiple independent cursors
+     * over the same materialized data. When true,
+     * {@link #getSharedCursor(SqlExecutionContext, int)} can be called with
+     * different consumer IDs to obtain independent cursors.
+     */
+    default boolean supportsSharedCursors() {
         return false;
     }
 

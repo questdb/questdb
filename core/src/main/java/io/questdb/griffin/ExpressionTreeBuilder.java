@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -33,8 +33,8 @@ import java.util.Deque;
 public final class ExpressionTreeBuilder implements ExpressionParserListener {
 
     private final Deque<ExpressionNode> argStack = new ArrayDeque<>();
-    private final Deque<QueryModel> modelStack = new ArrayDeque<>();
-    private QueryModel model;
+    private final Deque<IQueryModel> modelStack = new ArrayDeque<>();
+    private IQueryModel model;
 
     @Override
     public void onNode(ExpressionNode node) throws SqlException {
@@ -78,7 +78,7 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
         this.model = modelStack.poll();
     }
 
-    void pushModel(QueryModel model) {
+    void pushModel(IQueryModel model) {
         if (this.model != null) {
             modelStack.push(this.model);
         }

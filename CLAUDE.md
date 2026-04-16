@@ -14,15 +14,20 @@ time-series SQL extensions.
 
 Java class members are grouped by kind (static vs. instance) and visibility, and
 sorted alphabetically. When adding new methods or fields, insert them in the
-correct alphabetical position among existing members of the same kind. Don't
-insert comments as "section headings" because methods won't stay together after
-auto-sorting.
+correct alphabetical position among existing members of the same kind.
 
-Use modern Java features:
+Never insert `// ===` or `// ---` banner comments as section headings in any
+Java file — not in production code, not in test code. Methods are sorted
+alphabetically and will not stay grouped by category.
+
+Use the modern Java 17 features:
 
 - enhanced switch
 - multiline string literal
 - pattern variables in instanceof checks
+
+However, the java-questdb-client module targets Java 11. When writing code in
+the client module, use only legacy Java features.
 
 Whenever dealing with column data, results of expressions, SQL statements, etc.,
 always consider what the behavior should be when something is NULL. Be careful
@@ -31,6 +36,11 @@ NULL value.
 
 When choosing a name for a boolean variable, field or method, always use the
 is... or has... prefix, as appropriate.
+
+**Log messages must use strictly ASCII characters.** QuestDB's log
+infrastructure does not reliably render non-ASCII (e.g., em dashes, curly
+quotes, Unicode symbols). Use only plain ASCII punctuation in all `LOG.info()`,
+`LOG.error()`, etc. calls.
 
 Use `ObjList<T>` instead of `T[]` object arrays. `ObjList` is QuestDB's
 standard resizable list and integrates with `Misc.freeObjList()` /
@@ -79,6 +89,9 @@ offending character, not the start of the expression.
 
 ## Git & PR Conventions
 
+- **`java-questdb-client/` is a separate git repo** (a git submodule). Always
+  `cd` into it and commit there independently. Never commit it from the parent
+  repo as a submodule pointer update without also committing inside it first.
 - PR titles must follow Conventional Commits format: `type(scope): description`
   (e.g., `fix(sql): fix ...`, `feat(core): add ...`). The description part is
   copied to release notes, so it must read well on its own — repeat the verb
@@ -94,7 +107,8 @@ offending character, not the start of the expression.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit
-  message body (not just the title).
+  message body (not just the title). Lines in the description can be longer than
+  in the commit title: up to 72 characters.
 - In PR test plans, use plain bullet points (`-`), not check marks or
   checkboxes.
 - Always add GitHub labels consistent with the PR title (e.g., a `perf(sql):` PR
@@ -127,7 +141,7 @@ offending character, not the start of the expression.
 
 ```bash
 # Build JAR without tests (fastest)
-mvn clean package -DskipTests
+mvn clean package -DskipTests -P local-client
 
 # Build with web console
 mvn clean package -DskipTests -P build-web-console
@@ -135,6 +149,16 @@ mvn clean package -DskipTests -P build-web-console
 # Build with web console and native binaries
 mvn clean package -DskipTests -P build-web-console,build-binaries
 ```
+
+When you build just the core module with `mvn -pl core`, it will fall use a
+pre-built java-questdb-client module, installed in the local Maven cache. It may
+be stale and result in build errors. Fix this issue with:
+
+```bash
+cd java-questdb-client && mvn clean install -DskipTests && cd -
+```
+
+This should install a fresh version into the Maven cache.
 
 ### Running Tests
 
@@ -180,6 +204,8 @@ cmake --build build/release --config Release
 - **utils/** - Build utilities
 - **examples/** - Usage examples
 - **win64svc/** - Windows service wrapper
+- **java-questdb-client** - Java client for data ingestion (legacy ILP and
+  QuestDB's QWP)
 
 ### Core Package Layout (`core/src/main/java/io/questdb/`)
 
