@@ -1,0 +1,373 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin.engine.functions.groupby;
+
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import org.junit.Assert;
+
+/**
+ * Shared test helpers for {@code *GroupByFunctionKeyedBatchTest} classes. Each test
+ * asserts that the override of {@link GroupByFunction#computeKeyedBatch} produces
+ * the same final value region (byte-for-byte) as the default implementation that
+ * loops over {@code computeFirst}/{@code computeNext}.
+ * <p>
+ * A single minimal {@link PageFrameMemoryRecord} subclass, {@link TestFrameRecord},
+ * backs both the direct-column fast path (via {@code getPageAddress}) and the
+ * record-based slow path (via {@code getByte}/{@code getShort}/{@code getInt}/
+ * {@code getLong}/{@code getFloat}/{@code getDouble}). Toggle
+ * {@link TestFrameRecord#setPageAvailable} to force the slow path by making
+ * {@code getPageAddress} return 0, which matches the "column top" condition the
+ * production code checks for.
+ */
+final class KeyedBatchTestUtils {
+
+    // Standard layout shared by all per-type equivalence tests: eight entries,
+    // split 4/4 between primed (existing) and fresh (new) slots. The priming
+    // batch targets entries 0..3 via rows 0, 2, 4, 6; the test batch pairs
+    // each of the eight entries with a distinct row index.
+    private static final int ENTRY_COUNT = 8;
+    private static final boolean[] PRIME_IS_NEW = {true, true, true, true};
+    private static final long[] PRIME_ROWS = {0, 2, 4, 6};
+    private static final boolean[] TEST_IS_NEW = {false, false, false, false, true, true, true, true};
+    private static final long[] TEST_ROWS = {3, 1, 7, 5, 0, 1, 2, 5};
+
+    private KeyedBatchTestUtils() {
+    }
+
+    /**
+     * Allocates a native buffer holding the supplied primitive values
+     * contiguously. The returned address is freed by {@link TestFrameRecord#close}
+     * when the record is closed. One overload per primitive type accepted by
+     * the test record's slow-path getters.
+     */
+    static long allocArgBuffer(byte[] values) {
+        final long bytes = values.length;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < values.length; i++) {
+            Unsafe.getUnsafe().putByte(addr + i, values[i]);
+        }
+        return addr;
+    }
+
+    static long allocArgBuffer(short[] values) {
+        final long bytes = (long) values.length * Short.BYTES;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < values.length; i++) {
+            Unsafe.getUnsafe().putShort(addr + (long) i * Short.BYTES, values[i]);
+        }
+        return addr;
+    }
+
+    static long allocArgBuffer(int[] values) {
+        final long bytes = (long) values.length * Integer.BYTES;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < values.length; i++) {
+            Unsafe.getUnsafe().putInt(addr + (long) i * Integer.BYTES, values[i]);
+        }
+        return addr;
+    }
+
+    static long allocArgBuffer(long[] values) {
+        final long bytes = (long) values.length * Long.BYTES;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < values.length; i++) {
+            Unsafe.getUnsafe().putLong(addr + (long) i * Long.BYTES, values[i]);
+        }
+        return addr;
+    }
+
+    static long allocArgBuffer(float[] values) {
+        final long bytes = (long) values.length * Float.BYTES;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < values.length; i++) {
+            Unsafe.getUnsafe().putFloat(addr + (long) i * Float.BYTES, values[i]);
+        }
+        return addr;
+    }
+
+    static long allocArgBuffer(double[] values) {
+        final long bytes = (long) values.length * Double.BYTES;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < values.length; i++) {
+            Unsafe.getUnsafe().putDouble(addr + (long) i * Double.BYTES, values[i]);
+        }
+        return addr;
+    }
+
+    /**
+     * Allocates a zero-initialized value region of
+     * {@code entryCount * valueSize} bytes and initializes each entry via
+     * {@link GroupByFunction#setEmpty} so it matches the etalon seed that
+     * {@link io.questdb.cairo.map.Map#setBatchEmptyValue} produces in
+     * production.
+     */
+    static long allocEtalonRegion(GroupByFunction function, int entryCount, long valueSize, FlyweightPackedMapValue flyweight) {
+        final long bytes = (long) entryCount * valueSize;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.getUnsafe().setMemory(addr, bytes, (byte) 0);
+        for (int i = 0; i < entryCount; i++) {
+            flyweight.of(addr + (long) i * valueSize);
+            function.setEmpty(flyweight);
+        }
+        return addr;
+    }
+
+    /**
+     * Byte-for-byte equality check over two native regions. Reports the first
+     * diverging offset with both byte values, which narrows down the failing
+     * column within the value region.
+     */
+    static void assertBytesEqual(long baseA, long baseB, long totalBytes) {
+        for (long i = 0; i < totalBytes; i++) {
+            final byte a = Unsafe.getUnsafe().getByte(baseA + i);
+            final byte b = Unsafe.getUnsafe().getByte(baseB + i);
+            if (a != b) {
+                Assert.fail("value regions diverge at byte offset " + i
+                        + ": ref=0x" + Integer.toHexString(a & 0xff)
+                        + ", override=0x" + Integer.toHexString(b & 0xff));
+            }
+        }
+    }
+
+    /**
+     * Packs (rowIndex, entryOffset, isNew) triples into a native buffer of
+     * packed longs matching the layout consumed by {@code computeKeyedBatch}.
+     * Each entry occupies 8 bytes.
+     */
+    static long buildBatchBuffer(long[] rowIndexes, long[] entryOffsets, boolean[] isNewFlags) {
+        final int n = rowIndexes.length;
+        Assert.assertEquals(n, entryOffsets.length);
+        Assert.assertEquals(n, isNewFlags.length);
+        final long bytes = (long) n * Long.BYTES;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < n; i++) {
+            final long encoded = Map.encodeBatchEntry(rowIndexes[i], entryOffsets[i], isNewFlags[i]);
+            Unsafe.getUnsafe().putLong(addr + (long) i * Long.BYTES, encoded);
+        }
+        return addr;
+    }
+
+    /**
+     * Initializes a function's value-column indices via
+     * {@link GroupByFunction#initValueTypes} and returns the resulting total
+     * value-region size in bytes, derived from the registered column types.
+     */
+    static long initFunctionTypes(GroupByFunction function, ArrayColumnTypes types) {
+        function.initValueTypes(types);
+        long size = 0;
+        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
+            size += ColumnType.sizeOf(types.getColumnType(i));
+        }
+        return size;
+    }
+
+    /**
+     * Runs the default {@link GroupByFunction#computeKeyedBatch} skeleton
+     * inline: for each entry, positions {@code flyweight} at the entry's value
+     * region, calls {@code setRowIndex} on the record, and dispatches to
+     * {@code computeFirst} / {@code computeNext}.
+     * <p>
+     * Intentionally not delegated to {@code GroupByFunction#computeKeyedBatch}
+     * so the equivalence test does not depend on the default implementation
+     * remaining unchanged.
+     */
+    static void runReferencePath(
+            GroupByFunction function,
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue flyweight,
+            long baseValueAddress,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        for (long i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            final long valueOffset = Map.decodeBatchOffset(encoded);
+            final int rowIndex = Map.decodeBatchRowIndex(encoded);
+            final boolean isNew = Map.isNewBatchEntry(encoded);
+            record.setRowIndex(rowIndex);
+            flyweight.of(baseValueAddress + valueOffset);
+            if (isNew) {
+                function.computeFirst(flyweight, record, baseRowId + rowIndex);
+            } else {
+                function.computeNext(flyweight, record, baseRowId + rowIndex);
+            }
+        }
+    }
+
+    /**
+     * Asserts that {@code function.computeKeyedBatch} produces the same final
+     * value region as the reference loop over {@code computeFirst} /
+     * {@code computeNext}. The batch layout intentionally hits every branch
+     * combination exposed by a typical override:
+     * <ul>
+     *     <li>entries 0..3 are primed (existing state) with a mix of non-null
+     *         and null row values; entries 4..7 stay at the etalon (new
+     *         entries);</li>
+     *     <li>the test batch then pairs each of those eight entries with a
+     *         distinct row, producing every {isNew, isNull} combination in a
+     *         single pass.</li>
+     * </ul>
+     * The caller supplies an already-allocated argument buffer along with its
+     * element size (in bytes); ownership transfers to the returned record so
+     * the buffer is freed on {@code close()}.
+     */
+    static void assertEquivalence(GroupByFunction function, boolean fastPath, int elemSize, long argBufferAddr, long argBufferSize) {
+        try (TestFrameRecord record = new TestFrameRecord(elemSize, argBufferAddr, argBufferSize)) {
+            record.setPageAvailable(fastPath);
+
+            final ArrayColumnTypes types = new ArrayColumnTypes();
+            final long valueSize = initFunctionTypes(function, types);
+            final FlyweightPackedMapValue flyweightA = new FlyweightPackedMapValue(types);
+            final FlyweightPackedMapValue flyweightB = new FlyweightPackedMapValue(types);
+
+            final long regionBytes = (long) ENTRY_COUNT * valueSize;
+            final long baseA = allocEtalonRegion(function, ENTRY_COUNT, valueSize, flyweightA);
+            final long baseB = allocEtalonRegion(function, ENTRY_COUNT, valueSize, flyweightB);
+            try {
+                // Priming: entries 0..3 receive an initial value each, marked
+                // as new, establishing a non-etalon starting state on both
+                // regions through the reference path.
+                final long[] primeOffsets = {0, valueSize, 2 * valueSize, 3 * valueSize};
+                final long primeBatch = buildBatchBuffer(PRIME_ROWS, primeOffsets, PRIME_IS_NEW);
+                try {
+                    runReferencePath(function, record, flyweightA, baseA, primeBatch, PRIME_ROWS.length, 0);
+                    runReferencePath(function, record, flyweightB, baseB, primeBatch, PRIME_ROWS.length, 0);
+                } finally {
+                    Unsafe.free(primeBatch, (long) PRIME_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+
+                // Sanity check: priming uses the same code on both regions, so
+                // divergence here would point at the test harness, not the
+                // override.
+                assertBytesEqual(baseA, baseB, regionBytes);
+
+                // Test batch: existing entries first, then new entries. Row
+                // indexes alternate null / non-null values from the caller's
+                // ARG_VALUES to cover {isNew, isNull} × {true, false}.
+                final long[] testOffsets = {
+                        0, valueSize, 2 * valueSize, 3 * valueSize,
+                        4 * valueSize, 5 * valueSize, 6 * valueSize, 7 * valueSize
+                };
+                final long testBatch = buildBatchBuffer(TEST_ROWS, testOffsets, TEST_IS_NEW);
+                try {
+                    runReferencePath(function, record, flyweightA, baseA, testBatch, TEST_ROWS.length, 1000);
+                    function.computeKeyedBatch(record, flyweightB, baseB, testBatch, TEST_ROWS.length, 1000);
+                } finally {
+                    Unsafe.free(testBatch, (long) TEST_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+
+                assertBytesEqual(baseA, baseB, regionBytes);
+            } finally {
+                Unsafe.free(baseA, regionBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(baseB, regionBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
+    /**
+     * Minimal {@link PageFrameMemoryRecord} that services both code paths of
+     * {@code computeKeyedBatch}:
+     * <ul>
+     *     <li>the direct-column fast path via {@link #getPageAddress},</li>
+     *     <li>the record-based slow path via {@code getByte}/{@code getShort}/
+     *         {@code getInt}/{@code getLong}/{@code getFloat}/{@code getDouble}.</li>
+     * </ul>
+     * The underlying native buffer is a flat array of primitive values, indexed
+     * by {@code rowIndex} and stepping by {@code elemSize} bytes per row.
+     * {@link #setPageAvailable} flips between paths without rebuilding the
+     * buffer.
+     */
+    static final class TestFrameRecord extends PageFrameMemoryRecord {
+        private final long bufferAddr;
+        private final long bufferSize;
+        private final int elemSize;
+        private boolean pageAvailable = true;
+
+        TestFrameRecord(int elemSize, long bufferAddr, long bufferSize) {
+            this.elemSize = elemSize;
+            this.bufferAddr = bufferAddr;
+            this.bufferSize = bufferSize;
+        }
+
+        @Override
+        public void close() {
+            if (bufferAddr != 0) {
+                Unsafe.free(bufferAddr, bufferSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+
+        @Override
+        public byte getByte(int columnIndex) {
+            return Unsafe.getUnsafe().getByte(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public double getDouble(int columnIndex) {
+            return Unsafe.getUnsafe().getDouble(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public float getFloat(int columnIndex) {
+            return Unsafe.getUnsafe().getFloat(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public int getInt(int columnIndex) {
+            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public long getLong(int columnIndex) {
+            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return pageAvailable ? bufferAddr : 0;
+        }
+
+        @Override
+        public short getShort(int columnIndex) {
+            return Unsafe.getUnsafe().getShort(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public long getTimestamp(int columnIndex) {
+            return getLong(columnIndex);
+        }
+
+        void setPageAvailable(boolean value) {
+            this.pageAvailable = value;
+        }
+    }
+}
