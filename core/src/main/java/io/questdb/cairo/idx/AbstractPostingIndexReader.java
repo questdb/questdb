@@ -39,8 +39,10 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
@@ -64,6 +66,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);
     protected final PostingGenLookup genLookup = new PostingGenLookup();
     protected final MemoryMR keyMem = Vm.getCMRInstance();
+    protected final IntList sidecarColumnIndices = new IntList();
+    protected final IntList sidecarColumnTypes = new IntList();
+    protected final ObjList<MemoryMR> sidecarMems = new ObjList<>();
     protected final MemoryMR valueMem = Vm.getCMRInstance();
     protected long columnTop;
     protected int coverCount;
@@ -71,9 +76,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int keyCount;
     protected RecordMetadata metadata;
     protected long reloadGeneration; // incremented when valueMem is remapped; cursors check for staleness
-    protected int[] sidecarColumnIndices;
-    protected int[] sidecarColumnTypes;
-    protected MemoryMR[] sidecarMems;
     private long activePageOffset;
     private MillisecondClock clock;
     private long columnTxn;
@@ -220,7 +222,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     MemoryTag.MMAP_INDEX_READER
             );
 
-            openSidecarFilesIfPresent(configuration, path.trimTo(plen), columnName, columnNameTxn);
+            openSidecarFilesIfPresent(path.trimTo(plen), columnName, columnNameTxn);
         } catch (Throwable e) {
             close();
             throw e;
@@ -257,15 +259,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     private void closeSidecarMems() {
-        if (sidecarMems != null) {
-            for (int i = 0; i < sidecarMems.length; i++) {
-                sidecarMems[i] = Misc.free(sidecarMems[i]);
-            }
-            sidecarMems = null;
-        }
+        Misc.freeObjListAndClear(sidecarMems);
         coverCount = 0;
-        sidecarColumnIndices = null;
-        sidecarColumnTypes = null;
+        sidecarColumnIndices.clear();
+        sidecarColumnTypes.clear();
     }
 
     /**
@@ -328,7 +325,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     private void openSidecarFilesIfPresent(
-            FilesFacade ff,
             Path path,
             CharSequence columnName,
             long columnNameTxn
@@ -360,37 +356,37 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // Types are looked up from the live RecordMetadata, not stored here.
             long neededSize = 8 + (long) count * Integer.BYTES;
             infoMem.extend(neededSize);
-            sidecarColumnIndices = new int[count];
-            sidecarColumnTypes = new int[count];
+            sidecarColumnIndices.clear();
+            sidecarColumnTypes.clear();
             int columnCount = metadata.getColumnCount();
             for (int i = 0; i < count; i++) {
                 int colIdx = infoMem.getInt(8 + (long) i * Integer.BYTES);
-                sidecarColumnIndices[i] = colIdx;
+                sidecarColumnIndices.add(colIdx);
                 if (colIdx < 0 || colIdx >= columnCount) {
                     throw CairoException.critical(0)
                             .put("posting index .pci references missing column [colIdx=").put(colIdx)
                             .put(", columnCount=").put(columnCount).put(']');
                 }
-                sidecarColumnTypes[i] = metadata.getColumnType(colIdx);
+                sidecarColumnTypes.add(metadata.getColumnType(colIdx));
             }
             coverCount = count;
 
-            sidecarMems = new MemoryMR[count];
+            sidecarMems.clear();
             int presentCount = 0;
             for (int c = 0; c < count; c++) {
                 // coveredColumnNameTxn placeholder: a future change will
                 // resolve the per-cover-column txn from _cv.d.
                 LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), columnName, c, columnNameTxn, valueFileTxn);
                 if (ff.exists(pcFile)) {
-                    sidecarMems[c] = Vm.getCMRInstance();
+                    MemoryMR mem = Vm.getCMRInstance();
                     // Use -1 to map the full file via fd-based length check,
                     // avoiding stale length from ff.length(path).
-                    sidecarMems[c].of(ff, pcFile, ff.getMapPageSize(), -1, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+                    mem.of(ff, pcFile, ff.getMapPageSize(), -1, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+                    sidecarMems.add(mem);
                     presentCount++;
+                } else {
+                    sidecarMems.add(null);
                 }
-                // Missing sidecar leaves sidecarMems[c] = null; the cursor
-                // reports per-column availability via isCoveredAvailable, and
-                // the record-side dispatch falls back to the main column file.
                 path.trimTo(plen);
             }
             if (presentCount == 0) {
@@ -404,15 +400,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             Misc.free(infoMem);
             path.trimTo(plen);
         }
-    }
-
-    private void openSidecarFilesIfPresent(
-            CairoConfiguration configuration,
-            Path path,
-            CharSequence columnName,
-            long columnNameTxn
-    ) {
-        openSidecarFilesIfPresent(configuration.getFilesFacade(), path, columnName, columnNameTxn);
     }
 
     private void readIndexMetadataFromBestPage(long pinnedSealTxn) {
@@ -577,7 +564,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         @Override
         public int decodeCoveredColumnsToAddr(long[] outputAddrs) {
-            if (sidecarMems == null || coverCount == 0) {
+            if (coverCount == 0) {
                 return -1;
             }
             ensureDecodeWorkspaceCapacity(65536); // pre-allocate workspace
@@ -631,8 +618,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         @Override
         public int getCoveredColumnType(int includeIdx) {
-            return sidecarColumnTypes != null && includeIdx < sidecarColumnTypes.length
-                    ? sidecarColumnTypes[includeIdx] : -1;
+            return includeIdx >= 0 && includeIdx < sidecarColumnTypes.size()
+                    ? sidecarColumnTypes.getQuick(includeIdx) : -1;
         }
 
         @Override
@@ -795,7 +782,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         @Override
         public int getCoveredValueCount() {
-            if (sidecarMems == null || coverCount == 0) {
+            if (coverCount == 0) {
                 return -1;
             }
             // Sum counts across all gens for this key.
@@ -828,17 +815,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
         @Override
         public boolean hasCovering() {
-            return coverCount > 0 && sidecarMems != null;
+            return coverCount > 0;
         }
 
         @Override
         public boolean isCoveredAvailable(int includeIdx) {
-            return coverCount > 0
-                    && sidecarMems != null
-                    && includeIdx >= 0
-                    && includeIdx < sidecarMems.length
-                    && sidecarMems[includeIdx] != null
-                    && sidecarMems[includeIdx].size() > 0;
+            if (includeIdx < 0 || includeIdx >= sidecarMems.size()) {
+                return false;
+            }
+            MemoryMR mem = sidecarMems.getQuick(includeIdx);
+            return mem != null && mem.size() > 0;
         }
 
         @Override
@@ -872,7 +858,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 firstSparseGen++;
             }
             for (int c = 0; c < coverCount; c++) {
-                if (sidecarMems[c] == null) {
+                MemoryMR mem = sidecarMems.getQuick(c);
+                if (mem == null) {
                     offsets[c] = 0;
                     continue;
                 }
@@ -882,21 +869,21 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 } else if (c == 0) {
                     offset = genLookup.getGenSidecarOffset(firstSparseGen);
                 } else {
-                    offset = computeSealedSidecarSize(sidecarMems[c], denseKeyCount);
+                    offset = computeSealedSidecarSize(mem, denseKeyCount);
                 }
-                int colType = sidecarColumnTypes[c];
+                int colType = sidecarColumnTypes.getQuick(c);
                 boolean isVar = ColumnType.isVarSize(colType);
                 int elemSize = isVar ? 0 : ColumnType.sizeOf(colType);
                 for (int g = firstSparseGen; g < gen; g++) {
                     if (genLookup.getGenKeyCount(g) >= 0) continue;
-                    if (offset + 4 > sidecarMems[c].size()) break;
-                    int count = Unsafe.getUnsafe().getInt(sidecarMems[c].addressOf(offset));
+                    if (offset + 4 > mem.size()) break;
+                    int count = Unsafe.getUnsafe().getInt(mem.addressOf(offset));
                     if (isVar) {
                         if (count == 0) {
                             offset += 4;
                         } else {
                             long sentinelPos = offset + 4 + (long) count * Integer.BYTES;
-                            int dataSize = Unsafe.getUnsafe().getInt(sidecarMems[c].addressOf(sentinelPos));
+                            int dataSize = Unsafe.getUnsafe().getInt(mem.addressOf(sentinelPos));
                             offset += 4 + (long) (count + 1) * Integer.BYTES + dataSize;
                         }
                     } else {
@@ -919,9 +906,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             int count = 0;
             for (int c = 0; c < coverCount; c++) {
                 if (outputAddrs[c] == 0) continue;
-                MemoryMR mem = sidecarMems[c];
+                MemoryMR mem = sidecarMems.getQuick(c);
                 if (mem == null || mem.size() == 0) continue;
-                int colType = sidecarColumnTypes[c];
+                int colType = sidecarColumnTypes.getQuick(c);
                 if (ColumnType.isVarSize(colType)) continue;
 
                 long strideIdxOffset = (long) stride * Integer.BYTES;
@@ -974,9 +961,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             int count = 0;
             for (int c = 0; c < coverCount; c++) {
                 if (outputAddrs[c] == 0) continue;
-                MemoryMR mem = sidecarMems[c];
+                MemoryMR mem = sidecarMems.getQuick(c);
                 if (mem == null) continue;
-                int colType = sidecarColumnTypes[c];
+                int colType = sidecarColumnTypes.getQuick(c);
                 if (ColumnType.isVarSize(colType)) continue;
 
                 int elemSize = ColumnType.sizeOf(colType);
@@ -1042,12 +1029,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private long findDenseVarBlockBase(int includeIdx) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null || sealedGenKeyCount <= 0) {
+            if (includeIdx >= sidecarMems.size() || sealedGenKeyCount <= 0) {
+                return -1;
+            }
+            MemoryMR mem = sidecarMems.getQuick(includeIdx);
+            if (mem == null) {
                 return -1;
             }
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int siSize = PostingIndexUtils.strideIndexSize(sealedGenKeyCount);
-            MemoryMR mem = sidecarMems[includeIdx];
             if ((long) stride * Integer.BYTES + Integer.BYTES > mem.size()) {
                 return -1;
             }
@@ -1058,8 +1048,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         private int getDenseGenCount(int genKeyCount) {
             int memIdx = -1;
             for (int c = 0; c < coverCount; c++) {
-                if (sidecarMems[c] != null && sidecarMems[c].size() > 0
-                        && !ColumnType.isVarSize(sidecarColumnTypes[c])) {
+                MemoryMR mem = sidecarMems.getQuick(c);
+                if (mem != null && mem.size() > 0
+                        && !ColumnType.isVarSize(sidecarColumnTypes.getQuick(c))) {
                     memIdx = c;
                     break;
                 }
@@ -1073,7 +1064,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
             if (localKey >= ks) return 0;
 
-            MemoryMR mem = sidecarMems[memIdx];
+            MemoryMR mem = sidecarMems.getQuick(memIdx);
             int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
             long strideIdxOffset = (long) stride * Integer.BYTES;
             if (strideIdxOffset + Integer.BYTES > mem.size()) return 0;
@@ -1087,38 +1078,44 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private byte getRawSidecarByte(int includeIdx) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return 0;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Byte.BYTES);
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return 0;
+            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Byte.BYTES);
             return Unsafe.getUnsafe().getByte(addr);
         }
 
         private double getRawSidecarDouble(int includeIdx) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return Double.NaN;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Double.BYTES);
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return Double.NaN;
+            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Double.BYTES);
             return Unsafe.getUnsafe().getDouble(addr);
         }
 
         private float getRawSidecarFloat(int includeIdx) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return Float.NaN;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Float.BYTES);
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return Float.NaN;
+            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Float.BYTES);
             return Unsafe.getUnsafe().getFloat(addr);
         }
 
         private int getRawSidecarInt(int includeIdx) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return Integer.MIN_VALUE;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Integer.BYTES);
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return Integer.MIN_VALUE;
+            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Integer.BYTES);
             return Unsafe.getUnsafe().getInt(addr);
         }
 
         private long getRawSidecarLong(int includeIdx) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return Long.MIN_VALUE;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Long.BYTES);
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return Long.MIN_VALUE;
+            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Long.BYTES);
             return Unsafe.getUnsafe().getLong(addr);
         }
 
         private long getRawSidecarMultiLong(int includeIdx, int valueSize, int longIndex) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return Long.MIN_VALUE;
-            long addr = sidecarMems[includeIdx].addressOf(
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return Long.MIN_VALUE;
+            long addr = mem.addressOf(
                     currentGenSidecarOffsets[includeIdx] + 4
                             + (long) cachedSidecarIdx * valueSize
                             + (long) longIndex * Long.BYTES
@@ -1127,23 +1124,26 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private short getRawSidecarShort(int includeIdx) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return 0;
-            long addr = sidecarMems[includeIdx].addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Short.BYTES);
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return 0;
+            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Short.BYTES);
             return Unsafe.getUnsafe().getShort(addr);
         }
 
         private int getSparseGenCount(int gen) {
-            if (sidecarMems[0] == null) {
+            MemoryMR mem = sidecarMems.size() > 0 ? sidecarMems.getQuick(0) : null;
+            if (mem == null) {
                 return 0;
             }
             int[] offsets = ensureSparseOffsetsWorkspace();
             computeSparseOffsets(gen, offsets);
-            long addr = sidecarMems[0].addressOf(offsets[0]);
+            long addr = mem.addressOf(offsets[0]);
             return Unsafe.getUnsafe().getInt(addr);
         }
 
         private ArrayView getVarSidecarArray(int includeIdx, int columnType) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return null;
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return null;
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
@@ -1151,7 +1151,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets[includeIdx];
             if (blockBase < 0) return null;
-            MemoryMR mem = sidecarMems[includeIdx];
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
             int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
@@ -1189,7 +1188,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private BinarySequence getVarSidecarBin(int includeIdx) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return null;
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return null;
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
@@ -1197,7 +1197,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets[includeIdx];
             if (blockBase < 0) return null;
-            MemoryMR mem = sidecarMems[includeIdx];
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
             int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
@@ -1223,7 +1222,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private long getVarSidecarBinLen(int includeIdx) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return -1;
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return -1;
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
@@ -1231,7 +1231,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets[includeIdx];
             if (blockBase < 0) return -1;
-            MemoryMR mem = sidecarMems[includeIdx];
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
             int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
@@ -1253,7 +1252,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private CharSequence getVarSidecarStr(int includeIdx, DirectString view) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return null;
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return null;
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
@@ -1261,7 +1261,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets[includeIdx];
             if (blockBase < 0) return null;
-            MemoryMR mem = sidecarMems[includeIdx];
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
             int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
@@ -1283,7 +1282,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private Utf8Sequence getVarSidecarUtf8(int includeIdx, DirectUtf8String view) {
-            if (sidecarMems == null || sidecarMems[includeIdx] == null) return null;
+            MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
+            if (mem == null) return null;
             int ordinal = isCurrentGenDense
                     ? denseVarKeyStartCount + cachedSidecarIdx
                     : cachedSidecarIdx;
@@ -1291,7 +1291,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     ? findDenseVarBlockBase(includeIdx)
                     : currentGenSidecarOffsets[includeIdx];
             if (blockBase < 0) return null;
-            MemoryMR mem = sidecarMems[includeIdx];
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
             int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
@@ -1337,7 +1336,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
          * The getCoveredXxx() methods decode individual values on demand.
          */
         protected void cacheSidecarKeyAddrs(int stride, int localKey) {
-            if (sidecarMems == null || coverCount == 0 || sealedGenKeyCount <= 0) {
+            if (coverCount == 0 || sealedGenKeyCount <= 0) {
                 return;
             }
             if (stride == cachedKeyBlockStride) {
@@ -1358,7 +1357,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
 
             for (int c = 0; c < coverCount; c++) {
-                MemoryMR mem = sidecarMems[c];
+                MemoryMR mem = sidecarMems.getQuick(c);
                 if (mem == null) {
                     keyBlockAddrs[c] = 0;
                     continue;
@@ -1428,7 +1427,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         protected void computePerColumnSidecarOffsets(int gen) {
-            if (sidecarMems == null || sidecarColumnTypes == null || coverCount == 0) {
+            if (coverCount == 0) {
                 return;
             }
             if (currentGenSidecarOffsets == null || currentGenSidecarOffsets.length < coverCount) {
@@ -1442,7 +1441,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
 
             for (int c = 0; c < coverCount; c++) {
-                if (sidecarMems[c] == null) {
+                MemoryMR mem = sidecarMems.getQuick(c);
+                if (mem == null) {
                     currentGenSidecarOffsets[c] = 0;
                     continue;
                 }
@@ -1457,10 +1457,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 } else {
                     // Other columns: compute sealed data size from stride index sentinel.
                     // Each column's sealed sidecar has different sizes due to compression.
-                    offset = computeSealedSidecarSize(sidecarMems[c], sealedGenKeyCount);
+                    offset = computeSealedSidecarSize(mem, sealedGenKeyCount);
                 }
 
-                int colType = sidecarColumnTypes[c];
+                int colType = sidecarColumnTypes.getQuick(c);
                 boolean isVar = ColumnType.isVarSize(colType);
                 int elemSize = isVar ? 0 : ColumnType.sizeOf(colType);
 
@@ -1469,16 +1469,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     if (genLookup.getGenKeyCount(g) >= 0) {
                         continue; // skip dense gens (shouldn't happen after firstSparseGen)
                     }
-                    if (offset + 4 > sidecarMems[c].size()) {
+                    if (offset + 4 > mem.size()) {
                         break;
                     }
-                    int count = Unsafe.getUnsafe().getInt(sidecarMems[c].addressOf(offset));
+                    int count = Unsafe.getUnsafe().getInt(mem.addressOf(offset));
                     if (isVar) {
                         if (count == 0) {
                             offset += 4;
                         } else {
                             long sentinelPos = offset + 4 + (long) count * Integer.BYTES;
-                            int dataSize = Unsafe.getUnsafe().getInt(sidecarMems[c].addressOf(sentinelPos));
+                            int dataSize = Unsafe.getUnsafe().getInt(mem.addressOf(sentinelPos));
                             offset += 4 + (long) (count + 1) * Integer.BYTES + dataSize;
                         }
                     } else {
@@ -1518,7 +1518,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 colCacheBlockAddrs[includeIdx] = blockAddr;
                 return true;
             }
-            int colType = sidecarColumnTypes[includeIdx];
+            int colType = sidecarColumnTypes.getQuick(includeIdx);
             int elemSize = ColumnType.sizeOf(colType);
             int needed = count * elemSize;
             if (needed > colCacheCapacities[includeIdx]) {
