@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table.parquet;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -113,7 +114,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             int rowGroupIndex,
             int rowLo,
             int rowHi,
-            io.questdb.std.DirectLongList filteredRows
+            DirectLongList filteredRows
     ) {
         if (decodeContextPtr == 0) {
             decodeContextPtr = PartitionDecoder.createDecodeContext(parquetAddr, parquetSize);
@@ -134,7 +135,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
             int rowGroupIndex,
             int rowLo,
             int rowHi,
-            io.questdb.std.DirectLongList filteredRows
+            DirectLongList filteredRows
     ) {
         if (decodeContextPtr == 0) {
             decodeContextPtr = PartitionDecoder.createDecodeContext(parquetAddr, parquetSize);

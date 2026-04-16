@@ -86,14 +86,14 @@ public class PartitionUpdater implements QuietCloseable {
         copyRowGroupWithNullColumns(ptr, rowGroupIndex, nullColDescAddr, nullColCount);
     }
 
-    public long getResultUnusedBytes() {
-        assert ptr != 0;
-        return getResultUnusedBytes(ptr);
-    }
-
     public long getResultParquetMetaFileSize() {
         assert ptr != 0;
         return getResultParquetMetaFileSize(ptr);
+    }
+
+    public long getResultUnusedBytes() {
+        assert ptr != 0;
+        return getResultUnusedBytes(ptr);
     }
 
     public void of(

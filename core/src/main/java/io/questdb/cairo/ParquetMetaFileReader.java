@@ -74,7 +74,8 @@ import io.questdb.std.str.Utf8s;
  *   [8]  PARQUET_FOOTER_LENGTH   u32
  *   [12] ROW_GROUP_COUNT         u32
  *   [16] UNUSED_BYTES            u64
- *   [24..] row group entries (4B each, u32 block offset >> 3)
+ *   [24] PREV_FOOTER_OFFSET      u64
+ *   [32..] row group entries (4B each, u32 block offset >> 3)
  *   [..]  feature sections (gated by header FEATURE_FLAGS)
  *   [..]  CRC32                  u32
  *   [..]  FOOTER_LENGTH          u32  (total bytes from footer start through CRC)
@@ -106,7 +107,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int FOOTER_UNUSED_BYTES_OFF = 16;
     private static final int HEADER_COLUMN_COUNT_OFF = 24;
     private static final int HEADER_DESIGNATED_TS_OFF = 16;
-    private static final long HEADER_FEATURE_FLAGS_OFF = 8;
+    private static final int HEADER_FEATURE_FLAGS_OFF = 8;
     private static final int HEADER_FIXED_SIZE = 32;
     // Header offsets (new layout: footer_offset(8) + feature_flags(8) + dts(4) + sorting(4) + col_count(4) + reserved(4))
     private static final int HEADER_FOOTER_OFFSET_OFF = 0;
@@ -498,7 +499,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
     /**
      * Computes the absolute memory address of a column descriptor in the header.
-     * Descriptors start at offset 24 (after fixed header) and are 32 bytes each.
+     * Descriptors start at offset 32 (after fixed header) and are 32 bytes each.
      */
     private long columnDescriptorAddr(int columnIndex) {
         assert columnIndex >= 0 && columnIndex < columnCount;

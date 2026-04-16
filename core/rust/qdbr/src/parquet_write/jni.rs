@@ -183,11 +183,16 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             ));
         }
 
-        // Take ownership of fds so Rust closes them on any error path below.
+        // Take ownership of ALL fds so Rust closes them on any error path below.
         // The Java caller must set its fd locals to -1 before this JNI call
         // so that it never double-closes on the exception path.
         let reader_file = unsafe { File::from_raw_fd_i32(reader_fd) };
         let writer_file = unsafe { File::from_raw_fd_i32(writer_fd) };
+        let pm_fd = if parquet_meta_fd >= 0 {
+            Some(unsafe { crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd) })
+        } else {
+            None
+        };
 
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
@@ -211,12 +216,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
         let sorting_columns = if timestamp_index != -1 {
             Some(vec![SortingColumn::new(timestamp_index, false, false)])
-        } else {
-            None
-        };
-
-        let pm_fd = if parquet_meta_fd >= 0 {
-            Some(unsafe { crate::parquet::io::FromRawFdI32Ext::from_raw_fd_i32(parquet_meta_fd) })
         } else {
             None
         };

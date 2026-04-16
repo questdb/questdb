@@ -44,8 +44,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         Os.init();
     }
 
-    // ── Helper to build a _pm file via the real Rust writer ────────────
-
     @Test
     public void testBloomFilterEnabledCanSkipRowGroup() throws Exception {
         assertMemoryLeak(() -> {
@@ -98,8 +96,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ── Happy path tests ────────────────────────────────────────────────
 
     @Test
     public void testCanSkipRowGroupNoFiltersReturnsFalse() throws Exception {
@@ -232,8 +228,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         });
     }
 
-    // ── Edge case tests ─────────────────────────────────────────────────
-
     @Test
     public void testCorruptedColumnCountValidatedBeforeAccess() throws Exception {
         assertMemoryLeak(() -> {
@@ -325,8 +319,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             }
         });
     }
-
-    // ── Error / invalid input tests ──────────────────────────────────────
 
     @Test
     public void testDesignatedTimestampColumnIndexNone() throws Exception {
@@ -777,8 +769,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
         });
     }
 
-    // ── Feature flags / bloom filter tests ──────────────────────────────
-
     @Test
     public void testUnknownRequiredFeatureFlagRejected() throws Exception {
         assertMemoryLeak(() -> {
@@ -839,8 +829,6 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
             ParquetMetaFileWriter.destroyWriter(writerPtr);
         }
     }
-
-    // ── Bloom filter test helper ────────────────────────────────────────
 
     private static PmTestFile buildFileWithBloomFilter(int columnCount, long... rowGroupSizes) {
         long writerPtr = ParquetMetaFileWriter.create();

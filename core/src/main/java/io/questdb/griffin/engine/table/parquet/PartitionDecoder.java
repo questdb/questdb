@@ -229,15 +229,6 @@ public class PartitionDecoder implements ParquetDecoder, ParquetRowGroupSkipper,
         );
     }
 
-    public long getFileAddr() {
-        return fileAddr;
-    }
-
-    public long getFileSize() {
-        assert fileSize > 0 || fileAddr == 0;
-        return fileSize;
-    }
-
     @Override
     public int getColumnCount() {
         return metadata.getColumnCount();
@@ -246,6 +237,15 @@ public class PartitionDecoder implements ParquetDecoder, ParquetRowGroupSkipper,
     @Override
     public int getColumnId(int columnIndex) {
         return metadata.getColumnId(columnIndex);
+    }
+
+    public long getFileAddr() {
+        return fileAddr;
+    }
+
+    public long getFileSize() {
+        assert fileSize > 0 || fileAddr == 0;
+        return fileSize;
     }
 
     public Metadata metadata() {

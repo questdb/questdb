@@ -1367,6 +1367,9 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         // stat() the _pm file to get its actual size (field 3 is now parquet file size).
         final long parquetMetaFileSize = ff.length(path.$());
+        if (parquetMetaFileSize < 1) {
+            throw CairoException.critical(0).put("missing _pm sidecar file [path=").put(path).put(']');
+        }
 
         MemoryCMR parquetMetaMem = parquetMetadataPartitions.getQuick(partitionIndex);
         if (parquetMetaMem != null && parquetMetaMem != NullMemoryCMR.INSTANCE) {

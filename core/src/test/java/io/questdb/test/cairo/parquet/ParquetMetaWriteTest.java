@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.test.AbstractCairoTest;
@@ -61,6 +62,7 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertHasParquetPartition("x");
+            assertParquetMetadata("x", 3);
             assertSql(
                     """
                             x\ty\tts
@@ -175,6 +177,7 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
 
             assertNotSuspended("x");
             assertHasParquetPartition("x");
+            assertParquetMetadata("x", 2);
             assertSql(
                     """
                             x\tts
@@ -230,6 +233,7 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
 
             assertNotSuspended("x");
             assertHasParquetPartition("x");
+            assertParquetMetadata("x", 2);
             assertSql(
                     """
                             x\tts
@@ -293,6 +297,7 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             }
 
             assertHasParquetPartition("x");
+            assertParquetMetadata("x", 2);
             assertSql("count\n11\n", "SELECT count() FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02'");
         });
     }
@@ -329,6 +334,7 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertHasParquetPartition("x");
+            assertParquetMetadata("x", 9);
             // Note: FLOAT column 'f' renders with DOUBLE precision when read through
             // the _pm decode path because the parquet decoder promotes f32 to f64.
             assertSql(
@@ -343,7 +349,47 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
         });
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
+    @Test
+    public void testParquetMetaWithNullColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (
+                                a INT,
+                                b STRING,
+                                c DOUBLE,
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(a, ts) VALUES (99, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            assertHasParquetPartition("x");
+            assertParquetMetadata("x", 4);
+            assertSql(
+                    """
+                            a\tb\tc\tts
+                            1\t\tnull\t2020-01-01T00:00:00.000000Z
+                            2\t\tnull\t2020-01-01T01:00:00.000000Z
+                            3\t\tnull\t2020-01-01T02:00:00.000000Z
+                            99\t\tnull\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
 
     private void assertHasParquetPartition(String tableName) throws Exception {
         try (TableReader reader = getReader(tableName)) {
@@ -363,5 +409,22 @@ public class ParquetMetaWriteTest extends AbstractCairoTest {
                 "table " + tableName + " should not be suspended",
                 engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName))
         );
+    }
+
+    private void assertParquetMetadata(String tableName, int expectedColumnCount) {
+        try (TableReader reader = getReader(tableName)) {
+            for (int i = 0; i < reader.getPartitionCount(); i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                reader.openPartition(i);
+                ParquetMetaFileReader meta = reader
+                        .getAndInitParquetMetaPartitionDecoder(i)
+                        .metadata();
+                Assert.assertTrue("row group count must be > 0", meta.getRowGroupCount() > 0);
+                Assert.assertEquals("column count", expectedColumnCount, meta.getColumnCount());
+                Assert.assertTrue("parquet file size must be > 0", meta.getParquetFileSize() > 0);
+            }
+        }
     }
 }

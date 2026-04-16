@@ -29,7 +29,6 @@ import io.questdb.griffin.engine.table.parquet.ParquetMetaPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
