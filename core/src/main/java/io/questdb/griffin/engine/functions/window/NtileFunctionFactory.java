@@ -115,8 +115,8 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
      * The first {@code totalRows % bucketCount} buckets each contain {@code ceil(totalRows / bucketCount)} rows,
      * and the remaining buckets each contain {@code floor(totalRows / bucketCount)} rows.
      *
-     * @param rowNumber  1-based row number within the partition
-     * @param totalRows  total number of rows in the partition
+     * @param rowNumber   1-based row number within the partition
+     * @param totalRows   total number of rows in the partition
      * @param bucketCount number of buckets
      * @return 1-based bucket number
      */
