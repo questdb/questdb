@@ -227,7 +227,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                         for (int i = 0; i < numOfTables; i++) {
                             final String tableName = getTableName(i);
                             final TableData table = tables.get(tableName);
-                            if (table.size() > 0) {
+                            if (table.size(sendSymbolsWithSpace) > 0) {
                                 serverMain.awaitTable(tableName);
                                 assertTable(serverMain, table, tableName);
                             }
@@ -349,7 +349,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     }
 
     private void assertTable(TestServerMain serverMain, TableData table, @NotNull String tableName) {
-        if (table.size() < 1) {
+        if (table.size(sendSymbolsWithSpace) < 1) {
             return;
         }
         try (
@@ -357,9 +357,9 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
         ) {
             getLog().info().$("table.getName(): ").$safe(table.getName()).$(", tableName: ").$safe(tableName)
-                    .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
+                    .$(", table.size(): ").$(table.size(sendSymbolsWithSpace)).$(", reader.size(): ").$(reader.size()).$();
             final TableReaderMetadata metadata = reader.getMetadata();
-            final CharSequence expected = table.generateRows(metadata);
+            final CharSequence expected = table.generateRows(metadata, sendSymbolsWithSpace);
             getLog().info().$safe(table.getName()).$(" expected:\n").$safe(expected).$();
 
             // Assert reader min timestamp

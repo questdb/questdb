@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.BitSet;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -351,6 +352,19 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testDirectUtf8ToUtf16AsciiPath() {
+        try (DirectUtf8Sink utf8Sink = new DirectUtf8Sink(16)) {
+            utf8Sink.put("hello");
+            Assert.assertTrue(utf8Sink.isAscii());
+            StringSink utf16Sink = new StringSink();
+            CharSequence result = Utf8s.directUtf8ToUtf16(utf8Sink, utf16Sink);
+            Assert.assertEquals("hello", result.toString());
+            // ASCII path returns the asAsciiCharSequence directly
+            Assert.assertSame(utf8Sink.asAsciiCharSequence(), result);
+        }
+    }
+
+    @Test
     public void testDoubleQuotedTextBySingleQuoteParsing() {
         StringSink query = new StringSink();
 
@@ -361,6 +375,24 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testDoubleQuotedTextBySingleQuoteParsingWithMultiByte() {
+        // Exercises utf8ToUtf16EscConsecutiveQuotes with non-ASCII (multi-byte) input
+        StringSink query = new StringSink();
+        String text = "select * from \"\"фубар\"\" abcd";
+        byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < bytes.length; i++) {
+            Unsafe.getUnsafe().putByte(ptr + i, bytes[i]);
+        }
+        try {
+            Assert.assertTrue(Utf8s.utf8ToUtf16EscConsecutiveQuotes(ptr, ptr + bytes.length, query));
+            Assert.assertEquals(text.replace("\"\"", "\""), query.toString());
+        } finally {
+            Unsafe.free(ptr, bytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testDoubleQuotedTextParsing() {
         StringSink query = new StringSink();
 
@@ -368,6 +400,30 @@ public class Utf8sTest {
         Assert.assertTrue(copyToSinkWithTextUtil(query, text, true));
 
         Assert.assertEquals(text.replace("\"\"", "\""), query.toString());
+    }
+
+    @Test
+    public void testEncodeUtf16CharSurrogateErrors() {
+        Utf8StringSink sink = new Utf8StringSink();
+
+        // Lone high surrogate at end of input => '?'
+        // encodeUtf16Char is called with i already past the current char
+        sink.clear();
+        int pos = Utf8s.encodeUtf16Char(sink, "\uD83D", 1, 1, '\uD83D');
+        Assert.assertEquals(1, pos);
+        Assert.assertEquals("?", sink.toString());
+
+        // High surrogate followed by non-low surrogate => '?'
+        sink.clear();
+        pos = Utf8s.encodeUtf16Char(sink, "\uD83Dx", 2, 1, '\uD83D');
+        Assert.assertEquals(2, pos); // consumed up to position 2 (read 'x' at pos=1, rejected it)
+        Assert.assertEquals("?", sink.toString());
+
+        // Lone low surrogate => '?'
+        sink.clear();
+        pos = Utf8s.encodeUtf16Char(sink, "\uDE00b", 2, 1, '\uDE00');
+        Assert.assertEquals(1, pos);
+        Assert.assertEquals("?", sink.toString());
     }
 
     @Test
@@ -415,6 +471,27 @@ public class Utf8sTest {
         sink.clear();
         Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "\uD83D\uDE00", 3));
         TestUtils.assertEquals("", sink);
+
+        // Lone high surrogate at end of string => '?'
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "a\uD83D", 10));
+        TestUtils.assertEquals("a?", sink);
+
+        // High surrogate followed by non-low surrogate => '?'
+        // Note: the non-low surrogate char is consumed but not encoded
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "\uD83Dx", 10));
+        TestUtils.assertEquals("?", sink);
+
+        // Lone low surrogate => '?'
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "\uDE00b", 10));
+        TestUtils.assertEquals("?b", sink);
+
+        // Invalid surrogate with limited budget for the '?'
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "a\uD83D", 1));
+        TestUtils.assertEquals("a", sink);
     }
 
     @Test
@@ -426,6 +503,10 @@ public class Utf8sTest {
         Assert.assertFalse(Utf8s.endsWith(utf8("foo bar baz"), utf8("bar")));
         Assert.assertTrue(Utf8s.endsWith(utf8("foo bar baz"), Utf8String.EMPTY));
         Assert.assertFalse(Utf8s.endsWith(Utf8String.EMPTY, utf8("foo")));
+
+        // Long suffix (>= 8 bytes) that differs — exercises equalSuffixBytes longAt mismatch
+        Assert.assertFalse(Utf8s.endsWith(utf8("abcdefghijklmnop"), utf8("ijklmnox")));
+        Assert.assertTrue(Utf8s.endsWith(utf8("abcdefghijklmnop"), utf8("ijklmnop")));
     }
 
     @Test
@@ -505,6 +586,41 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testEqualsAsciiPointer() {
+        byte[] data = "hello".getBytes(StandardCharsets.UTF_8);
+        long mem = Unsafe.malloc(data.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < data.length; i++) {
+                Unsafe.getUnsafe().putByte(mem + i, data[i]);
+            }
+            Assert.assertTrue(Utf8s.equalsAscii("hello", mem, mem + data.length));
+            Assert.assertFalse(Utf8s.equalsAscii("world", mem, mem + data.length));
+            Assert.assertFalse(Utf8s.equalsAscii("hell", mem, mem + data.length));
+            Assert.assertFalse(Utf8s.equalsAscii("helloo", mem, mem + data.length));
+        } finally {
+            Unsafe.free(mem, data.length, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testEqualsDirectSink() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+            sink.put("hello");
+            byte[] data = "hello".getBytes(StandardCharsets.UTF_8);
+            long mem = Unsafe.malloc(data.length, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < data.length; i++) {
+                    Unsafe.getUnsafe().putByte(mem + i, data[i]);
+                }
+                Assert.assertTrue(Utf8s.equals(sink, mem, data.length));
+                Assert.assertFalse(Utf8s.equals(sink, mem, data.length - 1));
+            } finally {
+                Unsafe.free(mem, data.length, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+    }
+
+    @Test
     public void testEqualsIgnoreCaseAscii() {
         final Utf8String str = utf8("test1");
 
@@ -528,6 +644,40 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testEqualsIgnoreCaseAsciiRangeEdgeCases() {
+        Utf8Sequence s = utf8("abcdef");
+        // Identity check
+        Assert.assertTrue(Utf8s.equalsIgnoreCaseAscii(s, 0, 3, s, 0, 3));
+        // Length mismatch
+        Utf8Sequence t = utf8("abc");
+        Assert.assertFalse(Utf8s.equalsIgnoreCaseAscii(s, 0, 3, t, 0, 2));
+    }
+
+    @Test
+    public void testEqualsLongStrings() {
+        // Exercises dataEquals long-at-a-time loop and int/short/byte fallback
+        // 14 bytes = 6 prefix + 8 data (one full long comparison)
+        Assert.assertTrue(Utf8s.equals(utf8("abcdefghijklmn"), utf8("abcdefghijklmn")));
+        Assert.assertFalse(Utf8s.equals(utf8("abcdefghijklmn"), utf8("abcdefghijklmo")));
+
+        // 22 bytes = 6 prefix + 16 data (two long comparisons)
+        Assert.assertTrue(Utf8s.equals(utf8("abcdefghijklmnopqrstuv"), utf8("abcdefghijklmnopqrstuv")));
+        Assert.assertFalse(Utf8s.equals(utf8("abcdefghijklmnopqrstuv"), utf8("abcdefghijklmnopqrstuw")));
+
+        // 10 bytes = 6 prefix + 4 data (int comparison, no full long)
+        Assert.assertTrue(Utf8s.equals(utf8("abcdefghij"), utf8("abcdefghij")));
+        Assert.assertFalse(Utf8s.equals(utf8("abcdefghij"), utf8("abcdefghik")));
+
+        // 8 bytes = 6 prefix + 2 data (short comparison)
+        Assert.assertTrue(Utf8s.equals(utf8("abcdefgh"), utf8("abcdefgh")));
+        Assert.assertFalse(Utf8s.equals(utf8("abcdefgh"), utf8("abcdefgi")));
+
+        // 7 bytes = 6 prefix + 1 data (byte comparison)
+        Assert.assertTrue(Utf8s.equals(utf8("abcdefg"), utf8("abcdefg")));
+        Assert.assertFalse(Utf8s.equals(utf8("abcdefg"), utf8("abcdefh")));
+    }
+
+    @Test
     public void testEqualsNcAscii() {
         final Utf8String str = utf8("test1");
 
@@ -536,6 +686,55 @@ public class Utf8sTest {
         Assert.assertFalse(Utf8s.equalsNcAscii("a_longer_string", str));
 
         Assert.assertFalse(Utf8s.equalsNcAscii("test1", null));
+    }
+
+    @Test
+    public void testEqualsNullCases() {
+        Utf8Sequence abc = utf8("abc");
+        // Both null
+        Assert.assertTrue(Utf8s.equals(null, (@org.jetbrains.annotations.Nullable Utf8Sequence) null));
+        // One null
+        Assert.assertFalse(Utf8s.equals(abc, null));
+        Assert.assertFalse(Utf8s.equals(null, abc));
+    }
+
+    @Test
+    public void testEqualsRangeEdgeCases() {
+        Utf8Sequence s = utf8("abcdef");
+        Utf8Sequence t = utf8("abc");
+        // Identity check
+        Assert.assertTrue(Utf8s.equals(s, 0, 3, s, 0, 3));
+        // Length mismatch
+        Assert.assertFalse(Utf8s.equals(s, 0, 3, t, 0, 2));
+    }
+
+    @Test
+    public void testEqualsRangeLengthMismatch() {
+        Utf8Sequence s = utf8("abc");
+        // Length mismatch via equalsAscii(CharSequence, Utf8Sequence, rLo, rHi)
+        Assert.assertFalse(Utf8s.equalsAscii("ab", s, 0, 3));
+        // Length mismatch via equalsAscii(CharSequence, lLo, lHi, Utf8Sequence, rLo, rHi)
+        Assert.assertFalse(Utf8s.equalsAscii("abcdef", 0, 2, s, 0, 3));
+    }
+
+    @Test
+    public void testEqualsSixPrefix() {
+        Utf8String a = utf8("abcdefgh");
+        Utf8String b = utf8("abcdefgh");
+        Utf8String c = utf8("abcdexgh");
+        long aPrefix = a.zeroPaddedSixPrefix();
+        long bPrefix = b.zeroPaddedSixPrefix();
+        long cPrefix = c.zeroPaddedSixPrefix();
+
+        Assert.assertTrue(Utf8s.equals(a, aPrefix, b, bPrefix));
+        Assert.assertFalse(Utf8s.equals(a, aPrefix, c, cPrefix));
+    }
+
+    @Test
+    public void testEqualsUtf16NcNull() {
+        Assert.assertTrue(Utf8s.equalsUtf16Nc(null, null));
+        Assert.assertFalse(Utf8s.equalsUtf16Nc("abc", null));
+        Assert.assertFalse(Utf8s.equalsUtf16Nc(null, utf8("abc")));
     }
 
     @Test
@@ -551,6 +750,30 @@ public class Utf8sTest {
             sink.put((byte) 0x80);
             Assert.assertEquals(-1, Utf8s.getUtf8SequenceType(sink.lo(), sink.hi()));
         }
+    }
+
+    @Test
+    public void testGreaterThan() {
+        // Null cases
+        Assert.assertFalse(Utf8s.greaterThan(null, null));
+        Assert.assertFalse(Utf8s.greaterThan(null, utf8("a")));
+        Assert.assertFalse(Utf8s.greaterThan(utf8("a"), null));
+
+        // Equal strings
+        Assert.assertFalse(Utf8s.greaterThan(utf8("abc"), utf8("abc")));
+
+        // Greater by byte value
+        Assert.assertTrue(Utf8s.greaterThan(utf8("abd"), utf8("abc")));
+        Assert.assertFalse(Utf8s.greaterThan(utf8("abc"), utf8("abd")));
+
+        // Greater by length
+        Assert.assertTrue(Utf8s.greaterThan(utf8("abcd"), utf8("abc")));
+        Assert.assertFalse(Utf8s.greaterThan(utf8("abc"), utf8("abcd")));
+
+        // Empty strings
+        Assert.assertFalse(Utf8s.greaterThan(utf8(""), utf8("")));
+        Assert.assertTrue(Utf8s.greaterThan(utf8("a"), utf8("")));
+        Assert.assertFalse(Utf8s.greaterThan(utf8(""), utf8("a")));
     }
 
     @Test
@@ -620,6 +843,11 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testHashCodeEmpty() {
+        Assert.assertEquals(0, Utf8s.hashCode(Utf8String.EMPTY));
+    }
+
+    @Test
     public void testIndexOf() {
         Assert.assertEquals(1, Utf8s.indexOf(utf8("foo bar baz"), 0, 7, utf8("oo")));
         Assert.assertEquals(-1, Utf8s.indexOf(utf8("foo bar baz"), 2, 4, utf8("y")));
@@ -651,12 +879,103 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testIndexOfAsciiCharOccurrence() {
+        Utf8String seq = utf8("abcabcabc");
+        // occurrence = 0 returns -1
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), 'a', 0));
+
+        // Forward search: 1st, 2nd, 3rd occurrence of 'a'
+        Assert.assertEquals(0, Utf8s.indexOfAscii(seq, 0, seq.size(), 'a', 1));
+        Assert.assertEquals(3, Utf8s.indexOfAscii(seq, 0, seq.size(), 'a', 2));
+        Assert.assertEquals(6, Utf8s.indexOfAscii(seq, 0, seq.size(), 'a', 3));
+        // 4th occurrence doesn't exist
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), 'a', 4));
+
+        // Reverse search: -1 = last, -2 = second-to-last
+        Assert.assertEquals(6, Utf8s.indexOfAscii(seq, 0, seq.size(), 'a', -1));
+        Assert.assertEquals(3, Utf8s.indexOfAscii(seq, 0, seq.size(), 'a', -2));
+        Assert.assertEquals(0, Utf8s.indexOfAscii(seq, 0, seq.size(), 'a', -3));
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), 'a', -4));
+
+        // Char not found
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), 'z', 1));
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), 'z', -1));
+    }
+
+    @Test
+    public void testIndexOfAsciiTermOccurrence() {
+        Utf8String seq = utf8("foo bar foo baz foo");
+
+        // occurrence = 0 returns -1
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), "foo", 0));
+
+        // Forward: 1st, 2nd, 3rd
+        Assert.assertEquals(0, Utf8s.indexOfAscii(seq, 0, seq.size(), "foo", 1));
+        Assert.assertEquals(8, Utf8s.indexOfAscii(seq, 0, seq.size(), "foo", 2));
+        Assert.assertEquals(16, Utf8s.indexOfAscii(seq, 0, seq.size(), "foo", 3));
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), "foo", 4));
+
+        // Reverse: -1 = last, -2 = second-to-last
+        Assert.assertEquals(16, Utf8s.indexOfAscii(seq, 0, seq.size(), "foo", -1));
+        Assert.assertEquals(8, Utf8s.indexOfAscii(seq, 0, seq.size(), "foo", -2));
+        Assert.assertEquals(0, Utf8s.indexOfAscii(seq, 0, seq.size(), "foo", -3));
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), "foo", -4));
+
+        // Empty term returns -1 (not 0, unlike the non-occurrence overload)
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), "", 1));
+
+        // Term not found
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), "xyz", 1));
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, seq.size(), "xyz", -1));
+
+        // Term longer than remaining sequence
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 17, seq.size(), "foo", 1));
+        Assert.assertEquals(-1, Utf8s.indexOfAscii(seq, 0, 2, "foo", -1));
+
+        // Partial match then mismatch in forward search — exercises the backtracking branch
+        // "abYabX": matching "abX", first "ab" matches but 'Y' != 'X' triggers backtrack
+        Utf8String seq2 = utf8("abYabX");
+        Assert.assertEquals(3, Utf8s.indexOfAscii(seq2, 0, seq2.size(), "abX", 1));
+
+        // Partial match then mismatch in reverse search
+        Utf8String seq3 = utf8("abXabY");
+        Assert.assertEquals(0, Utf8s.indexOfAscii(seq3, 0, seq3.size(), "abX", -1));
+    }
+
+    @Test
     public void testIndexOfLowerCaseAscii() {
         Assert.assertEquals(20, Utf8s.indexOfLowerCaseAscii(utf8("фу бар баз FOO BAR BAZ"), 0, 30, utf8("oo")));
         Assert.assertEquals(1, Utf8s.indexOfLowerCaseAscii(utf8("FOO BAR BAZ"), 0, 7, utf8("oo")));
         Assert.assertEquals(1, Utf8s.indexOfLowerCaseAscii(utf8("foo bar baz"), 0, 7, utf8("oo")));
         Assert.assertEquals(-1, Utf8s.indexOfLowerCaseAscii(utf8("foo bar baz"), 2, 4, utf8("y")));
         Assert.assertEquals(-1, Utf8s.indexOfLowerCaseAscii(Utf8String.EMPTY, 0, 0, utf8("byz")));
+    }
+
+    @Test
+    public void testIndexOfOccurrence() {
+        Utf8String seq = utf8("foo bar foo baz foo");
+
+        // occurrence = 0 returns -1
+        Assert.assertEquals(-1, Utf8s.indexOf(seq, 0, seq.size(), utf8("foo"), 0));
+
+        // Forward search
+        Assert.assertEquals(0, Utf8s.indexOf(seq, 0, seq.size(), utf8("foo"), 1));
+        Assert.assertEquals(8, Utf8s.indexOf(seq, 0, seq.size(), utf8("foo"), 2));
+        Assert.assertEquals(16, Utf8s.indexOf(seq, 0, seq.size(), utf8("foo"), 3));
+        Assert.assertEquals(-1, Utf8s.indexOf(seq, 0, seq.size(), utf8("foo"), 4));
+
+        // Reverse search
+        Assert.assertEquals(16, Utf8s.indexOf(seq, 0, seq.size(), utf8("foo"), -1));
+        Assert.assertEquals(8, Utf8s.indexOf(seq, 0, seq.size(), utf8("foo"), -2));
+        Assert.assertEquals(0, Utf8s.indexOf(seq, 0, seq.size(), utf8("foo"), -3));
+        Assert.assertEquals(-1, Utf8s.indexOf(seq, 0, seq.size(), utf8("foo"), -4));
+
+        // Empty term returns 0
+        Assert.assertEquals(0, Utf8s.indexOf(seq, 0, seq.size(), Utf8String.EMPTY, 1));
+
+        // Not found
+        Assert.assertEquals(-1, Utf8s.indexOf(seq, 0, seq.size(), utf8("xyz"), 1));
+        Assert.assertEquals(-1, Utf8s.indexOf(seq, 0, seq.size(), utf8("xyz"), -1));
     }
 
     @Test
@@ -690,11 +1009,89 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testIsAsciiTrailingNonAscii() {
+        // Non-ASCII byte in the trailing bytes after the 8-byte loop
+        // 9 bytes: 8 ASCII + 1 non-ASCII in the tail
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+            sink.put("12345678");
+            sink.put((byte) 0x80);
+            Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
+        }
+    }
+
+    @Test
     public void testLastIndexOfAscii() {
         Assert.assertEquals(2, Utf8s.lastIndexOfAscii(utf8("foo bar baz"), 'o'));
         Assert.assertEquals(10, Utf8s.lastIndexOfAscii(utf8("foo bar baz"), 'z'));
         Assert.assertEquals(-1, Utf8s.lastIndexOfAscii(utf8("foo bar baz"), 'y'));
         Assert.assertEquals(-1, Utf8s.lastIndexOfAscii(Utf8String.EMPTY, 'y'));
+    }
+
+    @Test
+    public void testLength() {
+        // Null
+        Assert.assertEquals(-1, Utf8s.length(null));
+
+        // Empty
+        Assert.assertEquals(0, Utf8s.length(Utf8String.EMPTY));
+
+        // Pure ASCII (fast path)
+        Assert.assertEquals(5, Utf8s.length(utf8("hello")));
+
+        // 2-byte chars (Cyrillic)
+        Assert.assertEquals(6, Utf8s.length(utf8("привет")));
+
+        // 3-byte chars (CJK)
+        Assert.assertEquals(2, Utf8s.length(utf8("你好")));
+
+        // 4-byte chars (emoji, surrogate pair)
+        Utf8StringSink emojiSink = new Utf8StringSink();
+        emojiSink.put("\uD83D\uDE00"); // 4 UTF-8 bytes, 1 codepoint
+        Assert.assertEquals(1, Utf8s.length(emojiSink));
+
+        // Mixed: "Aé世" = 3 codepoints (1 + 1 + 1)
+        Assert.assertEquals(3, Utf8s.length(utf8("Aé世")));
+
+        // Long string to exercise the 8-byte SWAR loop
+        // 20 Cyrillic chars = 40 UTF-8 bytes, 20 codepoints
+        Assert.assertEquals(20, Utf8s.length(utf8("абвгдежзиклмнопрстуф")));
+    }
+
+    @Test
+    public void testLessThan() {
+        // Null cases
+        Assert.assertFalse(Utf8s.lessThan(null, null));
+        Assert.assertFalse(Utf8s.lessThan(null, utf8("a")));
+        Assert.assertFalse(Utf8s.lessThan(utf8("a"), null));
+
+        // Equal
+        Assert.assertFalse(Utf8s.lessThan(utf8("abc"), utf8("abc")));
+
+        // Less by byte value
+        Assert.assertTrue(Utf8s.lessThan(utf8("abc"), utf8("abd")));
+        Assert.assertFalse(Utf8s.lessThan(utf8("abd"), utf8("abc")));
+
+        // Less by length
+        Assert.assertTrue(Utf8s.lessThan(utf8("abc"), utf8("abcd")));
+        Assert.assertFalse(Utf8s.lessThan(utf8("abcd"), utf8("abc")));
+
+        // Empty
+        Assert.assertFalse(Utf8s.lessThan(utf8(""), utf8("")));
+        Assert.assertTrue(Utf8s.lessThan(utf8(""), utf8("a")));
+        Assert.assertFalse(Utf8s.lessThan(utf8("a"), utf8("")));
+    }
+
+    @Test
+    public void testLessThanNegated() {
+        // negated=false => strict less-than
+        Assert.assertTrue(Utf8s.lessThan(utf8("abc"), utf8("abd"), false));
+        Assert.assertFalse(Utf8s.lessThan(utf8("abc"), utf8("abc"), false));
+        Assert.assertFalse(Utf8s.lessThan(utf8("abd"), utf8("abc"), false));
+
+        // negated=true => greater-than-or-equal (>=)
+        Assert.assertFalse(Utf8s.lessThan(utf8("abc"), utf8("abd"), true));
+        Assert.assertTrue(Utf8s.lessThan(utf8("abc"), utf8("abc"), true)); // equal => true
+        Assert.assertTrue(Utf8s.lessThan(utf8("abd"), utf8("abc"), true)); // greater => true
     }
 
     @Test
@@ -712,6 +1109,11 @@ public class Utf8sTest {
                 Assert.assertEquals(Chars.hashCode(charSink, 0, i - 1), Utf8s.lowerCaseAsciiHashCode(utf8Sink, 0, i - 1));
             }
         }
+    }
+
+    @Test
+    public void testLowerCaseAsciiHashCodeEmpty() {
+        Assert.assertEquals(0, Utf8s.lowerCaseAsciiHashCode(Utf8String.EMPTY));
     }
 
     @Test
@@ -830,6 +1232,44 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testPutSafeInvalidFourPlusBytesFromSequence() {
+        // Invalid leading byte (0xF8 = 5-byte, not valid UTF-8) followed by 3 continuation bytes
+        // Exercises putInvalidBytes(Utf8Sequence) with 4 invalid bytes and also the
+        // putUpTo4BytesSafe fallback with hi - lo > 3 for the Utf8Sequence path
+        Utf8StringSink source = new Utf8StringSink();
+        source.putAny((byte) 0xF8);
+        source.putAny((byte) 0x80);
+        source.putAny((byte) 0x80);
+        source.putAny((byte) 0x80);
+        source.putAny((byte) 0x80);
+
+        Utf8StringSink sink = new Utf8StringSink();
+        Utf8s.putSafe(source, sink);
+        Assert.assertEquals("\\xF8\\x80\\x80\\x80\\x80", sink.toString());
+    }
+
+    @Test
+    public void testPutSafeTruncatedLeadBytes() {
+        // Lone 3-byte lead byte (0xE4) at end of input — hi - lo == 1
+        // Exercises putUpTo3BytesSafe returning 1 (both pointer and sequence paths)
+        Utf8StringSink source = new Utf8StringSink();
+        Utf8StringSink sink = new Utf8StringSink();
+        source.putAny((byte) 0xE4);
+        Utf8s.putSafe(source, sink);
+        Assert.assertEquals("\\xE4", sink.toString());
+
+        long buf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
+            sink.clear();
+            Utf8s.putSafe(buf, buf + 1, sink);
+            Assert.assertEquals("\\xE4", sink.toString());
+        } finally {
+            Unsafe.free(buf, 4, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testPutSafeValid() {
         final Utf8StringSink sink = new Utf8StringSink();
         final String[] testStrs = {
@@ -848,13 +1288,86 @@ public class Utf8sTest {
                 sink.clear();
                 Utf8s.putSafe(buf, hi, sink);
                 String actual = sink.toString();
-                for (long ptr = buf; ptr < hi; ptr++) {
-                    int b = Unsafe.getUnsafe().getByte(ptr) & 0xFF;
-                }
                 Assert.assertEquals(testStr, actual);
             }
         } finally {
             Unsafe.free(buf, 128, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testPutSafeValidFourByteSequence() {
+        // Valid 4-byte UTF-8 sequence (emoji) via putSafe - exercises put4ByteSafe valid path.
+        // put4ByteSafe emits highSurrogate/lowSurrogate chars, but Utf8Sink.put(char) replaces
+        // lone surrogates with '?', so the output is "??" — this is expected behavior.
+        try (DirectUtf8Sink source = new DirectUtf8Sink(8)) {
+            source.put("\uD83D\uDE00"); // U+1F600 grinning face: F0 9F 98 80
+
+            Utf8StringSink sink = new Utf8StringSink();
+            Utf8s.putSafe(source, sink);
+            Assert.assertEquals("??", sink.toString());
+
+            // Also via pointer path
+            sink.clear();
+            Utf8s.putSafe(source.lo(), source.hi(), sink);
+            Assert.assertEquals("??", sink.toString());
+        }
+    }
+
+    @Test
+    public void testPutSafeValidFromSequence() {
+        // Exercises putSafe(Utf8Sequence, Utf8Sink) with valid printable ASCII
+        // (covers the !Character.isISOControl(c) branch for the Utf8Sequence overload)
+        final Utf8StringSink source = new Utf8StringSink();
+        final Utf8StringSink sink = new Utf8StringSink();
+
+        source.put("hello");
+        Utf8s.putSafe(source, sink);
+        Assert.assertEquals("hello", sink.toString());
+
+        // Mixed printable ASCII and valid multi-byte
+        source.clear();
+        sink.clear();
+        source.put("abcфубар");
+        Utf8s.putSafe(source, sink);
+        Assert.assertEquals("abcфубар", sink.toString());
+    }
+
+    @Test
+    public void testPutSafeWithAsciiAfterInvalidByte() {
+        // Invalid leading byte (0xFE doesn't match any valid 2/3/4-byte lead pattern)
+        // followed by a continuation byte then an ASCII byte.
+        // Exercises putInvalidBytes(Utf8Sequence) early-break-on-positive-byte branch.
+        Utf8StringSink source = new Utf8StringSink();
+        Utf8StringSink sink = new Utf8StringSink();
+
+        source.putAny((byte) 0xFE);
+        source.putAny((byte) 0x80); // continuation byte
+        source.putAscii('A');       // ASCII byte terminates the invalid run
+        Utf8s.putSafe(source, sink);
+        Assert.assertEquals("\\xFE\\x80A", sink.toString());
+    }
+
+    @Test
+    public void testPutSafeWithControlCharacters() {
+        // Test that ASCII control characters (e.g., \0, \t, \n) are rendered as hex
+        final Utf8StringSink source = new Utf8StringSink();
+        final Utf8StringSink sink = new Utf8StringSink();
+
+        // Control char via Utf8Sequence path
+        source.putAny((byte) 0x01); // SOH control character
+        Utf8s.putSafe(source, sink);
+        Assert.assertEquals("\\x01", sink.toString());
+
+        // Control char via pointer path
+        long buf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(buf, (byte) 0x01);
+            sink.clear();
+            Utf8s.putSafe(buf, buf + 1, sink);
+            Assert.assertEquals("\\x01", sink.toString());
+        } finally {
+            Unsafe.free(buf, 4, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -1220,6 +1733,323 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testStrCpySubstringInvalidUtf8() {
+        // Invalid multi-byte in non-ASCII sequence — exercises strCpyNonAscii error return
+        Utf8StringSink src = new Utf8StringSink();
+        src.putAny((byte) 0xC0); // overlong lead
+        src.putAny((byte) 0x80);
+        Assert.assertFalse(src.isAscii());
+
+        Utf8StringSink dest = new Utf8StringSink();
+        Assert.assertEquals(-1, Utf8s.strCpy(src, 0, 1, dest));
+    }
+
+    @Test
+    public void testStrCpySubstringNonAsciiWithAsciiBytes() {
+        // Mixed sequence where isAscii()=false but has ASCII bytes,
+        // exercises strCpyNonAscii's ASCII byte handling path
+        Utf8StringSink src = new Utf8StringSink();
+        src.put("aы"); // 'a' (1 byte) + 'ы' (2 bytes), isAscii=false
+        Assert.assertFalse(src.isAscii());
+
+        Utf8StringSink dest = new Utf8StringSink();
+        // Copy first character only (the ASCII 'a')
+        Assert.assertEquals(1, Utf8s.strCpy(src, 0, 1, dest));
+        Assert.assertEquals("a", dest.toString());
+
+        // Skip first char, copy second — exercises charPos < charLo for ASCII byte path
+        dest.clear();
+        Assert.assertEquals(2, Utf8s.strCpy(src, 1, 2, dest));
+        Assert.assertEquals("ы", dest.toString());
+    }
+
+    @Test
+    public void testStrCpyUtf8() {
+        final int bufSize = 64;
+        long mem = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // empty string
+            Assert.assertEquals(0, Utf8s.strCpyUtf8("", mem, bufSize));
+
+            // maxBytes = 0
+            Assert.assertEquals(0, Utf8s.strCpyUtf8("hello", mem, 0));
+
+            // pure ASCII
+            int n = Utf8s.strCpyUtf8("hello", mem, bufSize);
+            Assert.assertEquals(5, n);
+            Assert.assertEquals("hello", readUtf8(mem, n));
+
+            // 2-byte UTF-8 (Latin, Cyrillic, etc.)
+            n = Utf8s.strCpyUtf8("éü", mem, bufSize); // é ü
+            Assert.assertEquals(4, n);
+            Assert.assertEquals("éü", readUtf8(mem, n));
+
+            // 3-byte UTF-8 (CJK, etc.)
+            n = Utf8s.strCpyUtf8("世界", mem, bufSize); // 世界
+            Assert.assertEquals(6, n);
+            Assert.assertEquals("世界", readUtf8(mem, n));
+
+            // 4-byte UTF-8 (surrogate pair: emoji U+1F600)
+            String emoji = "\uD83D\uDE00";
+            n = Utf8s.strCpyUtf8(emoji, mem, bufSize);
+            Assert.assertEquals(4, n);
+            Assert.assertEquals(emoji, readUtf8(mem, n));
+
+            // lone high surrogate replaced with '?'
+            n = Utf8s.strCpyUtf8("\uD83Da", mem, bufSize);
+            Assert.assertEquals(2, n);
+            Assert.assertEquals("?a", readUtf8(mem, n));
+
+            // lone low surrogate replaced with '?'
+            n = Utf8s.strCpyUtf8("\uDE00b", mem, bufSize);
+            Assert.assertEquals(2, n);
+            Assert.assertEquals("?b", readUtf8(mem, n));
+
+            // mixed: ASCII + 2-byte + 3-byte + 4-byte
+            String mixed = "Aé世\uD83D\uDE00";
+            n = Utf8s.strCpyUtf8(mixed, mem, bufSize);
+            Assert.assertEquals(1 + 2 + 3 + 4, n);
+            Assert.assertEquals(mixed, readUtf8(mem, n));
+
+            // truncation: ASCII at boundary
+            n = Utf8s.strCpyUtf8("abcdef", mem, 3);
+            Assert.assertEquals(3, n);
+            Assert.assertEquals("abc", readUtf8(mem, n));
+
+            // truncation: 2-byte char doesn't fit
+            n = Utf8s.strCpyUtf8("aéb", mem, 2);
+            Assert.assertEquals(1, n);
+            Assert.assertEquals("a", readUtf8(mem, n));
+
+            // truncation: 3-byte char doesn't fit
+            n = Utf8s.strCpyUtf8("a世b", mem, 3);
+            Assert.assertEquals(1, n);
+            Assert.assertEquals("a", readUtf8(mem, n));
+
+            // truncation: 4-byte char (surrogate pair) doesn't fit
+            n = Utf8s.strCpyUtf8("a\uD83D\uDE00b", mem, 4);
+            Assert.assertEquals(1, n);
+            Assert.assertEquals("a", readUtf8(mem, n));
+
+            // truncation: 2-byte char fits exactly
+            n = Utf8s.strCpyUtf8("aé", mem, 3);
+            Assert.assertEquals(3, n);
+            Assert.assertEquals("aé", readUtf8(mem, n));
+
+            // truncation: 3-byte char fits exactly
+            n = Utf8s.strCpyUtf8("a世", mem, 4);
+            Assert.assertEquals(4, n);
+            Assert.assertEquals("a世", readUtf8(mem, n));
+
+            // truncation: 4-byte char fits exactly
+            n = Utf8s.strCpyUtf8("a\uD83D\uDE00", mem, 5);
+            Assert.assertEquals(5, n);
+            Assert.assertEquals("a\uD83D\uDE00", readUtf8(mem, n));
+        } finally {
+            Unsafe.free(mem, bufSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testStringFromUtf8BytesInvalidNonDirect() {
+        // Invalid UTF-8 in a non-DirectUtf8Sequence (Utf8StringSink is heap-based)
+        // This covers the else branch at line 1256 of Utf8s.java
+        Utf8StringSink invalid = new Utf8StringSink();
+        invalid.putAny((byte) 0xC0);
+        invalid.putAny((byte) 0x80); // overlong 2-byte => invalid
+        try {
+            Utf8s.stringFromUtf8Bytes(invalid);
+            Assert.fail("expected CairoException");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "cannot convert invalid UTF-8 sequence to UTF-16");
+        }
+    }
+
+    @Test
+    public void testStringFromUtf8BytesSafe() {
+        // Empty
+        Assert.assertEquals("", Utf8s.stringFromUtf8BytesSafe(Utf8String.EMPTY));
+
+        // Valid ASCII
+        Assert.assertEquals("hello", Utf8s.stringFromUtf8BytesSafe(utf8("hello")));
+
+        // Valid non-ASCII
+        Assert.assertEquals("привет", Utf8s.stringFromUtf8BytesSafe(utf8("привет")));
+
+        // Invalid UTF-8 doesn't throw (unlike stringFromUtf8Bytes)
+        Utf8StringSink invalid = new Utf8StringSink();
+        invalid.putAny((byte) 0x80);
+        invalid.putAny((byte) 0xFF);
+        // Should not throw; the result is best-effort
+        Utf8s.stringFromUtf8BytesSafe(invalid);
+    }
+
+    @Test
+    public void testStrpos() {
+        // Empty needle => 1
+        Assert.assertEquals(1, Utf8s.strpos(utf8("hello"), Utf8String.EMPTY));
+        Assert.assertEquals(1, Utf8s.strpos(Utf8String.EMPTY, Utf8String.EMPTY));
+
+        // Empty haystack with non-empty needle => 0
+        Assert.assertEquals(0, Utf8s.strpos(Utf8String.EMPTY, utf8("a")));
+
+        // ASCII: 1-based position
+        Assert.assertEquals(1, Utf8s.strpos(utf8("hello"), utf8("h")));
+        Assert.assertEquals(2, Utf8s.strpos(utf8("hello"), utf8("ell")));
+        Assert.assertEquals(5, Utf8s.strpos(utf8("hello"), utf8("o")));
+        Assert.assertEquals(0, Utf8s.strpos(utf8("hello"), utf8("xyz")));
+
+        // Multi-byte: position counts codepoints, not bytes
+        // "привет" = 6 codepoints (each 2 UTF-8 bytes)
+        Assert.assertEquals(1, Utf8s.strpos(utf8("привет"), utf8("п")));
+        Assert.assertEquals(4, Utf8s.strpos(utf8("привет"), utf8("в")));
+        Assert.assertEquals(0, Utf8s.strpos(utf8("привет"), utf8("ы")));
+    }
+
+    @Test
+    public void testToString() {
+        Assert.assertNull(Utf8s.toString(null));
+        Assert.assertEquals("hello", Utf8s.toString(utf8("hello")));
+        Assert.assertEquals("", Utf8s.toString(Utf8String.EMPTY));
+    }
+
+    @Test
+    public void testToStringUnescape() {
+        // toString(seq, start, end, unescapeAscii) removes doubled ASCII chars
+        Utf8String seq = utf8("he''llo");
+        String result = Utf8s.toString(seq, 0, seq.size(), (byte) '\'');
+        Assert.assertEquals("he'llo", result);
+
+        // No doubled chars
+        Utf8String seq2 = utf8("hello");
+        Assert.assertEquals("hello", Utf8s.toString(seq2, 0, seq2.size(), (byte) '\''));
+
+        // Doubled at end
+        Utf8String seq3 = utf8("hello''");
+        Assert.assertEquals("hello'", Utf8s.toString(seq3, 0, seq3.size(), (byte) '\''));
+
+        // Subrange
+        Utf8String seq4 = utf8("xx''yy");
+        Assert.assertEquals("'yy", Utf8s.toString(seq4, 2, seq4.size(), (byte) '\''));
+    }
+
+    @Test
+    public void testToUtf8String() {
+        Assert.assertNull(Utf8s.toUtf8String(null));
+        Utf8String s = utf8("hello");
+        Utf8String result = Utf8s.toUtf8String(s);
+        Assert.assertNotNull(result);
+        Assert.assertEquals("hello", result.toString());
+
+        Utf8String cyrillic = utf8("мир");
+        result = Utf8s.toUtf8String(cyrillic);
+        Assert.assertNotNull(result);
+        Assert.assertEquals("мир", result.toString());
+    }
+
+    @Test
+    public void testTrim() {
+        Utf8StringSink sink = new Utf8StringSink();
+
+        // Null source
+        Utf8s.trim(TrimType.TRIM, null, sink);
+        Assert.assertEquals("", sink.toString());
+
+        // Empty source
+        sink.clear();
+        Utf8s.trim(TrimType.TRIM, Utf8String.EMPTY, sink);
+        Assert.assertEquals("", sink.toString());
+
+        // TRIM (both sides)
+        sink.clear();
+        Utf8s.trim(TrimType.TRIM, utf8("  hello  "), sink);
+        Assert.assertEquals("hello", sink.toString());
+
+        // LTRIM (left only)
+        sink.clear();
+        Utf8s.trim(TrimType.LTRIM, utf8("  hello  "), sink);
+        Assert.assertEquals("hello  ", sink.toString());
+
+        // RTRIM (right only)
+        sink.clear();
+        Utf8s.trim(TrimType.RTRIM, utf8("  hello  "), sink);
+        Assert.assertEquals("  hello", sink.toString());
+
+        // No spaces to trim
+        sink.clear();
+        Utf8s.trim(TrimType.TRIM, utf8("hello"), sink);
+        Assert.assertEquals("hello", sink.toString());
+
+        // All spaces
+        sink.clear();
+        Utf8s.trim(TrimType.TRIM, utf8("   "), sink);
+        Assert.assertEquals("", sink.toString());
+    }
+
+    @Test
+    public void testUtf8Bytes() {
+        // Pure ASCII
+        Assert.assertEquals(5, Utf8s.utf8Bytes("hello"));
+
+        // 2-byte chars (Cyrillic)
+        Assert.assertEquals(12, Utf8s.utf8Bytes("привет"));
+
+        // 3-byte chars (CJK)
+        Assert.assertEquals(6, Utf8s.utf8Bytes("你好"));
+
+        // 4-byte chars (surrogate pair)
+        Assert.assertEquals(4, Utf8s.utf8Bytes("\uD83D\uDE00"));
+
+        // Mixed
+        Assert.assertEquals(1 + 2 + 3 + 4, Utf8s.utf8Bytes("Aé世\uD83D\uDE00"));
+
+        // Lone high surrogate => 1 byte ('?')
+        Assert.assertEquals(2, Utf8s.utf8Bytes("\uD83Da"));
+
+        // Lone low surrogate => 1 byte ('?')
+        Assert.assertEquals(2, Utf8s.utf8Bytes("\uDE00b"));
+
+        // High surrogate at end of string => 1 byte ('?')
+        Assert.assertEquals(1, Utf8s.utf8Bytes("\uD83D"));
+
+        // Empty
+        Assert.assertEquals(0, Utf8s.utf8Bytes(""));
+    }
+
+    @Test
+    public void testUtf8BytesWithLimit() {
+        // Fits entirely
+        Assert.assertEquals(5, Utf8s.utf8Bytes("hello", 10));
+
+        // Limit cuts ASCII
+        Assert.assertEquals(3, Utf8s.utf8Bytes("hello", 3));
+
+        // 2-byte char doesn't fit
+        Assert.assertEquals(1, Utf8s.utf8Bytes("aé", 2));
+
+        // 2-byte char fits exactly
+        Assert.assertEquals(3, Utf8s.utf8Bytes("aé", 3));
+
+        // 3-byte char doesn't fit
+        Assert.assertEquals(1, Utf8s.utf8Bytes("a世", 3));
+
+        // 3-byte char fits exactly
+        Assert.assertEquals(4, Utf8s.utf8Bytes("a世", 4));
+
+        // 4-byte surrogate pair doesn't fit
+        Assert.assertEquals(1, Utf8s.utf8Bytes("a\uD83D\uDE00", 4));
+
+        // 4-byte surrogate pair fits exactly
+        Assert.assertEquals(5, Utf8s.utf8Bytes("a\uD83D\uDE00", 5));
+
+        // Lone surrogate
+        Assert.assertEquals(1, Utf8s.utf8Bytes("\uD83Da", 1));
+
+        // Zero limit
+        Assert.assertEquals(0, Utf8s.utf8Bytes("hello", 0));
+    }
+
+    @Test
     public void testUtf8CharDecode() {
         try (DirectUtf8Sink sink = new DirectUtf8Sink(8)) {
             testUtf8Char("A", sink, false); // 1 byte
@@ -1339,6 +2169,303 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testUtf8SupportZFourByte() {
+        // Test utf8ToUtf16Z with 4-byte UTF-8 (emoji) — exercises utf8Decode4BytesZ
+        String input = "\uD83D\uDE00"; // U+1F600
+        byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
+        int nBytes = bytes.length + 1;
+        long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+            }
+            Unsafe.getUnsafe().putByte(mem + bytes.length, (byte) 0);
+
+            StringSink b = new StringSink();
+            Assert.assertTrue(Utf8s.utf8ToUtf16Z(mem, b));
+            TestUtils.assertEquals(input, b.toString());
+        } finally {
+            Unsafe.free(mem, nBytes, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testUtf8SupportZNonAscii() {
+        // Test utf8ToUtf16Z with non-ASCII (Cyrillic) null-terminated string
+        // Exercises utf8DecodeMultiByteZ / utf8Decode2BytesZ
+        String input = "привет";
+        byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
+        int nBytes = bytes.length + 1;
+        long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+            }
+            Unsafe.getUnsafe().putByte(mem + bytes.length, (byte) 0);
+
+            StringSink b = new StringSink();
+            Assert.assertTrue(Utf8s.utf8ToUtf16Z(mem, b));
+            TestUtils.assertEquals(input, b.toString());
+        } finally {
+            Unsafe.free(mem, nBytes, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testUtf8SupportZThreeByte() {
+        // Test utf8ToUtf16Z with 3-byte UTF-8 (CJK) — exercises utf8Decode3BytesZ
+        String input = "你好世界";
+        byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
+        int nBytes = bytes.length + 1;
+        long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+            }
+            Unsafe.getUnsafe().putByte(mem + bytes.length, (byte) 0);
+
+            StringSink b = new StringSink();
+            Assert.assertTrue(Utf8s.utf8ToUtf16Z(mem, b));
+            TestUtils.assertEquals(input, b.toString());
+        } finally {
+            Unsafe.free(mem, nBytes, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testUtf8ToUtf16DecodeErrors() {
+        StringSink utf16Sink = new StringSink();
+
+        // --- Utf8Sequence path (through utf8ToUtf16(Utf8Sequence, Utf16Sink)) ---
+
+        // Truncated 2-byte: lead byte only
+        Utf8StringSink seq = new Utf8StringSink();
+        seq.putAny((byte) 0xC2); // 2-byte lead, no continuation
+        Assert.assertFalse(Utf8s.utf8ToUtf16(seq, utf16Sink));
+
+        // Invalid continuation in 2-byte
+        seq.clear();
+        utf16Sink.clear();
+        seq.putAny((byte) 0xC2);
+        seq.putAny((byte) 0x00); // not a continuation byte
+        Assert.assertFalse(Utf8s.utf8ToUtf16(seq, utf16Sink));
+
+        // Truncated 3-byte: lead + 1 continuation
+        seq.clear();
+        utf16Sink.clear();
+        seq.putAny((byte) 0xE4);
+        seq.putAny((byte) 0xBD);
+        Assert.assertFalse(Utf8s.utf8ToUtf16(seq, utf16Sink));
+
+        // Malformed 3-byte: invalid continuation pattern
+        seq.clear();
+        utf16Sink.clear();
+        seq.putAny((byte) 0xE0);
+        seq.putAny((byte) 0x80); // overlong
+        seq.putAny((byte) 0x80);
+        Assert.assertFalse(Utf8s.utf8ToUtf16(seq, utf16Sink));
+
+        // 3-byte encoding of surrogate code point (U+D800)
+        seq.clear();
+        utf16Sink.clear();
+        seq.putAny((byte) 0xED);
+        seq.putAny((byte) 0xA0);
+        seq.putAny((byte) 0x80);
+        Assert.assertFalse(Utf8s.utf8ToUtf16(seq, utf16Sink));
+
+        // Malformed 4-byte: invalid continuation
+        seq.clear();
+        utf16Sink.clear();
+        seq.putAny((byte) 0xF0);
+        seq.putAny((byte) 0x28); // not a continuation byte
+        seq.putAny((byte) 0x80);
+        seq.putAny((byte) 0x80);
+        Assert.assertFalse(Utf8s.utf8ToUtf16(seq, utf16Sink));
+
+        // 4-byte encoding producing non-supplementary code point
+        seq.clear();
+        utf16Sink.clear();
+        seq.putAny((byte) 0xF4);
+        seq.putAny((byte) 0x90); // code point > U+10FFFF
+        seq.putAny((byte) 0x80);
+        seq.putAny((byte) 0x80);
+        Assert.assertFalse(Utf8s.utf8ToUtf16(seq, utf16Sink));
+
+        // --- Pointer path (through utf8ToUtf16(long, long, Utf16Sink)) ---
+        long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // Truncated 2-byte via pointer
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
+            utf16Sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16(buf, buf + 1, utf16Sink));
+
+            // Invalid continuation in 2-byte via pointer
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x00);
+            utf16Sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16(buf, buf + 2, utf16Sink));
+
+            // Truncated 3-byte via pointer
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xBD);
+            utf16Sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16(buf, buf + 2, utf16Sink));
+        } finally {
+            Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testUtf8ToUtf16EscConsecutiveQuotesInvalid() {
+        // Invalid multi-byte UTF-8 in utf8ToUtf16EscConsecutiveQuotes
+        long buf = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xC0); // overlong
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x80);
+            StringSink sink = new StringSink();
+            Assert.assertFalse(Utf8s.utf8ToUtf16EscConsecutiveQuotes(buf, buf + 2, sink));
+        } finally {
+            Unsafe.free(buf, 4, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testUtf8ToUtf16UncheckedError() {
+        // Invalid UTF-8 in DirectUtf8Sequence — exercises utf8ToUtf16Unchecked error path
+        try (DirectUtf8Sink dirSink = new DirectUtf8Sink(8)) {
+            dirSink.put((byte) 0xC0);
+            dirSink.put((byte) 0x80);
+            StringSink tempSink = new StringSink();
+            try {
+                Utf8s.utf8ToUtf16Unchecked(dirSink, tempSink);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+            }
+        }
+    }
+
+    @Test
+    public void testUtf8ToUtf16WithTerminatorError() {
+        // Invalid UTF-8 before terminator — exercises utf8ToUtf16(seq, sink, terminator) error path
+        Utf8StringSink seq = new Utf8StringSink();
+        seq.putAny((byte) 0xC0); // overlong 2-byte lead (b & 30 == 0)
+        seq.putAny((byte) 0x80);
+        seq.putAscii(':');
+
+        StringSink sink = new StringSink();
+        Assert.assertEquals(-1, Utf8s.utf8ToUtf16(seq, sink, (byte) ':'));
+    }
+
+    @Test
+    public void testUtf8ToUtf16ZDecodeErrors() {
+        long buf = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+        try {
+            StringSink sink = new StringSink();
+
+            // 2-byte lead followed by null terminator
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0);
+            Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
+
+            // 2-byte lead followed by invalid continuation
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x41); // 'A', not continuation
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0);
+            sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
+
+            // 3-byte: null after b2
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0);
+            sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
+
+            // 3-byte: null after b3
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xBD);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0);
+            sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
+
+            // 4-byte: invalid lead (not >> 3 == -2)
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xF8); // 11111000, >> 3 = -1
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x80);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
+            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0x80);
+            Unsafe.getUnsafe().putByte(buf + 4, (byte) 0);
+            sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
+
+            // 4-byte: null after b2
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0);
+            sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
+
+            // 4-byte: null after b3
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x9F);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0);
+            sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
+
+            // 4-byte: null after b4
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x9F);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x98);
+            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0);
+            sink.clear();
+            Assert.assertFalse(Utf8s.utf8ToUtf16Z(buf, sink));
+        } finally {
+            Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testUtf8ZCopy() {
+        // ASCII null-terminated string
+        String input = "hello";
+        byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
+        int nBytes = bytes.length + 1; // +1 for null terminator
+        long mem = Unsafe.malloc(nBytes, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.getUnsafe().putByte(mem + i, bytes[i]);
+            }
+            Unsafe.getUnsafe().putByte(mem + bytes.length, (byte) 0);
+
+            Utf8StringSink sink = new Utf8StringSink();
+            Utf8s.utf8ZCopy(mem, sink);
+            Assert.assertEquals("hello", sink.toString());
+
+            // Non-ASCII
+            sink.clear();
+            String cyrillic = "привет";
+            byte[] cyrBytes = cyrillic.getBytes(StandardCharsets.UTF_8);
+            long mem2 = Unsafe.malloc(cyrBytes.length + 1, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < cyrBytes.length; i++) {
+                    Unsafe.getUnsafe().putByte(mem2 + i, cyrBytes[i]);
+                }
+                Unsafe.getUnsafe().putByte(mem2 + cyrBytes.length, (byte) 0);
+                Utf8s.utf8ZCopy(mem2, sink);
+                Assert.assertEquals("привет", sink.toString());
+            } finally {
+                Unsafe.free(mem2, cyrBytes.length + 1, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            // Empty string (just null terminator)
+            sink.clear();
+            Unsafe.getUnsafe().putByte(mem, (byte) 0);
+            Utf8s.utf8ZCopy(mem, sink);
+            Assert.assertEquals("", sink.toString());
+        } finally {
+            Unsafe.free(mem, nBytes, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testUtf8toUtf16() {
         StringSink utf16Sink = new StringSink();
         String empty = "";
@@ -1402,6 +2529,107 @@ public class Utf8sTest {
         Assert.assertEquals(10, Utf8s.validateUtf8(utf8("привет мир")));
         // invalid UTF-8
         Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0x80}, false)));
+
+        // 3-byte chars (CJK) — exercises validateUtf8Decode3Bytes(Utf8Sequence)
+        Assert.assertEquals(2, Utf8s.validateUtf8(utf8("你好")));
+
+        // 4-byte chars (emoji) — exercises validateUtf8Decode4Bytes(Utf8Sequence)
+        Utf8StringSink emojiSink = new Utf8StringSink();
+        emojiSink.put("\uD83D\uDE00");
+        Assert.assertEquals(1, Utf8s.validateUtf8(emojiSink));
+
+        // Invalid 3-byte: truncated
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0xE0, (byte) 0xA0}, false)));
+
+        // Invalid 3-byte: surrogate range (U+D800..U+DFFF)
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0xED, (byte) 0xA0, (byte) 0x80}, false)));
+
+        // Invalid 3-byte: malformed continuation
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0xE0, (byte) 0x80, (byte) 0x80}, false)));
+
+        // Invalid 4-byte: truncated
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0xF0, (byte) 0x9F, (byte) 0x98}, false)));
+
+        // Invalid 4-byte: malformed continuation
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0xF0, (byte) 0x80, (byte) 0x80, (byte) 0x80}, false)));
+
+        // Invalid 4-byte: not a supplementary code point
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0xF4, (byte) 0x90, (byte) 0x80, (byte) 0x80}, false)));
+
+        // Truncated 2-byte: lead only
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0xC2}, false)));
+
+        // Invalid continuation in 2-byte
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0xC2, (byte) 0x00}, false)));
+
+        // Malformed 4-byte: valid lead and length but bad continuation bytes
+        Assert.assertEquals(-1, Utf8s.validateUtf8(new Utf8String(new byte[]{(byte) 0xF0, (byte) 0x28, (byte) 0x80, (byte) 0x80}, false)));
+    }
+
+    @Test
+    public void testValidateUtf8PointerPaths() {
+        // Exercises validateUtf8MultiByte(long, long, byte) and its 3-byte/4-byte branches
+        long buf = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            // Valid 3-byte (CJK 你 = E4 BD A0)
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xE4);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xBD);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0xA0);
+            Assert.assertEquals(3, Utf8s.validateUtf8MultiByte(buf, buf + 3, (byte) 0xE4));
+
+            // Valid 4-byte (emoji U+1F600 = F0 9F 98 80)
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x9F);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x98);
+            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0x80);
+            Assert.assertEquals(4, Utf8s.validateUtf8MultiByte(buf, buf + 4, (byte) 0xF0));
+
+            // Invalid 3-byte: truncated
+            Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 2, (byte) 0xE4));
+
+            // Invalid 4-byte: truncated
+            Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 3, (byte) 0xF0));
+
+            // Invalid 3-byte: surrogate range
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xED);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xA0);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
+            Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 3, (byte) 0xED));
+
+            // Invalid 4-byte: not supplementary
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xF4);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x90);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
+            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0x80);
+            Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 4, (byte) 0xF4));
+
+            // Valid 2-byte
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xC2);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0xA9);
+            Assert.assertEquals(2, Utf8s.validateUtf8MultiByte(buf, buf + 2, (byte) 0xC2));
+
+            // Truncated 2-byte
+            Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 1, (byte) 0xC2));
+
+            // Invalid continuation in 2-byte
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x00);
+            Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 2, (byte) 0xC2));
+
+            // Malformed 3-byte: overlong (E0 80 80)
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xE0);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x80);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
+            Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 3, (byte) 0xE0));
+
+            // Malformed 4-byte: invalid continuation bytes
+            Unsafe.getUnsafe().putByte(buf, (byte) 0xF0);
+            Unsafe.getUnsafe().putByte(buf + 1, (byte) 0x28);
+            Unsafe.getUnsafe().putByte(buf + 2, (byte) 0x80);
+            Unsafe.getUnsafe().putByte(buf + 3, (byte) 0x80);
+            Assert.assertEquals(-1, Utf8s.validateUtf8MultiByte(buf, buf + 4, (byte) 0xF0));
+        } finally {
+            Unsafe.free(buf, 16, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private static void assertUtf8ToUtf16WithTerminator(
@@ -1435,6 +2663,14 @@ public class Utf8sTest {
             Unsafe.getUnsafe().putByte(buf + i, bytes[i]);
         }
         return buf + bytes.length;
+    }
+
+    private static String readUtf8(long addr, int len) {
+        byte[] bytes = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = Unsafe.getUnsafe().getByte(addr + i);
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private static void testUtf8Char(String x, MutableUtf8Sink sink, boolean failExpected) {

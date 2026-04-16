@@ -611,7 +611,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * already have data, this function will create ".top" file in addition to column files. ".top" file contains
      * the size of partition at the moment of column creation. It must be used to accurately position inside new
      * column when either appending or reading.
-     *
+     * <p>
      * <b>Failures</b>
      * Adding new column can fail in many situations. None of the failures affect the integrity of data that is already in
      * the table but can leave instance of TableWriter in inconsistent state. When this happens, function will throw CairoError.
@@ -620,7 +620,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * Whenever function throws CairoException application code can continue using TableWriter instance and may attempt to
      * add columns again.
-     *
+     * <p>
      * <b>Transactions</b>
      * <p>
      * Pending transaction will be committed before the function attempts to add column. Even when function is unsuccessful, it may
@@ -1050,6 +1050,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         ConvertOperatorImpl convertOperator = getConvertOperator();
         try {
             commit();
+
+            // ConvertOperatorImpl opens native .d files directly, so parquet
+            // partitions must be converted back to native before the column
+            // type change.
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                if (txWriter.isPartitionParquet(i)) {
+                    convertPartitionParquetToNative(txWriter.getPartitionTimestampByIndex(i));
+                }
+            }
 
             LOG.info().$("converting column [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", from=").$(ColumnType.nameOf(existingType))
@@ -2681,11 +2690,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         txWriter.append();
         return row;
-    }
-
-    @Override
-    public Row newRowDeferTimestamp() {
-        throw new UnsupportedOperationException();
     }
 
     public void o3BumpErrorCount(boolean oom) {
@@ -5513,9 +5517,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     openPartition(prevTimestamp, newTransientRowCount);
                     setAppendPosition(newTransientRowCount, false);
                 } else {
-                    partitionTimestampHi = index != 0
-                            ? txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp)
-                            : Long.MIN_VALUE;
+                    partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp);
                 }
             } else {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
