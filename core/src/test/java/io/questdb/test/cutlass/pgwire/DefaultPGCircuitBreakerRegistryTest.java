@@ -47,16 +47,16 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
     @Test
     public void testCancelHappyPath() throws Exception {
         assertMemoryLeak(() -> {
-            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
-            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+            try (
+                    DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+                    NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()
+            ) {
                 int idx = registry.add(cb);
                 cb.setSecret(123_456);
                 Assert.assertFalse("circuit breaker must not be tripped before cancel()", cb.checkIfTripped());
                 // happy path: correct idx and secret causes cancel() to trip the breaker
                 registry.cancel(idx, 123_456);
                 Assert.assertTrue("cancel() must trip the circuit breaker", cb.checkIfTripped());
-            } finally {
-                registry.close();
             }
         });
     }
@@ -64,12 +64,9 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
     @Test
     public void testCancelRejectsEmptySlot() throws Exception {
         assertMemoryLeak(() -> {
-            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
-            try {
+            try (DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration)) {
                 // slot 0 has never been assigned; must not crash and must reject cleanly
                 expectCairoFailure(() -> registry.cancel(0, 0), "empty circuit breaker slot");
-            } finally {
-                registry.close();
             }
         });
     }
@@ -79,8 +76,10 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
         // off-by-one regression: previously `if (size() < idx)` allowed idx == size() through,
         // leading to ObjList.getQuick(size()) reading past the logical end of the list.
         assertMemoryLeak(() -> {
-            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
-            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+            try (
+                    DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+                    NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()
+            ) {
                 int idx = registry.add(cb);
                 cb.setSecret(42);
                 // the registry is pre-sized with `limit` null slots; idx + 1 up to `limit` are
@@ -89,8 +88,6 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
                 expectCairoFailure(() -> registry.cancel(PG_CONFIG.getLimit() + 1, 42), "wrong circuit breaker idx");
                 // sanity: the legitimate idx still works
                 registry.cancel(idx, 42);
-            } finally {
-                registry.close();
             }
         });
     }
@@ -98,12 +95,9 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
     @Test
     public void testCancelRejectsNegativeIdx() throws Exception {
         assertMemoryLeak(() -> {
-            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
-            try {
+            try (DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration)) {
                 expectCairoFailure(() -> registry.cancel(-1, 0), "wrong circuit breaker idx");
                 expectCairoFailure(() -> registry.cancel(Integer.MIN_VALUE, 0), "wrong circuit breaker idx");
-            } finally {
-                registry.close();
             }
         });
     }
@@ -113,14 +107,14 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
         // after clear(), the breaker's secret is -1 until init() assigns a new random. A cancel
         // arriving in that window must not be able to succeed by guessing secret = -1.
         assertMemoryLeak(() -> {
-            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
-            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+            try (
+                    DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+                    NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()
+            ) {
                 int idx = registry.add(cb);
                 cb.clear(); // sets secret = -1
                 Assert.assertEquals(-1, cb.getSecret());
                 expectCairoFailure(() -> registry.cancel(idx, -1), "wrong circuit breaker secret");
-            } finally {
-                registry.close();
             }
         });
     }
@@ -128,13 +122,13 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
     @Test
     public void testCancelRejectsWrongSecret() throws Exception {
         assertMemoryLeak(() -> {
-            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
-            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+            try (
+                    DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+                    NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()
+            ) {
                 int idx = registry.add(cb);
                 cb.setSecret(0xDEADBEEF);
                 expectCairoFailure(() -> registry.cancel(idx, 0xC0FFEE), "wrong circuit breaker secret");
-            } finally {
-                registry.close();
             }
         });
     }

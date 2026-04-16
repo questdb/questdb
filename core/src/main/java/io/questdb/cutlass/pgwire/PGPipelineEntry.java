@@ -3582,29 +3582,28 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return msgParseReconcileParameterTypes((short) msgParseParameterTypeOIDs.size(), typeContainer);
     }
 
-    boolean populateBindingServiceForExec(
+    void populateBindingServiceForExec(
             SqlExecutionContext sqlExecutionContext,
             CharacterStore bindVariableCharacterStore,
             @Transient DirectUtf8String directUtf8String,
             @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool
     ) throws PGMessageProcessingException, SqlException {
         if (isError()) {
-            return false;
+            return;
         }
-        return switch (sqlType) {
+        switch (sqlType) {
             // these query types use binding variables at the EXEC time
             case CompiledQuery.EXPLAIN, CompiledQuery.SELECT, CompiledQuery.PSEUDO_SELECT, CompiledQuery.INSERT,
-                 CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.ALTER -> {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        bindVariableCharacterStore,
-                        directUtf8String,
-                        binarySequenceParamsPool
-                );
-                yield true;
+                 CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.ALTER ->
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            bindVariableCharacterStore,
+                            directUtf8String,
+                            binarySequenceParamsPool
+                    );
+            default -> {
             }
-            default -> false;
-        };
+        }
     }
 
     boolean populateBindingServiceForSync(SqlExecutionContext sqlExecutionContext,
