@@ -374,6 +374,12 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             return SocketAuthenticator.NEEDS_READ;
         }
         int msgLen = getIntUnsafe(recvBufReadPos);
+        // msgLen includes itself (4 bytes) + protocol field (4 bytes), so 8 is the absolute minimum.
+        // Reject negative and absurdly large values before any pointer arithmetic.
+        if (msgLen < Integer.BYTES * 2 || msgLen > recvBufEnd - recvBufStart) {
+            LOG.error().$("bad init message length [msgLen=").$(msgLen).$(']').$();
+            throw PGMessageProcessingException.INSTANCE;
+        }
         if (msgLen > availableToRead) {
             return SocketAuthenticator.NEEDS_READ;
         }
@@ -415,6 +421,12 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         assert msgType == MESSAGE_TYPE_PASSWORD_MESSAGE;
 
         int msgLen = getIntUnsafe(recvBufReadPos + 1);
+        // msgLen includes itself (4 bytes) + at least a 1-byte null-terminated password.
+        // Reject negative and absurdly large values before any pointer arithmetic.
+        if (msgLen < Integer.BYTES + 1 || msgLen > recvBufEnd - recvBufStart - 1) {
+            LOG.error().$("bad password message length [msgLen=").$(msgLen).$(']').$();
+            throw PGMessageProcessingException.INSTANCE;
+        }
         long msgLimit = (recvBufReadPos + msgLen + 1); // +1 for the type byte which is not included in msgLen
         if (recvBufWritePos < msgLimit) {
             return SocketAuthenticator.NEEDS_READ;

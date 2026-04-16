@@ -132,7 +132,7 @@ public final class PGNonNullVarcharArrayView extends ArrayView implements FlatAr
 
     void addDimLen(int dimLen) {
         shape.add(dimLen);
-        flatViewLength *= dimLen;
+        flatViewLength = Math.multiplyExact(flatViewLength, dimLen);
     }
 
     /**

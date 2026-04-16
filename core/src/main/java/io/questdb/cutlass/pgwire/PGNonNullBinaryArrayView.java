@@ -94,7 +94,7 @@ final class PGNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
 
     void addDimLen(int dimLen) {
         shape.add(dimLen);
-        flatViewLength *= dimLen;
+        flatViewLength = Math.multiplyExact(flatViewLength, dimLen);
     }
 
     /**
