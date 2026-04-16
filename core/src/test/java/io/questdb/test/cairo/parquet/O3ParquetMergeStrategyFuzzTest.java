@@ -514,6 +514,320 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         });
     }
 
+    @Test
+    public void testO3MergeWithIoFailures() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+
+        // Data-only fuzz: no schema changes, drops, or truncations.
+        setFuzzProbabilities(
+                0,      // cancelRow
+                0,      // notSet
+                0,      // null
+                0,      // rollback
+                0,      // colAdd
+                0,      // colRemove
+                0,      // colRename
+                0,      // colTypeChange
+                1.0,    // dataAdd
+                0.5,    // equalTs
+                0,      // partitionDrop
+                0,      // truncate
+                0,      // tableDrop
+                0,      // setTtl
+                0,      // replace
+                0       // symbolAccess
+        );
+
+        int rowGroupSize = 500 + rnd.nextInt(2000);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+
+        int parquetVersion = rnd.nextBoolean() ? ParquetVersion.PARQUET_VERSION_V1 : ParquetVersion.PARQUET_VERSION_V2;
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, parquetVersion);
+
+        String compressionCodec = randomCompressionCodec(rnd);
+        int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, compressionLevel);
+
+        double rewriteRatio = 0.1 + rnd.nextDouble() * 0.4;
+        long rewriteMaxBytes = 4096 + rnd.nextLong(60_000);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(rewriteRatio));
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, rewriteMaxBytes);
+
+        int initialRowCount = 2000 + rnd.nextInt(5000);
+        fuzzer.setFuzzCounts(
+                true,           // isO3
+                5000,           // fuzzRowCount
+                30,             // transactionCount
+                20,             // strLen
+                10,             // symbolStrLenMax
+                20,             // symbolCountMax
+                initialRowCount,
+                1,              // partitionCount
+                -1,             // parallelWalCount (unused)
+                5 + rnd.nextInt(10) // ioFailureCount
+        );
+
+        assertMemoryLeak(() -> {
+            String walTable = getTestName();
+            fuzzer.createInitialTableWal(walTable, initialRowCount);
+            drainWalQueue();
+
+            String oracleTable = walTable + "_oracle";
+            fuzzer.createInitialTableNonWal(oracleTable, null);
+
+            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            drainWalQueue();
+
+            final long partitionTs;
+            StringSink partName = new StringSink();
+            try (TableReader reader = engine.getReader(walTable)) {
+                Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
+                partitionTs = reader.getPartitionTimestampByIndex(0);
+                PartitionBy.setSinkForPartition(
+                        partName,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        partitionTs
+                );
+            }
+            execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
+            drainWalQueue();
+
+            long dayEnd = partitionTs + DAY_MICROS;
+
+            int rounds = 3 + rnd.nextInt(8);
+            LOG.info()
+                    .$("starting io-failure fuzz: initialRowCount=").$(initialRowCount)
+                    .$(", rounds=").$(rounds)
+                    .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", parquetVersion=V").$(parquetVersion)
+                    .$(", compression=").$(compressionCodec)
+                    .$(", compressionLevel=").$(compressionLevel)
+                    .$(", rewriteRatio=").$(rewriteRatio)
+                    .$(", rewriteMaxBytes=").$(rewriteMaxBytes)
+                    .$(", partitionTs=").$(partitionTs)
+                    .$();
+
+            for (int round = 0; round < rounds; round++) {
+                long start, end;
+                int pattern = rnd.nextInt(5);
+
+                switch (pattern) {
+                    case 0 -> {
+                        long center = partitionTs + rnd.nextLong(DAY_MICROS);
+                        long halfSpan = 1 + rnd.nextLong(Math.max(1, DAY_MICROS / 20));
+                        start = Math.max(partitionTs, center - halfSpan);
+                        end = Math.min(dayEnd, center + halfSpan);
+                    }
+                    case 1 -> {
+                        start = partitionTs;
+                        end = dayEnd;
+                    }
+                    case 2 -> {
+                        start = partitionTs;
+                        end = partitionTs + DAY_MICROS / 2;
+                    }
+                    case 3 -> {
+                        start = partitionTs + DAY_MICROS / 2;
+                        end = dayEnd;
+                    }
+                    default -> {
+                        long a = partitionTs + rnd.nextLong(DAY_MICROS);
+                        long b = partitionTs + rnd.nextLong(DAY_MICROS);
+                        start = Math.min(a, b);
+                        end = Math.max(a, b) + 1;
+                    }
+                }
+
+                if (start >= end) {
+                    end = start + 1;
+                }
+
+                LOG.info()
+                        .$("round ").$(round)
+                        .$(": pattern=").$(pattern)
+                        .$(", start=").$(start)
+                        .$(", end=").$(end)
+                        .$();
+
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(walTable, rnd, start, end);
+                try {
+                    fuzzer.applyNonWal(transactions, oracleTable, rnd);
+                    fuzzer.applyWal(transactions, walTable, 1, rnd);
+                } finally {
+                    Misc.freeObjListAndClear(transactions);
+                }
+                drainWalQueue();
+            }
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+            }
+
+            assertRowGroupSizes(walTable, rowGroupSize);
+        });
+    }
+
+    @Test
+    public void testO3MergeWithSchemaChanges() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+
+        // Enable schema evolution: columns may be added, removed, or renamed
+        // between O3 merge rounds. This exercises the parquet rewrite path
+        // triggered by schema mismatch (hasMissingColumns, hasExtraColumns).
+        setFuzzProbabilities(
+                0,      // cancelRow
+                0,      // notSet
+                0.1,    // null
+                0,      // rollback
+                0.1,    // colAdd
+                0.05,   // colRemove
+                0.05,   // colRename
+                0,      // colTypeChange
+                1.0,    // dataAdd
+                0.5,    // equalTs
+                0,      // partitionDrop
+                0,      // truncate
+                0,      // tableDrop
+                0,      // setTtl
+                0,      // replace
+                0       // symbolAccess
+        );
+
+        int rowGroupSize = 500 + rnd.nextInt(2000);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+
+        int parquetVersion = rnd.nextBoolean() ? ParquetVersion.PARQUET_VERSION_V1 : ParquetVersion.PARQUET_VERSION_V2;
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, parquetVersion);
+
+        String compressionCodec = randomCompressionCodec(rnd);
+        int compressionLevel = randomCompressionLevel(rnd, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, compressionCodec);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, compressionLevel);
+
+        double rewriteRatio = 0.1 + rnd.nextDouble() * 0.4;
+        long rewriteMaxBytes = 4096 + rnd.nextLong(60_000);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, String.valueOf(rewriteRatio));
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, rewriteMaxBytes);
+
+        int initialRowCount = 2000 + rnd.nextInt(5000);
+        fuzzer.setFuzzCounts(
+                true,           // isO3
+                5000,           // fuzzRowCount
+                30,             // transactionCount
+                20,             // strLen
+                10,             // symbolStrLenMax
+                20,             // symbolCountMax
+                initialRowCount,
+                1,              // partitionCount
+                -1,             // parallelWalCount (unused)
+                0               // ioFailureCount
+        );
+
+        assertMemoryLeak(() -> {
+            String walTable = getTestName();
+            fuzzer.createInitialTableWal(walTable, initialRowCount);
+            drainWalQueue();
+
+            String oracleTable = walTable + "_oracle";
+            fuzzer.createInitialTableNonWal(oracleTable, null);
+
+            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            drainWalQueue();
+
+            final long partitionTs;
+            StringSink partName = new StringSink();
+            try (TableReader reader = engine.getReader(walTable)) {
+                Assert.assertTrue("expected at least 2 partitions", reader.getPartitionCount() >= 2);
+                partitionTs = reader.getPartitionTimestampByIndex(0);
+                PartitionBy.setSinkForPartition(
+                        partName,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        partitionTs
+                );
+            }
+            execute("ALTER TABLE " + walTable + " CONVERT PARTITION TO PARQUET LIST '" + partName + "'");
+            drainWalQueue();
+
+            long dayEnd = partitionTs + DAY_MICROS;
+
+            int rounds = 3 + rnd.nextInt(8);
+            LOG.info()
+                    .$("starting schema-change fuzz: initialRowCount=").$(initialRowCount)
+                    .$(", rounds=").$(rounds)
+                    .$(", rowGroupSize=").$(rowGroupSize)
+                    .$(", parquetVersion=V").$(parquetVersion)
+                    .$(", compression=").$(compressionCodec)
+                    .$(", compressionLevel=").$(compressionLevel)
+                    .$(", rewriteRatio=").$(rewriteRatio)
+                    .$(", rewriteMaxBytes=").$(rewriteMaxBytes)
+                    .$(", partitionTs=").$(partitionTs)
+                    .$();
+
+            for (int round = 0; round < rounds; round++) {
+                long start, end;
+                int pattern = rnd.nextInt(5);
+
+                switch (pattern) {
+                    case 0 -> {
+                        long center = partitionTs + rnd.nextLong(DAY_MICROS);
+                        long halfSpan = 1 + rnd.nextLong(Math.max(1, DAY_MICROS / 20));
+                        start = Math.max(partitionTs, center - halfSpan);
+                        end = Math.min(dayEnd, center + halfSpan);
+                    }
+                    case 1 -> {
+                        start = partitionTs;
+                        end = dayEnd;
+                    }
+                    case 2 -> {
+                        start = partitionTs;
+                        end = partitionTs + DAY_MICROS / 2;
+                    }
+                    case 3 -> {
+                        start = partitionTs + DAY_MICROS / 2;
+                        end = dayEnd;
+                    }
+                    default -> {
+                        long a = partitionTs + rnd.nextLong(DAY_MICROS);
+                        long b = partitionTs + rnd.nextLong(DAY_MICROS);
+                        start = Math.min(a, b);
+                        end = Math.max(a, b) + 1;
+                    }
+                }
+
+                if (start >= end) {
+                    end = start + 1;
+                }
+
+                LOG.info()
+                        .$("round ").$(round)
+                        .$(": pattern=").$(pattern)
+                        .$(", start=").$(start)
+                        .$(", end=").$(end)
+                        .$();
+
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(walTable, rnd, start, end);
+                try {
+                    fuzzer.applyNonWal(transactions, oracleTable, rnd);
+                    fuzzer.applyWal(transactions, walTable, 1, rnd);
+                } finally {
+                    Misc.freeObjListAndClear(transactions);
+                }
+                drainWalQueue();
+            }
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
+            }
+
+            assertRowGroupSizes(walTable, rowGroupSize);
+        });
+    }
+
     private static String randomCompressionCodec(Rnd rnd) {
         String[] codecs = {"uncompressed", "snappy", "gzip", "brotli", "zstd", "lz4_raw"};
         return codecs[rnd.nextInt(codecs.length)];

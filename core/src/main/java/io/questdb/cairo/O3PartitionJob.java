@@ -118,6 +118,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final ParquetMetaPartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
         final RowGroupBuffers rowGroupBuffers = ctx.getRowGroupBuffers();
         final DirectIntList parquetColumns = ctx.getParquetColumns();
+        final ParquetMetaFileReader parquetMetaReader = ctx.getParquetMetaReader();
         final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
         final PartitionDescriptor partitionDescriptor = ctx.getPartitionDescriptor();
         long parquetSize = parquetFileSize;
@@ -130,33 +131,31 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             parquetMetaFileSize = ff.length(path.$());
             boolean isStale = parquetMetaFileSize <= 0;
-            try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
-                if (!isStale) {
-                    parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                    try {
-                        parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
-                    } catch (CairoException e) {
-                        ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                        parquetMetaAddr = 0;
-                        if (e.getErrno() != CairoException.STALE_PARQUET_METADATA) {
-                            throw e;
-                        }
-                        isStale = true;
-                    }
-                }
-                if (isStale) {
-                    LOG.info()
-                            .$("regenerating stale _pm [path=").$(path)
-                            .$(", parquetFileSize=").$(parquetFileSize)
-                            .I$();
-                    regenerateParquetMetadata(ff, path, partitionDirLen, parquetFileSize, cairoConfiguration);
-                    path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-                    parquetMetaFileSize = ff.length(path.$());
-                    parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            if (!isStale) {
+                parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                try {
                     parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
+                } catch (CairoException e) {
+                    ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                    parquetMetaAddr = 0;
+                    if (e.getErrno() != CairoException.STALE_PARQUET_METADATA) {
+                        throw e;
+                    }
+                    isStale = true;
                 }
-                parquetSize = parquetMetaReader.getParquetFileSize();
             }
+            if (isStale) {
+                LOG.info()
+                        .$("regenerating stale _pm [path=").$(path)
+                        .$(", parquetFileSize=").$(parquetFileSize)
+                        .I$();
+                regenerateParquetMetadata(ff, path, partitionDirLen, parquetFileSize, cairoConfiguration);
+                path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                parquetMetaFileSize = ff.length(path.$());
+                parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
+            }
+            parquetSize = parquetMetaReader.getParquetFileSize();
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
 
             long parquetAddr = 0;

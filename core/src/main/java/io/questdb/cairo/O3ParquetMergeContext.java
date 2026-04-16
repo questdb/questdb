@@ -50,6 +50,7 @@ public class O3ParquetMergeContext implements Closeable {
     private LongList nullBufs;
     private IntIntHashMap parquetColIdToIdx;
     private DirectIntList parquetColumns;
+    private ParquetMetaFileReader parquetMetaReader;
     private ParquetMetaPartitionDecoder partitionDecoder;
     private OwnedMemoryPartitionDescriptor partitionDescriptor;
     private PartitionUpdater partitionUpdater;
@@ -69,6 +70,7 @@ public class O3ParquetMergeContext implements Closeable {
         nullBufs = new LongList();
         parquetColumns = new DirectIntList(64, MemoryTag.NATIVE_O3);
         parquetColIdToIdx = new IntIntHashMap();
+        parquetMetaReader = new ParquetMetaFileReader();
         partitionDecoder = new ParquetMetaPartitionDecoder();
         partitionDescriptor = new OwnedMemoryPartitionDescriptor();
         partitionUpdater = new PartitionUpdater();
@@ -88,6 +90,7 @@ public class O3ParquetMergeContext implements Closeable {
         nullBufs.clear();
         parquetColIdToIdx.clear();
         parquetColumns.clear();
+        parquetMetaReader.clear();
         partitionDescriptor.clear();
         rgO3Ranges.clear();
         rowGroupBounds.clear();
@@ -106,6 +109,7 @@ public class O3ParquetMergeContext implements Closeable {
         nullBufs = null;
         parquetColIdToIdx = null;
         parquetColumns = Misc.free(parquetColumns);
+        parquetMetaReader = Misc.free(parquetMetaReader);
         partitionDecoder = Misc.free(partitionDecoder);
         partitionDescriptor = Misc.free(partitionDescriptor);
         partitionUpdater = Misc.free(partitionUpdater);
@@ -159,6 +163,10 @@ public class O3ParquetMergeContext implements Closeable {
 
     public DirectIntList getParquetColumns() {
         return parquetColumns;
+    }
+
+    public ParquetMetaFileReader getParquetMetaReader() {
+        return parquetMetaReader;
     }
 
     public ParquetMetaPartitionDecoder getPartitionDecoder() {
