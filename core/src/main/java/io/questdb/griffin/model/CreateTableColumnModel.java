@@ -41,6 +41,7 @@ public class CreateTableColumnModel implements Mutable {
     private boolean indexedFlag;
     private boolean isCast;
     private boolean notNullFlag;
+    private boolean parquetBloomFilter;
     private int parquetCompression = -1;
     private int parquetCompressionLevel = -1;
     private int parquetEncoding = -1;
@@ -63,6 +64,7 @@ public class CreateTableColumnModel implements Mutable {
         indexedFlag = false;
         isCast = false;
         notNullFlag = false;
+        parquetBloomFilter = false;
         parquetCompression = -1;
         parquetCompressionLevel = -1;
         parquetEncoding = -1;
@@ -94,6 +96,10 @@ public class CreateTableColumnModel implements Mutable {
         return indexValueBlockSize;
     }
 
+    public boolean isParquetBloomFilter() {
+        return parquetBloomFilter;
+    }
+
     public int getParquetCompression() {
         return parquetCompression;
     }
@@ -107,7 +113,7 @@ public class CreateTableColumnModel implements Mutable {
     }
 
     public int getParquetEncodingConfig() {
-        if (parquetEncoding < 0 && parquetCompression < 0) {
+        if (parquetEncoding < 0 && parquetCompression < 0 && !parquetBloomFilter) {
             return 0;
         }
         // In packed form, compression is shifted +1 (0=default, 1=uncompressed, 2=snappy, etc.)
@@ -119,7 +125,8 @@ public class CreateTableColumnModel implements Mutable {
         return TableUtils.packParquetConfig(
                 Math.max(parquetEncoding, 0),
                 packedCompression,
-                packedLevel
+                packedLevel,
+                parquetBloomFilter
         );
     }
 
@@ -175,6 +182,10 @@ public class CreateTableColumnModel implements Mutable {
         this.notNullFlag = notNullFlag;
     }
 
+    public void setParquetBloomFilter(boolean parquetBloomFilter) {
+        this.parquetBloomFilter = parquetBloomFilter;
+    }
+
     public void setParquetCompression(int parquetCompression) {
         this.parquetCompression = parquetCompression;
     }
@@ -185,6 +196,22 @@ public class CreateTableColumnModel implements Mutable {
 
     public void setParquetEncoding(int parquetEncoding) {
         this.parquetEncoding = parquetEncoding;
+    }
+
+    /**
+     * Sets all parquet properties from a packed config int produced by
+     * {@link TableUtils#packParquetConfig(int, int, int, boolean)}.
+     * Unpacks encoding, compression (+1 encoded), level (+1 encoded), and bloom filter flag
+     * into the individual fields.
+     */
+    public void setParquetEncodingConfig(int packed) {
+        int enc = TableUtils.getParquetConfigEncoding(packed);
+        this.parquetEncoding = enc > 0 ? enc : -1;
+        int comp = TableUtils.getParquetConfigCompression(packed);
+        this.parquetCompression = comp > 0 ? comp - 1 : -1;
+        int lvl = TableUtils.getParquetConfigCompressionLevel(packed);
+        this.parquetCompressionLevel = lvl > 0 ? lvl - 1 : -1;
+        this.parquetBloomFilter = TableUtils.isParquetConfigBloomFilter(packed);
     }
 
     public void setSymbolCacheFlag(boolean symbolCacheFlag) {

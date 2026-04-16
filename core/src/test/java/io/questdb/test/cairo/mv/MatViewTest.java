@@ -3886,7 +3886,8 @@ public class MatViewTest extends AbstractCairoTest {
                     2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z
                     2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z
                     2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z
-                    2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T01:51:12.000000Z
+                    2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T00:55:05.000000Z
+                    2020-10-25T01:00:00.000000Z\t2020-10-25T01:00:00.000000Z\ta\t27.635284834188102\t2020-10-25T01:51:12.000000Z
                     2020-10-25T02:00:00.000000Z\t2020-10-25T02:00:00.000000Z\ta\t95.73868763606973\t2020-10-25T02:47:19.000000Z
                     2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tnull\t2020-10-25T03:43:26.000000Z
                     2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z
@@ -6035,7 +6036,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String out = "select to_timezone(k, 'PST') k, c";
             final String viewQuery = "select k, count() c from x sample by 2h align to calendar time zone 'PST' with offset '00:42'";
             final long startTs = timestampType.getDriver().parseFloorLiteral("1970-01-03T00:20:00.000000Z");
-            final long step = timestampType.getDriver().fromMicros(300000000);
+            final long step = timestampType.getDriver().fromMicros(300_000_000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -6122,7 +6123,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneFixedFormat() throws Exception {
-        assertMemoryLeak(() -> testAlignToCalendarTimezoneOffset("GMT+01:00"));
+        assertMemoryLeak(this::testAlignToCalendarTimezoneOffset);
     }
 
     @Test
@@ -6141,7 +6142,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             final String expected = """
                     k\tc
-                    2021-10-31T02:00:00.000000Z\t18
+                    2021-10-31T02:00:00.000000Z\t8
+                    2021-10-31T02:00:00.000000Z\t10
                     2021-10-31T03:00:00.000000Z\t10
                     2021-10-31T04:00:00.000000Z\t10
                     2021-10-31T05:00:00.000000Z\t10
@@ -6174,8 +6176,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             final String expected = """
                     k\tc
-                    2021-10-31T02:00:00.000000Z\t8
-                    2021-10-31T02:30:00.000000Z\t10
+                    2021-10-31T02:00:00.000000Z\t3
+                    2021-10-31T02:30:00.000000Z\t5
+                    2021-10-31T02:00:00.000000Z\t5
+                    2021-10-31T02:30:00.000000Z\t5
                     2021-10-31T03:00:00.000000Z\t5
                     2021-10-31T03:30:00.000000Z\t5
                     2021-10-31T04:00:00.000000Z\t5
@@ -6203,7 +6207,28 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOffset() throws Exception {
-        assertMemoryLeak(() -> testAlignToCalendarTimezoneOffset("PST"));
+        assertMemoryLeak(() -> {
+            final String viewName = "x_view";
+            final String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone 'PST' with offset '00:42'";
+            final long startTs = timestampType.getDriver().fromMicros(172800000000L);
+            final long step = timestampType.getDriver().fromMicros(300_000_000);
+            final int N = 100;
+            final int K = 5;
+            updateViewIncrementally(viewQuery, startTs, step, N, K);
+
+            final String expected = """
+                    k\tc
+                    1970-01-02T23:42:00.000000Z\t15
+                    1970-01-03T01:12:00.000000Z\t18
+                    1970-01-03T02:42:00.000000Z\t18
+                    1970-01-03T04:12:00.000000Z\t18
+                    1970-01-03T05:42:00.000000Z\t18
+                    1970-01-03T07:12:00.000000Z\t13
+                    """;
+
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewQuery, "k", true, true);
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewName, "k", true, true);
+        });
     }
 
     @Test
@@ -6212,7 +6237,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 90m align to calendar";
             final long startTs = timestampType.getDriver().fromMicros(172800000000L);
-            final long step = timestampType.getDriver().fromMicros(300000000);
+            final long step = timestampType.getDriver().fromMicros(300_000_000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -6238,7 +6263,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String viewName = "x_view";
             final String viewQuery = "select k, count() c from x sample by 90m align to calendar with offset '00:42'";
             final long startTs = timestampType.getDriver().fromMicros(172800000000L);
-            final long step = timestampType.getDriver().fromMicros(300000000);
+            final long step = timestampType.getDriver().fromMicros(300_000_000);
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewQuery, startTs, step, N, K);
@@ -6256,6 +6281,81 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewQuery, "k", true, true);
             assertQueryNoLeakCheck(replaceExpectedTimestamp(expected), viewName, "k", true, true);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed15mBerlinSpringForward() throws Exception {
+        // 15m stride = minimum DST gap. canSkipDstGapCorrection returns true for
+        // 15m when (from+offset) % day == 0 (it is here, offset=0).
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 15m ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-03-28T00:00:00.000000Z", 60_000_000, 200, 8);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed17mAucklandFallBack() throws Exception {
+        // Pacific/Auckland: Southern Hemisphere, positive offset (NZDT +13 → NZST +12).
+        // Fall-back Apr 4 2021, 03:00 NZDT → 02:00 NZST. 17m forces gap-aware path.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 17m ALIGN TO CALENDAR TIME ZONE 'Pacific/Auckland'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-04-03T13:00:00.000000Z", 60_000_000, 200, 4);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed17mBerlinSpringForward() throws Exception {
+        // 17m stride is coprime with 15m (minimum DST gap), forcing the DST-gap-aware
+        // code path in timestamp_floor_utc. Tests monotonicity across the Europe/Berlin
+        // spring-forward gap (March 28 2021, 02:00 CET → 03:00 CEST).
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 17m ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-03-28T00:15:00.000000Z", 60_000_000, 200, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed17mNewYorkFallBack() throws Exception {
+        // America/New_York: negative-offset DST zone (EDT -4 → EST -5).
+        // Fall-back Nov 7 2021, 02:00 EDT → 01:00 EST. Local 01:00-02:00 repeats.
+        // 17m stride forces gap-aware path.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 17m ALIGN TO CALENDAR TIME ZONE 'America/New_York'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-11-07T04:30:00.000000Z", 60_000_000, 200, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1hBerlinWithOffset() throws Exception {
+        // Sub-day interval + DST-aware timezone + non-zero offset.
+        // Europe/Berlin has DST (CET/CEST). This exercises the sub-day DST branch
+        // in MatViewRefreshJob.intervalIterator() which must account for the user
+        // offset when computing scan boundaries, otherwise the refresh iterator
+        // boundaries are misaligned with bucket keys produced by timestamp_floor_utc.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '00:15'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-03-28T00:00:00.000000Z", 60_000_000, 200, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1hKolkataWithOffset() throws Exception {
+        // Asia/Kolkata (+05:30) is non-hour-aligned. Combined with non-zero offset,
+        // this is the hardest case for bucket alignment.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '00:15'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-06-01T00:00:00.000000Z", 5 * 60_000_000, 100, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1wBerlinDST() throws Exception {
+        // Week stride with DST timezone. Super-day strides use actual tz offset
+        // (not standard), testing a different code path from sub-day.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1w ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            assertMatViewMatchesSampleBy(viewQuery, "2021-03-15T00:00:00.000000Z", 3_600_000_000L, 500, 5);
         });
     }
 
@@ -7121,6 +7221,30 @@ public class MatViewTest extends AbstractCairoTest {
         execute("drop materialized view if exists price_1h_" + n + ";");
     }
 
+    /**
+     * Asserts that a materialized view produces the same result as the standalone
+     * SAMPLE BY query after incremental data insertion. Checks both row-level equality
+     * and total count preservation (no rows lost during refresh).
+     */
+    private void assertMatViewMatchesSampleBy(String viewQuery, String startTsLiteral, long stepMicros, int N, int K) throws Exception {
+        final String viewName = "x_view";
+        final long startTs = timestampType.getDriver().parseFloorLiteral(startTsLiteral);
+        final long step = timestampType.getDriver().fromMicros(stepMicros);
+        updateViewIncrementally(viewQuery, startTs, step, N, K);
+
+        // Capture standalone query result as expected
+        sink.clear();
+        printSql(viewQuery, sink);
+        final String expected = sink.toString();
+
+        // Assert total count preserved (no rows lost during incremental refresh)
+        final String totalExpected = "total\n" + N + "\n";
+        assertQueryNoLeakCheck(totalExpected, "SELECT sum(c)::LONG total FROM " + viewName, null, false, true);
+
+        // Assert mat view matches standalone query row-by-row
+        assertQueryNoLeakCheck(expected, viewName, "k", true, true);
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -7167,11 +7291,11 @@ public class MatViewTest extends AbstractCairoTest {
         return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
     }
 
-    private void testAlignToCalendarTimezoneOffset(final String timezone) throws Exception {
+    private void testAlignToCalendarTimezoneOffset() throws Exception {
         final String viewName = "x_view";
-        final String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone '" + timezone + "' with offset '00:42'";
+        final String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone '" + "GMT+01:00" + "' with offset '00:42'";
         final long startTs = timestampType.getDriver().fromMicros(172800000000L);
-        final long step = timestampType.getDriver().fromMicros(300000000);
+        final long step = timestampType.getDriver().fromMicros(300_000_000);
         final int N = 100;
         final int K = 5;
         updateViewIncrementally(viewQuery, startTs, step, N, K);

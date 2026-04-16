@@ -8024,6 +8024,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                   keys: [min]
                                     Async Group By workers: 1
                                       keys: [timestamp,timestamp1]
+                                      keyFunctions: [timestamp_floor_utc('15s',timestamp1)]
                                       values: [min(x)]
                                       filter: null
                                         SelectedRecord

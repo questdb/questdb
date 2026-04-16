@@ -203,6 +203,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean stateClosed;
     private int stateDesc;
     private boolean stateExec = false;
+    private boolean stateSuspended = false;
     // boolean state, bitset?
     private boolean stateParse;
     private boolean stateParseExecuted = false;
@@ -344,6 +345,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = SYNC_DESC_NONE;
         stateExec = false;
         stateParse = false;
+        stateSuspended = false;
         stateParseExecuted = false;
         stateSync = SYNC_PARSE;
         tas = null;
@@ -351,6 +353,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         varcharArrayViewPool.clear();
         utf8StringSink.clear();
         selectIsCacheable = true;
+    }
+
+    public void closeSuspendedCursor() {
+        cursor = Misc.free(cursor);
+        stateSuspended = false;
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
@@ -489,6 +496,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public boolean isPreparedStatement() {
         return namedStatement != null;
+    }
+
+    public boolean isSuspended() {
+        return stateSuspended;
     }
 
     public boolean isStateClosed() {
@@ -841,15 +852,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             switch (stateSync) {
                 case SYNC_DATA_EXHAUSTED:
                     cursor = Misc.free(cursor);
+                    stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
                     break;
                 case SYNC_DATA_SUSPENDED:
                     outPortalSuspended(utf8Sink);
-                    if (!portal) {
-                        // if this is not a named portal
-                        // then we have to close the cursor even if we didn't fully exhaust it
-                        cursor = Misc.free(cursor);
-                    }
+                    // Keep cursor alive for both named and unnamed portals so the
+                    // client can send another Execute to fetch the next batch.
+                    // The cursor is freed when data is exhausted, the portal is
+                    // explicitly closed, or a new Bind/Parse replaces it.
+                    stateSuspended = true;
                     break;
             }
 

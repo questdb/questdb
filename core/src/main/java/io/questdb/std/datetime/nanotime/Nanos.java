@@ -144,15 +144,18 @@ public final class Nanos {
             return nanos;
         }
 
-        // Use the nano version of getYear
         int y = getYear(nanos);
-        int m;
         boolean leap1 = isLeapYear(y);
         boolean leap2 = isLeapYear(y + years);
-
+        int m = getMonthOfYear(nanos, y, leap1);
+        int d = getDayOfMonth(nanos, y, m, leap1);
+        int maxDay = CommonUtils.getDaysPerMonth(m, leap2);
+        if (d > maxDay) {
+            d = maxDay;
+        }
         return yearNanos(y + years, leap2)
-                + monthOfYearNanos(m = getMonthOfYear(nanos, y, leap1), leap2)
-                + (getDayOfMonth(nanos, y, m, leap1) - 1) * DAY_NANOS
+                + monthOfYearNanos(m, leap2)
+                + (d - 1) * DAY_NANOS
                 + getTimeNanos(nanos);
     }
 

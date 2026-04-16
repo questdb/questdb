@@ -22,12 +22,13 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.questdb</groupId>
     <artifactId>benchmarks</artifactId>
-    <version>9.3.5-SNAPSHOT</version>
+    <version>9.3.6-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>JMH benchmarks for QuestDB</name>
 
@@ -56,7 +57,7 @@
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-core</artifactId>
-            <version>2.25.3</version>
+            <version>2.25.4</version>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
@@ -89,6 +90,11 @@
             <artifactId>questdb-client</artifactId>
             <version>${questdb.client.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.17</version>
+        </dependency>
     </dependencies>
 
     <properties>
@@ -112,8 +118,8 @@
           -->
         <uberjar.name>benchmarks</uberjar.name>
 
-        <!-- Java ILP client version - override with -Dquestdb.client.version=1.0.1-SNAPSHOT for local dev -->
-        <questdb.client.version>1.0.1</questdb.client.version>
+        <!-- Java QWiP client version - override with -Dquestdb.client.version=1.1.1-SNAPSHOT for local dev -->
+        <questdb.client.version>1.1.0</questdb.client.version>
     </properties>
 
     <build>
@@ -148,7 +154,8 @@
                         <configuration>
                             <finalName>${uberjar.name}</finalName>
                             <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>org.openjdk.jmh.Main</mainClass>
                                 </transformer>
                             </transformers>
@@ -213,9 +220,6 @@
     <profiles>
         <profile>
             <id>local-client</id>
-            <properties>
-                <questdb.client.version>1.0.1-SNAPSHOT</questdb.client.version>
-            </properties>
         </profile>
         <profile>
             <id>javadoc</id>
