@@ -68,6 +68,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final int batchSize;
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
+    private final DirectLongList ownerBatchList;
+    private final FlyweightPackedMapValue ownerBatchMapValue;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
@@ -210,12 +212,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             perWorkerLongTopKLists = new ObjList<>(workerCount);
             perWorkerLongTopKLists.setAll(workerCount, null);
 
-            // Per-worker batch scratch buffers and flyweights for batched dispatch.
-            // The owner uses slotId -1 which maps to index 0; worker slots 0..N-1 map to 1..N.
+            // Per-slot batch scratch buffers and flyweights for batched dispatch.
+            // The owner uses slotId -1; worker slots 0..N-1 index directly into the per-worker lists.
             batchSize = configuration.getGroupByBatchSize();
-            perWorkerBatchLists = new ObjList<>(workerCount + 1);
-            perWorkerBatchMapValues = new ObjList<>(workerCount + 1);
-            for (int i = 0; i < workerCount + 1; i++) {
+            ownerBatchList = new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true);
+            ownerBatchMapValue = new FlyweightPackedMapValue(valueTypes);
+            perWorkerBatchLists = new ObjList<>(workerCount);
+            perWorkerBatchMapValues = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
                 perWorkerBatchLists.extendAndSet(i, new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true));
                 perWorkerBatchMapValues.extendAndSet(i, new FlyweightPackedMapValue(valueTypes));
             }
@@ -238,6 +242,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.clearObjList(perWorkerAllocators);
         Misc.clear(ownerLongTopKList);
         Misc.clearObjList(perWorkerLongTopKLists);
+        Misc.free(ownerBatchList);
         Misc.freeObjListAndKeepObjects(perWorkerBatchLists);
         filterCtx.clear();
     }
@@ -260,18 +265,23 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+        Misc.free(ownerBatchList);
         Misc.freeObjList(perWorkerBatchLists);
         Misc.free(filterCtx);
     }
 
     public DirectLongList getBatchList(int slotId) {
-        // slotId -1 (owner) maps to index 0, worker slots 0..N-1 map to 1..N
-        return perWorkerBatchLists.getQuick(slotId + 1);
+        if (slotId == -1) {
+            return ownerBatchList;
+        }
+        return perWorkerBatchLists.getQuick(slotId);
     }
 
     public FlyweightPackedMapValue getBatchMapValue(int slotId) {
-        // slotId -1 (owner) maps to index 0, worker slots 0..N-1 map to 1..N
-        return perWorkerBatchMapValues.getQuick(slotId + 1);
+        if (slotId == -1) {
+            return ownerBatchMapValue;
+        }
+        return perWorkerBatchMapValues.getQuick(slotId);
     }
 
     public int getBatchSize() {
