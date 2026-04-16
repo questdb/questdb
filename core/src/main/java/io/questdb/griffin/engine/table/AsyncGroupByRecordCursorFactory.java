@@ -77,7 +77,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private final AsyncGroupByRecordCursor cursor;
     private final UnorderedPageFrameSequence<AsyncGroupByAtom> frameSequence;
     private final ObjList<Function> recordFunctions; // includes groupByFunctions
+    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final int workerCount;
+    private ObjList<AsyncGroupBySharedCursor> sharedCursors;
 
     public AsyncGroupByRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -100,12 +102,14 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable Function filter,
             @Nullable IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
-            int workerCount
+            int workerCount,
+            @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
         super(groupByMetadata);
         try {
             this.base = base;
             this.recordFunctions = recordFunctions;
+            this.sharedRecordFunctions = sharedRecordFunctions;
             AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
                     configuration,
@@ -160,6 +164,23 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        AsyncGroupBySharedCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            assert sharedRecordFunctions != null;
+            assert idx < sharedRecordFunctions.size();
+            shared = new AsyncGroupBySharedCursor(sharedRecordFunctions.getQuick(idx));
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of(cursor);
+        return shared;
+    }
+
+    @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
         final int columnType = getMetadata().getColumnType(columnIndex);
         return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
@@ -167,6 +188,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
+    public boolean supportsSharedCursors() {
         return true;
     }
 
@@ -537,5 +563,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         Misc.free(cursor);
         Misc.free(frameSequence);
         Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
+        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        Misc.clear(sharedCursors);
     }
 }

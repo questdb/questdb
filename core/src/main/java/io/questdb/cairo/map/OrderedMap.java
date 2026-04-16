@@ -304,6 +304,24 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public MapRecordCursor newCursor() {
+        OrderedMapCursor c;
+        if (keySize == -1) {
+            OrderedMapVarSizeRecord rec = ((OrderedMapVarSizeRecord) record).clone();
+            c = new OrderedMapVarSizeCursor(rec, this);
+        } else {
+            OrderedMapFixedSizeRecord rec = ((OrderedMapFixedSizeRecord) record).clone();
+            c = new OrderedMapFixedSizeCursor(rec, this);
+        }
+        return c.init(heapAddr, heapLimit, size);
+    }
+
+    @Override
+    public void initCursor(MapRecordCursor cursor) {
+        ((OrderedMapCursor) cursor).init(heapAddr, heapLimit, size);
+    }
+
+    @Override
     public long getHeapSize() {
         return heapLimit - heapAddr;
     }

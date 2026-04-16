@@ -257,6 +257,17 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     }
 
     @Override
+    public MapRecordCursor newCursor() {
+        UnorderedVarcharMapCursor c = new UnorderedVarcharMapCursor(record.clone(), this);
+        return c.init(memStart, memLimit, size);
+    }
+
+    @Override
+    public void initCursor(MapRecordCursor cursor) {
+        ((UnorderedVarcharMapCursor) cursor).init(memStart, memLimit, size);
+    }
+
+    @Override
     public long getHeapSize() {
         return memLimit - memStart + allocator.allocated();
     }

@@ -109,11 +109,25 @@ public interface Map extends Mutable, Closeable, Reopenable {
         return -1;
     }
 
+    /**
+     * Reinitializes an existing cursor (previously created by {@link #newCursor()})
+     * with the map's current state, avoiding allocation.
+     */
+    void initCursor(MapRecordCursor cursor);
+
     boolean isOpen();
 
     void merge(Map srcMap, MapValueMergeFunction mergeFunc);
 
     /**
+     * Creates an independent cursor over the same materialized data.
+     * Each cursor has its own iteration state (position, record) but
+     * shares the underlying data store.
+     */
+    MapRecordCursor newCursor();
+
+    /**
+     * <<<<<<< HEAD
      * Probes rows {@code batchStart..batchEnd-1} and writes packed longs into
      * {@code batchAddr}. Each packed long has the layout:
      * {@code [isNew:1][rowIndex:24][offset:39]}, where {@code offset} is the
