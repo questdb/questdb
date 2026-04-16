@@ -12001,20 +12001,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNthValueRangeUnboundedToPreceding() throws Exception {
         // RANGE between unbounded preceding and N microseconds preceding — rowsLo=MIN_VALUE,
         // rowsHi<0 (NOT 0), so the factory skips the UnboundedRowsFrame fast path and routes
-        // to NthValueOverRangeFrameFunction. Exercises the non-default RANGE path.
+        // to NthValueOverRangeFrameFunction. Exercises the non-default RANGE path. Data
+        // spacing is 1s so "2 microseconds preceding" excludes only the current row in both
+        // MICRO and NANO timestamp modes, keeping expected output stable.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
-            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+            execute(timestampType == TestTimestampType.MICRO
+                    ? "insert into tab values (1000000, 10.0), (2000000, 20.0), (3000000, 30.0), (4000000, 40.0), (5000000, 50.0)"
+                    : "insert into tab values (1000000000, 10.0), (2000000000, 20.0), (3000000000, 30.0), (4000000000, 40.0), (5000000000, 50.0)");
 
             assertQueryNoLeakCheck(
-                    replaceTimestampSuffix1("""
+                    timestampType == TestTimestampType.MICRO
+                            ? """
                             ts\tnv
-                            1970-01-01T00:00:00.000001Z\tnull
-                            1970-01-01T00:00:00.000002Z\tnull
-                            1970-01-01T00:00:00.000003Z\tnull
-                            1970-01-01T00:00:00.000004Z\t20.0
-                            1970-01-01T00:00:00.000005Z\t20.0
-                            """),
+                            1970-01-01T00:00:01.000000Z\tnull
+                            1970-01-01T00:00:02.000000Z\tnull
+                            1970-01-01T00:00:03.000000Z\t20.0
+                            1970-01-01T00:00:04.000000Z\t20.0
+                            1970-01-01T00:00:05.000000Z\t20.0
+                            """
+                            : """
+                            ts\tnv
+                            1970-01-01T00:00:01.000000000Z\tnull
+                            1970-01-01T00:00:02.000000000Z\tnull
+                            1970-01-01T00:00:03.000000000Z\t20.0
+                            1970-01-01T00:00:04.000000000Z\t20.0
+                            1970-01-01T00:00:05.000000000Z\t20.0
+                            """,
                     "select ts, nth_value(val, 2) over (" +
                             "order by ts range between unbounded preceding and 2 microseconds preceding) nv from tab",
                     "ts",
@@ -12062,6 +12075,113 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValuePartitionedRowsUnboundedLockedIn() throws Exception {
+        // Partitioned ROWS frame with rowsLo=MIN_VALUE (unbounded preceding) and rowsHi=-1 (1
+        // preceding). Routes to NthValueOverPartitionRowsFrameFunction with frameLoBounded=false,
+        // bufferSize=frameSize=1. With n=1 the "frame locked in" early return at computeNext
+        // lines 717-722 fires from the second row of each partition onward — the main branch
+        // that testNthValuePartitionedRowsFrameBounded (which uses frameLoBounded=true) misses.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), " +
+                    "(4, 2, 40.0), (5, 2, 50.0)");
+
+            // The partitioned !frameLoBounded branch returns early once locked in (line 722)
+            // and never updates the ring buffer afterward — so rows 2, 3 keep reading the
+            // value captured on row 1. This documents the observed behaviour.
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t10.0
+                            1970-01-01T00:00:00.000003Z\t1\t10.0
+                            1970-01-01T00:00:00.000004Z\t2\tnull
+                            1970-01-01T00:00:00.000005Z\t2\t40.0
+                            """),
+                    "select ts, i, nth_value(val, 1) over (" +
+                            "partition by i order by ts rows between unbounded preceding and 1 preceding) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionedRowsIncludingCurrent() throws Exception {
+        // Partitioned ROWS frame with rowsLo=-2, rowsHi=0 (current row). Routes to
+        // NthValueOverPartitionRowsFrameFunction with frameLoBounded=true,
+        // frameIncludesCurrentValue=true. Exercises computeNext lines 748-758, including
+        // n <= currentFrameSize (main path), n == currentFrameSize + 1 (returns current
+        // row's value — row 2 in partition 1 and row 7 in partition 2), and the else-NaN
+        // fallback. testNthValuePartitionedRowsFrameBounded uses FIC=false, so this is the
+        // only test that covers the FIC=true partitioned branch.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 10.0), (2, 1, 20.0), (3, 1, 30.0), (4, 1, 40.0), (5, 1, 50.0), " +
+                    "(6, 2, 60.0), (7, 2, 70.0), (8, 2, 80.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\ti\tnv
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t20.0
+                            1970-01-01T00:00:00.000003Z\t1\t20.0
+                            1970-01-01T00:00:00.000004Z\t1\t30.0
+                            1970-01-01T00:00:00.000005Z\t1\t40.0
+                            1970-01-01T00:00:00.000006Z\t2\tnull
+                            1970-01-01T00:00:00.000007Z\t2\t70.0
+                            1970-01-01T00:00:00.000008Z\t2\t70.0
+                            """),
+                    "select ts, i, nth_value(val, 2) over (" +
+                            "partition by i order by ts rows between 2 preceding and current row) nv from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNthValueRowsFrameIncludingCurrentRow() throws Exception {
+        // Non-partitioned ROWS frame with FIC=true. Triple assertion targets the non-
+        // partitioned NthValueOverRowsFrameFunction.computeNext branches:
+        //   - n=3 on "rows between 2 preceding and current row" (frameSize=2, includes
+        //     current): once the frame is full, n==currentFrameSize+1 path returns the
+        //     current row's value (line 1121).
+        //   - n=5 on same frame: n > currentFrameSize+1, so the else-NaN path (line 1123)
+        //     always fires.
+        //   - n=1 on "rows between unbounded preceding and 2 preceding": frameLoBounded
+        //     is false; once count >= bufferSize + n - 1 = 2, the locked-in early return
+        //     at lines 1109-1111 fires for rows 3..5.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0), (5, 50.0)");
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix1("""
+                            ts\tnv3\tnv5\tnvlocked
+                            1970-01-01T00:00:00.000001Z\tnull\tnull\tnull
+                            1970-01-01T00:00:00.000002Z\tnull\tnull\t10.0
+                            1970-01-01T00:00:00.000003Z\t30.0\tnull\t10.0
+                            1970-01-01T00:00:00.000004Z\t40.0\tnull\t20.0
+                            1970-01-01T00:00:00.000005Z\t50.0\tnull\t30.0
+                            """),
+                    "select ts, " +
+                            "nth_value(val, 3) over (order by ts rows between 2 preceding and current row) nv3, " +
+                            "nth_value(val, 5) over (order by ts rows between 2 preceding and current row) nv5, " +
+                            "nth_value(val, 1) over (order by ts rows between unbounded preceding and 2 preceding) nvlocked " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNtileToPlan() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
@@ -12094,6 +12214,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
+            // CumeDistFunction (ordered, no partition)
             assertPlanNoLeakCheck(
                     "select ts, cume_dist() over (order by ts) from tab",
                     """
@@ -12104,11 +12225,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Frame forward scan on: tab
                             """
             );
+            // CumeDistNoOrderFunction (no partition)
             assertPlanNoLeakCheck(
                     "select ts, cume_dist() over () from tab",
                     """
                             Window
                               functions: [cume_dist() over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // CumeDistOverPartitionFunction
+            assertPlanNoLeakCheck(
+                    "select ts, i, cume_dist() over (partition by i order by ts) from tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // CumeDistNoOrderFunction partitioned branch
+            assertPlanNoLeakCheck(
+                    "select ts, i, cume_dist() over (partition by i) from tab",
+                    """
+                            Window
+                              functions: [cume_dist() over (partition by [i])]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -12122,6 +12266,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
+            // RANGE frames bake the timestamp-unit diff into the plan, so the numeric tokens
+            // differ between MICRO (1 µs = 1 tick) and NANO (1 µs = 1000 ticks).
+            String tenMicros = timestampType == TestTimestampType.MICRO ? "10" : "10000";
+            String twoMicros = timestampType == TestTimestampType.MICRO ? "2" : "2000";
+
+            // NthValueOverPartitionRowsFrameFunction (bounded partitioned rows frame)
             assertPlanNoLeakCheck(
                     "select ts, i, nth_value(val, 2) over (partition by i order by ts rows between 2 preceding and current row) from tab",
                     """
@@ -12131,6 +12281,91 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: tab
                             """
+            );
+            // NthValueOverWholeResultSetFunction
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over () from tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [nth_value(val,2) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverUnboundedRowsFrameFunction (default frame with order by)
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverCurrentRowFunction
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts rows between current row and current row) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (rows between current row and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverRowsFrameFunction — note leading space after "over (" (pre-existing
+            // pattern copied from FirstValueDoubleWindowFunctionFactory.toPlan)
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts rows between 2 preceding and current row) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over ( rows between 2 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverRangeFrameFunction
+            assertPlanNoLeakCheck(
+                    "select ts, nth_value(val, 2) over (order by ts range between 10 microseconds preceding and current row) from tab",
+                    "Window\n" +
+                            "  functions: [nth_value(val,2) over (range between " + tenMicros + " preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+            // NthValueOverPartitionFunction (whole partition)
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i) from tab",
+                    """
+                            CachedWindow
+                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverUnboundedPartitionRowsFrameFunction
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab",
+                    """
+                            Window
+                              functions: [nth_value(val,2) over (partition by [i] rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+            // NthValueOverPartitionRangeFrameFunction
+            assertPlanNoLeakCheck(
+                    "select ts, i, nth_value(val, 2) over (partition by i order by ts range between 2 microseconds preceding and current row) from tab",
+                    "Window\n" +
+                            "  functions: [nth_value(val,2) over (partition by [i] range between " + twoMicros + " preceding and current row)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
             );
         });
     }
