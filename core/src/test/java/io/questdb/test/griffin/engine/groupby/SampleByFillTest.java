@@ -1127,6 +1127,87 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevOfIntKeyColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // Regression test: FILL(PREV(k)) where k is an INT key column.
+            // Before the fix, the fill cursor returned NULL for the mirror
+            // column because the key column had no per-bucket prev slot.
+            execute("CREATE TABLE x (k INT, val DOUBLE, mirror INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1, 10.0, 100, '2024-01-01T00:00:00.000000Z')," +
+                    "(2, 20.0, 200, '2024-01-01T00:00:00.000000Z')," +
+                    "(1, 30.0, 300, '2024-01-01T02:00:00.000000Z')");
+            // At 01:00 gap: both keys emit fill rows with m=k (not null).
+            // At 02:00 gap for key=2: m=2 (mirrors the key value).
+            assertSql(
+                    """
+                            ts\tk\ts\tm
+                            2024-01-01T00:00:00.000000Z\t1\t10.0\t100
+                            2024-01-01T00:00:00.000000Z\t2\t20.0\t200
+                            2024-01-01T01:00:00.000000Z\t1\t10.0\t1
+                            2024-01-01T01:00:00.000000Z\t2\t20.0\t2
+                            2024-01-01T02:00:00.000000Z\t1\t30.0\t300
+                            2024-01-01T02:00:00.000000Z\t2\t20.0\t2
+                            """,
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m " +
+                            "FROM x SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevOfSymbolKeyColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(k)) where k is a SYMBOL key column.
+            // Covers the getSymA key-mirror path.
+            execute("CREATE TABLE x (k SYMBOL, val DOUBLE, mirror SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', 10.0, 'foo', '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 20.0, 'bar', '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 30.0, 'baz', '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tk\ts\tm
+                            2024-01-01T00:00:00.000000Z\tA\t10.0\tfoo
+                            2024-01-01T00:00:00.000000Z\tB\t20.0\tbar
+                            2024-01-01T01:00:00.000000Z\tA\t10.0\tA
+                            2024-01-01T01:00:00.000000Z\tB\t20.0\tB
+                            2024-01-01T02:00:00.000000Z\tA\t30.0\tbaz
+                            2024-01-01T02:00:00.000000Z\tB\t20.0\tB
+                            """,
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m " +
+                            "FROM x SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevOfVarcharKeyColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(k)) where k is a VARCHAR key column — no symbol table
+            // indirection, exercises the getVarcharA key-mirror path.
+            execute("CREATE TABLE x (k VARCHAR, val DOUBLE, mirror VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "('A', 10.0, 'foo', '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 20.0, 'bar', '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 30.0, 'baz', '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tk\ts\tm
+                            2024-01-01T00:00:00.000000Z\tA\t10.0\tfoo
+                            2024-01-01T00:00:00.000000Z\tB\t20.0\tbar
+                            2024-01-01T01:00:00.000000Z\tA\t10.0\tA
+                            2024-01-01T01:00:00.000000Z\tB\t20.0\tB
+                            2024-01-01T02:00:00.000000Z\tA\t30.0\tbaz
+                            2024-01-01T02:00:00.000000Z\tB\t20.0\tB
+                            """,
+                    "SELECT ts, k, sum(val) AS s, last(mirror) AS m " +
+                            "FROM x SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevSymbolLegacyFallback() throws Exception {
         assertMemoryLeak(() -> {
             // PREV on first(s) where s is STRING — unsupported type triggers

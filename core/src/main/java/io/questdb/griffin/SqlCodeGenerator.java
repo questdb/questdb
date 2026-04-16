@@ -3480,6 +3480,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (mode == SampleByFillRecordCursorFactory.FILL_PREV_SELF) {
                     prevSourceCols.add(col);
                 } else if (mode >= 0) {
+                    // PREV(key_col): when the source IS a key column, its value is constant
+                    // per key, so no per-bucket snapshot is needed. The FillRecord getter
+                    // mirrors the current key value directly from keysMapRecord.
+                    if (fillModes.getQuick(mode) == SampleByFillRecordCursorFactory.FILL_KEY) {
+                        continue;
+                    }
                     prevSourceCols.add(col);
                     // Ensure the source column is also snapshotted
                     if (!prevSourceCols.contains(mode)) {
