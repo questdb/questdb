@@ -380,6 +380,80 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFooterChainWalkResolvesCorrectFooter() throws Exception {
+        assertMemoryLeak(() -> {
+            // Build a single-footer _pm: 1 column, parquetFooterOff=100, parquetFooterLen=50,
+            // 1 row group with 1000 rows. Derived parquet size = 100 + 50 + 8 = 158.
+            try (PmTestFile file = buildFile(1, 100, 50, 1000)) {
+                long origLen = file.dataLen;
+                long origFooterOffset = file.footerOffset;
+
+                // Read the row group entry from the original footer to reuse in footer2.
+                int rowGroupEntry = Unsafe.getUnsafe().getInt(
+                        file.dataPtr + origFooterOffset + 32 // FOOTER_FIXED_SIZE
+                );
+
+                // Append a second footer with a different parquet file size.
+                // Footer2: parquetFooterOff=200, parquetFooterLen=80 → derived size = 288.
+                // Layout: fixed(32) + 1 rg entry(4) + CRC(4) + trailer(4) = 44 bytes.
+                int newFooterBytes = 44;
+                long newTotalLen = origLen + newFooterBytes;
+                long newBuf = Unsafe.malloc(newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().copyMemory(file.dataPtr, newBuf, origLen);
+
+                    long newFooterOff = origLen;
+                    long fa = newBuf + newFooterOff;
+
+                    // Footer fixed portion (32 bytes)
+                    Unsafe.getUnsafe().putLong(fa, 200L);              // parquet_footer_offset
+                    Unsafe.getUnsafe().putInt(fa + 8, 80);             // parquet_footer_length
+                    Unsafe.getUnsafe().putInt(fa + 12, 1);             // row_group_count
+                    Unsafe.getUnsafe().putLong(fa + 16, 0L);           // unused_bytes
+                    Unsafe.getUnsafe().putLong(fa + 24, origFooterOffset); // prev_footer_offset
+
+                    // Row group entry (reuse the same block offset)
+                    Unsafe.getUnsafe().putInt(fa + 32, rowGroupEntry);
+
+                    // CRC placeholder (of() does not verify the CRC hash value)
+                    Unsafe.getUnsafe().putInt(fa + 36, 0);
+
+                    // Trailer: footer_length = fixed(32) + rg(4) + CRC(4) = 40
+                    Unsafe.getUnsafe().putInt(fa + 40, 40);
+
+                    // Patch header footer_offset to point to the new footer.
+                    Unsafe.getUnsafe().putLong(newBuf, newFooterOff);
+
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+
+                    // Latest footer (parquet size 288) resolves directly.
+                    reader.of(newBuf, newTotalLen, 288L);
+                    Assert.assertEquals(288L, reader.getParquetFileSize());
+                    Assert.assertEquals(1, reader.getRowGroupCount());
+                    Assert.assertEquals(1000L, reader.getRowGroupSize(0));
+
+                    // Old footer (parquet size 158) resolves via chain walk.
+                    reader.of(newBuf, newTotalLen, 158L);
+                    Assert.assertEquals(158L, reader.getParquetFileSize());
+                    Assert.assertEquals(1, reader.getRowGroupCount());
+                    Assert.assertEquals(1000L, reader.getRowGroupSize(0));
+
+                    // Non-matching parquet size throws STALE_PARQUET_METADATA.
+                    try {
+                        reader.of(newBuf, newTotalLen, 9999L);
+                        Assert.fail("Expected CairoException for stale _pm");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(CairoException.STALE_PARQUET_METADATA, e.getErrno());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "no _pm footer found for parquet size");
+                    }
+                } finally {
+                    Unsafe.free(newBuf, newTotalLen, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGetParquetFileSize() throws Exception {
         assertMemoryLeak(() -> {
             // parquet file size = parquetFooterOffset + parquetFooterLength + 8

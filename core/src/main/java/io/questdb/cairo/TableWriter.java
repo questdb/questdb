@@ -7422,10 +7422,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long openParquetMetadataOrRegenerate(Path path, int partitionDirLen, long parquetFileSize, int memoryTag) {
         path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
         lastParquetMetaFileSize = ff.length(path.$());
-        boolean needsRegeneration = lastParquetMetaFileSize <= 0;
+        boolean isStale = lastParquetMetaFileSize <= 0;
         long addr = 0;
         try {
-            if (!needsRegeneration) {
+            if (!isStale) {
                 addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
                 try {
                     parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);

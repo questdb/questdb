@@ -129,9 +129,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
             parquetMetaFileSize = ff.length(path.$());
-            boolean needsRegeneration = parquetMetaFileSize <= 0;
+            boolean isStale = parquetMetaFileSize <= 0;
             try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
-                if (!needsRegeneration) {
+                if (!isStale) {
                     parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                     try {
                         parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
@@ -141,10 +141,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (e.getErrno() != CairoException.STALE_PARQUET_METADATA) {
                             throw e;
                         }
-                        needsRegeneration = true;
+                        isStale = true;
                     }
                 }
-                if (needsRegeneration) {
+                if (isStale) {
                     LOG.info()
                             .$("regenerating stale _pm [path=").$(path)
                             .$(", parquetFileSize=").$(parquetFileSize)
@@ -383,7 +383,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long rgMin, rgMax;
                     final ParquetMetaFileReader meta = partitionDecoder.metadata();
                     final int statFlags = meta.getChunkStatFlags(rg, timestampParquetIdx);
-                    final boolean hasTimestampStats = (statFlags & 0x01) != 0 && (statFlags & 0x08) != 0;
+                    final boolean hasTimestampStats = (statFlags & 0x03) == 0x03 && (statFlags & 0x18) == 0x18;
                     if (hasTimestampStats) {
                         rgMin = meta.getChunkMinStat(rg, timestampParquetIdx);
                         rgMax = meta.getChunkMaxStat(rg, timestampParquetIdx);

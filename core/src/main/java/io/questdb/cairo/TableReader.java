@@ -1601,14 +1601,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     closePartition(partitionIndex);
                                 }
                             } else {
-                                // reload Parquet file
-                                final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
-                                if (reloadParquetFile(partitionIndex, txPartitionNameTxn, parquetFileSize)) {
-                                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
-                                    LOG.debug().$("updated parquet partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
-                                } else {
-                                    closePartition(partitionIndex);
-                                }
+                                // Parquet _pm and data files are mapped with keepFdOpen=false,
+                                // so in-place remap is not possible. Close and re-open on next access.
+                                closePartition(partitionIndex);
                             }
                         } else {
                             closePartition(partitionIndex);
@@ -1670,14 +1665,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     closePartition(partitionIndex);
                                 }
                             } else {
-                                // reload Parquet file
-                                final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
-                                if (reloadParquetFile(partitionIndex, txPartitionNameTxn, parquetFileSize)) {
-                                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
-                                    LOG.debug().$("updated parquet partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
-                                } else {
-                                    closePartition(partitionIndex);
-                                }
+                                // Parquet _pm and data files are mapped with keepFdOpen=false,
+                                // so in-place remap is not possible. Close and re-open on next access.
+                                closePartition(partitionIndex);
                             }
                         }
                     } else {
@@ -1946,37 +1936,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (reshuffleColumns) {
             reshuffleColumns(transitionIndex);
         }
-    }
-
-    private boolean reloadParquetFile(int partitionIndex, long partitionNameTxn, long parquetFileSize) {
-        MemoryCMR parquetMetaMem = parquetMetadataPartitions.getQuick(partitionIndex);
-        if (parquetMetaMem == null || parquetMetaMem == NullMemoryCMR.INSTANCE) {
-            return false;
-        }
-        // stat() the _pm file by path to get its actual size.
-        path.trimTo(rootLen);
-        pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
-        long parquetMetaFileSize = ff.length(path.$());
-        MemoryCMRDetachedImpl pmMem = (MemoryCMRDetachedImpl) parquetMetaMem;
-        if (parquetMetaFileSize <= 0) {
-            return false;
-        }
-        // Try to remap the _pm file to its actual size.
-        if (!pmMem.tryChangeSize(parquetMetaFileSize)) {
-            return false;
-        }
-        // Use parquet file size as MVCC token to find the matching footer.
-        try {
-            parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaFileSize, parquetFileSize);
-        } catch (CairoException e) {
-            return false;
-        }
-
-        MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
-        if (parquetMem == null || parquetMem == NullMemoryCMR.INSTANCE) {
-            return false;
-        }
-        return ((MemoryCMRDetachedImpl) parquetMem).tryChangeSize(parquetFileSize);
     }
 
     private void reloadSlow(boolean reshuffle) {

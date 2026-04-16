@@ -362,7 +362,7 @@ impl<'a> ParquetMetaReader<'a> {
             }
 
             let prev = footer.prev_footer_offset();
-            if prev == 0 {
+            if prev == 0 || prev >= current_offset {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::InvalidValue,
                     "no footer found for parquet size {}",

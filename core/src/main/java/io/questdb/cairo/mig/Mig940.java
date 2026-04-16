@@ -55,14 +55,14 @@ public final class Mig940 {
 
     // Local copies of constants to avoid depending on values that may change.
     private static final int LONGS_PER_PARTITION = 4;
-    private static final int PARTITION_MASKED_SIZE_IDX = 1;
-    private static final int PARTITION_NAME_TX_IDX = 2;
-    private static final int PARQUET_FORMAT_BIT = 61;
+    private static final long META_COLUMN_DATA_SIZE = 32;
+    private static final long META_OFFSET_COLUMN_TYPES = 128;
+    private static final long META_OFFSET_COUNT = 0;
     private static final long META_OFFSET_PARTITION_BY = 4;
     private static final long META_OFFSET_TIMESTAMP_INDEX = 8;
-    private static final long META_OFFSET_COUNT = 0;
-    private static final long META_OFFSET_COLUMN_TYPES = 128;
-    private static final long META_COLUMN_DATA_SIZE = 32;
+    private static final int PARQUET_FORMAT_BIT = 61;
+    private static final int PARTITION_MASKED_SIZE_IDX = 1;
+    private static final int PARTITION_NAME_TX_IDX = 2;
 
     public static void migrate(MigrationContext migrationContext) {
         final FilesFacade ff = migrationContext.getFf();

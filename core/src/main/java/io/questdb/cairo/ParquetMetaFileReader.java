@@ -55,13 +55,14 @@ import io.questdb.std.str.Utf8s;
  * <p>
  * Binary format (little-endian):
  * <pre>
- * HEADER (24 bytes fixed):
- *   [0]  FORMAT_VERSION    u32
- *   [4]  FEATURE_FLAGS     u64
- *   [12] DESIGNATED_TS     i32
- *   [16] SORTING_COL_CNT   u32
- *   [20] COLUMN_COUNT      u32
- *   [24..] column descriptors (32B each), sorting columns (4B each), name strings
+ * HEADER (32 bytes fixed):
+ *   [0]  FOOTER_OFFSET     u64
+ *   [8]  FEATURE_FLAGS     u64
+ *   [16] DESIGNATED_TS     i32
+ *   [20] SORTING_COL_CNT   u32
+ *   [24] COLUMN_COUNT      u32
+ *   [28] RESERVED          u32
+ *   [32..] column descriptors (32B each), sorting columns (4B each), name strings
  *   [..] header feature sections (if any feature flags set)
  *
  * ROW GROUP BLOCK (8-byte aligned, per row group):
@@ -363,6 +364,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
         // Walk the prev_footer_offset chain to find the footer matching parquetFileSize.
         // Long.MAX_VALUE is a sentinel: use the latest footer (at footerOffset) without MVCC matching.
+        // This is an O(K) linear scan where K is the number of append-only footer updates
+        // since the last full rewrite. In practice K stays small because O3PartitionJob
+        // triggers a full _pm rewrite when the unused-bytes ratio exceeds the configured
+        // threshold (default 50%) or absolute unused bytes exceed the limit (default 1 GB).
         long currentOffset = footerOffset;
         if (parquetFileSize != Long.MAX_VALUE) {
             while (true) {
@@ -374,7 +379,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     break;
                 }
                 long prevOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PREV_FOOTER_OFFSET_OFF);
-                if (prevOffset == 0 || prevOffset < 0 || prevOffset >= fileSize) {
+                if (prevOffset == 0 || prevOffset < 0 || prevOffset >= fileSize || prevOffset >= currentOffset) {
                     throw CairoException.critical(CairoException.STALE_PARQUET_METADATA)
                             .put("no _pm footer found for parquet size [parquetFileSize=").put(parquetFileSize)
                             .put(']');
