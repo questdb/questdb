@@ -2081,6 +2081,98 @@ public class EarliestByTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testEarliestOnExplainPlanAllFiltered() throws Exception {
+        // Routes to EarliestByAllFilteredRecordCursorFactory: non-symbol partition column.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, x INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM t WHERE s = 'a' EARLIEST ON ts PARTITION BY x",
+                    "EarliestByAllFiltered\n" +
+                            "    Row forward scan\n" +
+                            "      filter: s='a'\n" +
+                            "    Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnExplainPlanAllSymbolsFiltered() throws Exception {
+        // Routes to EarliestByAllSymbolsFilteredRecordCursorFactory: multi-column symbol partition with filter.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, x INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM t WHERE x > 0 EARLIEST ON ts PARTITION BY s1, s2",
+                    "EarliestByAllSymbolsFiltered\n" +
+                            "  filter: 0<x\n" +
+                            "    Row forward scan\n" +
+                            "      expectedSymbolsCount: 4611686014132420609\n" +
+                            "    Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnExplainPlanSubQuery() throws Exception {
+        // Routes to EarliestBySubQueryRecordCursorFactory: WHERE s IN (subquery) with single-symbol partition.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE keys (s SYMBOL)");
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM t WHERE s IN (SELECT s FROM keys) EARLIEST ON ts PARTITION BY s",
+                    "EarliestBySubQuery\n" +
+                            "    Subquery\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: keys\n" +
+                            "    Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnExplainPlanLight() throws Exception {
+        // Routes to EarliestByLightRecordCursorFactory: subselect that supports random access.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            assertPlanNoLeakCheck(
+                    "SELECT * FROM (SELECT s, ts FROM t LIMIT 100) EARLIEST ON ts PARTITION BY s",
+                    "SelectedRecord\n" +
+                            "    EarliestBy light order_by_timestamp: true\n" +
+                            "        Limit value: 100 skip-rows: 0 take-rows: 0\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnExplainPlanNoRandomAccess() throws Exception {
+        // Routes to EarliestByRecordCursorFactory: UNION ALL strips random-access support.
+        Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (s SYMBOL, ts " + timestampType.getTypeName() + ")");
+            execute("CREATE TABLE t2 (s SYMBOL, ts " + timestampType.getTypeName() + ")");
+            assertPlanNoLeakCheck(
+                    "SELECT s, ts FROM (SELECT * FROM t1 UNION ALL SELECT * FROM t2) EARLIEST ON ts PARTITION BY s",
+                    "SelectedRecord\n" +
+                            "    EarliestBy\n" +
+                            "        Union All\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t1\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t2\n"
+            );
+        });
+    }
+
     // =====================================================================
     // IN (subquery) filter
     // =====================================================================
