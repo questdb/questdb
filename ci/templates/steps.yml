@@ -3,6 +3,7 @@ steps:
     fetchDepth: 1
     lfs: false
     submodules: false
+  - template: detect-local-client.yml
   - bash: |
       rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
     displayName: "Cleanup dangling test artifacts from /tmp"
@@ -93,12 +94,12 @@ steps:
   - bash: mkdir -p "$HOME/.m2/repository"
     displayName: "Ensure .m2/repository exists (bash)"
     condition: ne(variables['os'], 'Windows')
-  - script: 'wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
+  - script: "wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip"
     displayName: "Get non-default Maven (bash)"
     condition: |
       and(
-        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
-        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
+        ne(variables.MVN_CACHE_RESTORED, 'true'),
         ne(variables['os'], 'Windows')
       )
   - pwsh: |
@@ -106,14 +107,14 @@ steps:
     displayName: "Get non-default Maven (PowerShell)"
     condition: |
       and(
-        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
-        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'),
+        ne(variables.MVN_CACHE_RESTORED, 'true'),
         eq(variables['os'], 'Windows')
       )
   - task: ExtractFiles@1
     inputs:
-      archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
-      destinationFolder: '$(build.sourcesdirectory)/maven'
+      archiveFilePatterns: "apache-maven-$(MAVEN_VERSION)-bin.zip"
+      destinationFolder: "$(build.sourcesdirectory)/maven"
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
   - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
@@ -133,12 +134,11 @@ steps:
     displayName: "Compile with Maven"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "compile"
-      options:
-        "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
+      options: "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition: |
       or(
@@ -149,18 +149,17 @@ steps:
     displayName: "Run tests"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
-      options:
-        "--batch-mode --quiet -Dtest.include=$(includeTests)
+      options: "--batch-mode --quiet -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         -P build-web-console
-         $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
@@ -179,19 +178,39 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: Maven@3
+    displayName: "Pre-build for Coverage"
+    inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
+      mavenPomFile: "pom.xml"
+      mavenOptions: "$(MAVEN_OPTS)"
+      goals: "install"
+      options: "--batch-mode -pl core -am -DskipTests
+        -P build-web-console
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+      jdkVersionOption: $(jdk)
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['System.PullRequest.IsFork'], 'false'),
+        or(
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        )
+      )
+  - task: Maven@3
     displayName: "Run tests with Coverage (jemalloc)"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
-      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "core/pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "test"
-      options:
-        "--batch-mode -Dtest.include=$(includeTests)
+      options: "--batch-mode -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -P qdbr-coverage,build-web-console
-        $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
@@ -203,7 +222,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['System.PullRequest.IsFork'], 'false'),
-        or( 
+        or(
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
         )

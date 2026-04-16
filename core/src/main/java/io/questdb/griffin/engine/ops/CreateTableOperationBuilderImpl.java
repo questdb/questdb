@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -62,7 +62,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
     // transient field, unoptimized AS SELECT model, used in toSink()
-    private QueryModel selectModel;
+    private IQueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
@@ -202,7 +202,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public QueryModel getQueryModel() {
+    public IQueryModel getQueryModel() {
         return selectModel;
     }
 
@@ -277,7 +277,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public void setSelectModel(QueryModel selectModel) {
+    public void setSelectModel(IQueryModel selectModel) {
         this.selectModel = selectModel;
     }
 
