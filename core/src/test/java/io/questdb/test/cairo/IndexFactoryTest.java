@@ -35,6 +35,79 @@ import org.junit.Test;
 public class IndexFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testCreateReaderNoneThrows() {
+        try (Path path = new Path().put("/tmp/test/")) {
+            try {
+                IndexFactory.createReader(IndexType.NONE, 1, configuration, path, "col", 0, 0, 0, null);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("unsupported index type: NONE"));
+            }
+        }
+    }
+
+    @Test
+    public void testCreateReaderUnsupportedThrows() {
+        try (Path path = new Path().put("/tmp/test/")) {
+            try {
+                IndexFactory.createReader((byte) 99, 1, configuration, path, "col", 0, 0, 0, null);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage().contains("unsupported index type"));
+            }
+        }
+    }
+
+    @Test
+    public void testCreateWriterNoneThrows() {
+        try {
+            IndexFactory.createWriter(IndexType.NONE, configuration);
+            Assert.fail("expected CairoException");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getMessage().contains("unsupported index type: NONE"));
+        }
+    }
+
+    @Test
+    public void testCreateWriterPostingDelta() {
+        try (var writer = IndexFactory.createWriter(IndexType.POSTING_DELTA, configuration)) {
+            Assert.assertNotNull(writer);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
+    public void testCreateWriterUnsupportedThrows() {
+        try {
+            IndexFactory.createWriter((byte) 99, configuration);
+            Assert.fail("expected CairoException");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getMessage().contains("unsupported index type"));
+        }
+    }
+
+    @Test
+    public void testInitKeyMemoryNoneThrows() {
+        try {
+            IndexFactory.initKeyMemory(IndexType.NONE, null, 256);
+            Assert.fail("expected CairoException");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getMessage().contains("unsupported index type: NONE"));
+        }
+    }
+
+    @Test
+    public void testInitKeyMemoryUnsupportedThrows() {
+        try {
+            IndexFactory.initKeyMemory((byte) 99, null, 256);
+            Assert.fail("expected CairoException");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getMessage().contains("unsupported index type"));
+        }
+    }
+
+    @Test
     public void testKeyFileNameBitmap() {
         try (Path path = new Path().put("/tmp/test/")) {
             IndexFactory.keyFileName(IndexType.BITMAP, path, "col", 0);
@@ -79,80 +152,6 @@ public class IndexFactoryTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage().contains("unsupported index type"));
             }
-        }
-    }
-
-    @Test
-    public void testInitKeyMemoryNoneThrows() {
-        try {
-            IndexFactory.initKeyMemory(IndexType.NONE, null, 256);
-            Assert.fail("expected CairoException");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("cannot initialize key memory"));
-        }
-    }
-
-    @Test
-    public void testInitKeyMemoryUnsupportedThrows() {
-        try {
-            IndexFactory.initKeyMemory((byte) 99, null, 256);
-            Assert.fail("expected CairoException");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("unsupported index type"));
-        }
-    }
-
-    @Test
-    public void testCreateReaderNoneThrows() {
-        try (Path path = new Path().put("/tmp/test/")) {
-            try {
-                IndexFactory.createReader(IndexType.NONE, 1, configuration, path, "col", 0, 0, 0, null);
-                Assert.fail("expected CairoException");
-            } catch (CairoException e) {
-                Assert.assertTrue(e.getMessage().contains("cannot create reader"));
-            }
-        }
-    }
-
-    @Test
-    public void testCreateReaderUnsupportedThrows() {
-        try (Path path = new Path().put("/tmp/test/")) {
-            try {
-                IndexFactory.createReader((byte) 99, 1, configuration, path, "col", 0, 0, 0, null);
-                Assert.fail("expected CairoException");
-            } catch (CairoException e) {
-                Assert.assertTrue(e.getMessage().contains("unsupported index type"));
-            }
-        }
-    }
-
-    @Test
-    public void testCreateWriterNoneThrows() {
-        try {
-            IndexFactory.createWriter(IndexType.NONE, configuration);
-            Assert.fail("expected CairoException");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("cannot create writer"));
-        }
-    }
-
-    @Test
-    public void testCreateWriterUnsupportedThrows() {
-        try {
-            IndexFactory.createWriter((byte) 99, configuration);
-            Assert.fail("expected CairoException");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getMessage().contains("unsupported index type"));
-        }
-    }
-
-    @Test
-    public void testCreateWriterPostingDelta() {
-        // POSTING_DELTA creates a PostingIndexWriter — verify it opens without error
-        try (var writer = IndexFactory.createWriter(IndexType.POSTING_DELTA, configuration)) {
-            Assert.assertNotNull(writer);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
         }
     }
 }

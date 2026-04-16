@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -33,31 +33,31 @@ import org.junit.Test;
 public class PostingIndexNativeTest {
 
     @Test
-    public void testFallbackPackUnpackRoundTrip() {
-        // Test that fallback pack → fallback unpack produces original values.
-        int count = 100;
-        long minValue = 1000;
-        int bitWidth = 20;
+    public void testFallbackBitWidth63() {
+        int count = 10;
+        long minValue = 0;
+        int bitWidth = 63;
 
         long valuesAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        long packedAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        int packedBytes = (count * bitWidth + 7) / 8 + 8;
+        long packedAddr = Unsafe.malloc(packedBytes, MemoryTag.NATIVE_DEFAULT);
         long unpackedAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int i = 0; i < count; i++) {
-                Unsafe.getUnsafe().putLong(valuesAddr + (long) i * Long.BYTES, minValue + i * 7L);
+                Unsafe.getUnsafe().putLong(valuesAddr + (long) i * Long.BYTES, (long) i * 1_000_000_000L);
             }
 
             PostingIndexNative.packValuesNativeFallback(valuesAddr, count, minValue, bitWidth, packedAddr);
             PostingIndexNative.unpackAllValuesNativeFallback(packedAddr, count, bitWidth, minValue, unpackedAddr);
 
             for (int i = 0; i < count; i++) {
-                long expected = minValue + i * 7L;
+                long expected = (long) i * 1_000_000_000L;
                 long actual = Unsafe.getUnsafe().getLong(unpackedAddr + (long) i * Long.BYTES);
                 Assert.assertEquals("mismatch at index " + i, expected, actual);
             }
         } finally {
             Unsafe.free(valuesAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(packedAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(packedAddr, packedBytes, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(unpackedAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
@@ -118,6 +118,55 @@ public class PostingIndexNativeTest {
     }
 
     @Test
+    public void testFallbackPackUnpackRoundTrip() {
+        int count = 100;
+        long minValue = 1000;
+        int bitWidth = 20;
+
+        long valuesAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long packedAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long unpackedAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(valuesAddr + (long) i * Long.BYTES, minValue + i * 7L);
+            }
+
+            PostingIndexNative.packValuesNativeFallback(valuesAddr, count, minValue, bitWidth, packedAddr);
+            PostingIndexNative.unpackAllValuesNativeFallback(packedAddr, count, bitWidth, minValue, unpackedAddr);
+
+            for (int i = 0; i < count; i++) {
+                long expected = minValue + i * 7L;
+                long actual = Unsafe.getUnsafe().getLong(unpackedAddr + (long) i * Long.BYTES);
+                Assert.assertEquals("mismatch at index " + i, expected, actual);
+            }
+        } finally {
+            Unsafe.free(valuesAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(packedAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(unpackedAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testFallbackSingleValue() {
+        // Edge case: single value
+        long valuesAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        long packedAddr = Unsafe.malloc(Long.BYTES + 8, MemoryTag.NATIVE_DEFAULT);
+        long unpackedAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putLong(valuesAddr, 42);
+
+            PostingIndexNative.packValuesNativeFallback(valuesAddr, 1, 42, 1, packedAddr);
+            PostingIndexNative.unpackAllValuesNativeFallback(packedAddr, 1, 1, 42, unpackedAddr);
+
+            Assert.assertEquals(42, Unsafe.getUnsafe().getLong(unpackedAddr));
+        } finally {
+            Unsafe.free(valuesAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(packedAddr, Long.BYTES + 8, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(unpackedAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testFallbackWideBitWidth() {
         // Test bit widths > 32 which trigger the overflow recovery path
         // (oldBufferBits + bitWidth > 64) in packValuesNativeFallback.
@@ -146,57 +195,6 @@ public class PostingIndexNativeTest {
             Unsafe.free(valuesAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(packedAddr, packedBytes, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(unpackedAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testFallbackBitWidth63() {
-        // Edge case: bitWidth near 64 triggers overflow recovery in pack fallback.
-        int count = 10;
-        long minValue = 0;
-        int bitWidth = 63;
-
-        long valuesAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        int packedBytes = (count * bitWidth + 7) / 8 + 8;
-        long packedAddr = Unsafe.malloc(packedBytes, MemoryTag.NATIVE_DEFAULT);
-        long unpackedAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        try {
-            for (int i = 0; i < count; i++) {
-                Unsafe.getUnsafe().putLong(valuesAddr + (long) i * Long.BYTES, (long) i * 1_000_000_000L);
-            }
-
-            PostingIndexNative.packValuesNativeFallback(valuesAddr, count, minValue, bitWidth, packedAddr);
-            PostingIndexNative.unpackAllValuesNativeFallback(packedAddr, count, bitWidth, minValue, unpackedAddr);
-
-            for (int i = 0; i < count; i++) {
-                long expected = (long) i * 1_000_000_000L;
-                long actual = Unsafe.getUnsafe().getLong(unpackedAddr + (long) i * Long.BYTES);
-                Assert.assertEquals("mismatch at index " + i, expected, actual);
-            }
-        } finally {
-            Unsafe.free(valuesAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(packedAddr, packedBytes, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(unpackedAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testFallbackSingleValue() {
-        // Edge case: single value
-        long valuesAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        long packedAddr = Unsafe.malloc(Long.BYTES + 8, MemoryTag.NATIVE_DEFAULT);
-        long unpackedAddr = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        try {
-            Unsafe.getUnsafe().putLong(valuesAddr, 42);
-
-            PostingIndexNative.packValuesNativeFallback(valuesAddr, 1, 42, 1, packedAddr);
-            PostingIndexNative.unpackAllValuesNativeFallback(packedAddr, 1, 1, 42, unpackedAddr);
-
-            Assert.assertEquals(42, Unsafe.getUnsafe().getLong(unpackedAddr));
-        } finally {
-            Unsafe.free(valuesAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(packedAddr, Long.BYTES + 8, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(unpackedAddr, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }

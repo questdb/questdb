@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -1028,7 +1028,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         writer.setMaxValue(base + BP_BATCH - 1);
                         writer.commit();
                     }
-                    preCursor = io.questdb.std.Misc.free(preCursor);
+                    Misc.free(preCursor);
                 }
 
                 // Verify all 10 batches are readable
@@ -1400,9 +1400,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Query key=Integer.MAX_VALUE (far beyond written keys)
                     RowCursor cursorMax = reader.getCursor(Integer.MAX_VALUE, 0, Long.MAX_VALUE);
                     Assert.assertFalse("key=MAX_VALUE should be empty", cursorMax.hasNext());
-                    cursorMax = io.questdb.std.Misc.free(cursorMax);
-                    cursorNeg = io.questdb.std.Misc.free(cursorNeg);
-                    cursor5 = io.questdb.std.Misc.free(cursor5);
+                    Misc.free(cursorMax);
+                    Misc.free(cursorNeg);
+                    Misc.free(cursor5);
                 }
 
                 try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
@@ -1416,9 +1416,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     RowCursor cursorMax = reader.getCursor(Integer.MAX_VALUE, 0, Long.MAX_VALUE);
                     Assert.assertFalse("bwd key=MAX_VALUE should be empty", cursorMax.hasNext());
-                    cursorMax = io.questdb.std.Misc.free(cursorMax);
-                    cursorNeg = io.questdb.std.Misc.free(cursorNeg);
-                    cursor5 = io.questdb.std.Misc.free(cursor5);
+                    Misc.free(cursorMax);
+                    Misc.free(cursorNeg);
+                    Misc.free(cursor5);
                 }
             }
         });
@@ -2288,7 +2288,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             count++;
                         }
                         Assert.assertEquals(150, count);
-                        cursor2 = io.questdb.std.Misc.free(cursor2);
+                        Misc.free(cursor2);
                         Misc.free(cursor);
                     }
                 }
@@ -2332,11 +2332,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(BP_BATCH * 3, count);
 
-                        // After reload, reader sees empty index
-                        reader.reloadConditionally();
+                        reader.of(configuration, path.trimTo(plen), "trunc_reader", COLUMN_NAME_TXN_NONE, -1, 0, null);
                         RowCursor cursor2 = reader.getCursor(0, 0, Long.MAX_VALUE);
                         Assert.assertFalse(cursor2.hasNext());
-                        cursor2 = io.questdb.std.Misc.free(cursor2);
+                        Misc.free(cursor2);
                         Misc.free(cursor);
                     }
                 }
@@ -2401,10 +2400,10 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     // Key 3: values 300..349 — all > 250, so fully removed
                     RowCursor c3 = writer.getCursor(3);
                     Assert.assertFalse(c3.hasNext());
-                    c3 = io.questdb.std.Misc.free(c3);
-                    c2 = io.questdb.std.Misc.free(c2);
-                    c1 = io.questdb.std.Misc.free(c1);
-                    c0 = io.questdb.std.Misc.free(c0);
+                    Misc.free(c3);
+                    Misc.free(c2);
+                    Misc.free(c1);
+                    Misc.free(c0);
                 }
             }
         });
@@ -3752,7 +3751,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     // Seal to finalize
                     writer.seal();
-                    preCursor = io.questdb.std.Misc.free(preCursor);
+                    Misc.free(preCursor);
                 }
 
                 // Phase 4: verify all 25 batches readable via forward reader

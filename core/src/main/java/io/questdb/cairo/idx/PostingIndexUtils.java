@@ -98,7 +98,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * firstValues[]        : blockCount × 8B  (first absolute value per block)
  * minDeltas[]          : blockCount × 8B  (FoR reference per block)
  * bitWidths[]          : blockCount × 1B
- * packedOffsets[]      : blockCount × 4B  (byte offset from packed data start per block)
+ * packedOffsets[]      : blockCount × 8B  (byte offset from packed data start per block)
  * packedBlock[0..n-1]  : variable size bitpacked residuals
  * </pre>
  *
@@ -116,13 +116,13 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  *   [36-39]     formatVersion (4B)
  *   [40-47]     valueFileTxn (8B) — txn suffix of the .pv file after seal
  *   [48-63]     reserved (16B)
- *   [64-4087]   gen dir: up to 125 entries × 32B
+ *   [64-4087]   gen dir: up to 143 entries × 28B
  *   [4088-4095] sequence_end (8B) — must equal sequence_start for valid page
  * </pre>
  *
  * <h2>Dense generation (sealed) — stride-indexed</h2>
  * <pre>
- * [stride_index: (strideCount + 1) × 4B — byte offset per stride block]
+ * [stride_index: (strideCount + 1) × 8B — byte offset per stride block]
  * [stride block 0]   (delta or flat mode, chosen per stride)
  * [stride block 1]
  * ...
@@ -134,7 +134,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  *   [reserved: 1B]
  *   [padding: 2B]
  *   [counts:  ks × 4B — value count per key]
- *   [offsets: (ks + 1) × 4B — prefix-sum data offsets, sentinel at end]
+ *   [offsets: (ks + 1) × 8B — byte-offset per key into stride data, sentinel at end]
  *   [delta-encoded data for each key]
  * </pre>
  *
@@ -152,7 +152,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
  * <pre>
  * [keyIds:  activeKeyCount × 4B — sorted ascending]
  * [counts:  activeKeyCount × 4B]
- * [offsets: activeKeyCount × 4B]
+ * [offsets: activeKeyCount × 8B — byte-offset per key into delta data]
  * [delta-encoded data per key]
  * </pre>
  */
@@ -171,18 +171,16 @@ public final class PostingIndexUtils {
     public static final byte ENCODING_DELTA = 1;
     public static final byte ENCODING_EF = 2;
     public static final int FORMAT_VERSION = 1;
-    // Generation directory entry (32 bytes per generation, 8-byte aligned)
-    public static final int GEN_DIR_ENTRY_SIZE = 32;
+    public static final int GEN_DIR_ENTRY_SIZE = 28;
     public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
     public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
     public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
     public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
-    public static final int GEN_DIR_OFFSET_SIDECAR_OFFSET = 28; // 4 bytes: offset into .pc* sidecar files
     public static final int GEN_DIR_OFFSET_SIZE = 8;
     public static final int KEY_FILE_RESERVED = 8192; // was 64
+    public static final int LONG_OFFSETS_FLAG = 0x4000_0000;
     public static final int MAX_BLOCK_COUNT = 1_000_000; // corruption guard: 64M values at BLOCK_CAPACITY=64
-    public static final int MAX_COVER_COUNT = 4096; // corruption guard for readCoverCountFromInfoFile
-    public static final int MAX_GEN_COUNT = 125; // (4088-64)/32 = 125
+    public static final int MAX_GEN_COUNT = 143; // (4088-64)/28 = 143 (entry 142 ends at 4068 <= 4088)
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
     public static final long PAGE_A_OFFSET = 0;
     public static final long PAGE_B_OFFSET = 4096;
@@ -199,7 +197,9 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
     // Double-buffered 4KB metadata pages (v2 format)
     public static final int PAGE_SIZE = 4096;
+    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
     public static final byte SIGNATURE = (byte) 0xfb;
+    public static final int STRIDE_IDX_BYTES = Long.BYTES;
     // Stride block mode constants — see class javadoc for when each mode wins
     public static final byte STRIDE_MODE_DELTA = 0;
     public static final byte STRIDE_MODE_FLAT = 1;
@@ -243,7 +243,7 @@ public final class PostingIndexUtils {
         // Delta-FoR worst case (for reading old data):
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
         long totalDeltas = count - blockCount;
-        long packedOffsetsSize = blockCount > 1 ? (long) blockCount * Integer.BYTES : 0;
+        long packedOffsetsSize = blockCount > 1 ? (long) blockCount * Long.BYTES : 0;
         long deltaMax = 4 + (long) blockCount * 18 + packedOffsetsSize + totalDeltas * 8;
         return Math.max(efMax, deltaMax);
     }
@@ -326,7 +326,7 @@ public final class PostingIndexUtils {
 
             // Skip packedOffsets (only present for multi-block keys)
             if (firstWord > 1) {
-                pos += (long) firstWord * Integer.BYTES;
+                pos += (long) firstWord * Long.BYTES;
             }
 
             // Decode each block — only count-1 deltas are packed (first value is in firstValues[])
@@ -503,7 +503,7 @@ public final class PostingIndexUtils {
 
         // Skip packedOffsets (only present for multi-block keys)
         if (firstWord > 1) {
-            pos += (long) firstWord * Integer.BYTES;
+            pos += (long) firstWord * Long.BYTES;
         }
 
         int destIdx = 0;
@@ -665,14 +665,14 @@ public final class PostingIndexUtils {
         long packedOffsetsAddr = 0;
         if (blockCount > 1) {
             packedOffsetsAddr = pos;
-            pos += (long) blockCount * Integer.BYTES;
+            pos += (long) blockCount * Long.BYTES;
         }
 
         // Packed blocks — only pack the numDeltas=blockSize-1 inter-value deltas
         long packedDataStart = pos;
         for (int b = 0; b < blockCount; b++) {
             if (packedOffsetsAddr != 0) {
-                Unsafe.getUnsafe().putInt(packedOffsetsAddr + (long) b * Integer.BYTES, (int) (pos - packedDataStart));
+                Unsafe.getUnsafe().putLong(packedOffsetsAddr + (long) b * Long.BYTES, pos - packedDataStart);
             }
 
             int blockStart = b * BLOCK_CAPACITY;
@@ -902,11 +902,11 @@ public final class PostingIndexUtils {
         // Packed data offsets: byte offset from packed data start to each block's packed data.
         // Enables O(1) random access to any block without forward scanning.
         long packedOffsetsAddr = pos;
-        pos += (long) blockCount * Integer.BYTES;
+        pos += (long) blockCount * Long.BYTES;
 
         long packedDataStart = pos;
         for (int b = 0; b < blockCount; b++) {
-            Unsafe.getUnsafe().putInt(packedOffsetsAddr + (long) b * Integer.BYTES, (int) (pos - packedDataStart));
+            Unsafe.getUnsafe().putLong(packedOffsetsAddr + (long) b * Long.BYTES, pos - packedDataStart);
 
             int blockStart = b * BLOCK_CAPACITY;
             int blockEnd = Math.min(blockStart + BLOCK_CAPACITY, count);
@@ -939,9 +939,11 @@ public final class PostingIndexUtils {
 
     /**
      * Size of the per-generation sparse header: keyIds + counts + offsets for active keys only.
+     * keyIds and counts stay at 4B per entry; offsets are 8B so per-key data offsets into
+     * the sparse gen's delta region can address >2 GB without int truncation.
      */
     public static int genHeaderSizeSparse(int activeKeyCount) {
-        return activeKeyCount * Integer.BYTES * 3;
+        return activeKeyCount * (Integer.BYTES + Integer.BYTES + Long.BYTES);
     }
 
     /**
@@ -978,27 +980,6 @@ public final class PostingIndexUtils {
         if (stride < sc - 1) return DENSE_STRIDE;
         int rem = keyCount % DENSE_STRIDE;
         return rem == 0 ? DENSE_STRIDE : rem;
-    }
-
-    public static int readCoverCountFromInfoFile(FilesFacade ff, LPSZ pciFilePath) {
-        long fd = ff.openRO(pciFilePath);
-        if (fd < 0) {
-            return 0;
-        }
-        try {
-            int magic = ff.readNonNegativeInt(fd, 0);
-            if (magic != COVER_INFO_MAGIC) {
-                return 0;
-            }
-            int count = ff.readNonNegativeInt(fd, 4);
-            // Guard against corrupted .pci: a garbled count could cause
-            // billions of removeQuiet iterations in removeSidecarFiles.
-            // No table can have more than a few thousand columns, so any
-            // value beyond that is corruption.
-            return count >= 0 && count <= MAX_COVER_COUNT ? count : 0;
-        } finally {
-            ff.close(fd);
-        }
     }
 
     /**
@@ -1166,7 +1147,11 @@ public final class PostingIndexUtils {
      * Size of a delta-mode stride block header: mode prefix + counts + prefix-sum offsets.
      */
     public static int strideDeltaHeaderSize(int keysInStride) {
-        return STRIDE_MODE_PREFIX_SIZE + keysInStride * Integer.BYTES + (keysInStride + 1) * Integer.BYTES;
+        // 4B mode prefix + counts[ks] x 4B + offsets[ks+1] x 8B.
+        // offsets are 8B so total stride_data (sum of 256 per-key blobs) can
+        // exceed 2 GB without int truncation; counts stay at 4B since each is
+        // a single-key value count.
+        return STRIDE_MODE_PREFIX_SIZE + keysInStride * Integer.BYTES + (keysInStride + 1) * Long.BYTES;
     }
 
     /**
@@ -1177,11 +1162,12 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Size of the stride index: (strideCount + 1) × 4B.
+     * Size of the stride index: (strideCount + 1) x STRIDE_IDX_BYTES.
      * The extra entry is a sentinel holding the total size of all stride blocks.
+     * Entries are 8B so offsets survive sealed segments &gt;= 2 GB.
      */
     public static int strideIndexSize(int keyCount) {
-        return (strideCount(keyCount) + 1) * Integer.BYTES;
+        return (strideCount(keyCount) + 1) * STRIDE_IDX_BYTES;
     }
 
     // ==================================================================================

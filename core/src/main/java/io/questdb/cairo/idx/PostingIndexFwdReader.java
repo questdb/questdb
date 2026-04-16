@@ -500,7 +500,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
             cacheSidecarKeyAddrs(stride, localKey);
             int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
-            int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);
+            long strideOff = Unsafe.getUnsafe().getLong(genAddr + (long) stride * Long.BYTES);
             long strideFileOffset = genFileOffset + siSize + strideOff;
             long strideAddr = genAddr + siSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
@@ -594,7 +594,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 this.denseVarKeyStartCount = deltaKeyStartCount;
             }
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
-            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
+            long dataOffset = Unsafe.getUnsafe().getLong(offsetsBase + (long) localKey * Long.BYTES);
             int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
             this.encodedOffset = strideFileOffset + deltaHeaderSize + dataOffset;
 
@@ -655,7 +655,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) start * Integer.BYTES);
-            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) start * Integer.BYTES);
+            long dataOffset = Unsafe.getUnsafe().getLong(offsetsBase + (long) start * Long.BYTES);
             this.encodedOffset = genFileOffset + headerSize + dataOffset;
 
             readDeltaBlockMetadata();
@@ -694,7 +694,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
-            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
+            long dataOffset = Unsafe.getUnsafe().getLong(offsetsBase + (long) idx * Long.BYTES);
             this.encodedOffset = genFileOffset + headerSize + dataOffset;
 
             readDeltaBlockMetadata();
@@ -755,7 +755,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long srcPackedOffsetsOffset = 0;
             if (firstWord > 1) {
                 srcPackedOffsetsOffset = pos;
-                pos += (long) firstWord * Integer.BYTES;
+                pos += (long) firstWord * Long.BYTES;
             }
 
             long packedDataStartOffset = pos;
@@ -780,7 +780,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             // Use packedOffsets for O(1) jump to startBlock's packed data
             if (startBlock > 0) {
-                packedDataStartOffset += Unsafe.getUnsafe().getInt(baseAddr + srcPackedOffsetsOffset + (long) startBlock * Integer.BYTES);
+                packedDataStartOffset += Unsafe.getUnsafe().getLong(baseAddr + srcPackedOffsetsOffset + (long) startBlock * Long.BYTES);
             }
             this.sidecarStrideKeyStart += skippedValueCount;
             this.denseVarKeyStartCount += skippedValueCount;

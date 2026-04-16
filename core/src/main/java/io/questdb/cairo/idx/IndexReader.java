@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.BitSet;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
@@ -60,7 +61,7 @@ public interface IndexReader extends Closeable {
      * @param foundKeys bit set indexed by index key (0 = NULL, 1..N = symbol keys)
      * @return number of keys newly marked as found, or -1 if not supported
      */
-    default int collectDistinctKeys(io.questdb.std.BitSet foundKeys) {
+    default int collectDistinctKeys(BitSet foundKeys) {
         return -1;
     }
 

@@ -40,6 +40,7 @@ import io.questdb.std.BitSet;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -52,8 +53,6 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
-
-import java.util.Arrays;
 
 /**
  * Shared base for forward and backward posting index readers.
@@ -277,7 +276,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         int newlyFound = 0;
 
         for (int s = 0; s < sc; s++) {
-            int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) s * Integer.BYTES);
+            long strideOff = Unsafe.getUnsafe().getLong(genAddr + (long) s * Long.BYTES);
             long strideAddr = genAddr + siSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(genKeyCount, s);
             int keyBase = s * PostingIndexUtils.DENSE_STRIDE;
@@ -445,9 +444,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 if (seqStart == seqEnd && seqStart > 0
                         && genCount >= 0 && genCount <= PostingIndexUtils.MAX_GEN_COUNT) {
                     if (pinnedSealTxn >= 0 && sealTxn != pinnedSealTxn) {
-                        // Snapshot is from a newer seal. Try the other page —
-                        // it may still hold a same-pin update from an earlier
-                        // commit within our sealTxn generation.
                         anyPinMismatch = true;
                         continue;
                     }
@@ -495,6 +491,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
     }
 
+    protected static long readVarBlockOffset(long offsetsAddr, int ordinal, boolean longOffsets) {
+        if (longOffsets) {
+            return Unsafe.getUnsafe().getLong(offsetsAddr + (long) ordinal * Long.BYTES);
+        }
+        // Zero-extend to long; offsets in int blocks are non-negative.
+        return Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES) & 0xFFFFFFFFL;
+    }
+
+    protected static long varBlockOffsetsSize(int count, boolean longOffsets) {
+        return (long) (count + 1) * (longOffsets ? Long.BYTES : Integer.BYTES);
+    }
+
     protected void ensureGenLookup() {
         if (genCount == 0 || keyCount == 0) {
             return;
@@ -529,18 +537,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
         protected final BorrowedArray arrayView = new BorrowedArray();
         protected final DirectBinarySequence binView = new DirectBinarySequence();
+        protected final LongList currentGenSidecarOffsets = new LongList();
+        protected final LongList fsstCachedBlockBases = new LongList();
+        protected final ObjList<FSST.SymbolTable> fsstCachedTables = new ObjList<>();
         protected final DirectString stringViewA = new DirectString();
         protected final DirectString stringViewB = new DirectString();
         protected final DirectUtf8String varcharViewA = new DirectUtf8String();
         protected final DirectUtf8String varcharViewB = new DirectUtf8String();
         protected int cachedKeyBlockStride = -1;
         protected int cachedSidecarIdx;
-        protected int[] currentGenSidecarOffsets;
         protected long decodeWorkspaceAddr;
         protected int decodeWorkspaceCapacity;
         protected int denseVarKeyStartCount;
-        protected long[] fsstCachedBlockBases;
-        protected FSST.SymbolTable[] fsstCachedTables;
         protected long fsstDecompBufAddr;
         protected int fsstDecompBufCapacity;
         protected boolean isCurrentGenDense;
@@ -559,8 +567,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         private long[] colCacheBlockAddrs;
         private int[] colCacheCapacities;
         private long[] colPointBlockAddrs;
-        // Reusable workspace for computeSparseOffsets, avoids per-call heap allocation
-        private int[] sparseOffsetsWorkspace;
 
         @Override
         public int decodeCoveredColumnsToAddr(long[] outputAddrs) {
@@ -836,64 +842,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return lastRowId;
         }
 
-        private long computeSealedSidecarSize(MemoryMR mem, int keyCount) {
-            if (keyCount <= 0 || mem == null || mem.size() < 4) {
-                return 0;
-            }
-            int sc = PostingIndexUtils.strideCount(keyCount);
-            int siSize = PostingIndexUtils.strideIndexSize(keyCount);
-            long sentinelPos = (long) sc * Integer.BYTES;
-            if (sentinelPos + Integer.BYTES > mem.size()) {
-                return 0;
-            }
-            int totalStrideDataSize = Unsafe.getUnsafe().getInt(mem.addressOf(sentinelPos));
-            return siSize + totalStrideDataSize;
-        }
-
-        private void computeSparseOffsets(int gen, int[] offsets) {
-            int firstSparseGen = 0;
-            int denseKeyCount = 0;
-            while (firstSparseGen < gen && genLookup.getGenKeyCount(firstSparseGen) >= 0) {
-                denseKeyCount = genLookup.getGenKeyCount(firstSparseGen);
-                firstSparseGen++;
-            }
-            for (int c = 0; c < coverCount; c++) {
-                MemoryMR mem = sidecarMems.getQuick(c);
-                if (mem == null) {
-                    offsets[c] = 0;
-                    continue;
-                }
-                long offset;
-                if (firstSparseGen == 0) {
-                    offset = 0;
-                } else if (c == 0) {
-                    offset = genLookup.getGenSidecarOffset(firstSparseGen);
-                } else {
-                    offset = computeSealedSidecarSize(mem, denseKeyCount);
-                }
-                int colType = sidecarColumnTypes.getQuick(c);
-                boolean isVar = ColumnType.isVarSize(colType);
-                int elemSize = isVar ? 0 : ColumnType.sizeOf(colType);
-                for (int g = firstSparseGen; g < gen; g++) {
-                    if (genLookup.getGenKeyCount(g) >= 0) continue;
-                    if (offset + 4 > mem.size()) break;
-                    int count = Unsafe.getUnsafe().getInt(mem.addressOf(offset));
-                    if (isVar) {
-                        if (count == 0) {
-                            offset += 4;
-                        } else {
-                            long sentinelPos = offset + 4 + (long) count * Integer.BYTES;
-                            int dataSize = Unsafe.getUnsafe().getInt(mem.addressOf(sentinelPos));
-                            offset += 4 + (long) (count + 1) * Integer.BYTES + dataSize;
-                        }
-                    } else {
-                        offset += 4 + (long) count * elemSize;
-                    }
-                }
-                offsets[c] = (int) offset;
-            }
-        }
-
         private int decodeDenseGenToAddr(int genKeyCount, long[] outputAddrs, int writeOffset) {
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
@@ -911,16 +859,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 int colType = sidecarColumnTypes.getQuick(c);
                 if (ColumnType.isVarSize(colType)) continue;
 
-                long strideIdxOffset = (long) stride * Integer.BYTES;
-                if (strideIdxOffset + Integer.BYTES > mem.size()) continue;
-                int strideOff = mem.getInt(strideIdxOffset);
+                long strideIdxOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) stride * Long.BYTES;
+                if (strideIdxOffset + Long.BYTES > mem.size()) continue;
+                long strideOff = mem.getLong(strideIdxOffset);
                 long strideDataStart = siSize + strideOff;
                 if (strideDataStart >= mem.size()) continue;
 
-                long keyOffsetsEnd = strideDataStart + (long) ks * Integer.BYTES;
+                long keyOffsetsEnd = strideDataStart + (long) ks * Long.BYTES;
                 if (keyOffsetsEnd > mem.size()) continue;
                 long keyOffsetsAddr = mem.addressOf(strideDataStart);
-                int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
+                long keyBlockOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) localKey * Long.BYTES);
                 long keyBlockFileOffset = keyOffsetsEnd + keyBlockOff;
                 if (keyBlockFileOffset < 0 || keyBlockFileOffset + Integer.BYTES > mem.size()) continue;
                 long keyBlockAddr = mem.addressOf(keyBlockFileOffset);
@@ -955,9 +903,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private int decodeSparseGenToAddr(int gen, long[] outputAddrs, int writeOffset) {
-            int[] offsets = ensureSparseOffsetsWorkspace();
-            computeSparseOffsets(gen, offsets);
-
             int count = 0;
             for (int c = 0; c < coverCount; c++) {
                 if (outputAddrs[c] == 0) continue;
@@ -967,7 +912,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 if (ColumnType.isVarSize(colType)) continue;
 
                 int elemSize = ColumnType.sizeOf(colType);
-                long blockAddr = mem.addressOf(offsets[c]);
+                // Writer leaves dense gens' header slots untouched; mmap zero-fills,
+                // so a dense gen yields offset 0 -> blockAddr points at the .pcN
+                // header region and getInt returns 0 -> we skip via `gc == 0` below.
+                long blockAddr = mem.addressOf(mem.getLong((long) gen * Long.BYTES));
                 int gc = Unsafe.getUnsafe().getInt(blockAddr);
                 if (gc == 0) continue;
                 count = gc;
@@ -980,33 +928,36 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return count;
         }
 
-        private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view) {
-            int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx);
+        private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view, boolean longOffsets) {
+            int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
             if (decompLen < 0) return null;
             int len = Unsafe.getUnsafe().getInt(fsstDecompBufAddr);
             if (len < 0) return null;
             return view.of(fsstDecompBufAddr + Integer.BYTES, len);
         }
 
-        private Utf8Sequence decompressFsstUtf8(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectUtf8String view) {
-            int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx);
+        private Utf8Sequence decompressFsstUtf8(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectUtf8String view, boolean longOffsets) {
+            int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
             if (decompLen < 0) return null;
             return view.of(fsstDecompBufAddr, fsstDecompBufAddr + decompLen);
         }
 
-        private int decompressFsstValue(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx) {
+        private int decompressFsstValue(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, boolean longOffsets) {
             FSST.SymbolTable table = resolveFsstTable(mem, blockBase, includeIdx);
             long pos = blockBase + 4;
             int tableLen = Unsafe.getUnsafe().getShort(mem.addressOf(pos)) & 0xFFFF;
 
             long offsetsAddr = mem.addressOf(pos + 2 + tableLen);
-            int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
-            int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
+            long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
+            long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
             if (lo == hi) return -1; // NULL
 
-            long dataBase = pos + 2 + tableLen + (long) (count + 1) * Integer.BYTES;
+            long dataBase = pos + 2 + tableLen + varBlockOffsetsSize(count, longOffsets);
             long compAddr = mem.addressOf(dataBase + lo);
-            int compLen = hi - lo;
+            // A single value's compressed length fits in int: blocks are bounded
+            // by var_value max size, which is always well under 2 GB even for
+            // ARRAY/BINARY columns.
+            int compLen = (int) (hi - lo);
 
             int needed = compLen * 8;
             if (fsstDecompBufCapacity < needed) {
@@ -1021,13 +972,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return FSST.decompressBytes(table, compAddr, compLen, fsstDecompBufAddr);
         }
 
-        private int[] ensureSparseOffsetsWorkspace() {
-            if (sparseOffsetsWorkspace == null || sparseOffsetsWorkspace.length < coverCount) {
-                sparseOffsetsWorkspace = new int[coverCount];
-            }
-            return sparseOffsetsWorkspace;
-        }
-
         private long findDenseVarBlockBase(int includeIdx) {
             if (includeIdx >= sidecarMems.size() || sealedGenKeyCount <= 0) {
                 return -1;
@@ -1038,10 +982,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             int stride = requestedKey / PostingIndexUtils.DENSE_STRIDE;
             int siSize = PostingIndexUtils.strideIndexSize(sealedGenKeyCount);
-            if ((long) stride * Integer.BYTES + Integer.BYTES > mem.size()) {
+            long strideIdxOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) stride * Long.BYTES;
+            if (strideIdxOffset + Long.BYTES > mem.size()) {
                 return -1;
             }
-            int strideOff = Unsafe.getUnsafe().getInt(mem.addressOf((long) stride * Integer.BYTES));
+            long strideOff = Unsafe.getUnsafe().getLong(mem.addressOf(strideIdxOffset));
             return siSize + strideOff;
         }
 
@@ -1066,49 +1011,49 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
             MemoryMR mem = sidecarMems.getQuick(memIdx);
             int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
-            long strideIdxOffset = (long) stride * Integer.BYTES;
-            if (strideIdxOffset + Integer.BYTES > mem.size()) return 0;
-            int strideOff = mem.getInt(strideIdxOffset);
+            long strideIdxOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) stride * Long.BYTES;
+            if (strideIdxOffset + Long.BYTES > mem.size()) return 0;
+            long strideOff = mem.getLong(strideIdxOffset);
             long strideDataStart = siSize + strideOff;
             if (strideDataStart >= mem.size()) return 0;
             long keyOffsetsAddr = mem.addressOf(strideDataStart);
-            int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
-            long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Integer.BYTES + keyBlockOff);
+            long keyBlockOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) localKey * Long.BYTES);
+            long keyBlockAddr = mem.addressOf(strideDataStart + (long) ks * Long.BYTES + keyBlockOff);
             return Unsafe.getUnsafe().getInt(keyBlockAddr) & ~CoveringCompressor.RAW_BLOCK_FLAG;
         }
 
         private byte getRawSidecarByte(int includeIdx) {
             MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
             if (mem == null) return 0;
-            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Byte.BYTES);
+            long addr = mem.addressOf(currentGenSidecarOffsets.getQuick(includeIdx) + 4 + (long) cachedSidecarIdx * Byte.BYTES);
             return Unsafe.getUnsafe().getByte(addr);
         }
 
         private double getRawSidecarDouble(int includeIdx) {
             MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
             if (mem == null) return Double.NaN;
-            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Double.BYTES);
+            long addr = mem.addressOf(currentGenSidecarOffsets.getQuick(includeIdx) + 4 + (long) cachedSidecarIdx * Double.BYTES);
             return Unsafe.getUnsafe().getDouble(addr);
         }
 
         private float getRawSidecarFloat(int includeIdx) {
             MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
             if (mem == null) return Float.NaN;
-            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Float.BYTES);
+            long addr = mem.addressOf(currentGenSidecarOffsets.getQuick(includeIdx) + 4 + (long) cachedSidecarIdx * Float.BYTES);
             return Unsafe.getUnsafe().getFloat(addr);
         }
 
         private int getRawSidecarInt(int includeIdx) {
             MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
             if (mem == null) return Integer.MIN_VALUE;
-            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Integer.BYTES);
+            long addr = mem.addressOf(currentGenSidecarOffsets.getQuick(includeIdx) + 4 + (long) cachedSidecarIdx * Integer.BYTES);
             return Unsafe.getUnsafe().getInt(addr);
         }
 
         private long getRawSidecarLong(int includeIdx) {
             MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
             if (mem == null) return Long.MIN_VALUE;
-            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Long.BYTES);
+            long addr = mem.addressOf(currentGenSidecarOffsets.getQuick(includeIdx) + 4 + (long) cachedSidecarIdx * Long.BYTES);
             return Unsafe.getUnsafe().getLong(addr);
         }
 
@@ -1116,7 +1061,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
             if (mem == null) return Long.MIN_VALUE;
             long addr = mem.addressOf(
-                    currentGenSidecarOffsets[includeIdx] + 4
+                    currentGenSidecarOffsets.getQuick(includeIdx) + 4
                             + (long) cachedSidecarIdx * valueSize
                             + (long) longIndex * Long.BYTES
             );
@@ -1126,7 +1071,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         private short getRawSidecarShort(int includeIdx) {
             MemoryMR mem = includeIdx < sidecarMems.size() ? sidecarMems.getQuick(includeIdx) : null;
             if (mem == null) return 0;
-            long addr = mem.addressOf(currentGenSidecarOffsets[includeIdx] + 4 + (long) cachedSidecarIdx * Short.BYTES);
+            long addr = mem.addressOf(currentGenSidecarOffsets.getQuick(includeIdx) + 4 + (long) cachedSidecarIdx * Short.BYTES);
             return Unsafe.getUnsafe().getShort(addr);
         }
 
@@ -1135,10 +1080,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (mem == null) {
                 return 0;
             }
-            int[] offsets = ensureSparseOffsetsWorkspace();
-            computeSparseOffsets(gen, offsets);
-            long addr = mem.addressOf(offsets[0]);
-            return Unsafe.getUnsafe().getInt(addr);
+            long offset = mem.getLong((long) gen * Long.BYTES);
+            return Unsafe.getUnsafe().getInt(mem.addressOf(offset));
         }
 
         private ArrayView getVarSidecarArray(int includeIdx, int columnType) {
@@ -1149,31 +1092,33 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
-                    : currentGenSidecarOffsets[includeIdx];
+                    : currentGenSidecarOffsets.getQuick(includeIdx);
             if (blockBase < 0) return null;
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
-            int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
+            boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
+            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
             if (ordinal >= count) return null;
 
             long dataAddr;
             int dataLen;
             if (fsst) {
-                int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx);
+                int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
                 if (decompLen < 0) return null;
                 dataAddr = fsstDecompBufAddr;
                 dataLen = decompLen;
             } else {
                 long offsetsAddr = mem.addressOf(blockBase + 4);
-                int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
-                int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
+                long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
+                long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
                 if (lo == hi) {
                     arrayView.ofNull();
                     return arrayView;
                 }
-                long dataBase = blockBase + 4 + (long) (count + 1) * Integer.BYTES;
+                long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
                 dataAddr = mem.addressOf(dataBase + lo);
-                dataLen = hi - lo;
+                // A single var value is always well under 2 GB
+                dataLen = (int) (hi - lo);
             }
             int dims = ColumnType.decodeArrayDimensionality(columnType);
             short elemType = ColumnType.decodeArrayElementType(columnType);
@@ -1195,15 +1140,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
-                    : currentGenSidecarOffsets[includeIdx];
+                    : currentGenSidecarOffsets.getQuick(includeIdx);
             if (blockBase < 0) return null;
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
-            int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
+            boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
+            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
             if (ordinal >= count) return null;
 
             if (fsst) {
-                int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx);
+                int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
                 if (decompLen < 0) return null;
                 long len = Unsafe.getUnsafe().getLong(fsstDecompBufAddr);
                 if (len < 0) return null;
@@ -1211,10 +1157,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
 
             long offsetsAddr = mem.addressOf(blockBase + 4);
-            int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
-            int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
+            long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
+            long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
             if (lo == hi) return null;
-            long dataBase = blockBase + 4 + (long) (count + 1) * Integer.BYTES;
+            long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
             long dataAddr = mem.addressOf(dataBase + lo);
             long len = Unsafe.getUnsafe().getLong(dataAddr);
             if (len < 0) return null;
@@ -1229,24 +1175,25 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
-                    : currentGenSidecarOffsets[includeIdx];
+                    : currentGenSidecarOffsets.getQuick(includeIdx);
             if (blockBase < 0) return -1;
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
-            int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
+            boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
+            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
             if (ordinal >= count) return -1;
 
             if (fsst) {
-                int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx);
+                int decompLen = decompressFsstValue(mem, blockBase, count, ordinal, includeIdx, longOffsets);
                 if (decompLen < 0) return -1;
                 return Unsafe.getUnsafe().getLong(fsstDecompBufAddr);
             }
 
             long offsetsAddr = mem.addressOf(blockBase + 4);
-            int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
-            int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
+            long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
+            long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
             if (lo == hi) return -1;
-            long dataBase = blockBase + 4 + (long) (count + 1) * Integer.BYTES;
+            long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
             long dataAddr = mem.addressOf(dataBase + lo);
             return Unsafe.getUnsafe().getLong(dataAddr);
         }
@@ -1259,22 +1206,23 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
-                    : currentGenSidecarOffsets[includeIdx];
+                    : currentGenSidecarOffsets.getQuick(includeIdx);
             if (blockBase < 0) return null;
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
-            int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
+            boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
+            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
             if (ordinal >= count) return null;
 
             if (fsst) {
-                return decompressFsstStr(mem, blockBase, count, ordinal, includeIdx, view);
+                return decompressFsstStr(mem, blockBase, count, ordinal, includeIdx, view, longOffsets);
             }
 
             long offsetsAddr = mem.addressOf(blockBase + 4);
-            int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
-            int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
+            long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
+            long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
             if (lo == hi) return null;
-            long dataBase = blockBase + 4 + (long) (count + 1) * Integer.BYTES;
+            long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
             long dataAddr = mem.addressOf(dataBase + lo);
             int len = Unsafe.getUnsafe().getInt(dataAddr);
             if (len < 0) return null;
@@ -1289,44 +1237,46 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     : cachedSidecarIdx;
             long blockBase = isCurrentGenDense
                     ? findDenseVarBlockBase(includeIdx)
-                    : currentGenSidecarOffsets[includeIdx];
+                    : currentGenSidecarOffsets.getQuick(includeIdx);
             if (blockBase < 0) return null;
             int rawCount = Unsafe.getUnsafe().getInt(mem.addressOf(blockBase));
             boolean fsst = (rawCount & FSST.FSST_BLOCK_FLAG) != 0;
-            int count = rawCount & ~FSST.FSST_BLOCK_FLAG;
+            boolean longOffsets = (rawCount & PostingIndexUtils.LONG_OFFSETS_FLAG) != 0;
+            int count = rawCount & ~(FSST.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG);
             if (ordinal >= count) return null;
 
             if (fsst) {
-                return decompressFsstUtf8(mem, blockBase, count, ordinal, includeIdx, view);
+                return decompressFsstUtf8(mem, blockBase, count, ordinal, includeIdx, view, longOffsets);
             }
 
             long offsetsAddr = mem.addressOf(blockBase + 4);
-            int lo = Unsafe.getUnsafe().getInt(offsetsAddr + (long) ordinal * Integer.BYTES);
-            int hi = Unsafe.getUnsafe().getInt(offsetsAddr + (long) (ordinal + 1) * Integer.BYTES);
+            long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
+            long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
             if (lo == hi) return null;
-            long dataBase = blockBase + 4 + (long) (count + 1) * Integer.BYTES;
+            long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
             long dataAddr = mem.addressOf(dataBase + lo);
             return view.of(dataAddr, dataAddr + (hi - lo));
         }
 
         private FSST.SymbolTable resolveFsstTable(MemoryMR mem, long blockBase, int includeIdx) {
-            if (fsstCachedTables == null) {
-                fsstCachedTables = new FSST.SymbolTable[coverCount];
-                fsstCachedBlockBases = new long[coverCount];
-                Arrays.fill(fsstCachedBlockBases, -1);
+            if (fsstCachedTables.size() < coverCount) {
+                fsstCachedBlockBases.setAll(coverCount, -1L);
+                fsstCachedTables.setPos(coverCount);
                 for (int i = 0; i < coverCount; i++) {
-                    fsstCachedTables[i] = new FSST.SymbolTable();
+                    if (fsstCachedTables.getQuick(i) == null) {
+                        fsstCachedTables.setQuick(i, new FSST.SymbolTable());
+                    }
                 }
             }
-            if (includeIdx < fsstCachedTables.length
-                    && fsstCachedBlockBases[includeIdx] == blockBase) {
-                return fsstCachedTables[includeIdx];
+            if (includeIdx < fsstCachedTables.size()
+                    && fsstCachedBlockBases.getQuick(includeIdx) == blockBase) {
+                return fsstCachedTables.getQuick(includeIdx);
             }
             long pos = blockBase + 4;
             long tableAddr = mem.addressOf(pos + 2);
-            FSST.SymbolTable table = fsstCachedTables[includeIdx];
+            FSST.SymbolTable table = fsstCachedTables.getQuick(includeIdx);
             FSST.deserializeInto(tableAddr, table);
-            fsstCachedBlockBases[includeIdx] = blockBase;
+            fsstCachedBlockBases.setQuick(includeIdx, blockBase);
             return table;
         }
 
@@ -1366,24 +1316,24 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     keyBlockAddrs[c] = 0;
                     continue;
                 }
-                long strideIdxOffset = (long) stride * Integer.BYTES;
-                if (strideIdxOffset + Integer.BYTES > mem.size()) {
+                long strideIdxOffset = PostingIndexUtils.PC_HEADER_SIZE + (long) stride * Long.BYTES;
+                if (strideIdxOffset + Long.BYTES > mem.size()) {
                     keyBlockAddrs[c] = 0;
                     continue;
                 }
-                int strideOff = mem.getInt(strideIdxOffset);
+                long strideOff = mem.getLong(strideIdxOffset);
                 long strideDataStart = siSize + strideOff;
                 if (strideDataStart >= mem.size()) {
                     keyBlockAddrs[c] = 0;
                     continue;
                 }
-                long keyOffsetsEnd = strideDataStart + (long) ks * Integer.BYTES;
+                long keyOffsetsEnd = strideDataStart + (long) ks * Long.BYTES;
                 if (keyOffsetsEnd > mem.size()) {
                     keyBlockAddrs[c] = 0;
                     continue;
                 }
                 long keyOffsetsAddr = mem.addressOf(strideDataStart);
-                int keyBlockOff = Unsafe.getUnsafe().getInt(keyOffsetsAddr + (long) localKey * Integer.BYTES);
+                long keyBlockOff = Unsafe.getUnsafe().getLong(keyOffsetsAddr + (long) localKey * Long.BYTES);
                 long keyBlockStart = keyOffsetsEnd + keyBlockOff;
                 if (keyBlockStart + 4 > mem.size()) {
                     keyBlockAddrs[c] = 0;
@@ -1415,77 +1365,21 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 fsstDecompBufAddr = 0;
                 fsstDecompBufCapacity = 0;
             }
-            if (fsstCachedTables != null) {
-                for (int i = 0; i < fsstCachedTables.length; i++) {
-                    if (fsstCachedTables[i] != null) {
-                        fsstCachedTables[i].close();
-                        fsstCachedTables[i] = null;
-                    }
-                }
-                fsstCachedTables = null;
-            }
+            Misc.freeObjListAndClear(fsstCachedTables);
+            fsstCachedBlockBases.clear();
         }
 
         protected void computePerColumnSidecarOffsets(int gen) {
             if (coverCount == 0) {
                 return;
             }
-            if (currentGenSidecarOffsets == null || currentGenSidecarOffsets.length < coverCount) {
-                currentGenSidecarOffsets = new int[coverCount];
-            }
-
-            // Find the first sparse gen (skip dense gens which have stride-indexed sidecars)
-            int firstSparseGen = 0;
-            while (firstSparseGen < gen && genLookup.getGenKeyCount(firstSparseGen) >= 0) {
-                firstSparseGen++;
-            }
-
+            currentGenSidecarOffsets.setPos(coverCount);
+            // For dense gens the header slot is 0 (never written, mmap zero-filled).
+            // Dense reads go through stride_index (findDenseVarBlockBase), so the
+            // 0 here is harmless — sparse reads are the only consumer of this cache.
             for (int c = 0; c < coverCount; c++) {
                 MemoryMR mem = sidecarMems.getQuick(c);
-                if (mem == null) {
-                    currentGenSidecarOffsets[c] = 0;
-                    continue;
-                }
-
-                long offset;
-                if (firstSparseGen == 0) {
-                    // No dense gens before this one — scan from file start
-                    offset = 0;
-                } else if (c == 0) {
-                    // Column 0: use gen dir sidecar offset (exact for column 0)
-                    offset = genLookup.getGenSidecarOffset(firstSparseGen);
-                } else {
-                    // Other columns: compute sealed data size from stride index sentinel.
-                    // Each column's sealed sidecar has different sizes due to compression.
-                    offset = computeSealedSidecarSize(mem, sealedGenKeyCount);
-                }
-
-                int colType = sidecarColumnTypes.getQuick(c);
-                boolean isVar = ColumnType.isVarSize(colType);
-                int elemSize = isVar ? 0 : ColumnType.sizeOf(colType);
-
-                // Scan through sparse gen blocks from firstSparseGen to gen-1
-                for (int g = firstSparseGen; g < gen; g++) {
-                    if (genLookup.getGenKeyCount(g) >= 0) {
-                        continue; // skip dense gens (shouldn't happen after firstSparseGen)
-                    }
-                    if (offset + 4 > mem.size()) {
-                        break;
-                    }
-                    int count = Unsafe.getUnsafe().getInt(mem.addressOf(offset));
-                    if (isVar) {
-                        if (count == 0) {
-                            offset += 4;
-                        } else {
-                            long sentinelPos = offset + 4 + (long) count * Integer.BYTES;
-                            int dataSize = Unsafe.getUnsafe().getInt(mem.addressOf(sentinelPos));
-                            offset += 4 + (long) (count + 1) * Integer.BYTES + dataSize;
-                        }
-                    } else {
-                        offset += 4 + (long) count * elemSize;
-                    }
-                }
-                currentGenSidecarOffsets[c] = (int) offset;
+                currentGenSidecarOffsets.setQuick(c, mem == null ? 0L : mem.getLong((long) gen * Long.BYTES));
             }
         }
 

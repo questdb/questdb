@@ -61,14 +61,13 @@ public class PostingGenLookup implements Closeable {
     private final IntList genKeyCounts = new IntList(); // negative = sparse
     private final IntList genMaxKeys = new IntList();
     private final IntList genMinKeys = new IntList();
-    private final IntList genSidecarOffsets = new IntList();
+    private final LongList sbbfAddrs = new LongList();
     private int builtForGenCount;
     private long genIndicesAddr;   // totalEntries × 4B native
     private int keyCount;
     private long keyOffsetsAddr;   // (keyCount+1) × 4B native
     private long memoryBudget = DEFAULT_MEMORY_BUDGET;
     private long posInGenAddr;     // totalEntries × 4B native
-    private final LongList sbbfAddrs = new LongList(); // native address per gen's SBBF, 0 = no SBBF for that gen
     private int sbbfGenCount;      // number of SBBFs allocated
     private int sbbfSizePerGen;    // uniform size per gen
     private int tier;
@@ -84,7 +83,6 @@ public class PostingGenLookup implements Closeable {
         genKeyCounts.clear();
         genMinKeys.clear();
         genMaxKeys.clear();
-        genSidecarOffsets.clear();
         builtForGenCount = 0;
         keyCount = 0;
         tier = TIER_NONE;
@@ -358,10 +356,6 @@ public class PostingGenLookup implements Closeable {
         return genFileOffsets.getQuick(gen) + genDataSizes.getQuick(gen) - (long) (keyRange + 2) * Integer.BYTES;
     }
 
-    int getGenSidecarOffset(int gen) {
-        return gen < genSidecarOffsets.size() ? genSidecarOffsets.getQuick(gen) : 0;
-    }
-
     int getKeyCount() {
         return keyCount;
     }
@@ -406,26 +400,19 @@ public class PostingGenLookup implements Closeable {
         this.memoryBudget = budget;
     }
 
-    /**
-     * Snapshots gen dir entries from keyMem into local arrays. Called by the reader
-     * inside the seq_start/seq_end validation window so the snapshot is consistent.
-     * Does NOT build the lookup index (tier1/tier2) — call buildLookupIfNeeded after.
-     */
     void snapshotMetadata(MemoryMR keyMem, int genCount, long pageOffset) {
         genFileOffsets.clear();
         genDataSizes.clear();
         genKeyCounts.clear();
         genMinKeys.clear();
         genMaxKeys.clear();
-        genSidecarOffsets.clear();
-        for (int g = 0; g < genCount; g++) {
-            long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, g);
+        for (int i = 0; i < genCount; i++) {
+            long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, i);
             genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
             genDataSizes.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
             genKeyCounts.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT));
             genMinKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
             genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
-            genSidecarOffsets.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET));
         }
     }
 }

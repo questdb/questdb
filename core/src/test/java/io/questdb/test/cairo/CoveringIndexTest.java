@@ -31,6 +31,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.idx.CoveringRowCursor;
+import io.questdb.cairo.idx.FSST;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -6220,8 +6221,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     }
                 }
 
-                io.questdb.cairo.idx.FSST.SymbolTable table = io.questdb.cairo.idx.FSST.trainBytes(trainBuf, pos);
-                try (table) {
+                try (FSST.SymbolTable table = FSST.trainBytes(trainBuf, pos)) {
                     assertNotNull("FSST training should succeed on repetitive data", table);
                     // Compress each value and verify roundtrip
                     long cmpBuf = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);

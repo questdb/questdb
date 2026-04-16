@@ -131,7 +131,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long minValue;
         private long next;
         private long packedDataStartOffset;
-        // File offsets into mapped value memory — resolved via baseAddr per hot func
         private long srcBitWidthsOffset;
         private long srcFirstValuesOffset;
         private long srcMinDeltasOffset;
@@ -378,7 +377,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 if (numDeltas > 0) {
                     long minD = Unsafe.getUnsafe().getLong(baseAddr + srcMinDeltasOffset + (long) b * Long.BYTES);
                     long blockPackedAddr = srcPackedOffsetsOffset != 0
-                            ? baseAddr + packedDataStartOffset + Unsafe.getUnsafe().getInt(baseAddr + srcPackedOffsetsOffset + (long) b * Integer.BYTES)
+                            ? baseAddr + packedDataStartOffset + Unsafe.getUnsafe().getLong(baseAddr + srcPackedOffsetsOffset + (long) b * Long.BYTES)
                             : baseAddr + packedDataStartOffset;
                     long scratchAddr = blockBufferAddr + Long.BYTES;
                     BitpackUtils.unpackAllValues(blockPackedAddr, numDeltas, bitWidth, minD, scratchAddr);
@@ -477,7 +476,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int localKey = requestedKey % PostingIndexUtils.DENSE_STRIDE;
             cacheSidecarKeyAddrs(stride, localKey);
             int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
-            int strideOff = Unsafe.getUnsafe().getInt(genAddr + (long) stride * Integer.BYTES);
+            long strideOff = Unsafe.getUnsafe().getLong(genAddr + (long) stride * Long.BYTES);
             long strideFileOffset = genFileOffset + siSize + strideOff;
             long strideAddr = genAddr + siSize + strideOff;
             int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
@@ -573,7 +572,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 this.denseVarKeyStartCount = deltaKeyStartCount;
             }
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
-            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) localKey * Integer.BYTES);
+            long dataOffset = Unsafe.getUnsafe().getLong(offsetsBase + (long) localKey * Long.BYTES);
             int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
             long encodedOffset = strideFileOffset + deltaHeaderSize + dataOffset;
 
@@ -641,7 +640,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             int totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) start * Integer.BYTES);
-            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) start * Integer.BYTES);
+            long dataOffset = Unsafe.getUnsafe().getLong(offsetsBase + (long) start * Long.BYTES);
             long encodedOffset = genFileOffset + headerSize + dataOffset;
 
             if (totalValueCount == 0) {
@@ -693,7 +692,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             int totalValueCount = Unsafe.getUnsafe().getInt(countsBase + (long) idx * Integer.BYTES);
-            int dataOffset = Unsafe.getUnsafe().getInt(offsetsBase + (long) idx * Integer.BYTES);
+            long dataOffset = Unsafe.getUnsafe().getLong(offsetsBase + (long) idx * Long.BYTES);
             long encodedOffset = genFileOffset + headerSize + dataOffset;
 
             if (totalValueCount == 0) {
@@ -781,7 +780,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // packedOffsets only present for multi-block keys
             if (firstWord > 1) {
                 srcPackedOffsetsOffset = pos;
-                pos += (long) firstWord * Integer.BYTES;
+                pos += (long) firstWord * Long.BYTES;
             } else {
                 srcPackedOffsetsOffset = 0;
             }
