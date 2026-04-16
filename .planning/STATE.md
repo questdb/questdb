@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: complete
-stopped_at: Phase 11 back-fill complete; PR #6946 CI green
-last_updated: "2026-04-14T11:00:00.000Z"
+status: completed
+stopped_at: Phase 12 context gathered (discuss-phase complete)
+last_updated: "2026-04-16T20:33:59.840Z"
 last_activity: 2026-04-14
 progress:
-  total_phases: 11
-  completed_phases: 11
+  total_phases: 12
+  completed_phases: 10
   total_plans: 10
   completed_plans: 10
   percent: 100
@@ -91,6 +91,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - Phase 6 added: Keyed fill with FROM/TO range (was incorrectly listed as out of scope)
 - Phase 11 added retroactively via `/gsd-add-phase hardening`; code landed first (commits `2125201f30`, `28b00e8340`, `a6355c3e65`), paper trail back-filled via `/gsd-forensics` on 2026-04-14
 - Phase 5 closed as "Absorbed by 7–10" on 2026-04-14 — its four `must_have.truths` were satisfied cumulatively by the finer-grained phases rather than as a single batch
+- Phase 12 added: Replace safety-net reclassification with legacy fallback and tighten optimizer PREV gate. Driven by `/review-pr` finding that the codegen safety-net silently rewrites expression-argument aggregates with unsupported output types as `FILL_KEY`, producing duplicated fill rows (see `testSampleByFillNeedFix` regression vs master). Also closes LONG128/INTERVAL gap between `isUnsupportedPrevType` and `isFastPathPrevSupportedType`. Scope expanded to include missing regression tests for phase-11 production changes (UUID / Long256 / Decimal128 / Decimal256 key-column FILL_KEY dispatch, geo "no-prev-yet" null sentinels, selective `assertSql→assertQueryNoLeakCheck` conversions), removal of the redundant `anyPrev` detection loop, `hasExplicitTo` guard for runtime-null `TO`, alphabetizing FillRecord getters / SampleByFillCursor members / imports / `isKeyColumn`, replacing FQN signatures with plain imports, emitting `fill=` unconditionally in `toPlan`, and asserting on `Dates.parseOffset` failure. PR metadata (title, body tone, `.planning/` diff noise) excluded — tracked separately
 
 ### Pending Todos
 
@@ -99,12 +100,13 @@ None.
 ### Blockers/Concerns
 
 None blocking merge. Open pre-merge cleanup items:
+
 - `/review-pr` has not been re-run since the phase 11 commits landed (success criterion #7 unverified)
 - PR #6946 body references `FillPrevRangeRecordCursorFactory`, which no longer exists — update before merge
 - PR #6946 missing `Performance` label
 
 ## Session Continuity
 
-Last session: 2026-04-14T11:00:00Z
-Stopped at: Phase 11 back-fill complete; PR #6946 CI green
-Resume file: None
+Last session: 2026-04-16T20:33:59.834Z
+Stopped at: Phase 12 context gathered (discuss-phase complete)
+Resume file: .planning/phases/12-replace-safety-net-reclassification-with-legacy-fallback-and/12-CONTEXT.md
