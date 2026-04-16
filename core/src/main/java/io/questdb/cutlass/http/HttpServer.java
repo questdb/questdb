@@ -340,6 +340,27 @@ public class HttpServer implements Closeable {
         }
     }
 
+    public void unbind(ObjHashSet<String> urls) {
+        for (int j = 0, n = urls.size(); j < n; j++) {
+            final Utf8String key = new Utf8String(urls.get(j));
+            for (int i = 0; i < workerCount; i++) {
+                final HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
+                final int keyIndex = selector.requestHandlerMap.keyIndex(key);
+                if (keyIndex < 0) {
+                    final int handlerId = selector.requestHandlerMap.valueAt(keyIndex).handlerId();
+                    selector.requestHandlerMap.removeAt(keyIndex);
+                    if (handlerId < selector.handlersByIdList.size()) {
+                        final HttpRequestHandler handler = selector.handlersByIdList.getQuick(handlerId);
+                        if (handler != null) {
+                            selector.handlersByIdList.setQuick(handlerId, null);
+                            Misc.freeIfCloseable(handler);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     public void clearSelectCache() {
         selectCache.clear();
     }

@@ -215,6 +215,10 @@ public class ServerMain implements Closeable {
         return engine;
     }
 
+    protected HttpServer getHttpServer() {
+        return httpServer;
+    }
+
     public int getHttpServerPort() {
         if (httpServer != null) {
             return httpServer.getPort();

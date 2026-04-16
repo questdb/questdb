@@ -25,8 +25,12 @@
 package io.questdb.plugin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CheckpointListener;
+import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.wal.WalListener;
+import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
 
@@ -132,6 +136,23 @@ public interface PluginContext {
     CairoEngine getEngine();
 
     /**
+     * Returns a plugin-scoped metrics registry. Metrics created through this
+     * registry are automatically prefixed with the plugin name and scraped
+     * alongside QuestDB's built-in metrics at the {@code /metrics} endpoint.
+     * <p>
+     * All metrics become no-ops after the plugin is unloaded.
+     * <p>
+     * Example:
+     * <pre>
+     *   Counter requests = context.getMetricsRegistry().newCounter("requests");
+     *   requests.inc();
+     * </pre>
+     *
+     * @return the plugin-scoped metrics registry, never null
+     */
+    PluginMetricsRegistry getMetricsRegistry();
+
+    /**
      * Returns the canonical name of this plugin (e.g., "questdb-plugin-example-1.0.0").
      */
     CharSequence getPluginName();
@@ -200,4 +221,90 @@ public interface PluginContext {
      * @return the resolved value or defaultValue
      */
     String getProperty(String key, String defaultValue);
+
+    /**
+     * Registers a {@link CheckpointListener} to receive callbacks when checkpoints
+     * are created or restored.
+     * <p>
+     * <b>Threading:</b> {@link CheckpointListener#onCheckpointReleased} fires on the
+     * thread executing the CHECKPOINT RELEASE SQL command.
+     * {@link CheckpointListener#onCheckpointRestoreComplete()} fires on the recovery
+     * thread during startup.
+     * <p>
+     * <b>Lifecycle:</b> automatically removed when the plugin is unloaded.
+     *
+     * @param listener the checkpoint listener; must not be null
+     */
+    void registerCheckpointListener(CheckpointListener listener);
+
+    /**
+     * Registers a {@link DdlListener} to receive callbacks when tables, views,
+     * materialized views, or columns are created, dropped, or renamed.
+     * <p>
+     * <b>Threading:</b> callbacks fire on the SQL compiler thread executing the DDL.
+     * Implementations must be thread-safe if multiple concurrent DDL statements are
+     * possible.
+     * <p>
+     * <b>Lifecycle:</b> automatically removed when the plugin is unloaded.
+     *
+     * @param listener the DDL listener; must not be null
+     */
+    void registerDdlListener(DdlListener listener);
+
+    /**
+     * Registers an {@link HttpRequestHandlerFactory} that maps one or more URL paths
+     * to an HTTP request handler on QuestDB's HTTP server.
+     * <p>
+     * If the HTTP server has not yet started when this method is called (e.g., during
+     * {@link PluginLifecycle#onLoad(PluginContext)}), the registration is buffered and
+     * applied once the server is ready.
+     * <p>
+     * <b>Threading:</b> the factory's {@link HttpRequestHandlerFactory#newInstance()} is
+     * called once per HTTP worker thread. Each returned handler instance is private to
+     * that worker.
+     * <p>
+     * <b>Lifecycle:</b> handlers are automatically unbound when the plugin is unloaded.
+     * <p>
+     * Example:
+     * <pre>
+     *   context.registerHttpEndpoint(new HttpRequestHandlerFactory() {
+     *       public ObjHashSet&lt;String&gt; getUrls() {
+     *           ObjHashSet&lt;String&gt; urls = new ObjHashSet&lt;&gt;();
+     *           urls.add("/my-plugin/api");
+     *           return urls;
+     *       }
+     *       public HttpRequestHandler newInstance() {
+     *           return header -&gt; new MyProcessor();
+     *       }
+     *   });
+     * </pre>
+     *
+     * @param factory the handler factory; must not be null
+     */
+    void registerHttpEndpoint(HttpRequestHandlerFactory factory);
+
+    /**
+     * Registers a {@link WalListener} to receive callbacks for WAL events:
+     * data/non-data transactions committed, segments closed, tables created/dropped/renamed,
+     * and WAL closed.
+     * <p>
+     * <b>Threading:</b> callbacks fire on WAL apply worker threads. Implementations
+     * must be thread-safe and return quickly — blocking delays WAL application.
+     * Offload heavy work to a registered {@link Job}.
+     * <p>
+     * <b>Lifecycle:</b> automatically removed when the plugin is unloaded.
+     * <p>
+     * Example:
+     * <pre>
+     *   context.registerWalListener(new DefaultWalListener() {
+     *       public void dataTxnCommitted(TableToken tableToken, long txn,
+     *               long timestamp, int walId, int segmentId, int segmentTxn) {
+     *           pendingWork.add(tableToken);
+     *       }
+     *   });
+     * </pre>
+     *
+     * @param listener the WAL listener; must not be null
+     */
+    void registerWalListener(WalListener listener);
 }

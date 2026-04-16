@@ -217,6 +217,7 @@ public class CairoEngine implements Closeable, WriterSource {
             return WatchRegistry.UNREGISTERED;
         }
     }; // no-op
+    private @NotNull CheckpointListener checkpointListener = DefaultCheckpointListener.INSTANCE;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
@@ -267,6 +268,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
+            this.checkpointListener = configuration.getCheckpointListener();
 
             // IMPORTANT: Do not reorder statements!
             // The backup recovery process needs the `dataID` (since it will set it),
@@ -796,7 +798,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull CheckpointListener getCheckpointListener() {
-        return configuration.getCheckpointListener();
+        return checkpointListener;
     }
 
     public DatabaseCheckpointStatus getCheckpointStatus() {
@@ -1765,6 +1767,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setConfigReloader(@NotNull ConfigReloader configReloader) {
         this.configReloader = configReloader;
+    }
+
+    public void setCheckpointListener(@NotNull CheckpointListener checkpointListener) {
+        this.checkpointListener = checkpointListener;
     }
 
     public void setDdlListener(@NotNull DdlListener ddlListener) {
