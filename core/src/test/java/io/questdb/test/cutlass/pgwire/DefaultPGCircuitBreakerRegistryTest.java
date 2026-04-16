@@ -1,0 +1,156 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cutlass.pgwire;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultPGConfiguration;
+import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.std.MemoryTag;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
+
+public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
+
+    private static final PGConfiguration PG_CONFIG = new DefaultPGConfiguration() {
+        @Override
+        public int getLimit() {
+            return 4;
+        }
+    };
+
+    @Test
+    public void testCancelHappyPath() throws Exception {
+        assertMemoryLeak(() -> {
+            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                int idx = registry.add(cb);
+                cb.setSecret(123_456);
+                // happy path: correct idx and secret causes cancel() to flip the cancelled flag
+                registry.cancel(idx, 123_456);
+                Assert.assertTrue(cb.getCancelledFlag() == null || cb.getCancelledFlag().get() || cb.checkIfTripped());
+            } finally {
+                registry.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCancelRejectsEmptySlot() throws Exception {
+        assertMemoryLeak(() -> {
+            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+            try {
+                // slot 0 has never been assigned; must not crash and must reject cleanly
+                expectCairoFailure(() -> registry.cancel(0, 0), "empty circuit breaker slot");
+            } finally {
+                registry.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCancelRejectsIdxEqualToSize() throws Exception {
+        // off-by-one regression: previously `if (size() < idx)` allowed idx == size() through,
+        // leading to ObjList.getQuick(size()) reading past the logical end of the list.
+        assertMemoryLeak(() -> {
+            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                int idx = registry.add(cb);
+                cb.setSecret(42);
+                // the registry is pre-sized with `limit` null slots; idx + 1 up to `limit` are
+                // also valid indices but empty. Anything at or beyond `limit` must be rejected.
+                expectCairoFailure(() -> registry.cancel(PG_CONFIG.getLimit(), 42), "wrong circuit breaker idx");
+                expectCairoFailure(() -> registry.cancel(PG_CONFIG.getLimit() + 1, 42), "wrong circuit breaker idx");
+                // sanity: the legitimate idx still works
+                registry.cancel(idx, 42);
+            } finally {
+                registry.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCancelRejectsNegativeIdx() throws Exception {
+        assertMemoryLeak(() -> {
+            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+            try {
+                expectCairoFailure(() -> registry.cancel(-1, 0), "wrong circuit breaker idx");
+                expectCairoFailure(() -> registry.cancel(Integer.MIN_VALUE, 0), "wrong circuit breaker idx");
+            } finally {
+                registry.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCancelRejectsSecretMinusOneSentinel() throws Exception {
+        // after clear(), the breaker's secret is -1 until init() assigns a new random. A cancel
+        // arriving in that window must not be able to succeed by guessing secret = -1.
+        assertMemoryLeak(() -> {
+            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                int idx = registry.add(cb);
+                cb.clear(); // sets secret = -1
+                Assert.assertEquals(-1, cb.getSecret());
+                expectCairoFailure(() -> registry.cancel(idx, -1), "wrong circuit breaker secret");
+            } finally {
+                registry.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCancelRejectsWrongSecret() throws Exception {
+        assertMemoryLeak(() -> {
+            DefaultPGCircuitBreakerRegistry registry = new DefaultPGCircuitBreakerRegistry(PG_CONFIG, configuration);
+            try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
+                int idx = registry.add(cb);
+                cb.setSecret(0xDEADBEEF);
+                expectCairoFailure(() -> registry.cancel(idx, 0xC0FFEE), "wrong circuit breaker secret");
+            } finally {
+                registry.close();
+            }
+        });
+    }
+
+    private static void expectCairoFailure(Runnable op, String expectedMessage) {
+        try {
+            op.run();
+            Assert.fail("expected CairoException with message containing '" + expectedMessage + "'");
+        } catch (CairoException e) {
+            Assert.assertTrue(
+                    "unexpected message: " + e.getFlyweightMessage(),
+                    e.getFlyweightMessage().toString().contains(expectedMessage)
+            );
+        }
+    }
+
+    private NetworkSqlExecutionCircuitBreaker newCircuitBreaker() {
+        return new NetworkSqlExecutionCircuitBreaker(engine, new DefaultSqlExecutionCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB5);
+    }
+}

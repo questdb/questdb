@@ -1603,6 +1603,23 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBadInitMessageLengthNegative() throws Exception {
+        // first message msgLen is 0xFFFFFFFF (-1); server must reject before any pointer arithmetic
+        // and close the connection.
+        assertHexScript("""
+                >ffffffff00030000
+                <!!""");
+    }
+
+    @Test
+    public void testBadInitMessageLengthTooSmall() throws Exception {
+        // msgLen=4 is below the 8-byte protocol minimum (size + protocol fields).
+        assertHexScript("""
+                >0000000400030000
+                <!!""");
+    }
+
+    @Test
     public void testBadMessageLength() throws Exception {
         final String script =
                 """
@@ -1626,6 +1643,21 @@ if __name__ == "__main__":
                         >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                         <520000000800000003
                         >700000000464756e6e6f00
+                        <!!"""
+        );
+    }
+
+    @Test
+    public void testBadPasswordLengthNegative() throws Exception {
+        // PasswordMessage with msgLen 0xFFFFFFFF (-1); server must reject before
+        // computing msgLimit = recvBufReadPos + msgLen + 1.
+        assertHexScript(
+                """
+                        >0000000804d2162f
+                        <4e
+                        >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >70ffffffff
                         <!!"""
         );
     }
