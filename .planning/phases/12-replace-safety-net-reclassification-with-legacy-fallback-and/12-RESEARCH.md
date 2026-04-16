@@ -681,9 +681,9 @@ counted all 36 getters]`
 | A4 | 15 tests in SampleByFillTest.java qualify for `assertSql → assertQueryNoLeakCheck` conversion per the D-10 rule | CONTEXT.md Test conversion | If the count is off, either false failures (too many converted) or missed coverage (too few). Mitigation: CONTEXT.md says "exact set determined by applying the rule" — treat ~15 as an estimate, not a target. Measure when applying. |
 | A5 | Existing `testFillPrevOfIntKeyColumn`, `testFillPrevOfSymbolKeyColumn`, `testFillPrevOfVarcharKeyColumn` tests currently pass because each fills a same-type-tag column — D-09 type-mismatch rejection will NOT regress them | Pitfall 4 | If one of them actually fills a different-tag target, D-09 rejects a query that master accepts. Mitigation: read each test's query text during planning and verify source vs target types before landing D-09. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Where does `generateSelectGroupBy` observe the model — outer select vs rewritten nested?**
+1. **RESOLVED: Where does `generateSelectGroupBy` observe the model — outer select vs rewritten nested?** (Answer: trust same-identity assumption; add diagnostic assert in plan 12-03 Task 2.)
    - What we know: The SAMPLE BY fields are on `nested`, cleared by `rewriteSampleBy`. After the rewrite,
      `model` (outer SELECT) wraps `nested`. Later optimiser passes (rewriteSelectClause, moveOrderBy...)
      may re-wrap. `generateSelectGroupBy` is invoked on the model with `SELECT_MODEL_GROUP_BY`, which is
@@ -692,8 +692,15 @@ counted all 36 getters]`
      the nested instance. `[ASSUMED: no replacement]`
    - Recommendation: During planning, add a printf-style diagnostic during the first retro-fallback test
      to confirm `System.identityHashCode(modelAtRewrite) == System.identityHashCode(modelAtGenerate)`.
+   - **RESOLVED:** Trust the same-identity assumption on the first pass. Plan 12-03 Task 2 adds a
+     diagnostic `assert stashed != null` at the retro-fallback catch site so a mismatch would fire
+     loudly under `-ea`. A full nested-model chain walk is NOT required for the first pass; if the
+     assert trips during plan 12-04 test runs, the remediation (walk `model.getNestedModel()` until
+     `getStashedSampleByNode() != null`) is documented inline in plan 12-03 Task 2 as contingency
+     prose — but with the resolution below from this file, that remediation is now the default
+     two-step action rather than conditional prose.
 
-2. **Should `FallbackToLegacyException` extend `SqlException` or `RuntimeException`?**
+2. **RESOLVED: Should `FallbackToLegacyException` extend `SqlException` or `RuntimeException`?** (Answer: extend `SqlException` with a singleton `INSTANCE`; `super(0)` keeps position retention simple.)
    - What we know: `generateFill` already throws `SqlException`. Extending it means the existing catch
      block signature at 3624 (`catch (Throwable e)`) still catches it; the call-site catch needs to be
      specific to avoid false capture. But `SqlException` carries a position which we don't need for
@@ -702,20 +709,31 @@ counted all 36 getters]`
      extend one or the other.
    - Recommendation: Extend `SqlException` with a private constructor that returns a singleton (no
      position, no message — it's internal control flow). Or use a static field. Plan decides.
+   - **RESOLVED:** Extend `SqlException` with a singleton `INSTANCE` (public static final), private
+     constructor calling `super(0)`, `fillInStackTrace()` overridden to skip stack-walking. Position
+     is carried as `0` and ignored — the exception never surfaces to users. Plan 12-01 Task 1
+     implements this exact shape.
 
-3. **Chain rule: simple (~6 line) vs precise (~10 line) variant?**
+3. **RESOLVED: Chain rule: simple (~6 line) vs precise (~10 line) variant?** (Answer: simple ~6-line variant with generic FILL-clause position per CONTEXT D-07.)
    - What we know: Both are functionally equivalent. Simple uses `fillValuesExprs.getQuick(0).position`
      (the whole FILL clause); precise tracks per-column `ExpressionNode` and points at the offending
      `PREV(...)`.
    - What's unclear: How often users hit this error in practice. If rare (which it likely is — chains are
      an obscure grammar), the precise variant's UX upgrade is worth 4 lines.
    - Recommendation: Precise variant. 4 extra lines for a better error message is a clear win.
+   - **RESOLVED:** Simple ~6-line variant with generic FILL-clause position per CONTEXT D-07 locked
+     decision ("Simplest variant (~6 lines) with generic FILL-clause position"). Plan 12-03 Task 1
+     Step F implements the simple variant. If real users hit the error often enough that UX warrants
+     the precise variant, a follow-up phase can upgrade — 4 lines of savings today, 4 lines of work
+     tomorrow if demand appears.
 
-4. **What's the right exception subclass name?**
+4. **RESOLVED: What's the right exception subclass name?** (Answer: keep `FallbackToLegacyException`.)
    - What we know: CONTEXT.md suggests `FallbackToLegacyException`.
    - What's unclear: Whether a shorter name like `LegacyFallbackSignal` or `UseCursorPath` is preferred.
    - Recommendation: Stick with `FallbackToLegacyException` unless the plan picks otherwise. It's
      self-documenting.
+   - **RESOLVED:** Keep `FallbackToLegacyException`. Self-documenting, matches CONTEXT.md
+     terminology, no shorter alternative won enough support to justify divergence.
 
 ## Environment Availability
 

@@ -215,7 +215,7 @@ Phase 11 added FILL_KEY dispatch for 128/256-bit getters and corrected null sent
 7. The grammar rules for `FILL(PREV, PREV(...))` are implemented: `PREV(ts)`, chains, malformed shapes, and type-tag mismatches each raise positioned `SqlException`. `PREV(self)` aliases to `FILL_PREV_SELF` internally. Bare `PREV` inside a per-column list is documented as accepted.
 8. All 633 existing tests across `SampleByFillTest`, `SampleByTest`, `SampleByNanoTimestampTest` still pass (after updating `testSampleByFillNeedFix` to match master).
 9. Five FILL_KEY regression tests for UUID / Long256 / Decimal128 / Decimal256 key columns, plus `testFillPrevGeoNoPrevYet` — all pass, all would fail without the phase 11 production fixes.
-10. Eight grammar regression tests (see "Grammar block" item 7) — all pass.
+10. Eleven grammar regression tests (3 positive + 8 negative) (see "Grammar block" item 7) — all pass.
 11. Retro-fallback regression tests (`testFillPrevExpressionArgDecimal128Fallback`, `testFillPrevExpressionArgStringFallback`, `testFillPrevCaseOverDecimalFallback`, `testFillPrevLong128Fallback`, `testFillPrevIntervalFallback`) — each asserts legacy plan is picked and output matches legacy cursor.
 12. Fast-path `SampleByFillTest` tests that hit streaming single-pass queries use `assertQueryNoLeakCheck` (not `assertSql`), per the selection rule; a regression in `supportsRandomAccess` or `size()` would be caught.
 13. The redundant `anyPrev` detection loop at `SqlCodeGenerator.java:3392-3398` is removed.

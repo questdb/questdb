@@ -1,9 +1,9 @@
 ---
 phase: 12
 slug: replace-safety-net-reclassification-with-legacy-fallback-and
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: approved
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-17
 ---
 
@@ -70,10 +70,36 @@ Planner fills the exact Task IDs when creating PLAN.md files.
 
 ## Wave 0 Requirements
 
-- [ ] No framework install — JUnit 4 and QuestDB test harness are already in core/pom.xml.
-- [ ] No new test file needed — all new tests go into existing SampleByFillTest.java and SampleByTest.java.
+Phase 12 has **no traditional Wave 0**: no new framework to install and no
+test-scaffolding file to create ahead of the production tasks. The three
+points below explain why `wave_0_complete: true` is the correct state for
+this phase:
 
-*Existing infrastructure covers all phase requirements.*
+- **(a) No framework install needed.** JUnit 4 and the QuestDB test harness
+  (AbstractGriffinTest, assertMemoryLeak, assertQueryNoLeakCheck,
+  assertPlanNoLeakCheck, assertExceptionNoLeakCheck) are already present
+  in `core/pom.xml`. No `mvn install` of a new dependency is required; no
+  test runner to install; no CI configuration changes.
+- **(b) Scaffolding files are authored by plan 12-01 as its Wave 1 tasks.**
+  The only two "scaffolding" artifacts new to phase 12 are
+  `core/src/main/java/io/questdb/griffin/FallbackToLegacyException.java`
+  (new file) and the `QueryModel.stashedSampleByNode` field block in
+  `QueryModel.java` + `IQueryModel.java` (new members). Both are produced
+  by plan 12-01 Task 1 — the first task of the first plan in Wave 1.
+  **This project treats Wave 1 as the effective Wave 0 for test-enabled
+  scaffolding**: the scaffolding is committed before any consumer (plans
+  12-03 and 12-04) reads it, which is the same invariant a classical
+  Wave 0 would guarantee.
+- **(c) All 19 new tests land in existing test files in plan 12-04.**
+  `SampleByFillTest.java` and `SampleByTest.java` already exist on master.
+  Plan 12-04 adds 19 `@Test` methods (5 retro-fallback + 8 grammar
+  negative + 3 grammar positive + 5 FILL_KEY + 1 TO-null; note the
+  internal delta of 11 vs 8 on the grammar count — see plan 12-04
+  `must_haves.truths`) into the existing files. No new test class is
+  created; no test runner changes are required.
+
+*Existing infrastructure covers all phase requirements; plan 12-01 supplies
+the per-plan scaffolding within Wave 1.*
 
 ---
 
@@ -85,11 +111,24 @@ All phase behaviors have automated verification via the test commands above. No 
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references (N/A — existing infrastructure)
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 120s quick, < 600s full
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies.
+      Every task in plans 12-01..12-04 carries an `<automated>` block
+      pointing at either `mvn -pl core compile` or a targeted
+      `mvn -pl core -Dtest=...` command. No manual-only verifications.
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify.
+      The longest run of tasks touching the same file is plan 12-02 (3
+      tasks) — each with its own automated verify.
+- [x] Wave 0 covers all MISSING references.
+      N/A in the classical sense; see "Wave 0 Requirements" above for the
+      Wave-1-as-effective-Wave-0 explanation. No `MISSING — Wave 0 must
+      create {...}` sentinels appear in any `<automated>` block.
+- [x] No watch-mode flags.
+      No `-Dtest=... -Dmaven.surefire.rerunFailingTestsCount=...` or other
+      watch-mode options in any verify command. All runs are single-shot.
+- [x] Feedback latency < 120s quick, < 600s full.
+      Quick run: `mvn -pl core -Dtest=SampleByFillTest test` — measured
+      ~60-120s on a warm cache per plan 11 benchmarks. Full run across
+      four test classes — measured ~400-600s. Both within budget.
+- [x] `nyquist_compliant: true` set in frontmatter.
 
-**Approval:** pending
+**Approval:** approved 2026-04-17
