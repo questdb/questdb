@@ -193,19 +193,6 @@ public class Unordered8Map implements Map, Reopenable {
         return columnType == ColumnType.LONG || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE;
     }
 
-    private static void validateBatchAddressable(long sizeBytes) {
-        // A silent truncation here would feed corrupted offsets into every batched
-        // probe; fail loudly instead of producing wrong aggregation results.
-        if (sizeBytes > Map.BATCH_OFFSET_MASK) {
-            throw CairoException.nonCritical()
-                    .put("Unordered8Map heap size exceeds batched probe addressable range [heapBytes=")
-                    .put(sizeBytes)
-                    .put(", maxAddressable=")
-                    .put(Map.BATCH_OFFSET_MASK)
-                    .put(']');
-        }
-    }
-
     @Override
     public void clear() {
         free = (int) (keyCapacity * loadFactor);
@@ -238,12 +225,13 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     @Override
-    public MapRecordCursor newCursor() {
-        Unordered8MapCursor c = new Unordered8MapCursor(record.clone(), this);
-        if (hasZero) {
-            return c.init(memStart, memLimit, zeroMemStart, size + 1);
-        }
-        return c.init(memStart, memLimit, 0, size);
+    public int getKeyCapacity() {
+        return keyCapacity;
+    }
+
+    @Override
+    public MapRecord getRecord() {
+        return record;
     }
 
     @Override
@@ -254,16 +242,6 @@ public class Unordered8Map implements Map, Reopenable {
         } else {
             c.init(memStart, memLimit, 0, size);
         }
-    }
-
-    @Override
-    public int getKeyCapacity() {
-        return keyCapacity;
-    }
-
-    @Override
-    public MapRecord getRecord() {
-        return record;
     }
 
     @Override
@@ -332,6 +310,15 @@ public class Unordered8Map implements Map, Reopenable {
                 }
             }
         }
+    }
+
+    @Override
+    public MapRecordCursor newCursor() {
+        Unordered8MapCursor c = new Unordered8MapCursor(record.clone(), this);
+        if (hasZero) {
+            return c.init(memStart, memLimit, zeroMemStart, size + 1);
+        }
+        return c.init(memStart, memLimit, 0, size);
     }
 
     @Override
@@ -569,6 +556,17 @@ public class Unordered8Map implements Map, Reopenable {
     @Override
     public MapKey withKey() {
         return key;
+    }
+
+    private static void validateBatchAddressable(long sizeBytes) {
+        // A silent truncation here would feed corrupted offsets into every batched
+        // probe; fail loudly instead of producing wrong aggregation results.
+        if (sizeBytes > Map.BATCH_OFFSET_MASK) {
+            throw CairoException.nonCritical()
+                    .put("Unordered8Map heap size exceeds batched probe addressable range [heapBytes=").put(sizeBytes)
+                    .put(", maxAddressable=").put(Map.BATCH_OFFSET_MASK)
+                    .put(']');
+        }
     }
 
     private FlyweightPackedMapValue asNew(long startAddress, long key, long hashCode, FlyweightPackedMapValue value) {

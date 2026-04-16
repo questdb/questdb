@@ -229,19 +229,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return hashSizeFlags & 0xffffffffL;
     }
 
-    private static void validateBatchAddressable(long sizeBytes) {
-        // A silent truncation here would feed corrupted offsets into every batched
-        // probe; fail loudly instead of producing wrong aggregation results.
-        if (sizeBytes > Map.BATCH_OFFSET_MASK) {
-            throw CairoException.nonCritical()
-                    .put("UnorderedVarcharMap heap size exceeds batched probe addressable range [heapBytes=")
-                    .put(sizeBytes)
-                    .put(", maxAddressable=")
-                    .put(Map.BATCH_OFFSET_MASK)
-                    .put(']');
-        }
-    }
-
     @Override
     public void clear() {
         free = (int) (keyCapacity * loadFactor);
@@ -271,17 +258,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     }
 
     @Override
-    public MapRecordCursor newCursor() {
-        UnorderedVarcharMapCursor c = new UnorderedVarcharMapCursor(record.clone(), this);
-        return c.init(memStart, memLimit, size);
-    }
-
-    @Override
-    public void initCursor(MapRecordCursor cursor) {
-        ((UnorderedVarcharMapCursor) cursor).init(memStart, memLimit, size);
-    }
-
-    @Override
     public long getHeapSize() {
         return memLimit - memStart + allocator.allocated();
     }
@@ -294,6 +270,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public MapRecord getRecord() {
         return record;
+    }
+
+    @Override
+    public void initCursor(MapRecordCursor cursor) {
+        ((UnorderedVarcharMapCursor) cursor).init(memStart, memLimit, size);
     }
 
     @Override
@@ -369,6 +350,12 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 }
             }
         }
+    }
+
+    @Override
+    public MapRecordCursor newCursor() {
+        UnorderedVarcharMapCursor c = new UnorderedVarcharMapCursor(record.clone(), this);
+        return c.init(memStart, memLimit, size);
     }
 
     @Override
@@ -544,6 +531,17 @@ public class UnorderedVarcharMap implements Map, Reopenable {
      */
     private static long makePackComparable(long packedHashSizeFlags) {
         return packedHashSizeFlags & 0x7fffffffffffffffL;
+    }
+
+    private static void validateBatchAddressable(long sizeBytes) {
+        // A silent truncation here would feed corrupted offsets into every batched
+        // probe; fail loudly instead of producing wrong aggregation results.
+        if (sizeBytes > Map.BATCH_OFFSET_MASK) {
+            throw CairoException.nonCritical()
+                    .put("UnorderedVarcharMap heap size exceeds batched probe addressable range [heapBytes=").put(sizeBytes)
+                    .put(", maxAddressable=").put(Map.BATCH_OFFSET_MASK)
+                    .put(']');
+        }
     }
 
     private FlyweightPackedMapValue asNew(

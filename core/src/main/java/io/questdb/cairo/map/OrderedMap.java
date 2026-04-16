@@ -185,6 +185,7 @@ public class OrderedMap implements Map, Reopenable {
             this.listMemoryTag = listMemoryTag;
             initialHeapSize = heapSize;
             this.loadFactor = loadFactor;
+            validateBatchAddressable(heapSize);
             heapAddr = kPos = Unsafe.malloc(heapSize, heapMemoryTag);
             this.heapSize = heapSize;
             heapLimit = heapAddr + heapSize;
@@ -304,24 +305,6 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
-    public MapRecordCursor newCursor() {
-        OrderedMapCursor c;
-        if (keySize == -1) {
-            OrderedMapVarSizeRecord rec = ((OrderedMapVarSizeRecord) record).clone();
-            c = new OrderedMapVarSizeCursor(rec, this);
-        } else {
-            OrderedMapFixedSizeRecord rec = ((OrderedMapFixedSizeRecord) record).clone();
-            c = new OrderedMapFixedSizeCursor(rec, this);
-        }
-        return c.init(heapAddr, heapLimit, size);
-    }
-
-    @Override
-    public void initCursor(MapRecordCursor cursor) {
-        ((OrderedMapCursor) cursor).init(heapAddr, heapLimit, size);
-    }
-
-    @Override
     public long getHeapSize() {
         return heapLimit - heapAddr;
     }
@@ -346,6 +329,11 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public void initCursor(MapRecordCursor cursor) {
+        ((OrderedMapCursor) cursor).init(heapAddr, heapLimit, size);
+    }
+
+    @Override
     public boolean isOpen() {
         return heapAddr != 0;
     }
@@ -357,6 +345,19 @@ public class OrderedMap implements Map, Reopenable {
             return;
         }
         mergeRef.merge((OrderedMap) srcMap, mergeFunc);
+    }
+
+    @Override
+    public MapRecordCursor newCursor() {
+        OrderedMapCursor c;
+        if (keySize == -1) {
+            OrderedMapVarSizeRecord rec = ((OrderedMapVarSizeRecord) record).clone();
+            c = new OrderedMapVarSizeCursor(rec, this);
+        } else {
+            OrderedMapFixedSizeRecord rec = ((OrderedMapFixedSizeRecord) record).clone();
+            c = new OrderedMapFixedSizeCursor(rec, this);
+        }
+        return c.init(heapAddr, heapLimit, size);
     }
 
     @Override
@@ -478,6 +479,17 @@ public class OrderedMap implements Map, Reopenable {
 
     private static long decompressOffset(int rawOffset) {
         return ((long) rawOffset - 1) << 3;
+    }
+
+    private static void validateBatchAddressable(long sizeBytes) {
+        // A silent truncation here would feed corrupted offsets into every batched
+        // probe; fail loudly instead of producing wrong aggregation results.
+        if (sizeBytes > Map.BATCH_OFFSET_MASK) {
+            throw CairoException.nonCritical()
+                    .put("OrderedMap heap size exceeds batched probe addressable range [heapBytes=").put(sizeBytes)
+                    .put(", maxAddressable=").put(Map.BATCH_OFFSET_MASK)
+                    .put(']');
+        }
     }
 
     private FlyweightPackedMapValue asNew(Key keyWriter, int index, int hashCodeLo, FlyweightPackedMapValue value) {
@@ -825,6 +837,7 @@ public class OrderedMap implements Map, Reopenable {
         if (kCapacity > MAX_HEAP_SIZE) {
             throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
         }
+        validateBatchAddressable(kCapacity);
         long kAddr = Unsafe.realloc(heapAddr, heapSize, kCapacity, heapMemoryTag);
 
         this.heapSize = kCapacity;
