@@ -27,33 +27,33 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final VirtualRecord recordA;
-    private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
+public class AsyncGroupByNotKeyedSharedCursor implements NoRandomAccessRecordCursor {
+    private final ObjList<Function> groupByFunctions;
+    private final AsyncGroupByNotKeyedRecordCursor primaryCursor;
+    private final VirtualRecord record;
     private boolean isExhausted;
-    private boolean isOpen;
-    private boolean isValueBuilt;
 
-    public AsyncGroupByNotKeyedRecordCursor(ObjList<GroupByFunction> groupByFunctions) {
-        this.groupByFunctions = groupByFunctions;
-        this.recordA = new VirtualRecord(groupByFunctions);
-        this.isOpen = true;
+    AsyncGroupByNotKeyedSharedCursor(
+            AsyncGroupByNotKeyedRecordCursor cursor,
+            ObjList<Function> functions,
+            SimpleMapValue mapValue
+    ) {
+        this.primaryCursor = cursor;
+        this.groupByFunctions = functions;
+        this.record = new VirtualRecord(functions);
+        this.record.of(mapValue);
     }
 
     @Override
@@ -66,22 +66,12 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void close() {
-        if (isOpen) {
-            try {
-                if (frameSequence != null) {
-                    frameSequence.await();
-                    frameSequence.reset();
-                }
-            } finally {
-                Misc.clearObjList(groupByFunctions);
-                isOpen = false;
-            }
-        }
+        Misc.clearObjList(groupByFunctions);
     }
 
     @Override
     public Record getRecord() {
-        return recordA;
+        return record;
     }
 
     @Override
@@ -94,15 +84,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         if (isExhausted) {
             return false;
         }
-        buildValueConditionally();
+        primaryCursor.buildValueConditionally();
         isExhausted = true;
         return true;
-    }
-
-    void buildValueConditionally() {
-        if (!isValueBuilt) {
-            buildValue();
-        }
     }
 
     @Override
@@ -112,7 +96,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public long preComputedStateSize() {
-        return RecordCursor.fromBool(isValueBuilt);
+        return 0;
     }
 
     @Override
@@ -124,47 +108,10 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     public void toTop() {
         isExhausted = false;
         GroupByUtils.toTop(groupByFunctions);
-        if (frameSequence != null) {
-            frameSequence.getAtom().toTop();
-        }
     }
 
-    private void buildValue() {
-        frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
-        frameSequence.dispatchAndAwait();
-
-        // Merge the values.
-        final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
-        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(-1);
-        final SimpleMapValue destValue = atom.getOwnerMapValue();
-        for (int i = 0, n = atom.getPerWorkerMapValues().size(); i < n; i++) {
-            final SimpleMapValue srcValue = atom.getPerWorkerMapValues().getQuick(i);
-            if (srcValue.isNew()) {
-                continue;
-            }
-
-            if (destValue.isNew()) {
-                destValue.copy(srcValue);
-            } else {
-                functionUpdater.merge(destValue, srcValue);
-            }
-            destValue.setNew(false);
-        }
-
-        isValueBuilt = true;
-    }
-
-    void of(UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
-        final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
-        if (!isOpen) {
-            isOpen = true;
-            atom.reopen();
-        }
-        this.frameSequence = frameSequence;
-        this.isValueBuilt = false;
-        recordA.of(atom.getOwnerMapValue());
+    void of(SqlExecutionContext executionContext, UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence) throws SqlException {
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
-        toTop();
+        isExhausted = false;
     }
 }

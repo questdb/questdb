@@ -41,8 +41,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.JoinContext;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -88,9 +88,12 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             );
             this.columnSplit = columnSplit;
             this.joinType = joinType;
-            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                    ? new SymbolTranslatingRecord(slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices)
-                    : null;
+            if (masterSymbolKeyColumnIndices != null) {
+                assert slaveSymbolKeyColumnIndices != null;
+                this.symbolTranslatingRecord = new SymbolTranslatingRecord(slaveFactory.getMetadata().getColumnCount(), slaveSymbolKeyColumnIndices, masterSymbolKeyColumnIndices);
+            } else {
+                this.symbolTranslatingRecord = null;
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -99,14 +102,14 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
+        return joinType == IQueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             switch (joinType) {
-                case QueryModel.JOIN_LEFT_OUTER:
+                case IQueryModel.JOIN_LEFT_OUTER:
                     cursor = new HashLeftOuterJoinFilteredRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -114,7 +117,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_RIGHT_OUTER:
+                case IQueryModel.JOIN_RIGHT_OUTER:
                     cursor = new HashRightOuterJoinFilteredRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -122,7 +125,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_FULL_OUTER:
+                case IQueryModel.JOIN_FULL_OUTER:
                     cursor = new HashFullOuterJoinFilteredRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -153,7 +156,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
+        return joinType == IQueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
