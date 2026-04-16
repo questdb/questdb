@@ -3013,8 +3013,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         int partitionCount = txWriter.getPartitionCount();
         squashPartitionForce(partitionIndex);
-        if (partitionCount != txWriter.getPartitionCount()) {
-            // If the partition was squashed, the parquet file may not reflect the current native data. Do not switch to parquet in this case.
+        int newPartitionCount = txWriter.getPartitionCount();
+        if (partitionCount != newPartitionCount) {
+            // The force-squash merged one or more split sub-partitions into this logical partition.
+            // The existing parquet file was produced before the squash, so it is now stale relative
+            // to the grown native partition.
+            LOG.info()
+                    .$("skipping switch to parquet, due to partition squash [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .I$();
             return SWITCH_NO_PARQUET;
         }
 
