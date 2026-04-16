@@ -328,7 +328,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                     continue;
                 }
 
-                if (!genLookup.mightContainKey(currentGen, requestedKey)) {
+                if (genLookup.mightNotContainKey(currentGen, requestedKey)) {
                     currentGen--;
                     continue;
                 }

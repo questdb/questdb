@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.std.MemoryTag;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
 /**
@@ -560,7 +561,7 @@ public final class FSST {
      *   [symbols: MAX_SYMBOLS * 8B][lens: MAX_SYMBOLS * 4B][byteMap: 256 * 4B][hashCodes: HASH_SIZE * 4B]
      * </pre>
      */
-    public static final class SymbolTable implements io.questdb.std.QuietCloseable {
+    public static final class SymbolTable implements QuietCloseable {
         private static final long BYTEMAP_SIZE = 256L * Integer.BYTES;                 // 1024
         private static final long HASHCODES_SIZE = (long) HASH_SIZE * Integer.BYTES;   // 65536
         private static final long LENS_SIZE = (long) MAX_SYMBOLS * Integer.BYTES;      // 1020

@@ -1,4 +1,4 @@
-/*******************************************************************************
+/*+*****************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -25,6 +25,8 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
@@ -54,26 +56,21 @@ public class PostingGenLookup implements Closeable {
     private static final long DEFAULT_MEMORY_BUDGET = 256L * 1024 * 1024; // 256MB
     private static final double DEFAULT_TARGET_FPP = 0.01; // 1% FPR
     private static final double MAX_FPP = 0.5; // don't degrade SBBF beyond 50%
-    // State
+    private final LongList genDataSizes = new LongList();
+    private final LongList genFileOffsets = new LongList();
+    private final IntList genKeyCounts = new IntList(); // negative = sparse
+    private final IntList genMaxKeys = new IntList();
+    private final IntList genMinKeys = new IntList();
+    private final IntList genSidecarOffsets = new IntList();
     private int builtForGenCount;
-    private long[] genDataSizes;
-    // Shared: gen metadata cache
-    private long[] genFileOffsets;
     private long genIndicesAddr;   // totalEntries × 4B native
-    private int[] genKeyCounts;    // negative = sparse
-    private int[] genMaxKeys;
-    private int[] genMinKeys;
-    private int[] genSidecarOffsets;
     private int keyCount;
-    // Tier 1: per-key off-heap CSR arrays
     private long keyOffsetsAddr;   // (keyCount+1) × 4B native
     private long memoryBudget = DEFAULT_MEMORY_BUDGET;
     private long posInGenAddr;     // totalEntries × 4B native
-    // Tier 2: per-gen SBBF on native memory
-    private long[] sbbfAddrs;      // [genCount] native address per gen's SBBF
+    private final LongList sbbfAddrs = new LongList(); // native address per gen's SBBF, 0 = no SBBF for that gen
     private int sbbfGenCount;      // number of SBBFs allocated
     private int sbbfSizePerGen;    // uniform size per gen
-    // Tier selection
     private int tier;
     private long tier1EntriesSize;    // actual alloc size for genIndicesAddr/posInGenAddr
     private long tier1KeyOffsetsSize; // actual alloc size for keyOffsetsAddr
@@ -82,11 +79,12 @@ public class PostingGenLookup implements Closeable {
     public void close() {
         freeTier1();
         freeTier2();
-        genFileOffsets = null;
-        genDataSizes = null;
-        genKeyCounts = null;
-        genMinKeys = null;
-        genMaxKeys = null;
+        genFileOffsets.clear();
+        genDataSizes.clear();
+        genKeyCounts.clear();
+        genMinKeys.clear();
+        genMaxKeys.clear();
+        genSidecarOffsets.clear();
         builtForGenCount = 0;
         keyCount = 0;
         tier = TIER_NONE;
@@ -97,9 +95,10 @@ public class PostingGenLookup implements Closeable {
         int sparseGenCount = 0;
         long totalSparseEntries = 0;
         for (int g = 0; g < genCount; g++) {
-            if (genKeyCounts[g] < 0) {
+            int gkc = genKeyCounts.getQuick(g);
+            if (gkc < 0) {
                 sparseGenCount++;
-                totalSparseEntries -= genKeyCounts[g];
+                totalSparseEntries -= gkc;
             }
         }
 
@@ -133,12 +132,13 @@ public class PostingGenLookup implements Closeable {
         Unsafe.getUnsafe().setMemory(countsAddr, countsSize, (byte) 0);
         try {
             for (int g = 0; g < genCount; g++) {
-                if (genKeyCounts[g] >= 0) {
+                int gkc = genKeyCounts.getQuick(g);
+                if (gkc >= 0) {
                     continue; // dense gen
                 }
-                int activeKeyCount = -genKeyCounts[g];
-                long genFileOffset = genFileOffsets[g];
-                long genDataSize = genDataSizes[g];
+                int activeKeyCount = -gkc;
+                long genFileOffset = genFileOffsets.getQuick(g);
+                long genDataSize = genDataSizes.getQuick(g);
                 valueMem.extend(genFileOffset + genDataSize);
                 long genAddr = valueMem.addressOf(genFileOffset);
                 for (int i = 0; i < activeKeyCount; i++) {
@@ -193,11 +193,12 @@ public class PostingGenLookup implements Closeable {
 
             // Pass 2: fill entries (reuse countsAddr as write position tracker)
             for (int g = 0; g < genCount; g++) {
-                if (genKeyCounts[g] >= 0) {
+                int gkc = genKeyCounts.getQuick(g);
+                if (gkc >= 0) {
                     continue;
                 }
-                int activeKeyCount = -genKeyCounts[g];
-                long genAddr = valueMem.addressOf(genFileOffsets[g]);
+                int activeKeyCount = -gkc;
+                long genAddr = valueMem.addressOf(genFileOffsets.getQuick(g));
                 for (int i = 0; i < activeKeyCount; i++) {
                     int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
                     if (key < kc) {
@@ -219,8 +220,9 @@ public class PostingGenLookup implements Closeable {
         // Estimate per-gen SBBF size at default FPP
         int maxActiveKeys = 0;
         for (int g = 0; g < genCount; g++) {
-            if (genKeyCounts[g] < 0) {
-                int ak = -genKeyCounts[g];
+            int gkc = genKeyCounts.getQuick(g);
+            if (gkc < 0) {
+                int ak = -gkc;
                 if (ak > maxActiveKeys) {
                     maxActiveKeys = ak;
                 }
@@ -243,23 +245,24 @@ public class PostingGenLookup implements Closeable {
             return;
         }
 
-        sbbfAddrs = new long[genCount];
+        sbbfAddrs.setAll(genCount, 0);
         sbbfGenCount = genCount;
 
         for (int g = 0; g < genCount; g++) {
-            if (genKeyCounts[g] >= 0) {
-                sbbfAddrs[g] = 0; // no SBBF for dense gens
-                continue;
+            int gkc = genKeyCounts.getQuick(g);
+            if (gkc >= 0) {
+                continue; // no SBBF for dense gens, address stays 0
             }
-            int activeKeyCount = -genKeyCounts[g];
-            long genAddr = valueMem.addressOf(genFileOffsets[g]);
+            int activeKeyCount = -gkc;
+            long genAddr = valueMem.addressOf(genFileOffsets.getQuick(g));
 
-            sbbfAddrs[g] = SplitBlockBloomFilter.allocate(sbbfSizePerGen);
+            long addr = SplitBlockBloomFilter.allocate(sbbfSizePerGen);
+            sbbfAddrs.setQuick(g, addr);
             sbbfGenCount = g + 1; // track for cleanup if later allocations fail
             for (int i = 0; i < activeKeyCount; i++) {
                 int key = Unsafe.getUnsafe().getInt(genAddr + (long) i * Integer.BYTES);
                 long hash = SplitBlockBloomFilter.hashKey(key);
-                SplitBlockBloomFilter.insert(sbbfAddrs[g], sbbfSizePerGen, hash);
+                SplitBlockBloomFilter.insert(addr, sbbfSizePerGen, hash);
             }
         }
 
@@ -280,11 +283,14 @@ public class PostingGenLookup implements Closeable {
     }
 
     private void freeTier2() {
-        if (sbbfAddrs != null) {
+        if (sbbfGenCount > 0) {
             for (int g = 0; g < sbbfGenCount; g++) {
-                SplitBlockBloomFilter.free(sbbfAddrs[g], sbbfSizePerGen);
+                long addr = sbbfAddrs.getQuick(g);
+                if (addr != 0) {
+                    SplitBlockBloomFilter.free(addr, sbbfSizePerGen);
+                }
             }
-            sbbfAddrs = null;
+            sbbfAddrs.clear();
             sbbfGenCount = 0;
             sbbfSizePerGen = 0;
         }
@@ -300,7 +306,7 @@ public class PostingGenLookup implements Closeable {
             return;
         }
         this.keyCount = keyCount;
-        if (genCount == 0 || keyCount == 0 || genFileOffsets == null) {
+        if (genCount == 0 || keyCount == 0 || genFileOffsets.size() == 0) {
             this.builtForGenCount = genCount;
             this.tier = TIER_NONE;
             return;
@@ -322,11 +328,11 @@ public class PostingGenLookup implements Closeable {
     }
 
     long getGenDataSize(int gen) {
-        return genDataSizes[gen];
+        return genDataSizes.getQuick(gen);
     }
 
     long getGenFileOffset(int gen) {
-        return genFileOffsets[gen];
+        return genFileOffsets.getQuick(gen);
     }
 
     int getGenIndex(int entryPos) {
@@ -334,26 +340,26 @@ public class PostingGenLookup implements Closeable {
     }
 
     int getGenKeyCount(int gen) {
-        return genKeyCounts[gen];
+        return genKeyCounts.getQuick(gen);
     }
 
     int getGenMaxKey(int gen) {
-        return genMaxKeys[gen];
+        return genMaxKeys.getQuick(gen);
     }
 
     int getGenMinKey(int gen) {
-        return genMinKeys[gen];
+        return genMinKeys.getQuick(gen);
     }
 
     long getGenPrefixSumOffset(int gen) {
-        int minKey = genMinKeys[gen];
-        int maxKey = genMaxKeys[gen];
+        int minKey = genMinKeys.getQuick(gen);
+        int maxKey = genMaxKeys.getQuick(gen);
         int keyRange = maxKey - minKey + 1;
-        return genFileOffsets[gen] + genDataSizes[gen] - (long) (keyRange + 2) * Integer.BYTES;
+        return genFileOffsets.getQuick(gen) + genDataSizes.getQuick(gen) - (long) (keyRange + 2) * Integer.BYTES;
     }
 
     int getGenSidecarOffset(int gen) {
-        return genSidecarOffsets != null ? genSidecarOffsets[gen] : 0;
+        return gen < genSidecarOffsets.size() ? genSidecarOffsets.getQuick(gen) : 0;
     }
 
     int getKeyCount() {
@@ -385,11 +391,15 @@ public class PostingGenLookup implements Closeable {
     }
 
     // Tier 2 accessor
-    boolean mightContainKey(int gen, int key) {
-        if (gen >= sbbfGenCount || sbbfAddrs[gen] == 0) {
-            return true; // no SBBF for this gen (dense gen), assume present
+    boolean mightNotContainKey(int gen, int key) {
+        if (gen >= sbbfGenCount) {
+            return false; // no SBBF for this gen (dense gen), assume present
         }
-        return SplitBlockBloomFilter.mightContain(sbbfAddrs[gen], sbbfSizePerGen, SplitBlockBloomFilter.hashKey(key));
+        long addr = sbbfAddrs.getQuick(gen);
+        if (addr == 0) {
+            return false; // no SBBF for this gen (dense gen), assume present
+        }
+        return !SplitBlockBloomFilter.mightContain(addr, sbbfSizePerGen, SplitBlockBloomFilter.hashKey(key));
     }
 
     void setMemoryBudget(long budget) {
@@ -402,27 +412,20 @@ public class PostingGenLookup implements Closeable {
      * Does NOT build the lookup index (tier1/tier2) — call buildLookupIfNeeded after.
      */
     void snapshotMetadata(MemoryMR keyMem, int genCount, long pageOffset) {
-        if (genCount == 0) {
-            return;
-        }
-        // Ensure arrays are large enough
-        if (genFileOffsets == null || genFileOffsets.length < genCount) {
-            int newSize = Math.max(genCount, 16);
-            genFileOffsets = new long[newSize];
-            genDataSizes = new long[newSize];
-            genKeyCounts = new int[newSize];
-            genMinKeys = new int[newSize];
-            genMaxKeys = new int[newSize];
-            genSidecarOffsets = new int[newSize];
-        }
+        genFileOffsets.clear();
+        genDataSizes.clear();
+        genKeyCounts.clear();
+        genMinKeys.clear();
+        genMaxKeys.clear();
+        genSidecarOffsets.clear();
         for (int g = 0; g < genCount; g++) {
             long dirOffset = PostingIndexUtils.getGenDirOffset(pageOffset, g);
-            genFileOffsets[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET);
-            genDataSizes[g] = keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE);
-            genKeyCounts[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
-            genMinKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY);
-            genMaxKeys[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY);
-            genSidecarOffsets[g] = keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET);
+            genFileOffsets.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_FILE_OFFSET));
+            genDataSizes.add(keyMem.getLong(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIZE));
+            genKeyCounts.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT));
+            genMinKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MIN_KEY));
+            genMaxKeys.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_MAX_KEY));
+            genSidecarOffsets.add(keyMem.getInt(dirOffset + PostingIndexUtils.GEN_DIR_OFFSET_SIDECAR_OFFSET));
         }
     }
 }
