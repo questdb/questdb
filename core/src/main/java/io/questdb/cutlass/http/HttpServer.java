@@ -27,6 +27,7 @@ package io.questdb.cutlass.http;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.http.processors.ChatCompletionsProcessor;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -54,6 +55,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8String;
@@ -272,6 +274,23 @@ public class HttpServer implements Closeable {
                 return new TableStatusCheckProcessor(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
             }
         });
+
+        if (Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64) {
+            final int chatCompletionsBufferSize = httpServerConfiguration.getRecvBufferSize();
+            server.bind(new HttpRequestHandlerFactory() {
+                @Override
+                public ObjHashSet<String> getUrls() {
+                    return httpServerConfiguration.getContextPathChatCompletions();
+                }
+
+                @Override
+                public HttpRequestHandler newInstance() {
+                    // One instance per worker — the processor holds per-request state in a field,
+                    // so a shared singleton would race under concurrent connections.
+                    return new ChatCompletionsProcessor(chatCompletionsBufferSize);
+                }
+            });
+        }
 
         server.bind(new StaticContentProcessorFactory(cairoEngine, httpServerConfiguration));
     }

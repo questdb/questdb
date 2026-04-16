@@ -31,6 +31,10 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.ObjHashSet;
 
 public interface HttpFullFatServerConfiguration extends HttpServerConfiguration {
+    ObjHashSet<String> CONTEXT_PATH_CHAT_COMPLETIONS = new ObjHashSet<>() {{
+        add("/v1/chat/completions");
+        add("/chat/completions");
+    }};
     ObjHashSet<String> CONTEXT_PATH_EXEC = new ObjHashSet<>() {{
         add("/exec");
         add("/api/v1/sql/execute");
@@ -64,6 +68,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     String DEFAULT_PROCESSOR_URL = "*";
 
     ConcurrentCacheConfiguration getConcurrentCacheConfiguration();
+
+    default ObjHashSet<String> getContextPathChatCompletions() {
+        return CONTEXT_PATH_CHAT_COMPLETIONS;
+    }
 
     default ObjHashSet<String> getContextPathDefault() {
         return new ObjHashSet<>() {{
