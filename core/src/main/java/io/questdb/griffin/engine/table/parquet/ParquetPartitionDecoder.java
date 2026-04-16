@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Os;
@@ -45,10 +46,15 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private long allocator;
     private long decodeContextPtr;
+    private long nameTxn;
     private long parquetAddr;
     private long parquetMetaAddr;
     private long parquetMetaSize;
     private long parquetSize;
+    private int partitionBy;
+    private TableToken table;
+    private long timestamp;
+    private int timestampType;
 
     public static boolean decodeNoNeedToDecodeFlag(long encodedIndex) {
         return (encodedIndex & 1) == 1;
@@ -216,13 +222,18 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
      * @param parquetSize     size of the mmapped parquet file
      * @param memoryTag       memory tag for native allocations
      */
-    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, int memoryTag) {
+    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, long nameTxn, int memoryTag) {
         destroy();
         try {
             this.parquetMetaAddr = parquetMetaAddr;
             this.parquetMetaSize = parquetMetaSize;
             this.parquetAddr = parquetAddr;
             this.parquetSize = parquetSize;
+            this.partitionBy = partitionBy;
+            this.timestamp = timestamp;
+            this.nameTxn = nameTxn;
+            this.timestampType = timestampType;
+            this.table = table;
             this.allocator = Unsafe.getNativeAllocator(memoryTag);
             this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize);
             if (!this.parquetMetaReader.resolveFooter(parquetSize)) {
