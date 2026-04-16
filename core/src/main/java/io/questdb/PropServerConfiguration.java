@@ -482,7 +482,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinContextPoolCapacity;
     private final int sqlJoinMetadataMaxResizes;
     private final int sqlJoinMetadataPageSize;
-   private final long sqlLatestByRowCount;
+    private final long sqlLatestByRowCount;
     private final long sqlEarliestByRowCount;
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
