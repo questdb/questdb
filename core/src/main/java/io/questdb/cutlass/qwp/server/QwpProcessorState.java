@@ -404,7 +404,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             error.put("(no error message)");
         }
         this.fd = fd;
-        LOG.error().$('[').$(fd).$("] rejected [status=").$(status).$(", error=").$(errorText).$(']').$();
+        LOG.error().$('[').$(fd).$("] rejected [status=").$(status).$(", error=").$safe(errorText).$(']').$();
     }
 
     public void setHighestProcessedSequence(long highestProcessedSequence) {

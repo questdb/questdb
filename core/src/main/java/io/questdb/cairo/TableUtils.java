@@ -55,7 +55,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -404,7 +404,7 @@ public final class TableUtils {
     @NotNull
     public static Function createCursorFunction(
             FunctionParser functionParser,
-            @NotNull QueryModel model,
+            @NotNull IQueryModel model,
             @NotNull SqlExecutionContext executionContext
     ) throws SqlException {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();

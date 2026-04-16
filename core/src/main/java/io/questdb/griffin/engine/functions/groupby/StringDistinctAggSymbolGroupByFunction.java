@@ -47,7 +47,8 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     private final Function arg;
     private final char delimiter;
     private final GroupByIntHashSet set;
-    private final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
+    private boolean isShared;
+    private ObjList<DirectUtf16Sink> sinks = new ObjList<>();
     private int sinkIndex = 0;
     private int valueIndex;
 
@@ -59,6 +60,7 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
 
     @Override
     public void clear() {
+        if (isShared) return;
         Misc.freeObjListAndClear(sinks);
         sinkIndex = 0;
     }
@@ -129,6 +131,13 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.sinks = ((StringDistinctAggSymbolGroupByFunction) primary).sinks;
+        this.isShared = true;
     }
 
     @Override

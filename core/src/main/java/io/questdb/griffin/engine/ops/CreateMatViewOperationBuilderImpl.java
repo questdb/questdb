@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -106,7 +106,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     }
 
     @Override
-    public QueryModel getQueryModel() {
+    public IQueryModel getQueryModel() {
         return createTableOperationBuilder.getQueryModel();
     }
 
@@ -144,7 +144,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     }
 
     @Override
-    public void setSelectModel(QueryModel selectModel) {
+    public void setSelectModel(IQueryModel selectModel) {
         createTableOperationBuilder.setSelectModel(selectModel);
     }
 
