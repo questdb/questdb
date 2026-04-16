@@ -42,7 +42,7 @@ import io.questdb.std.str.Path;
  * prior to any cursor operations. Once this happens, cursors can be obtained and
  * called concurrently.
  */
-public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
+public class ConcurrentBitmapIndexFwdReader extends AbstractBitmapIndexReader {
     private final static Log LOG = LogFactory.getLog(ConcurrentBitmapIndexFwdReader.class);
     private final ConcurrentPool<Cursor> freeCursors = new ConcurrentPool<>();
 

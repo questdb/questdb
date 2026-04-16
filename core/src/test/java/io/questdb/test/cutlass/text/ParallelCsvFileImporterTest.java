@@ -33,7 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
@@ -1540,7 +1540,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         int columnIndex = metadata.getColumnIndex("sym");
                         Assert.assertTrue("Column sym must exist", columnIndex >= 0);
 
-                        BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD);
+                        IndexReader indexReader = reader.getBitmapIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
                         Assert.assertNotNull(indexReader);
                         Assert.assertTrue(indexReader.getKeyCount() > 0);
                         Assert.assertTrue(indexReader.getValueMemorySize() > 0);

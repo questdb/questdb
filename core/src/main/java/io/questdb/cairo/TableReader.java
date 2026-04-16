@@ -27,8 +27,8 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.idx.BitmapIndexBwdNullReader;
 import io.questdb.cairo.idx.BitmapIndexFwdNullReader;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -91,7 +91,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int timestampType;
     private final TxReader txFile;
     private final TxnScoreboard txnScoreboard;
-    private ObjList<BitmapIndexReader> bitmapIndexes;
+    private ObjList<IndexReader> bitmapIndexes;
     private int columnCount;
     private int columnCountShl;
     private LongList columnTops;
@@ -323,13 +323,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         return decoder;
     }
 
-    public BitmapIndexReader getBitmapIndexReader(int partitionIndex, int columnIndex, int direction) {
+    public IndexReader getBitmapIndexReader(int partitionIndex, int columnIndex, int direction) {
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
-        BitmapIndexReader indexReader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        IndexReader indexReader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
         if (indexReader != null) {
             if (
                     !indexReader.isOpen()
@@ -358,10 +358,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
     }
 
-    public BitmapIndexReader getBitmapIndexReaderIfExists(int partitionIndex, int columnIndex, int direction) {
+    public IndexReader getBitmapIndexReaderIfExists(int partitionIndex, int columnIndex, int direction) {
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
-        final int indexIndex = direction == BitmapIndexReader.DIR_BACKWARD ? index : index + 1;
+        final int indexIndex = direction == IndexReader.DIR_BACKWARD ? index : index + 1;
         return bitmapIndexes.getQuick(indexIndex);
     }
 
@@ -960,7 +960,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             int fromColumnIndex,
             ObjList<MemoryCMR> toColumns,
             LongList toColumnTops,
-            ObjList<BitmapIndexReader> toIndexReaders,
+            ObjList<IndexReader> toIndexReaders,
             int toBase,
             int toColumnIndex
     ) {
@@ -985,14 +985,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long partitionTxn) {
-        BitmapIndexReader reader;
+    private IndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long partitionTxn) {
+        IndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
             throw CairoException.critical(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
         }
         MemoryR col = columns.getQuick(globalIndex);
         if (col instanceof NullMemoryCMR) {
-            if (direction == BitmapIndexReader.DIR_BACKWARD) {
+            if (direction == IndexReader.DIR_BACKWARD) {
                 reader = new BitmapIndexBwdNullReader(columnNameTxn, partitionTxn);
                 bitmapIndexes.setQuick(globalIndex, reader);
             } else {
@@ -1014,7 +1014,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         getColumnTop(columnBase, columnIndex),
                         metadata
                 );
-                if (direction == BitmapIndexReader.DIR_BACKWARD) {
+                if (direction == IndexReader.DIR_BACKWARD) {
                     bitmapIndexes.setQuick(globalIndex, reader);
                 } else {
                     bitmapIndexes.setQuick(globalIndex + 1, reader);
@@ -1031,7 +1031,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         int capacity = partitionCount << columnCountShl;
         final ObjList<MemoryCMR> toColumns = new ObjList<>(capacity + 2);
         final LongList toColumnTops = new LongList(capacity / 2);
-        final ObjList<BitmapIndexReader> toIndexReaders = new ObjList<>(capacity);
+        final ObjList<IndexReader> toIndexReaders = new ObjList<>(capacity);
         toColumns.setPos(capacity + 2);
         toColumns.setQuick(0, NullMemoryCMR.INSTANCE);
         toColumns.setQuick(1, NullMemoryCMR.INSTANCE);
@@ -1673,7 +1673,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Path path,
             ObjList<MemoryCMR> columns,
             LongList columnTops,
-            ObjList<BitmapIndexReader> indexReaders,
+            ObjList<IndexReader> indexReaders,
             int columnBase,
             int columnIndex,
             long partitionRowCount
@@ -1755,7 +1755,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
 
                 if (metadata.isColumnIndexed(columnIndex)) {
-                    BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
+                    IndexReader indexReader = indexReaders.getQuick(primaryIndex);
                     if (indexReader != null) {
                         indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata);
                     }

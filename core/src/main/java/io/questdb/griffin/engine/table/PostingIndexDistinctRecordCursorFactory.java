@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -221,10 +221,10 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 if (frame == null) {
                     return;
                 }
-                BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
+                IndexReader indexReader = tableReader.getBitmapIndexReader(
                         frame.getPartitionIndex(),
                         readerColumnIndex,
-                        BitmapIndexReader.DIR_FORWARD
+                        IndexReader.DIR_FORWARD
                 );
                 // Bulk stride-scan: walks all dense/sparse gens in one sequential pass
                 // and marks present keys in the BitSet. Returns newly found count,

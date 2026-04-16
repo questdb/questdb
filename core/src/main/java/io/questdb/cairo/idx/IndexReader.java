@@ -34,7 +34,7 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public interface BitmapIndexReader extends Closeable {
+public interface IndexReader extends Closeable {
 
     int DIR_BACKWARD = 2;
     int DIR_FORWARD = 1;

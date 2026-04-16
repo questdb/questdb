@@ -33,13 +33,13 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.idx.AbstractIndexReader;
+import io.questdb.cairo.idx.AbstractBitmapIndexReader;
 import io.questdb.cairo.idx.BitmapIndexBwdReader;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.ConcurrentBitmapIndexFwdReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.NullMemoryCMR;
@@ -483,96 +483,6 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExtendGranularityWithFdBasedOf() throws Exception {
-        // Simulates what O3CopyJob.updateIndex does when appending to a non-last
-        // partition: opens BitmapIndexWriter with init=false using fd-based API.
-        // The fd-based BitmapIndexWriter.of() uses the 5-arg MemoryCMARWImpl.of()
-        // for keyMem. This test verifies that extend0() grows the key file in
-        // page-sized chunks (not 1 byte at a time).
-        int initialKeys = 1000;
-        int newKeys = 10_000;
-        int indexBlockCapacity = 4;
-
-        AtomicInteger allocateCount = new AtomicInteger();
-        LongList allocateSizes = new LongList();
-        long[] trackedKeyFd = {-1};
-        AtomicBoolean tracking = new AtomicBoolean();
-
-        FilesFacade testFf = new TestFilesFacadeImpl() {
-            @Override
-            public boolean allocate(long fd, long size) {
-                if (tracking.get() && fd == trackedKeyFd[0]) {
-                    allocateCount.incrementAndGet();
-                    allocateSizes.add(size);
-                }
-                return super.allocate(fd, size);
-            }
-        };
-
-        assertMemoryLeak(testFf, () -> {
-            create(configuration, path.trimTo(plen), "x", indexBlockCapacity);
-
-            try (BitmapIndexWriter w = new BitmapIndexWriter(configuration)) {
-                // Phase 1: create the index with init=true (simulates first partition creation).
-                w.of(path, "x", COLUMN_NAME_TXN_NONE, indexBlockCapacity);
-                for (int key = 0; key < initialKeys; key++) {
-                    w.add(key, key);
-                }
-                w.commit();
-                w.close();
-
-                // Phase 2: reopen with init=false using fd-based API,
-                // exactly as O3CopyJob.updateIndex does for OPEN_MID_PARTITION_FOR_APPEND.
-                long keyFd = TableUtils.openRW(
-                        testFf,
-                        BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE),
-                        LOG,
-                        configuration.getWriterFileOpenOpts()
-                );
-                long valueFd = TableUtils.openRW(
-                        testFf,
-                        BitmapIndexUtils.valueFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE),
-                        LOG,
-                        configuration.getWriterFileOpenOpts()
-                );
-                trackedKeyFd[0] = keyFd;
-                tracking.set(true);
-
-                // init=false: O3CopyJob passes row > 0 → init = (row == 0) = false
-                w.of(configuration, keyFd, valueFd, false, indexBlockCapacity);
-
-                // Add new keys, simulating new unique symbols in O3 append.
-                for (int key = initialKeys; key < initialKeys + newKeys; key++) {
-                    w.add(key, key);
-                }
-                w.commit();
-
-                tracking.set(false);
-
-                LOG.info()
-                        .$("bitmap index .k allocate calls [initialKeys=").$(initialKeys)
-                        .$(", newKeys=").$(newKeys)
-                        .$(", allocateCount=").$(allocateCount.get())
-                        .I$();
-                for (int i = 0, n = allocateSizes.size(); i < n; i++) {
-                    LOG.info()
-                            .$("  allocate[").$(i)
-                            .$("] size=").$(allocateSizes.get(i))
-                            .I$();
-                }
-
-                // With the fix, extend0() rounds up to page-sized chunks, so
-                // 10K new keys (320KB of key data) should need very few allocate
-                // calls — not tens of thousands.
-                assertTrue(
-                        "expected fewer than 100 allocate() calls but got " + allocateCount.get(),
-                        allocateCount.get() < 100
-                );
-            }
-        });
-    }
-
-    @Test
     public void testConcurrentForwardCursorReadBreadth() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         testConcurrentForwardCursor(rnd.nextInt(1000000), 1024);
@@ -878,10 +788,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         tableReader.openPartition(0);
                         final int columnBase = tableReader.getColumnBase(0);
                         final int columnIndex = tableReader.getMetadata().getColumnIndex("c");
-                        BitmapIndexReader reader = tableReader.getBitmapIndexReader(
+                        IndexReader reader = tableReader.getBitmapIndexReader(
                                 0,
                                 columnIndex,
-                                BitmapIndexReader.DIR_BACKWARD
+                                IndexReader.DIR_BACKWARD
                         );
 
                         long columnTop = tableReader.getColumnTop(columnBase, columnIndex);
@@ -958,6 +868,96 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 assertEmptyCursor(reader);
+            }
+        });
+    }
+
+    @Test
+    public void testExtendGranularityWithFdBasedOf() throws Exception {
+        // Simulates what O3CopyJob.updateIndex does when appending to a non-last
+        // partition: opens BitmapIndexWriter with init=false using fd-based API.
+        // The fd-based BitmapIndexWriter.of() uses the 5-arg MemoryCMARWImpl.of()
+        // for keyMem. This test verifies that extend0() grows the key file in
+        // page-sized chunks (not 1 byte at a time).
+        int initialKeys = 1000;
+        int newKeys = 10_000;
+        int indexBlockCapacity = 4;
+
+        AtomicInteger allocateCount = new AtomicInteger();
+        LongList allocateSizes = new LongList();
+        long[] trackedKeyFd = {-1};
+        AtomicBoolean tracking = new AtomicBoolean();
+
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (tracking.get() && fd == trackedKeyFd[0]) {
+                    allocateCount.incrementAndGet();
+                    allocateSizes.add(size);
+                }
+                return super.allocate(fd, size);
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            create(configuration, path.trimTo(plen), "x", indexBlockCapacity);
+
+            try (BitmapIndexWriter w = new BitmapIndexWriter(configuration)) {
+                // Phase 1: create the index with init=true (simulates first partition creation).
+                w.of(path, "x", COLUMN_NAME_TXN_NONE, indexBlockCapacity);
+                for (int key = 0; key < initialKeys; key++) {
+                    w.add(key, key);
+                }
+                w.commit();
+                w.close();
+
+                // Phase 2: reopen with init=false using fd-based API,
+                // exactly as O3CopyJob.updateIndex does for OPEN_MID_PARTITION_FOR_APPEND.
+                long keyFd = TableUtils.openRW(
+                        testFf,
+                        BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE),
+                        LOG,
+                        configuration.getWriterFileOpenOpts()
+                );
+                long valueFd = TableUtils.openRW(
+                        testFf,
+                        BitmapIndexUtils.valueFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE),
+                        LOG,
+                        configuration.getWriterFileOpenOpts()
+                );
+                trackedKeyFd[0] = keyFd;
+                tracking.set(true);
+
+                // init=false: O3CopyJob passes row > 0 → init = (row == 0) = false
+                w.of(configuration, keyFd, valueFd, false, indexBlockCapacity);
+
+                // Add new keys, simulating new unique symbols in O3 append.
+                for (int key = initialKeys; key < initialKeys + newKeys; key++) {
+                    w.add(key, key);
+                }
+                w.commit();
+
+                tracking.set(false);
+
+                LOG.info()
+                        .$("bitmap index .k allocate calls [initialKeys=").$(initialKeys)
+                        .$(", newKeys=").$(newKeys)
+                        .$(", allocateCount=").$(allocateCount.get())
+                        .I$();
+                for (int i = 0, n = allocateSizes.size(); i < n; i++) {
+                    LOG.info()
+                            .$("  allocate[").$(i)
+                            .$("] size=").$(allocateSizes.get(i))
+                            .I$();
+                }
+
+                // With the fix, extend0() rounds up to page-sized chunks, so
+                // 10K new keys (320KB of key data) should need very few allocate
+                // calls — not tens of thousands.
+                assertTrue(
+                        "expected fewer than 100 allocate() calls but got " + allocateCount.get(),
+                        allocateCount.get() < 100
+                );
             }
         });
     }
@@ -1518,7 +1518,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             writer.add(900, 8000);
             Assert.assertEquals(901, writer.getKeyCount());
 
-            try (BitmapIndexReader reader = new BitmapIndexBwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+            try (IndexReader reader = new BitmapIndexBwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
                 Assert.assertEquals(901, reader.getKeyCount());
                 RowCursor cursor = reader.getCursor(900, 0, 1_000_000);
                 assertTrue(cursor.hasNext());
@@ -1638,14 +1638,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void assertEmptyCursor(AbstractIndexReader reader) {
+    private void assertEmptyCursor(AbstractBitmapIndexReader reader) {
         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE);
         Assert.assertFalse(cursor.hasNext());
         Assert.assertEquals(0, cursor.next());
         Misc.free(cursor);
     }
 
-    private void assertForwardCursorLimit(AbstractIndexReader reader, int min, int N, LongList tmp, int nExpectedResults, int nExpectedNulls, int slotId) {
+    private void assertForwardCursorLimit(AbstractBitmapIndexReader reader, int min, int N, LongList tmp, int nExpectedResults, int nExpectedNulls, int slotId) {
         assertTrue(reader instanceof BitmapIndexFwdReader || reader instanceof ConcurrentBitmapIndexFwdReader);
         tmp.clear();
         try (RowCursor cursor = reader.getCursor(0, min, N - 1)) {

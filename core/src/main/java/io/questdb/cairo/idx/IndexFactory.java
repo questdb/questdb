@@ -39,7 +39,7 @@ public final class IndexFactory {
     private IndexFactory() {
     }
 
-    public static BitmapIndexReader createReader(
+    public static IndexReader createReader(
             byte indexType,
             int direction,
             CairoConfiguration configuration,
@@ -51,10 +51,10 @@ public final class IndexFactory {
             RecordMetadata metadata
     ) {
         return switch (indexType) {
-            case IndexType.BITMAP -> direction == BitmapIndexReader.DIR_FORWARD
+            case IndexType.BITMAP -> direction == IndexReader.DIR_FORWARD
                     ? new BitmapIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop)
                     : new BitmapIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop);
-            case IndexType.POSTING, IndexType.POSTING_DELTA -> direction == BitmapIndexReader.DIR_FORWARD
+            case IndexType.POSTING, IndexType.POSTING_DELTA -> direction == IndexReader.DIR_FORWARD
                     ? new PostingIndexFwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata)
                     : new PostingIndexBwdReader(configuration, path, columnName, columnNameTxn, partitionTxn, columnTop, metadata);
             default -> throw unsupportedIndexType(indexType);

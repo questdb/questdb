@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
-public class BitmapIndexBwdNullReader implements BitmapIndexReader {
+public class BitmapIndexBwdNullReader implements IndexReader {
     private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
     private long partitionTxn;

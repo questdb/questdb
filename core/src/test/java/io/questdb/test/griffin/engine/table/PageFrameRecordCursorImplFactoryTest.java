@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
@@ -36,6 +35,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -119,9 +119,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        BitmapIndexReader.DIR_FORWARD,
+                        IndexReader.DIR_FORWARD,
                         null
-                        );
+                );
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
                     // entity index
                     final IntList columnIndexes = new IntList();
@@ -1018,9 +1018,9 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 RowCursorFactory symbolIndexRowCursorFactory = new SymbolIndexRowCursorFactory(
                         columnIndex,
                         symbolKey,
-                        BitmapIndexReader.DIR_FORWARD,
+                        IndexReader.DIR_FORWARD,
                         null
-                        );
+                );
                 try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
                     // entity index
                     final IntList columnIndexes = new IntList();

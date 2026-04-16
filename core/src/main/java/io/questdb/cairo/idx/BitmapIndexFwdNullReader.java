@@ -34,7 +34,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
-public class BitmapIndexFwdNullReader implements BitmapIndexReader {
+public class BitmapIndexFwdNullReader implements IndexReader {
     private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
     private long partitionTxn;

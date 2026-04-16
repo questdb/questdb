@@ -56,7 +56,7 @@ import io.questdb.std.str.Utf8Sequence;
  * Contains index metadata management, memory mapping, generation lookup,
  * and reload logic common to both iteration directions.
  */
-public abstract class AbstractPostingIndexReader implements BitmapIndexReader {
+public abstract class AbstractPostingIndexReader implements IndexReader {
 
     private static final String INDEX_CORRUPT = "posting index is corrupt";
     private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);

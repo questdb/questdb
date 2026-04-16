@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -84,7 +84,7 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index ").type(BitmapIndexReader.nameOf(indexDirection)).type(" scan").meta("on").putBaseColumnName(columnIndex);
+        sink.type("Index ").type(IndexReader.nameOf(indexDirection)).type(" scan").meta("on").putBaseColumnName(columnIndex);
         sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(symbolKey);
     }
 }

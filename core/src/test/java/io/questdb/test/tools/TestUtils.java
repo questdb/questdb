@@ -27,7 +27,6 @@ package io.questdb.test.tools;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.ServerMain;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -47,6 +46,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
@@ -845,9 +845,9 @@ public final class TestUtils {
                 int expectedCapacity = metadata.getIndexValueBlockCapacity(symIndex);
 
                 for (int partitionIndex = 0; partitionIndex < rdr.getPartitionCount(); partitionIndex++) {
-                    BitmapIndexReader bitmapIndexReader =
-                            rdr.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
-                    Assert.assertEquals(expectedCapacity, bitmapIndexReader.getValueBlockCapacity() + 1);
+                    IndexReader indexReader =
+                            rdr.getBitmapIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
+                    Assert.assertEquals(expectedCapacity, indexReader.getValueBlockCapacity() + 1);
                 }
             }
         }

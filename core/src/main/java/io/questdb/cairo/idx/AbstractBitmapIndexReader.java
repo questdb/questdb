@@ -40,7 +40,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-public abstract class AbstractIndexReader implements BitmapIndexReader {
+public abstract class AbstractBitmapIndexReader implements IndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
     protected static final Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
     protected final MemoryMR keyMem = Vm.getCMRInstance();

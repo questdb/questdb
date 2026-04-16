@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
@@ -36,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -3791,7 +3791,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 // Verify bitmap index reader works for the previously-skipped indexed column
                 int symIndex = reader.getMetadata().getColumnIndex("sym");
-                BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
+                IndexReader indexReader = reader.getBitmapIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                 Assert.assertNotNull(indexReader);
                 Assert.assertTrue(indexReader.isOpen());
             }
@@ -3844,7 +3844,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 // to populate the bitmapIndexes slot with a non-null reader.
                 reader.openPartition(0);
                 int symIndex = reader.getMetadata().getColumnIndex("sym");
-                reader.getBitmapIndexReader(0, symIndex, BitmapIndexReader.DIR_BACKWARD);
+                reader.getBitmapIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                 assertOpenPartitionCount(reader);
 
                 // Close the partition. The bitmap index reader is closed but

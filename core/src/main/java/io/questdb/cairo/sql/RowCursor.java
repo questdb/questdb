@@ -24,13 +24,14 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.QuietCloseable;
 
 /**
  * Used internally for index-based (but not only) row access.
  * <p>
  * <b>Lifecycle is the caller's responsibility.</b> A cursor acquired from
- * {@link io.questdb.cairo.idx.BitmapIndexReader#getCursor} must be closed
+ * {@link IndexReader#getCursor} must be closed
  * exactly once by whoever acquired it — the reader does not track outstanding
  * cursors and will not free them on its own.
  * <p>

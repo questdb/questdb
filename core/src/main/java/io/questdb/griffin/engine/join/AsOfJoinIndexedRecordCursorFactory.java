@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -159,9 +159,9 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             long rowMax = Rows.toLocalRowID(slaveRecB.getRowId());
             int frameIndex = slaveTimeFrame.getFrameIndex();
             for (; ; ) {
-                BitmapIndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(
+                IndexReader indexReader = slaveTimeFrameCursor.getIndexReaderForCurrentFrame(
                         slaveSymbolColumnIndex,
-                        BitmapIndexReader.DIR_BACKWARD
+                        IndexReader.DIR_BACKWARD
                 );
                 // indexReader.getCursor() takes absolute row IDs, but TimeFrameCursor uses numbering relative to
                 // the first row within the BETWEEN ... AND ... range selected by the query.

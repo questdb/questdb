@@ -31,8 +31,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -518,8 +518,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             try {
                 PartitionFrame frame;
                 while ((frame = frameCursor.next()) != null) {
-                    BitmapIndexReader reader = tableReader.getBitmapIndexReader(
-                            frame.getPartitionIndex(), indexColumnIndex, BitmapIndexReader.DIR_FORWARD);
+                    IndexReader reader = tableReader.getBitmapIndexReader(
+                            frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
                     try (RowCursor rc = reader.getCursor(TableUtils.toIndexKey(symbolKey),
                             frame.getRowLo(), frame.getRowHi() - 1)) {
                         if (rc instanceof CoveringRowCursor coveringCursor) {
@@ -614,8 +614,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // index, evaluating the filter on each row. When the backward
                     // reader has covering data, use it directly to avoid column
                     // file I/O; otherwise fall back to column files.
-                    BitmapIndexReader bwdReader = tableReader.getBitmapIndexReader(
-                            partitionIndex, indexColumnIndex, BitmapIndexReader.DIR_BACKWARD);
+                    IndexReader bwdReader = tableReader.getBitmapIndexReader(
+                            partitionIndex, indexColumnIndex, IndexReader.DIR_BACKWARD);
                     RowCursor bwdCursor = bwdReader.getCursor(indexKey, rowLo, rowHi);
                     try {
                         if (bwdCursor instanceof CoveringRowCursor crc && crc.hasCovering()) {
@@ -654,8 +654,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                 } else {
                     // No filter: use forward reader and seekToLast for covering data
-                    BitmapIndexReader fwdReader = tableReader.getBitmapIndexReader(
-                            partitionIndex, indexColumnIndex, BitmapIndexReader.DIR_FORWARD);
+                    IndexReader fwdReader = tableReader.getBitmapIndexReader(
+                            partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
                     RowCursor rowCursor = fwdReader.getCursor(indexKey, rowLo, rowHi);
                     try {
                         if (rowCursor instanceof CoveringRowCursor crc) {
@@ -721,10 +721,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private boolean tryOpenKey(int partitionIndex, int rawSymbolKey, long rowLo, long rowHi) {
-            BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
+            IndexReader indexReader = tableReader.getBitmapIndexReader(
                     partitionIndex,
                     indexColumnIndex,
-                    BitmapIndexReader.DIR_FORWARD
+                    IndexReader.DIR_FORWARD
             );
             RowCursor rowCursor = indexReader.getCursor(
                     TableUtils.toIndexKey(rawSymbolKey),
@@ -822,7 +822,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+        public IndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return null;
         }
 
@@ -1050,10 +1050,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi) {
-            BitmapIndexReader indexReader = tableReader.getBitmapIndexReader(
+            IndexReader indexReader = tableReader.getBitmapIndexReader(
                     partitionIndex,
                     indexColumnIndex,
-                    BitmapIndexReader.DIR_FORWARD
+                    IndexReader.DIR_FORWARD
             );
             final long[] addrs = frameAddrs;
             final long[] varDataAddrs = frameVarDataAddrs;

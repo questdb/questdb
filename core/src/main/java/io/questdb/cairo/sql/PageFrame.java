@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 
 /**
@@ -57,7 +57,7 @@ public interface PageFrame {
      */
     long getAuxPageSize(int columnIndex);
 
-    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
+    IndexReader getBitmapIndexReader(int columnIndex, int direction);
 
     /**
      * The count of columns in the page frame. In some cases it is possible to have

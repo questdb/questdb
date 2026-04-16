@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
@@ -46,7 +46,7 @@ public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         try (RowCursor indexReaderCursor = pageFrame
-                .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
+                .getBitmapIndexReader(columnIndex, IndexReader.DIR_BACKWARD)
                 .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1)) {
             if (indexReaderCursor.hasNext()) {
                 cursor.of(indexReaderCursor.next());
@@ -68,7 +68,7 @@ public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index ").type(BitmapIndexReader.NAME_BACKWARD).type(" scan").meta("on").putBaseColumnName(columnIndex);
+        sink.type("Index ").type(IndexReader.NAME_BACKWARD).type(" scan").meta("on").putBaseColumnName(columnIndex);
         sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(symbolKey);
     }
 }

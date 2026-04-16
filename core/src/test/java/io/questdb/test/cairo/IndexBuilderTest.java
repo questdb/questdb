@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexBuilder;
@@ -35,6 +34,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -529,11 +529,11 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 Assert.assertTrue("Column sym2 must exist", columnIndex2 >= 0);
                 Assert.assertEquals(
                         511,
-                        reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                        reader.getBitmapIndexReader(0, columnIndex, IndexReader.DIR_FORWARD).getValueBlockCapacity()
                 );
                 Assert.assertEquals(
                         1023,
-                        reader.getBitmapIndexReader(0, columnIndex2, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                        reader.getBitmapIndexReader(0, columnIndex2, IndexReader.DIR_FORWARD).getValueBlockCapacity()
                 );
             }
         });
@@ -642,11 +642,11 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 Assert.assertTrue("Column sym2 must exist", columnIndex2 >= 0);
                 Assert.assertEquals(
                         511,
-                        reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                        reader.getBitmapIndexReader(0, columnIndex, IndexReader.DIR_FORWARD).getValueBlockCapacity()
                 );
                 Assert.assertEquals(
                         1023,
-                        reader.getBitmapIndexReader(0, columnIndex2, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                        reader.getBitmapIndexReader(0, columnIndex2, IndexReader.DIR_FORWARD).getValueBlockCapacity()
                 );
             }
         });

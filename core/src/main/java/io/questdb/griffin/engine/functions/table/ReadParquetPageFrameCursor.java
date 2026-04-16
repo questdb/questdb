@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -241,7 +241,7 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+        public IndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return null;
         }
 

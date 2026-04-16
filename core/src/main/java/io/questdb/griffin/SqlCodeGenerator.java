@@ -49,7 +49,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
@@ -9265,7 +9265,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     assert nKeyValues > 0 || nKeyExcludedValues > 0;
 
                     boolean orderByKeyColumn = false;
-                    int indexDirection = BitmapIndexReader.DIR_FORWARD;
+                    int indexDirection = IndexReader.DIR_FORWARD;
                     if (intervalHitsOnlyOnePartition) {
                         final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                         final int orderByAdviceSize = orderByAdvice.size();
@@ -9281,7 +9281,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
                                     orderByKeyColumn = true;
                                     if (getOrderByDirectionOrDefault(model, 1) == ORDER_DIRECTION_DESCENDING) {
-                                        indexDirection = BitmapIndexReader.DIR_BACKWARD;
+                                        indexDirection = IndexReader.DIR_BACKWARD;
                                     }
                                 }
                             }
@@ -9298,7 +9298,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             orderByTimestamp = true;
 
                             if (orderByDirection == ORDER_DIRECTION_DESCENDING) {
-                                indexDirection = BitmapIndexReader.DIR_BACKWARD;
+                                indexDirection = IndexReader.DIR_BACKWARD;
                             }
                         } else if (nKeyExcludedValues > 0 && orderByDirection == ORDER_DIRECTION_ASCENDING) {
                             orderByTimestamp = true;
@@ -9535,13 +9535,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
                                 && !SqlHints.hasNoIndexHint(model)) {
                             boolean orderByKeyColumn = false;
-                            int indexDirection = BitmapIndexReader.DIR_FORWARD;
+                            int indexDirection = IndexReader.DIR_FORWARD;
                             if (orderByAdviceSize == 1) {
                                 orderByKeyColumn = true;
                             } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
                                 orderByKeyColumn = true;
                                 if (getOrderByDirectionOrDefault(model, 1) == ORDER_DIRECTION_DESCENDING) {
-                                    indexDirection = BitmapIndexReader.DIR_BACKWARD;
+                                    indexDirection = IndexReader.DIR_BACKWARD;
                                 }
                             }
 

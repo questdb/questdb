@@ -37,7 +37,7 @@ import io.questdb.std.str.Path;
 /**
  * Cursors returned by this class are not thread-safe.
  */
-public class BitmapIndexBwdReader extends AbstractIndexReader {
+public class BitmapIndexBwdReader extends AbstractBitmapIndexReader {
     private final ObjList<Cursor> freeCursors = new ObjList<>();
     private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
 

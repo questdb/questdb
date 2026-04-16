@@ -43,7 +43,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -3306,7 +3306,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private void assertIndex(TableReader reader, TestTableReaderRecord record, int columnIndex) {
         final int partitionIndex = 0;
         reader.openPartition(partitionIndex);
-        final BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
+        final IndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, IndexReader.DIR_FORWARD);
         final SymbolMapReader r = reader.getSymbolMapReader(columnIndex);
         final int symbolCount = r.getSymbolCount();
 

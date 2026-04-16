@@ -5,10 +5,10 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
-import io.questdb.cairo.idx.BitmapIndexReader;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.CoveringRowCursor;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -148,7 +148,7 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public void indexPointRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
-            BitmapIndexReader reader = openReader(s.config, path, s.isPosting);
+            IndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key : s.pointKeys) {
                     try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE);) {
@@ -168,7 +168,7 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public void indexRangeRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
-            BitmapIndexReader reader = openReader(s.config, path, s.isPosting);
+            IndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key : s.rangeKeys) {
                     try (RowCursor c = reader.getCursor(key, s.maxRow / 4, s.maxRow * 3 / 4);) {
@@ -184,7 +184,7 @@ public class PostingIndexBenchmarkSuite {
     @Benchmark
     public void indexScanRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
-            BitmapIndexReader reader = openReader(s.config, path, s.isPosting);
+            IndexReader reader = openReader(s.config, path, s.isPosting);
             try {
                 for (int key = 0; key < s.keyCount; key++) {
                     try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
@@ -432,7 +432,7 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
-    private static BitmapIndexReader openReader(CairoConfiguration config, Path path, boolean posting) {
+    private static IndexReader openReader(CairoConfiguration config, Path path, boolean posting) {
         return posting
                 ? new PostingIndexFwdReader(config, path, "test", COL_TXN, -1, 0)
                 : new BitmapIndexFwdReader(config, path, "test", COL_TXN, -1, 0);

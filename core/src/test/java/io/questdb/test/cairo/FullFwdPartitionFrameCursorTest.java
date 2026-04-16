@@ -37,7 +37,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.idx.BitmapIndexReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -1013,7 +1013,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at partition frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, indexDirection);
+            IndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, indexDirection);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
@@ -1057,7 +1057,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private long assertIndex(TestTableReaderRecord record, int columnIndex, StaticSymbolTable symbolTable, long count, PartitionFrame frame, int direction) {
-        BitmapIndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, direction);
+        IndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, direction);
 
         // because out Symbol column 0 is indexed, frame has to have an index.
         Assert.assertNotNull(indexReader);
@@ -1103,7 +1103,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
         PartitionFrame frame;
         while ((frame = cursor.next()) != null) {
             try {
-                record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), 4, BitmapIndexReader.DIR_BACKWARD);
+                record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), 4, IndexReader.DIR_BACKWARD);
                 Assert.fail();
             } catch (CairoException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "Not indexed"));
@@ -1128,7 +1128,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     symbolTable,
                     count,
                     frame,
-                    BitmapIndexReader.DIR_BACKWARD
+                    IndexReader.DIR_BACKWARD
             );
 
             count = assertIndex(
@@ -1137,7 +1137,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     symbolTable,
                     count,
                     frame,
-                    BitmapIndexReader.DIR_FORWARD
+                    IndexReader.DIR_FORWARD
             );
 
         }
@@ -2500,9 +2500,9 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     static void assertIndexRowsMatchSymbol(PartitionFrameCursor cursor, TestTableReaderRecord record, int columnIndex, long expectedRowCount) {
-        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_FORWARD);
+        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, IndexReader.DIR_FORWARD);
         cursor.toTop();
-        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_BACKWARD);
+        assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, IndexReader.DIR_BACKWARD);
     }
 
     final static class MyWorkScheduler extends MessageBusImpl {
