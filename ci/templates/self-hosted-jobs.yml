@@ -20,6 +20,7 @@ jobs:
       JAVA_HOME_25_X64: "/usr/lib/jvm/java-25-openjdk-arm64"
       JAVA_HOME: "/usr/lib/jvm/java-25-openjdk-arm64"
       os: Linux
+      poolName: "hetzner-incus-arm"
     steps:
       - template: steps.yml
 
@@ -44,6 +45,7 @@ jobs:
       os: Linux
       JAVA_HOME_25_X64: "/usr/lib/jvm/java-25-openjdk-amd64"
       JAVA_HOME: "/usr/lib/jvm/java-25-openjdk-amd64"
+      poolName: "hetzner-incus-zfs"
     steps:
       - template: steps.yml
 
@@ -65,8 +67,9 @@ jobs:
       javadoc_step: ""
       javadoc_profile: ""
       jdk: "1.25"
-      JAVA_HOME_25_X64: "/opt/graalvm"
-      JAVA_HOME: "/opt/graalvm"
       os: Linux
+      JAVA_HOME_25_X64: "/opt/graalvm-25"
+      JAVA_HOME: "/opt/graalvm-25"
+      poolName: "hetzner-incus"
     steps:
       - template: steps.yml
