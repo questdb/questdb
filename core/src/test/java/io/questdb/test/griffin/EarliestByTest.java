@@ -1811,6 +1811,8 @@ public class EarliestByTest extends AbstractCairoTest {
 
     @Test
     public void testEarliestOnOverGroupBySubquery() throws Exception {
+        // Inner subquery has implicit GROUP BY s, ts (since both are non-aggregated alongside sum(v)).
+        // Each row becomes its own group, so sum(v) == v. EARLIEST ON picks the first row per symbol.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
@@ -1822,8 +1824,8 @@ public class EarliestByTest extends AbstractCairoTest {
             String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertSql(
                     "ts\ts\ttotal\n" +
-                            "1970-01-01T00:00:00.000000" + suffix + "\ta\t40\n" +
-                            "1970-01-01T01:00:00.000000" + suffix + "\tb\t60\n",
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\t10\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\tb\t20\n",
                     "SELECT ts, s, total FROM (SELECT s, sum(v) total, ts FROM t TIMESTAMP(ts)) EARLIEST ON ts PARTITION BY s"
             );
         });
@@ -1863,12 +1865,12 @@ public class EarliestByTest extends AbstractCairoTest {
     public void testEarliestOnManyDistinctKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t as (" +
-                    "SELECT rnd_symbol('s' || x::string) s, " +
+                    "SELECT ('s' || x)::symbol s, " +
                     "timestamp_sequence(0, 60*1000*1000L)::" + timestampType.getTypeName() + " ts " +
                     "FROM long_sequence(1000)" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
 
-            // Should return one row per distinct symbol — verify count
+            // Each of the 1000 symbols appears exactly once, so EARLIEST ON returns all rows
             assertSql(
                     "count\n1000\n",
                     "SELECT count() FROM (SELECT ts, s FROM t EARLIEST ON ts PARTITION BY s)"
