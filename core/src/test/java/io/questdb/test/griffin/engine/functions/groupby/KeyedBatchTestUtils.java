@@ -38,12 +38,20 @@ import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UuidFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.junit.Assert;
 
 /**
@@ -148,6 +156,44 @@ final class KeyedBatchTestUtils {
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
             Unsafe.getUnsafe().putDouble(addr + (long) i * Double.BYTES, values[i]);
+        }
+        return addr;
+    }
+
+    /**
+     * Allocates a native buffer of {@code l0.length * 32} bytes, laid out as
+     * 4 consecutive longs per row ({@code l0}, {@code l1}, {@code l2}, {@code l3}),
+     * matching the on-disk representation of a {@code LONG256} column.
+     */
+    static long allocArgBufferLong256(long[] l0, long[] l1, long[] l2, long[] l3) {
+        Assert.assertEquals(l0.length, l1.length);
+        Assert.assertEquals(l0.length, l2.length);
+        Assert.assertEquals(l0.length, l3.length);
+        final long bytes = (long) l0.length * 32L;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < l0.length; i++) {
+            final long base = addr + (long) i * 32L;
+            Unsafe.getUnsafe().putLong(base, l0[i]);
+            Unsafe.getUnsafe().putLong(base + 8, l1[i]);
+            Unsafe.getUnsafe().putLong(base + 16, l2[i]);
+            Unsafe.getUnsafe().putLong(base + 24, l3[i]);
+        }
+        return addr;
+    }
+
+    /**
+     * Allocates a native buffer of {@code lo.length * 16} bytes, laid out as
+     * {@code (lo, hi)} long pairs per row, matching the on-disk representation
+     * of a {@code UUID} (or {@code LONG128}) column.
+     */
+    static long allocArgBufferUuid(long[] lo, long[] hi) {
+        Assert.assertEquals(lo.length, hi.length);
+        final long bytes = (long) lo.length * 16L;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < lo.length; i++) {
+            final long base = addr + (long) i * 16L;
+            Unsafe.getUnsafe().putLong(base, lo[i]);
+            Unsafe.getUnsafe().putLong(base + 8, hi[i]);
         }
         return addr;
     }
@@ -427,6 +473,29 @@ final class KeyedBatchTestUtils {
         }
     }
 
+    static final class IndirectLong256Arg extends Long256Function {
+        private final int columnIndex;
+
+        IndirectLong256Arg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink<?> sink) {
+            rec.getLong256(columnIndex, sink);
+        }
+
+        @Override
+        public Long256 getLong256A(Record rec) {
+            return rec.getLong256A(columnIndex);
+        }
+
+        @Override
+        public Long256 getLong256B(Record rec) {
+            return rec.getLong256B(columnIndex);
+        }
+    }
+
     static final class IndirectLongArg extends LongFunction {
         private final int columnIndex;
 
@@ -453,6 +522,29 @@ final class KeyedBatchTestUtils {
         }
     }
 
+    static final class IndirectStrArg extends StrFunction {
+        private final int columnIndex;
+
+        IndirectStrArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return rec.getStrA(columnIndex);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return rec.getStrB(columnIndex);
+        }
+
+        @Override
+        public int getStrLen(Record rec) {
+            return rec.getStrLen(columnIndex);
+        }
+    }
+
     static final class IndirectTimestampArg extends TimestampFunction {
         private final int columnIndex;
 
@@ -464,6 +556,47 @@ final class KeyedBatchTestUtils {
         @Override
         public long getTimestamp(Record rec) {
             return rec.getTimestamp(columnIndex);
+        }
+    }
+
+    static final class IndirectUuidArg extends UuidFunction {
+        private final int columnIndex;
+
+        IndirectUuidArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public long getLong128Hi(Record rec) {
+            return rec.getLong128Hi(columnIndex);
+        }
+
+        @Override
+        public long getLong128Lo(Record rec) {
+            return rec.getLong128Lo(columnIndex);
+        }
+    }
+
+    static final class IndirectVarcharArg extends VarcharFunction {
+        private final int columnIndex;
+
+        IndirectVarcharArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            return rec.getVarcharA(columnIndex);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return rec.getVarcharB(columnIndex);
+        }
+
+        @Override
+        public int getVarcharSize(Record rec) {
+            return rec.getVarcharSize(columnIndex);
         }
     }
 
@@ -484,6 +617,7 @@ final class KeyedBatchTestUtils {
         private final long bufferAddr;
         private final long bufferSize;
         private final int elemSize;
+        private final Long256Impl long256 = new Long256Impl();
         private boolean pageAvailable = true;
 
         TestFrameRecord(int elemSize, long bufferAddr, long bufferSize) {
@@ -515,6 +649,16 @@ final class KeyedBatchTestUtils {
         }
 
         @Override
+        public double getDouble(int columnIndex) {
+            return Unsafe.getUnsafe().getDouble(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public float getFloat(int columnIndex) {
+            return Unsafe.getUnsafe().getFloat(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
         public byte getGeoByte(int columnIndex) {
             return Unsafe.getUnsafe().getByte(bufferAddr + rowIndex * elemSize);
         }
@@ -535,16 +679,6 @@ final class KeyedBatchTestUtils {
         }
 
         @Override
-        public double getDouble(int columnIndex) {
-            return Unsafe.getUnsafe().getDouble(bufferAddr + rowIndex * elemSize);
-        }
-
-        @Override
-        public float getFloat(int columnIndex) {
-            return Unsafe.getUnsafe().getFloat(bufferAddr + rowIndex * elemSize);
-        }
-
-        @Override
         public int getIPv4(int columnIndex) {
             return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
         }
@@ -560,6 +694,28 @@ final class KeyedBatchTestUtils {
         }
 
         @Override
+        public long getLong128Hi(int columnIndex) {
+            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * elemSize + 8);
+        }
+
+        @Override
+        public long getLong128Lo(int columnIndex) {
+            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public Long256 getLong256A(int columnIndex) {
+            final long base = bufferAddr + rowIndex * elemSize;
+            long256.setAll(
+                    Unsafe.getUnsafe().getLong(base),
+                    Unsafe.getUnsafe().getLong(base + 8),
+                    Unsafe.getUnsafe().getLong(base + 16),
+                    Unsafe.getUnsafe().getLong(base + 24)
+            );
+            return long256;
+        }
+
+        @Override
         public long getPageAddress(int columnIndex) {
             return pageAvailable ? bufferAddr : 0;
         }
@@ -570,8 +726,18 @@ final class KeyedBatchTestUtils {
         }
 
         @Override
+        public int getStrLen(int columnIndex) {
+            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
         public long getTimestamp(int columnIndex) {
             return getLong(columnIndex);
+        }
+
+        @Override
+        public int getVarcharSize(int columnIndex) {
+            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
         }
 
         void setPageAvailable(boolean value) {
