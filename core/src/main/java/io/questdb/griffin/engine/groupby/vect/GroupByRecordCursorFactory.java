@@ -309,6 +309,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
         Misc.free(base);
+        // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
     }
 
