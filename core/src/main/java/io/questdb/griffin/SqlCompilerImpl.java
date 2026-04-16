@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
@@ -40,7 +39,6 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
@@ -273,7 +271,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     postOrderTreeTraversalAlgo
             );
 
-            alterOperationBuilder = new AlterOperationBuilder();
+            alterOperationBuilder = createAlterOperationBuilder();
             dropOperationBuilder = new GenericDropOperationBuilder();
             queryRegistry = engine.getQueryRegistry();
             blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
@@ -1697,6 +1695,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterViewExecution(SqlExecutionContext executionContext, TableToken viewToken, String viewSql, int viewSqlPosition) throws SqlException {
+        if (viewToken.isSystem()) {
+            throw SqlException.position(viewSqlPosition)
+                    .put("cannot modify system view [name=")
+                    .put(viewToken.getTableName())
+                    .put(']');
+        }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
@@ -1841,13 +1845,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileAlterMatView(SqlExecutionContext executionContext) throws SqlException {
-        CharSequence tok = expectToken(lexer, "'view'");
-        if (!isViewKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'view' expected'");
-        }
-
+        expectKeyword(lexer, "view");
         final int matViewNamePosition = lexer.getPosition();
-        tok = expectToken(lexer, "materialized view name");
+        CharSequence tok = expectToken(lexer, "materialized view name");
         assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final CharSequence matViewName = unquote(tok);
         final TableToken matViewToken = viewExistsOrFail(matViewName, executionContext, SqlException.matViewDoesNotExist(matViewNamePosition, matViewName));
@@ -1861,7 +1861,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
-            tok = expectToken(lexer, "'alter' or 'resume' or 'suspend'");
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
+                compileAlterMatViewExt(securityContext, tok, matViewToken, matViewNamePosition);
+                return;
+            }
             if (isAlterKeyword(tok)) {
                 expectKeyword(lexer, "column");
                 final int columnNamePosition = lexer.getPosition();
@@ -1952,20 +1956,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'symbol capacity', 'add index' or 'drop index' expected");
                 }
             } else if (isSetKeyword(tok)) {
-                tok = expectToken(lexer, "'ttl' or 'refresh'");
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isTtlKeyword(tok) && !isRefreshKeyword(tok))) {
+                    compileAlterMatViewSetExt(securityContext, tok, matViewToken, matViewNamePosition);
+                    return;
+                }
                 if (isTtlKeyword(tok)) {
-                    final int ttlValuePos = lexer.getPosition();
-                    final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                    try (TableMetadata matViewMeta = engine.getTableMetadata(matViewToken)) {
-                        PartitionBy.validateTtlGranularity(matViewMeta.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
-                    }
-                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
-                            matViewNamePosition,
-                            matViewToken,
-                            tableMetadata.getTableId(),
-                            ttlHoursOrMonths
-                    );
-                    compiledQuery.ofAlter(setTtl.build());
+                    alterTableOrMatViewSetTtl(matViewToken, matViewNamePosition, tableMetadata);
                 } else if (isRefreshKeyword(tok)) {
                     tok = expectToken(lexer, "'immediate' or 'manual' or 'period' or 'every' or 'limit'");
                     if (isLimitKeyword(tok)) {
@@ -2147,8 +2144,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
                 parseSuspendWal(matViewToken, matViewNamePosition, executionContext);
-            } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' expected");
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
@@ -2199,14 +2194,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, action, executionContext);
             } else if (isDropKeyword(tok)) {
-                tok = expectToken(lexer, "'column' or 'partition'");
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isColumnKeyword(tok) && !isPartitionKeyword(tok))) {
+                    compileAlterTableDropExt(securityContext, tok, tableToken, tableNamePosition);
+                    return;
+                }
                 if (isColumnKeyword(tok)) {
                     alterTableDropColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
                 } else if (isPartitionKeyword(tok)) {
                     securityContext.authorizeAlterTableDropPartition(tableToken);
                     alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
             } else if (isRenameKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
@@ -2391,7 +2388,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
             } else if (isSetKeyword(tok)) {
-                tok = expectToken(lexer, "'param', 'ttl' or 'type'");
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok == null || (!isParamKeyword(tok) && !isTtlKeyword(tok) && !isTypeKeyword(tok))) {
+                    compileAlterTableSetExt(securityContext, tok, tableToken, tableNamePosition);
+                    return;
+                }
                 if (isParamKeyword(tok)) {
                     securityContext.authorizeAlterTableSetParam(tableToken);
                     final int paramNamePosition = lexer.getPosition();
@@ -2405,20 +2406,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'=' expected");
                     }
                 } else if (isTtlKeyword(tok)) {
-                    final int ttlValuePos = lexer.getPosition();
-                    final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                    try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                        CairoTable table = metadataRO.getTable(tableToken);
-                        assert table != null : "CairoTable == null after we already checked it exists";
-                        PartitionBy.validateTtlGranularity(table.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
-                    }
-                    final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
-                            tableNamePosition,
-                            tableToken,
-                            tableMetadata.getTableId(),
-                            ttlHoursOrMonths
-                    );
-                    compiledQuery.ofAlter(setTtl.build());
+                    alterTableOrMatViewSetTtl(tableToken, tableNamePosition, tableMetadata);
                 } else if (isTypeKeyword(tok)) {
                     tok = expectToken(lexer, "'bypass' or 'wal'");
                     if (isBypassKeyword(tok)) {
@@ -2433,8 +2421,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'bypass' or 'wal' expected");
                     }
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'param' or 'type' expected");
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(tableToken, tableNamePosition, executionContext);
@@ -2463,6 +2449,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     executionContext.getSecurityContext().authorizeAlterTableDedupEnable(tableToken);
                     alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
                 }
+            } else if (isEnableKeyword(tok)) {
+                compileAlterTableEnableExt(securityContext, tok, tableToken, tableNamePosition);
+            } else if (isDisableKeyword(tok)) {
+                compileAlterTableDisableExt(securityContext, tok, tableToken, tableNamePosition);
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
             }
@@ -4397,7 +4387,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                     engine.dropTableOrViewOrMatView(path, tableToken);
                     hasDroppedAny = true;
-                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableName);
+                    op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableToken);
                 } catch (Exception e) {
                     LOG.error().$("Error while dropping table, view or materialized view [").$(tableName).$(", error=").$(e).I$();
                     dropAllTablesFailures.put(tableName, e.getMessage());
@@ -4505,6 +4495,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         if (!tableToken.isView()) {
             throw SqlException.$(op.getEntityNamePosition(), "view name expected, got table name");
+        }
+        if (tableToken.isSystem()) {
+            throw SqlException.$(op.getEntityNamePosition(), "cannot drop a system view");
         }
         sqlExecutionContext.getSecurityContext().authorizeViewDrop(tableToken);
 
@@ -5034,11 +5027,86 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    protected void alterTableOrMatViewSetTtl(TableToken tableToken, int tableNamePosition, TableRecordMetadata tableMetadata) throws SqlException {
+        final int ttlValuePos = lexer.getPosition();
+        final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+            PartitionBy.validateTtlGranularity(metadata.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
+        }
+        final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId(),
+                ttlHoursOrMonths
+        );
+        compiledQuery.ofAlter(setTtl.build());
+    }
+
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'view' expected");
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
+    }
+
+    protected void compileAlterMatViewExt(SecurityContext securityContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'alter' or 'resume' or 'suspend' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'alter' or 'resume' or 'suspend' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'alter' or 'resume' or 'suspend' expected");
+    }
+
+    protected void compileAlterMatViewSetExt(SecurityContext securityContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {
+        LOG.debug().$("'ttl' or 'refresh' expected [matViewToken=").$(matViewToken)
+                .$(", matViewNamePosition=").$(matViewNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'ttl' or 'refresh' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'ttl' or 'refresh' expected");
+    }
+
+    protected void compileAlterTableDisableExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+    }
+
+    protected void compileAlterTableDropExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$("'column' or 'partition' expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'column' or 'partition' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
+    }
+
+    protected void compileAlterTableEnableExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$(ALTER_TABLE_EXPECTED_TOKEN_DESCR).$(" expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
+    }
+
+    protected void compileAlterTableSetExt(SecurityContext securityContext, CharSequence tok, TableToken tableToken, int tableNamePosition) throws SqlException {
+        LOG.debug().$("'param', 'ttl' or 'type' expected [tableToken=").$(tableToken)
+                .$(", tableNamePosition=").$(tableNamePosition)
+                .$(']').$();
+        if (tok == null) {
+            throw SqlException.$(lexer.getPosition(), "'param', 'ttl' or 'type' expected");
+        }
+        throw SqlException.$(lexer.lastTokenPosition(), "'param', 'ttl' or 'type' expected");
     }
 
     protected void compileBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
@@ -5106,6 +5174,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected void compileDropReportExpected(int position) throws SqlException {
         throw SqlException.position(position).put("'table' or 'view' or 'materialized view' or 'all' expected");
+    }
+
+    protected AlterOperationBuilder createAlterOperationBuilder() {
+        return new AlterOperationBuilder();
     }
 
     protected RecordCursorFactory generateSelectOneShot(

@@ -114,7 +114,8 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         bloomFilterColumnIndexes.getAddress(),
                         (int) bloomFilterColumnIndexes.size(),
                         0.01,
-                        0.0
+                        0.0,
+                        -1L
                 );
                 Assert.assertTrue(Files.exists(path.$()));
                 ParquetRowGroupFilter.resetRowGroupsSkipped();
