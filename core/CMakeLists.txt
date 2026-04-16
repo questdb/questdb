@@ -365,5 +365,36 @@ add_custom_command(TARGET questdb POST_BUILD
         COMMENT "Copying all build outputs from ${OUTPUT} to ${SECONDARY_OUTPUT2}"
 )
 
+# Apple Foundation Models bridge (macOS + Apple Silicon only).
+# Builds a separate shared library that wraps Swift's FoundationModels API
+# for JNI access. The FoundationModels symbols are weak-linked so the dylib
+# loads on older macOS; the Swift source guards every call with
+# @available(macOS 26.0, *) and returns an error otherwise.
+if (OS_DARWIN AND ARCH_AARCH64)
+    enable_language(Swift)
+
+    add_library(questdb-afm SHARED
+            src/main/swift/afm.swift
+            src/main/c/osx/afm_jni.c
+    )
+
+    target_include_directories(questdb-afm PRIVATE
+            $ENV{JAVA_HOME}/include
+            $ENV{JAVA_HOME}/include/darwin
+    )
+
+    set_target_properties(questdb-afm PROPERTIES
+            Swift_MODULE_NAME afm
+    )
+
+    target_link_libraries(questdb-afm
+            "-framework Foundation"
+    )
+    # swiftc drives the link, so use -Xlinker to pass -weak_framework through.
+    target_link_options(questdb-afm PRIVATE
+            "SHELL:-Xlinker -weak_framework -Xlinker FoundationModels"
+    )
+endif ()
+
 #jemalloc
 include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
