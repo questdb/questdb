@@ -69,7 +69,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -85,7 +85,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
                 if (value != Numbers.INT_NULL) {
-                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
                 }
             }
@@ -95,7 +95,7 @@ public class CountIntGroupByFunction extends AbstractCountGroupByFunction {
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
                 if (value != Numbers.INT_NULL) {
-                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
                 }
             }

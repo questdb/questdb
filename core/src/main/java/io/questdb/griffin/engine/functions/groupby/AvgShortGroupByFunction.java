@@ -76,7 +76,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -94,7 +94,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final short value = Unsafe.getUnsafe().getShort(argAddr + (rowIndex << 1));
-                final long valueBase = baseValueAddress + Map.decodeBatchOffset(encoded);
+                final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
             }
         } else {
@@ -102,7 +102,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final short value = arg.getShort(record);
-                final long valueBase = baseValueAddress + Map.decodeBatchOffset(encoded);
+                final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
             }
         }
@@ -113,16 +113,6 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
         final short value = arg.getShort(record);
         mapValue.addLong(valueIndex, value);
         mapValue.addLong(valueIndex + 1, 1);
-    }
-
-    private static void applyAvg(long sumAddr, long countAddr, short value, boolean isNew) {
-        if (isNew) {
-            Unsafe.getUnsafe().putLong(sumAddr, value);
-            Unsafe.getUnsafe().putLong(countAddr, 1L);
-        } else {
-            Unsafe.getUnsafe().putLong(sumAddr, Unsafe.getUnsafe().getLong(sumAddr) + value);
-            Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1L);
-        }
     }
 
     @Override
@@ -219,5 +209,15 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
+    }
+
+    private static void applyAvg(long sumAddr, long countAddr, short value, boolean isNew) {
+        if (isNew) {
+            Unsafe.getUnsafe().putLong(sumAddr, value);
+            Unsafe.getUnsafe().putLong(countAddr, 1L);
+        } else {
+            Unsafe.getUnsafe().putLong(sumAddr, Unsafe.getUnsafe().getLong(sumAddr) + value);
+            Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1L);
+        }
     }
 }

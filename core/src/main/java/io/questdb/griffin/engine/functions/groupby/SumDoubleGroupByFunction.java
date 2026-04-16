@@ -75,7 +75,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -90,7 +90,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final double value = Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3));
                 if (!Double.isNaN(value)) {
-                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final double current = Unsafe.getUnsafe().getDouble(addr);
                     Unsafe.getUnsafe().putDouble(addr, !Double.isNaN(current) ? current + value : value);
                 }
@@ -101,7 +101,7 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final double value = arg.getDouble(record);
                 if (!Double.isNaN(value)) {
-                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final double current = Unsafe.getUnsafe().getDouble(addr);
                     Unsafe.getUnsafe().putDouble(addr, !Double.isNaN(current) ? current + value : value);
                 }

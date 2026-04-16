@@ -58,7 +58,7 @@ public class BitAndByteGroupByFunction extends ByteFunction implements GroupByFu
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -75,7 +75,7 @@ public class BitAndByteGroupByFunction extends ByteFunction implements GroupByFu
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final byte value = Unsafe.getUnsafe().getByte(argAddr + rowIndex);
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final byte current = Unsafe.getUnsafe().getByte(addr);
                 Unsafe.getUnsafe().putByte(addr, Map.isNewBatchEntry(encoded) ? value : (byte) (current & value));
             }
@@ -84,7 +84,7 @@ public class BitAndByteGroupByFunction extends ByteFunction implements GroupByFu
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final byte value = arg.getByte(record);
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final byte current = Unsafe.getUnsafe().getByte(addr);
                 Unsafe.getUnsafe().putByte(addr, Map.isNewBatchEntry(encoded) ? value : (byte) (current & value));
             }

@@ -83,7 +83,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -98,7 +98,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final float value = Unsafe.getUnsafe().getFloat(argAddr + (rowIndex << 2));
                 if (!Float.isNaN(value)) {
-                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final float current = Unsafe.getUnsafe().getFloat(addr);
                     Unsafe.getUnsafe().putFloat(addr, !Float.isNaN(current) ? current + value : value);
                 }
@@ -109,7 +109,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final float value = arg.getFloat(record);
                 if (!Float.isNaN(value)) {
-                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final float current = Unsafe.getUnsafe().getFloat(addr);
                     Unsafe.getUnsafe().putFloat(addr, !Float.isNaN(current) ? current + value : value);
                 }

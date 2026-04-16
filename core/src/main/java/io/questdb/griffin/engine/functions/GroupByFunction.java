@@ -115,17 +115,17 @@ public interface GroupByFunction extends Function, Mutable {
      * so overrides may safely skip the {@code isNew} branch when
      * {@code computeNext} on the empty state yields the right result.
      *
-     * @param record           page frame record, positioned via setRowIndex
-     * @param mapValue         pre-allocated packed flyweight, reused per row
-     * @param baseValueAddress stable base address for map values, pre-resolved by the reducer
-     * @param batchAddr        native pointer to {@code rowCount} packed longs (8 bytes each)
-     * @param rowCount         number of entries to process
-     * @param baseRowId        absolute row id of the first row in the sub-batch
+     * @param record        page frame record, positioned via setRowIndex
+     * @param mapValue      pre-allocated packed flyweight, reused per row
+     * @param baseValueAddr stable base address for map values, pre-resolved by the reducer
+     * @param batchAddr     native pointer to {@code rowCount} packed longs (8 bytes each)
+     * @param rowCount      number of entries to process
+     * @param baseRowId     absolute row id of the first row in the sub-batch
      */
     default void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -136,7 +136,7 @@ public interface GroupByFunction extends Function, Mutable {
             int rowIndex = Map.decodeBatchRowIndex(encoded);
             boolean isNew = Map.isNewBatchEntry(encoded);
             record.setRowIndex(rowIndex);
-            mapValue.of(baseValueAddress + valueOffset);
+            mapValue.of(baseValueAddr + valueOffset);
             if (isNew) {
                 computeFirst(mapValue, record, baseRowId + rowIndex);
             } else {

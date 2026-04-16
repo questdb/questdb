@@ -71,7 +71,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -88,7 +88,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final double value = Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3));
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getUnsafe().getDouble(addr);
                 if (value > current || Numbers.isNull(current)) {
                     Unsafe.getUnsafe().putDouble(addr, value);
@@ -99,7 +99,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final double value = arg.getDouble(record);
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getUnsafe().getDouble(addr);
                 if (value > current || Numbers.isNull(current)) {
                     Unsafe.getUnsafe().putDouble(addr, value);

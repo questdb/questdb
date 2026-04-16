@@ -88,7 +88,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -107,7 +107,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final double value = Unsafe.getUnsafe().getDouble(argAddr + (rowIndex << 3));
-                final long valueBase = baseValueAddress + Map.decodeBatchOffset(encoded);
+                final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
             }
         } else {
@@ -115,7 +115,7 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final double value = arg.getDouble(record);
-                final long valueBase = baseValueAddress + Map.decodeBatchOffset(encoded);
+                final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
                 applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
             }
         }
@@ -127,22 +127,6 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
         if (!Double.isNaN(d)) {
             mapValue.addDouble(valueIndex, d);
             mapValue.addLong(valueIndex + 1, 1L);
-        }
-    }
-
-    private static void applyAvg(long sumAddr, long countAddr, double value, boolean isNew) {
-        if (isNew) {
-            if (!Double.isNaN(value)) {
-                Unsafe.getUnsafe().putDouble(sumAddr, value);
-                Unsafe.getUnsafe().putLong(countAddr, 1L);
-            } else {
-                // Overwrite the etalon's (NaN, 0) with the computeFirst NaN-case state.
-                Unsafe.getUnsafe().putDouble(sumAddr, 0);
-                Unsafe.getUnsafe().putLong(countAddr, 0L);
-            }
-        } else if (!Double.isNaN(value)) {
-            Unsafe.getUnsafe().putDouble(sumAddr, Unsafe.getUnsafe().getDouble(sumAddr) + value);
-            Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1L);
         }
     }
 
@@ -230,5 +214,21 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
+    }
+
+    private static void applyAvg(long sumAddr, long countAddr, double value, boolean isNew) {
+        if (isNew) {
+            if (!Double.isNaN(value)) {
+                Unsafe.getUnsafe().putDouble(sumAddr, value);
+                Unsafe.getUnsafe().putLong(countAddr, 1L);
+            } else {
+                // Overwrite the etalon's (NaN, 0) with the computeFirst NaN-case state.
+                Unsafe.getUnsafe().putDouble(sumAddr, 0);
+                Unsafe.getUnsafe().putLong(countAddr, 0L);
+            }
+        } else if (!Double.isNaN(value)) {
+            Unsafe.getUnsafe().putDouble(sumAddr, Unsafe.getUnsafe().getDouble(sumAddr) + value);
+            Unsafe.getUnsafe().putLong(countAddr, Unsafe.getUnsafe().getLong(countAddr) + 1L);
+        }
     }
 }

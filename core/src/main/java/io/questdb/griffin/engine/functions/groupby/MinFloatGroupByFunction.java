@@ -77,7 +77,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -93,7 +93,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final float value = Unsafe.getUnsafe().getFloat(argAddr + (rowIndex << 2));
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final float current = Unsafe.getUnsafe().getFloat(addr);
                 if (value < current || Numbers.isNull(current)) {
                     Unsafe.getUnsafe().putFloat(addr, value);
@@ -104,7 +104,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final float value = arg.getFloat(record);
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final float current = Unsafe.getUnsafe().getFloat(addr);
                 if (value < current || Numbers.isNull(current)) {
                     Unsafe.getUnsafe().putFloat(addr, value);

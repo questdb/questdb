@@ -73,7 +73,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -88,7 +88,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 Unsafe.getUnsafe().putLong(addr, Math.max(value, Unsafe.getUnsafe().getLong(addr)));
             }
         } else {
@@ -96,7 +96,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getTimestamp(record);
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 Unsafe.getUnsafe().putLong(addr, Math.max(value, Unsafe.getUnsafe().getLong(addr)));
             }
         }

@@ -71,7 +71,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -86,7 +86,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final long value = Unsafe.getUnsafe().getLong(argAddr + (rowIndex << 3));
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 Unsafe.getUnsafe().putLong(addr, Math.max(value, Unsafe.getUnsafe().getLong(addr)));
             }
         } else {
@@ -94,7 +94,7 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final long value = arg.getDate(record);
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 Unsafe.getUnsafe().putLong(addr, Math.max(value, Unsafe.getUnsafe().getLong(addr)));
             }
         }

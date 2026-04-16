@@ -73,7 +73,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -88,7 +88,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final int value = Unsafe.getUnsafe().getInt(argAddr + (rowIndex << 2));
                 if (value != Numbers.INT_NULL) {
-                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getUnsafe().getInt(addr);
                     Unsafe.getUnsafe().putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
                 }
@@ -99,7 +99,7 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final int value = arg.getInt(record);
                 if (value != Numbers.INT_NULL) {
-                    final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getUnsafe().getInt(addr);
                     Unsafe.getUnsafe().putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
                 }

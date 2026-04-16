@@ -74,7 +74,7 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -88,7 +88,7 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final short value = Unsafe.getUnsafe().getShort(argAddr + (rowIndex << 1));
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final long current = Unsafe.getUnsafe().getLong(addr);
                 Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
             }
@@ -97,7 +97,7 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final short value = arg.getShort(record);
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final long current = Unsafe.getUnsafe().getLong(addr);
                 Unsafe.getUnsafe().putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
             }

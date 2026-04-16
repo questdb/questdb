@@ -58,7 +58,7 @@ public class BitXorShortGroupByFunction extends ShortFunction implements GroupBy
     public void computeKeyedBatch(
             PageFrameMemoryRecord record,
             FlyweightPackedMapValue mapValue,
-            long baseValueAddress,
+            long baseValueAddr,
             long batchAddr,
             long rowCount,
             long baseRowId
@@ -74,7 +74,7 @@ public class BitXorShortGroupByFunction extends ShortFunction implements GroupBy
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final short value = Unsafe.getUnsafe().getShort(argAddr + (rowIndex << 1));
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 Unsafe.getUnsafe().putShort(addr, (short) (Unsafe.getUnsafe().getShort(addr) ^ value));
             }
         } else {
@@ -82,7 +82,7 @@ public class BitXorShortGroupByFunction extends ShortFunction implements GroupBy
                 final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final short value = arg.getShort(record);
-                final long addr = baseValueAddress + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 Unsafe.getUnsafe().putShort(addr, (short) (Unsafe.getUnsafe().getShort(addr) ^ value));
             }
         }
@@ -101,13 +101,13 @@ public class BitXorShortGroupByFunction extends ShortFunction implements GroupBy
     }
 
     @Override
-    public short getShort(Record rec) {
-        return rec.getShort(valueIndex);
+    public String getName() {
+        return "bit_xor";
     }
 
     @Override
-    public String getName() {
-        return "bit_xor";
+    public short getShort(Record rec) {
+        return rec.getShort(valueIndex);
     }
 
     @Override
