@@ -45,8 +45,9 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
     private static final int LIST_CLEAR_THRESHOLD = 64;
     private final Function arg;
     private final char delimiter;
-    private final ObjList<DirectUtf8Sink> sinks = new ObjList<>();
+    private boolean isShared;
     private int sinkIndex = 0;
+    private ObjList<DirectUtf8Sink> sinks = new ObjList<>();
     private int valueIndex;
 
     public StringAggVarcharGroupByFunction(Function arg, char delimiter) {
@@ -56,6 +57,9 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
 
     @Override
     public void clear() {
+        if (isShared) {
+            return;
+        }
         // Free extra sinks.
         if (sinks.size() > LIST_CLEAR_THRESHOLD) {
             for (int i = sinks.size() - 1; i > LIST_CLEAR_THRESHOLD - 1; i--) {
@@ -137,6 +141,12 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.sinks = ((StringAggVarcharGroupByFunction) primary).sinks;
+        this.isShared = true;
+    }
+
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }

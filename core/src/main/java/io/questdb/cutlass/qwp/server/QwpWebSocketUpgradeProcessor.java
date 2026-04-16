@@ -507,7 +507,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             } else {
                 errorMessage = state.getErrorText();
                 LOG.error().$("WebSocket message processing failed [fd=").$(context.getFd())
-                        .$(", error=").$(errorMessage).I$();
+                        .$(", error=").$safe(errorMessage).I$();
                 responseStatus = switch (state.getStatus()) {
                     case PARSE_ERROR -> STATUS_PARSE_ERROR;
                     case SCHEMA_MISMATCH -> STATUS_SCHEMA_MISMATCH;

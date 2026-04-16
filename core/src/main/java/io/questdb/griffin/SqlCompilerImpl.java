@@ -101,9 +101,11 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
@@ -196,6 +198,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final QueryBuilder queryBuilder;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final ObjectPool<QueryModelWrapper> queryModelWrapperPool;
     private final Path renamePath;
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
@@ -225,6 +228,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
             this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
+            this.queryModelWrapperPool = new ObjectPool<>(QueryModelWrapper.FACTORY, 2);
             this.windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, configuration.getWindowColumnPoolCapacity());
             this.compiledQuery = new CompiledQueryImpl(engine);
             this.characterStore = new CharacterStore(
@@ -253,6 +257,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     windowExpressionPool,
                     queryColumnPool,
                     queryModelPool,
+                    queryModelWrapperPool,
                     postOrderTreeTraversalAlgo,
                     functionParser,
                     path
@@ -528,12 +533,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @Override
     public RecordCursorFactory generateSelectWithRetries(
-            @Transient QueryModel initialQueryModel,
+            @Transient IQueryModel initialQueryModel,
             @Nullable @Transient InsertModel insertModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
-        QueryModel queryModel = initialQueryModel;
+        IQueryModel queryModel = initialQueryModel;
         int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
             try {
@@ -549,7 +554,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     queryModel = compileExecutionModel(executionContext).getQueryModel();
                     insertModel.setQueryModel(queryModel);
                 } else {
-                    queryModel = (QueryModel) compileExecutionModel(executionContext);
+                    queryModel = (IQueryModel) compileExecutionModel(executionContext);
                 }
             }
         }
@@ -589,7 +594,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @TestOnly
     @Override
-    public ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
+    public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
         return parser.expr(lexer, model, this);
@@ -1407,7 +1412,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 };
 
                 final int functionPosition = lexer.getPosition();
-                ExpressionNode expr = parser.expr(lexer, (QueryModel) null, this);
+                ExpressionNode expr = parser.expr(lexer, (IQueryModel) null, this);
                 String designatedTimestampColumnName = null;
                 int tsIndex = tableMetadata.getTimestampIndex();
                 if (tsIndex >= 0) {
@@ -1721,7 +1726,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
-            final QueryModel queryModel = executionModel.getQueryModel();
+            final IQueryModel queryModel = executionModel.getQueryModel();
             SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
             engine.getViewGraph().validateNoCycle(viewToken, queryModel);
 
@@ -1823,6 +1828,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         characterStore.clear();
         queryColumnPool.clear();
         queryModelPool.clear();
+        queryModelWrapperPool.clear();
         optimiser.clear();
         parser.clear();
         alterOperationBuilder.clear();
@@ -2932,7 +2938,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private ExecutionModel compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
-                return optimiser.optimise((QueryModel) model, executionContext, this);
+                return optimiser.optimise((IQueryModel) model, executionContext, this);
             case ExecutionModel.INSERT: {
                 final InsertModel insertModel = (InsertModel) model;
                 if (insertModel.getQueryModel() != null) {
@@ -2945,7 +2951,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return insertModel;
             }
             case ExecutionModel.UPDATE:
-                final QueryModel queryModel = (QueryModel) model;
+                final IQueryModel queryModel = (IQueryModel) model;
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
                 try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
@@ -2965,7 +2971,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeTableCreate();
                 final CreateTableOperationBuilder createTableBuilder = (CreateTableOperationBuilder) model;
                 if (createTableBuilder.getQueryModel() != null) {
-                    final QueryModel selectModel = optimiser.optimise(createTableBuilder.getQueryModel(), executionContext, this);
+                    final IQueryModel selectModel = optimiser.optimise(createTableBuilder.getQueryModel(), executionContext, this);
                     createTableBuilder.setSelectModel(selectModel);
                 }
                 return model;
@@ -2973,7 +2979,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeMatViewCreate();
                 final CreateMatViewOperationBuilder createMatViewBuilder = (CreateMatViewOperationBuilder) model;
                 if (createMatViewBuilder.getQueryModel() != null) {
-                    final QueryModel selectModel = optimiser.optimise(createMatViewBuilder.getQueryModel(), executionContext, this);
+                    final IQueryModel selectModel = optimiser.optimise(createMatViewBuilder.getQueryModel(), executionContext, this);
                     createMatViewBuilder.setSelectModel(selectModel);
                 }
                 return model;
@@ -3325,13 +3331,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
-            final QueryModel queryModel;
+            final IQueryModel queryModel;
             try {
                 final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
                 if (executionModel.getModelType() != ExecutionModel.QUERY) {
                     throw SqlException.$(startPos, "SELECT query expected");
                 }
-                queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
+                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -3703,12 +3709,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 case ExecutionModel.QUERY:
                     compiledQuery.ofSelect(
                             generateSelectWithRetries(
-                                    (QueryModel) executionModel,
+                                    (IQueryModel) executionModel,
                                     null,
                                     executionContext,
                                     generateProgressLogger
                             ),
-                            ((QueryModel) executionModel).isCacheable()
+                            ((IQueryModel) executionModel).isCacheable()
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:
@@ -3758,7 +3764,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     checkViewModification(executionModel);
                     checkMatViewModification(executionModel);
-                    final QueryModel updateQueryModel = (QueryModel) executionModel;
+                    final IQueryModel updateQueryModel = (IQueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                         compiledQuery.ofUpdate(generateUpdate(updateQueryModel, executionContext, metadata));
@@ -3906,13 +3912,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
-            final QueryModel queryModel;
+            final IQueryModel queryModel;
             try {
                 final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
                 if (executionModel.getModelType() != ExecutionModel.QUERY) {
                     throw SqlException.$(startPos, "SELECT query expected");
                 }
-                queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
+                queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -4045,7 +4051,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void enqueueCompileViews(ExecutionModel model) {
-        final QueryModel queryModel = model.getQueryModel();
+        final IQueryModel queryModel = model.getQueryModel();
         if (queryModel == null) {
             return;
         }
@@ -4653,13 +4659,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return affectedPartitions;
     }
 
-    private void freeTableNameFunctions(QueryModel queryModel) {
+    private void freeTableNameFunctions(IQueryModel queryModel) {
         if (queryModel == null) {
             return;
         }
 
         do {
-            final ObjList<QueryModel> joinModels = queryModel.getJoinModels();
+            final ObjList<IQueryModel> joinModels = queryModel.getJoinModels();
             if (joinModels.size() > 1) {
                 for (int i = 1, n = joinModels.size(); i < n; i++) {
                     freeTableNameFunctions(joinModels.getQuick(i));
@@ -4668,13 +4674,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             Misc.free(queryModel.getTableNameFunction());
             queryModel.setTableNameFunction(null);
-        } while ((queryModel = queryModel.getNestedModel()) != null);
+        } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
-            QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
-            final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+            IQueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
+            final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
             final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                     updateQueryModel.getUpdateTableToken(),
                     selectQueryModel,
@@ -4687,13 +4693,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
+    private UpdateOperation generateUpdate(IQueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
         TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
-        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+        final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
-        // Update QueryModel structure is
-        // QueryModel with SET column expressions
-        // |-- QueryModel of select-virtual or select-choose of data selected for update
+        // Update IQueryModel structure is
+        // IQueryModel with SET column expressions
+        // |-- IQueryModel of select-virtual or select-choose of data selected for update
         final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                 updateTableToken,
                 selectQueryModel,
@@ -4735,8 +4741,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private RecordCursorFactory generateUpdateFactory(
             TableToken tableToken,
-            @Transient QueryModel selectQueryModel,
-            @Transient QueryModel updateQueryModel,
+            @Transient IQueryModel selectQueryModel,
+            @Transient IQueryModel updateQueryModel,
             @Transient SqlExecutionContext executionContext
     ) throws SqlException {
         final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
@@ -5038,7 +5044,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void validateAndOptimiseInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
-        final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this);
+        final IQueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext, this);
         int columnNameListSize = model.getColumnNameList().size();
         if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
             throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
@@ -5184,7 +5190,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     protected RecordCursorFactory generateSelectOneShot(
-            QueryModel selectQueryModel,
+            IQueryModel selectQueryModel,
             SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
@@ -5213,6 +5219,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
+            ObjectPool<QueryModelWrapper> queryModelWrapperPool,
             PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
             FunctionParser functionParser,
             Path path
@@ -5224,6 +5231,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 windowExpressionPool,
                 queryColumnPool,
                 queryModelPool,
+                queryModelWrapperPool,
                 postOrderTreeTraversalAlgo,
                 functionParser,
                 path
