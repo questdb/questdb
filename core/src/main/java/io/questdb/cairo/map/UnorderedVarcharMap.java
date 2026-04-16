@@ -193,6 +193,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
             this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
             final long sizeBytes = entrySize * this.keyCapacity;
+            validateBatchAddressable(sizeBytes);
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
@@ -226,6 +227,19 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     // public for testing
     public static long unpackHash(long hashSizeFlags) {
         return hashSizeFlags & 0xffffffffL;
+    }
+
+    private static void validateBatchAddressable(long sizeBytes) {
+        // A silent truncation here would feed corrupted offsets into every batched
+        // probe; fail loudly instead of producing wrong aggregation results.
+        if (sizeBytes > Map.BATCH_OFFSET_MASK) {
+            throw CairoException.nonCritical()
+                    .put("UnorderedVarcharMap heap size exceeds batched probe addressable range [heapBytes=")
+                    .put(sizeBytes)
+                    .put(", maxAddressable=")
+                    .put(Map.BATCH_OFFSET_MASK)
+                    .put(']');
+        }
     }
 
     @Override
@@ -694,6 +708,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         }
 
         final long newSizeBytes = entrySize * newKeyCapacity;
+        validateBatchAddressable(newSizeBytes);
         final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
         final long newMemLimit = newMemStart + newSizeBytes;
         Vect.memset(newMemStart, newSizeBytes, 0);

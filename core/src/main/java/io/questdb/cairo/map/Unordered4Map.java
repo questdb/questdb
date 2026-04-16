@@ -169,6 +169,7 @@ public class Unordered4Map implements Map, Reopenable {
             this.entrySize = Bytes.align4b(KEY_SIZE + valueSize);
             // Allocate one extra slot at the end for the zero key entry.
             final long sizeBytes = entrySize * (this.keyCapacity + 1);
+            validateBatchAddressable(sizeBytes);
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + entrySize * this.keyCapacity;
@@ -189,6 +190,19 @@ public class Unordered4Map implements Map, Reopenable {
 
     public static boolean isSupportedKeyType(int columnType) {
         return columnType == ColumnType.INT || columnType == ColumnType.IPv4 || columnType == ColumnType.SYMBOL;
+    }
+
+    private static void validateBatchAddressable(long sizeBytes) {
+        // A silent truncation here would feed corrupted offsets into every batched
+        // probe; fail loudly instead of producing wrong aggregation results.
+        if (sizeBytes > Map.BATCH_OFFSET_MASK) {
+            throw CairoException.nonCritical()
+                    .put("Unordered4Map heap size exceeds batched probe addressable range [heapBytes=")
+                    .put(sizeBytes)
+                    .put(", maxAddressable=")
+                    .put(Map.BATCH_OFFSET_MASK)
+                    .put(']');
+        }
     }
 
     @Override
@@ -702,6 +716,7 @@ public class Unordered4Map implements Map, Reopenable {
 
         // Allocate one extra slot at the end for the zero key entry.
         final long newSizeBytes = entrySize * (newKeyCapacity + 1);
+        validateBatchAddressable(newSizeBytes);
         final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
         final long newMemLimit = newMemStart + entrySize * newKeyCapacity;
         Vect.memset(newMemStart, newSizeBytes, 0);

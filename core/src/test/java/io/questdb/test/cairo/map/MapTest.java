@@ -248,6 +248,31 @@ public class MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBatchAddressableRejectsOversizedHeap() throws Exception {
+        // OrderedMap's MAX_HEAP_SIZE already sits below BATCH_OFFSET_MASK, so it
+        // does not carry a construction-time guard.
+        Assume.assumeTrue(mapType != MapType.ORDERED_MAP);
+        TestUtils.assertMemoryLeak(() -> {
+            // 64 x LONG256 = 2048 bytes of value per entry. At the map's
+            // post-ceilPow2 cap of 2^30 keys, entrySize * keyCapacity exceeds
+            // the 39-bit BATCH_OFFSET_MASK, so the guard must fail construction
+            // before any malloc.
+            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            for (int i = 0; i < 64; i++) {
+                valueTypes.add(ColumnType.LONG256);
+            }
+            try {
+                // keyCapacity = 2^29 with loadFactor 0.5 drives post-ceilPow2 keyCapacity to 2^30,
+                // the map's hard cap.
+                createMap(keyColumnType(ColumnType.INT), valueTypes, 1 << 29, 0.5, Integer.MAX_VALUE);
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "exceeds batched probe addressable range");
+            }
+        });
+    }
+
+    @Test
     public void testClear() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
