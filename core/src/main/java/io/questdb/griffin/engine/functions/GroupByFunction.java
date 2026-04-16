@@ -180,6 +180,21 @@ public interface GroupByFunction extends Function, Mutable {
     int getValueIndex();
 
     /**
+     * Called on a shared cursor's GroupByFunction to initialize it from the primary
+     * (computation) instance. The default implementation copies the value index.
+     * Functions that store auxiliary data internally (e.g., StringAggGroupByFunction
+     * stores sinks) must override this to share the data reference with the primary.
+     * <p>
+     * The shared instance is read-only — it must never be used for computation
+     * (computeFirst/computeNext/merge) and its clear() must not free shared data.
+     *
+     * @param primary the function instance that performed the computation
+     */
+    default void initSharedFrom(GroupByFunction primary) {
+        initValueIndex(primary.getValueIndex());
+    }
+
+    /**
      * Called for group by function cloned to be used in different threads of parallel execution.
      * Guaranteed to be called before any other call accessing the map or map values.
      * {@link #initValueTypes(ArrayColumnTypes)} is not called on such functions.

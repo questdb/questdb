@@ -215,6 +215,25 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     @Override
+    public MapRecordCursor newCursor() {
+        Unordered4MapCursor c = new Unordered4MapCursor(record.clone(), this);
+        if (hasZero) {
+            return c.init(memStart, memLimit, zeroMemStart, size + 1);
+        }
+        return c.init(memStart, memLimit, 0, size);
+    }
+
+    @Override
+    public void initCursor(MapRecordCursor cursor) {
+        Unordered4MapCursor c = (Unordered4MapCursor) cursor;
+        if (hasZero) {
+            c.init(memStart, memLimit, zeroMemStart, size + 1);
+        } else {
+            c.init(memStart, memLimit, 0, size);
+        }
+    }
+
+    @Override
     public int getKeyCapacity() {
         return keyCapacity;
     }
