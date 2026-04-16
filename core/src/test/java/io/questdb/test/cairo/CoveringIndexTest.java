@@ -7827,9 +7827,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     Path pciPath = path.trimTo(plen);
                     assertTrue(ff.exists(PostingIndexUtils.coverInfoFileName(pciPath, name, COLUMN_NAME_TXN_NONE)));
 
-                    // Verify both .pc0 and .pc1 exist (initial state: coveredColumnNameTxn = sealTxn = COLUMN_NAME_TXN_NONE).
-                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE)));
-                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE)));
+                    long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    assertTrue(liveSealTxn >= 0);
+                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, liveSealTxn)));
+                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 1, COLUMN_NAME_TXN_NONE, liveSealTxn)));
                 } finally {
                     Unsafe.free(colAddrDouble, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(colAddrInt, (long) rowCount * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -8184,11 +8186,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     }
                     // Writer close triggers seal which writes .pci and .pc0
 
-                    // Verify .pci file exists
                     FilesFacade ff = configuration.getFilesFacade();
                     assertTrue(ff.exists(PostingIndexUtils.coverInfoFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)));
-                    // Verify .pc0 file exists (initial state: coveredColumnNameTxn = sealTxn = COLUMN_NAME_TXN_NONE).
-                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE)));
+                    long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    assertTrue(liveSealTxn >= 0);
+                    assertTrue(ff.exists(PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, 0, COLUMN_NAME_TXN_NONE, liveSealTxn)));
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }

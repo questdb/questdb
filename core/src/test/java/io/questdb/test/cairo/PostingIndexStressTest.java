@@ -1090,12 +1090,13 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                     }
                 }
 
-                // Simulate incomplete seal: extend the value file with 4KB of garbage
-                // (as if seal wrote new gen data but crashed before updating the metadata page)
                 FilesFacade ff = configuration.getFilesFacade();
                 try (Path valPath = new Path().of(configuration.getDbRoot())) {
-                    // No seal has run yet, so sealTxn == postingColumnNameTxn (both COLUMN_NAME_TXN_NONE).
-                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE);
+                    long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(valPath, name, COLUMN_NAME_TXN_NONE));
+                    Assert.assertTrue(liveSealTxn >= 0);
+                    valPath.of(configuration.getDbRoot());
+                    PostingIndexUtils.valueFileName(valPath, name, COLUMN_NAME_TXN_NONE, liveSealTxn);
                     long newSize = metadataValueMemSize + 4096;
                     long fd = ff.openRW(valPath.$(), CairoConfiguration.O_NONE);
                     Assert.assertTrue("could not open value file", fd > 0);
