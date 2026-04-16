@@ -934,6 +934,10 @@ public class SqlParser {
         return false;
     }
 
+    private boolean isUnexpectedRightParenInTopLevelSelect(CharSequence tok) {
+        return Chars.equals(tok, ')') && !(subQueryMode || createTableMode || copyMode || createViewMode);
+    }
+
     private ExpressionNode literal(GenericLexer lexer, CharSequence name) {
         return literal(name, lexer.lastTokenPosition());
     }
@@ -3079,6 +3083,11 @@ public class SqlParser {
             } else {
                 lexer.unparseLast();
             }
+            // questdb accepts open-ended limits like 'LIMIT 5,' and 'LIMIT ,5'.
+            // so reject only when neither side of the LIMIT clause parsed.
+            if (lo == null && hi == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "limit expression expected");
+            }
             model.setLimit(lo, hi);
         } else {
             lexer.unparseLast();
@@ -4019,6 +4028,10 @@ public class SqlParser {
                         throw SqlException.$(lexer.getPosition(), "reserved name");
                     }
 
+                    if (isUnexpectedRightParenInTopLevelSelect(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
+                    }
+
                     lexer.unparseLast();
                     expr = expr(lexer, model, sqlParserCallback, model.getDecls());
 
@@ -4101,13 +4114,13 @@ public class SqlParser {
                 }
 
                 if (Chars.equals(tok, ')')) {
-                    if (subQueryMode || createTableMode || copyMode || createViewMode) {
+                    if (isUnexpectedRightParenInTopLevelSelect(tok)) {
+                        // it's an unbalanced ')' in top-level SELECT
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
+                    } else {
                         // it's a balanced: ')'
                         lexer.unparseLast();
                         break;
-                    } else {
-                        // it's an unbalanced ')' in top-level SELECT
-                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
                     }
                 }
 
