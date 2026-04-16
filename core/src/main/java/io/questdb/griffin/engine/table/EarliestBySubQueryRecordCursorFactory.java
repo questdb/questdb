@@ -1,0 +1,131 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.table;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+/**
+ * Iterates table forwards and finds the earliest values for a single symbol column,
+ * where the symbol values come from a subquery (e.g. WHERE s IN (SELECT ...)).
+ */
+public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+    private final int columnIndex;
+    private final EarliestByValueListRecordCursor cursor;
+    private final Function filter;
+    private final Record.CharSequenceFunction func;
+    private final RecordCursorFactory recordCursorFactory;
+    private final IntHashSet symbolKeys;
+
+    public EarliestBySubQueryRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
+            int columnIndex,
+            @NotNull RecordCursorFactory recordCursorFactory,
+            @Nullable Function filter,
+            @NotNull Record.CharSequenceFunction func,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
+    ) {
+        super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+        this.symbolKeys = new IntHashSet();
+        this.filter = filter;
+        this.columnIndex = columnIndex;
+        this.recordCursorFactory = recordCursorFactory;
+        this.func = func;
+        this.cursor = new EarliestByValueListRecordCursor(
+                configuration,
+                metadata,
+                columnIndex,
+                filter,
+                configuration.getDefaultSymbolCapacity(),
+                true,
+                false
+        );
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return true;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("EarliestBySubQuery");
+        sink.optAttr("filter", filter);
+        sink.child("Subquery", recordCursorFactory);
+        sink.child(partitionFrameCursorFactory);
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(recordCursorFactory);
+        Misc.free(filter);
+        Misc.free(cursor);
+    }
+
+    @Override
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        symbolKeys.clear();
+        try (RecordCursor baseCursor = recordCursorFactory.getCursor(executionContext)) {
+            final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
+            final Record record = baseCursor.getRecord();
+            final StringSink sink = Misc.getThreadLocalSink();
+            while (baseCursor.hasNext()) {
+                int symbolKey = symbolTable.keyOf(func.get(record, 0, sink));
+                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                    symbolKeys.add(symbolKey);
+                }
+            }
+        }
+        IntHashSet cursorKeys = cursor.getIncludedSymbolKeys();
+        cursorKeys.clear();
+        cursorKeys.addAll(symbolKeys);
+        cursor.of(pageFrameCursor, executionContext);
+        return cursor;
+    }
+}

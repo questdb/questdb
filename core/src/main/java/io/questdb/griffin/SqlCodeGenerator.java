@@ -308,6 +308,7 @@ import io.questdb.griffin.engine.table.EarliestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByAllSymbolsFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByDeferredListValuesFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.EarliestBySubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory;
 import io.questdb.griffin.engine.table.EarliestByRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
@@ -5564,7 +5565,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateEarliestByTableQuery(
-            QueryModel model,
+            IQueryModel model,
             @Transient TableReader reader,
             RecordMetadata metadata,
             TableToken tableToken,
@@ -5672,11 +5673,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // key column must always be the same as earliest by column
                 assert earliestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
 
-                // Route all key-value cases through EarliestByDeferredListValuesFiltered
+                if (intrinsicModel.keySubQuery != null) {
+                    RecordCursorFactory rcf = null;
+                    final Record.CharSequenceFunction func;
+                    try {
+                        rcf = generate(intrinsicModel.keySubQuery, executionContext);
+                        func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
+                    } catch (Throwable th) {
+                        Misc.free(rcf);
+                        throw th;
+                    }
+
+                    return new EarliestBySubQueryRecordCursorFactory(
+                            configuration,
+                            metadata,
+                            partitionFrameCursorFactory,
+                            earliestByIndex,
+                            rcf,
+                            filter,
+                            func,
+                            columnIndexes,
+                            columnSizeShifts
+                    );
+                }
+
                 final int nKeyValues = intrinsicModel.keyValueFuncs.size();
                 final int nExcludedKeyValues = intrinsicModel.keyExcludedValueFuncs.size();
 
-                if (intrinsicModel.keySubQuery != null || nKeyValues > 1 || nExcludedKeyValues > 0) {
+                if (nKeyValues > 1 || nExcludedKeyValues > 0) {
                     return new EarliestByDeferredListValuesFilteredRecordCursorFactory(
                             configuration,
                             metadata,
@@ -5737,7 +5761,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @NotNull
-    private RecordCursorFactory generateEarliestBy(RecordCursorFactory factory, QueryModel model) throws SqlException {
+    private RecordCursorFactory generateEarliestBy(RecordCursorFactory factory, IQueryModel model) throws SqlException {
         final ObjList<ExpressionNode> earliestBy = model.getEarliestBy();
         if (earliestBy.size() == 0) {
             return factory;
@@ -5769,11 +5793,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         boolean orderedByTimestampAsc = false;
-        final QueryModel nested = model.getNestedModel();
+        final IQueryModel nested = model.getNestedModel();
         if (nested != null) {
             final LowerCaseCharSequenceIntHashMap orderBy = nested.getOrderHash();
             CharSequence timestampColumn = metadata.getColumnName(timestampIndex);
-            if (orderBy.get(timestampColumn) == ORDER_DIRECTION_ASCENDING) {
+            if (orderBy.get(timestampColumn) == IQueryModel.ORDER_DIRECTION_ASCENDING) {
                 // ORDER BY the timestamp column case.
                 orderedByTimestampAsc = true;
             } else if (timestampIndex == metadata.getTimestampIndex() && orderBy.size() == 0) {

@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -203,14 +202,14 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestByInsertNullSymbols() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
-            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month");
+            execute("create table t (ts " + timestampType.getTypeName() + ", s symbol, s2 symbol) timestamp (ts) partition by month");
             execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
             execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "2025-01-01T00:00:00.000000Z\t\t\n" +
-                            "2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA\n",
+                            "2025-01-01T00:00:00.000000" + suffix + "\t\t\n" +
+                            "2025-01-04T00:00:00.000000" + suffix + "\tsymS2A\tsymSA\n",
                     "select ts, s2, s from t earliest on ts partition by s, s2",
                     "ts",
                     true,
@@ -222,15 +221,15 @@ public class EarliestByTest extends AbstractCairoTest {
     @Test
     public void testEarliestByInsertNullSymbolsOnWal() throws Exception {
         assertMemoryLeak(() -> {
-            Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
-            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month wal");
+            execute("create table t (ts " + timestampType.getTypeName() + ", s symbol, s2 symbol) timestamp (ts) partition by month wal");
             execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
             execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
             drainWalQueue();
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
             assertQuery(
                     "ts\ts2\ts\n" +
-                            "2025-01-01T00:00:00.000000Z\t\t\n" +
-                            "2025-01-04T00:00:00.000000Z\tsymS2A\tsymSA\n",
+                            "2025-01-01T00:00:00.000000" + suffix + "\t\t\n" +
+                            "2025-01-04T00:00:00.000000" + suffix + "\tsymS2A\tsymSA\n",
                     "select ts, s2, s from t earliest on ts partition by s, s2",
                     "ts",
                     true,
@@ -1451,6 +1450,30 @@ public class EarliestByTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
                             "1970-01-01T01:00:00.000000" + suffix + "\tb\n",
                     "SELECT ts, s FROM t WHERE s != 'nonexistent' EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByWithInSubquery() throws Exception {
+        // Tests EARLIEST ON with WHERE s IN (SELECT ...) — exercises EarliestBySubQueryRecordCursorFactory
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '1970-01-01T02:00:00'), ('b', '1970-01-01T01:00:00'), " +
+                    "('c', '1970-01-01T03:00:00'), ('a', '1970-01-01T00:00:00'), ('b', '1970-01-01T04:00:00')");
+
+            execute("CREATE TABLE keys (k SYMBOL)");
+            execute("INSERT INTO keys VALUES ('a'), ('b')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "ts\ts\n" +
+                            "1970-01-01T00:00:00.000000" + suffix + "\ta\n" +
+                            "1970-01-01T01:00:00.000000" + suffix + "\tb\n",
+                    "SELECT ts, s FROM t WHERE s IN (SELECT k FROM keys) EARLIEST ON ts PARTITION BY s",
                     "ts",
                     true,
                     true

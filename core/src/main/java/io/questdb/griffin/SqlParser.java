@@ -2830,7 +2830,7 @@ public class SqlParser {
             if (model.getLatestByType() == IQueryModel.LATEST_BY_NEW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'latest on'");
             }
-            if (model.getEarliestByType() == QueryModel.EARLIEST_BY_NEW) {
+            if (model.getEarliestByType() == IQueryModel.EARLIEST_BY_NEW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'earliest on'");
             }
             ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
@@ -2856,7 +2856,7 @@ public class SqlParser {
         // expect [earliest by] (new syntax)
 
         if (tok != null && isEarliestKeyword(tok)) {
-            if (model.getEarliestByType() == QueryModel.EARLIEST_BY_DEPRECATED) {
+            if (model.getEarliestByType() == IQueryModel.EARLIEST_BY_DEPRECATED) {
                 throw SqlException.$((lexer.lastTokenPosition()), "mix of new and deprecated 'earliest by' syntax");
             }
             if (model.getLatestBy().size() > 0) {
@@ -3747,7 +3747,7 @@ public class SqlParser {
         }
     }
 
-    private void parseEarliestBy(GenericLexer lexer, QueryModel model) throws SqlException {
+    private void parseEarliestBy(GenericLexer lexer, IQueryModel model) throws SqlException {
         CharSequence tok = optTok(lexer);
         if (tok != null) {
             if (isByKeyword(tok)) {
@@ -3762,7 +3762,7 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'on' or 'by' expected");
     }
 
-    private void parseEarliestByDeprecated(GenericLexer lexer, QueryModel model) throws SqlException {
+    private void parseEarliestByDeprecated(GenericLexer lexer, IQueryModel model) throws SqlException {
         // 'earliest by' is already parsed at this point
 
         CharSequence tok;
@@ -3771,14 +3771,14 @@ public class SqlParser {
             tok = SqlUtil.fetchNext(lexer);
         } while (Chars.equalsNc(tok, ','));
 
-        model.setEarliestByType(QueryModel.EARLIEST_BY_DEPRECATED);
+        model.setEarliestByType(IQueryModel.EARLIEST_BY_DEPRECATED);
 
         if (tok != null) {
             lexer.unparseLast();
         }
     }
 
-    private void parseEarliestByNew(GenericLexer lexer, QueryModel model) throws SqlException {
+    private void parseEarliestByNew(GenericLexer lexer, IQueryModel model) throws SqlException {
         // 'earliest on' is already parsed at this point
 
         // <timestamp>
@@ -3794,7 +3794,7 @@ public class SqlParser {
             tok = SqlUtil.fetchNext(lexer);
         } while (Chars.equalsNc(tok, ','));
 
-        model.setEarliestByType(QueryModel.EARLIEST_BY_NEW);
+        model.setEarliestByType(IQueryModel.EARLIEST_BY_NEW);
 
         if (tok != null) {
             lexer.unparseLast();
