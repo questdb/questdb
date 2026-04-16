@@ -37,6 +37,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.IndirectIntArg;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.allocArgBuffer;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.assertEquivalence;
 
@@ -61,6 +62,12 @@ public class IntGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitAndIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitAndIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testBitAndIntSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitAndIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -70,6 +77,12 @@ public class IntGroupByFunctionKeyedBatchTest {
     public void testBitOrIntFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitOrIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testBitOrIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitOrIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test
@@ -85,6 +98,12 @@ public class IntGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitXorIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitXorIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testBitXorIntSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitXorIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -94,6 +113,12 @@ public class IntGroupByFunctionKeyedBatchTest {
     public void testCountIntFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new CountIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testCountIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new CountIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test
@@ -109,6 +134,12 @@ public class IntGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testMaxIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MaxIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testMaxIntSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MaxIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -121,6 +152,12 @@ public class IntGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testMinIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MinIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testMinIntSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MinIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -130,6 +167,12 @@ public class IntGroupByFunctionKeyedBatchTest {
     public void testSumIntFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new SumIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testSumIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new SumIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

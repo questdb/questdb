@@ -33,6 +33,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.IndirectTimestampArg;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.allocArgBuffer;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.assertEquivalence;
 
@@ -60,6 +61,14 @@ public class TimestampGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testMaxTimestampIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MaxTimestampGroupByFunction(
+                        new IndirectTimestampArg(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
+    }
+
+    @Test
     public void testMaxTimestampSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MaxTimestampGroupByFunction(
@@ -73,6 +82,14 @@ public class TimestampGroupByFunctionKeyedBatchTest {
                 new MinTimestampGroupByFunction(
                         TimestampColumn.newInstance(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
                         ColumnType.TIMESTAMP), true));
+    }
+
+    @Test
+    public void testMinTimestampIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MinTimestampGroupByFunction(
+                        new IndirectTimestampArg(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
     }
 
     @Test

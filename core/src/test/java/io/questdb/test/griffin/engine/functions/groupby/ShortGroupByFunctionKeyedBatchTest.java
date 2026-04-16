@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.groupby.SumShortGroupByFunction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.IndirectShortArg;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.allocArgBuffer;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.assertEquivalence;
 
@@ -64,6 +65,12 @@ public class ShortGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testAvgShortIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new AvgShortGroupByFunction(new IndirectShortArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testAvgShortSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new AvgShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -73,6 +80,12 @@ public class ShortGroupByFunctionKeyedBatchTest {
     public void testBitAndShortFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitAndShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testBitAndShortIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitAndShortGroupByFunction(new IndirectShortArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test
@@ -88,6 +101,12 @@ public class ShortGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitOrShortIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitOrShortGroupByFunction(new IndirectShortArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testBitOrShortSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitOrShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -100,6 +119,12 @@ public class ShortGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitXorShortIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitXorShortGroupByFunction(new IndirectShortArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testBitXorShortSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitXorShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -109,6 +134,12 @@ public class ShortGroupByFunctionKeyedBatchTest {
     public void testSumShortFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new SumShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testSumShortIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new SumShortGroupByFunction(new IndirectShortArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

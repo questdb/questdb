@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.IndirectDoubleArg;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.allocArgBuffer;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.assertEquivalence;
 
@@ -59,6 +60,12 @@ public class DoubleGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testAvgDoubleIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new AvgDoubleGroupByFunction(new IndirectDoubleArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testAvgDoubleSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new AvgDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -68,6 +75,12 @@ public class DoubleGroupByFunctionKeyedBatchTest {
     public void testCountDoubleFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new CountDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testCountDoubleIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new CountDoubleGroupByFunction(new IndirectDoubleArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test
@@ -83,6 +96,12 @@ public class DoubleGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testMaxDoubleIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MaxDoubleGroupByFunction(new IndirectDoubleArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testMaxDoubleSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MaxDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -95,6 +114,12 @@ public class DoubleGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testMinDoubleIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MinDoubleGroupByFunction(new IndirectDoubleArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testMinDoubleSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MinDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -104,6 +129,12 @@ public class DoubleGroupByFunctionKeyedBatchTest {
     public void testSumDoubleFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new SumDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testSumDoubleIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new SumDoubleGroupByFunction(new IndirectDoubleArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

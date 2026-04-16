@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.IndirectDateArg;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.allocArgBuffer;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.assertEquivalence;
 
@@ -57,6 +58,12 @@ public class DateGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testMaxDateIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MaxDateGroupByFunction(new IndirectDateArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testMaxDateSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MaxDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -66,6 +73,12 @@ public class DateGroupByFunctionKeyedBatchTest {
     public void testMinDateFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MinDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testMinDateIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MinDateGroupByFunction(new IndirectDateArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

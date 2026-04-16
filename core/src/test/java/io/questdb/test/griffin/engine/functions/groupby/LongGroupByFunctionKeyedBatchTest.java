@@ -38,6 +38,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.IndirectLongArg;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.allocArgBuffer;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.assertEquivalence;
 
@@ -63,6 +64,12 @@ public class LongGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitAndLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitAndLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testBitAndLongSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitAndLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -75,6 +82,12 @@ public class LongGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitOrLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitOrLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testBitOrLongSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitOrLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -84,6 +97,12 @@ public class LongGroupByFunctionKeyedBatchTest {
     public void testBitXorLongFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitXorLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testBitXorLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitXorLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test
@@ -105,6 +124,12 @@ public class LongGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testCountLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new CountLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testCountLongSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new CountLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -114,6 +139,12 @@ public class LongGroupByFunctionKeyedBatchTest {
     public void testMaxLongFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MaxLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testMaxLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MaxLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test
@@ -129,6 +160,12 @@ public class LongGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testMinLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MinLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testMinLongSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MinLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -138,6 +175,12 @@ public class LongGroupByFunctionKeyedBatchTest {
     public void testSumLongFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new SumLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testSumLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new SumLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

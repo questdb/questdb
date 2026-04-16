@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.groupby.BitXorByteGroupByFunction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.IndirectByteArg;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.allocArgBuffer;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.assertEquivalence;
 
@@ -62,6 +63,12 @@ public class ByteGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitAndByteIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitAndByteGroupByFunction(new IndirectByteArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testBitAndByteSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitAndByteGroupByFunction(ByteColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -74,6 +81,12 @@ public class ByteGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testBitOrByteIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitOrByteGroupByFunction(new IndirectByteArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testBitOrByteSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitOrByteGroupByFunction(ByteColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -83,6 +96,12 @@ public class ByteGroupByFunctionKeyedBatchTest {
     public void testBitXorByteFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitXorByteGroupByFunction(ByteColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testBitXorByteIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new BitXorByteGroupByFunction(new IndirectByteArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

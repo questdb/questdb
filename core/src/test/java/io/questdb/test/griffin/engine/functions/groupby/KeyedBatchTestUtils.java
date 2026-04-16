@@ -28,7 +28,16 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -47,6 +56,14 @@ import org.junit.Assert;
  * {@link TestFrameRecord#setPageAvailable} to force the slow path by making
  * {@code getPageAddress} return 0, which matches the "column top" condition the
  * production code checks for.
+ * <p>
+ * A set of {@code Indirect*Arg} wrappers delegate {@code getByte}/{@code getShort}/
+ * etc. to the underlying record without implementing
+ * {@link io.questdb.griffin.engine.functions.columns.ColumnFunction}. Using one
+ * as an aggregator argument forces
+ * {@link io.questdb.griffin.engine.groupby.GroupByUtils#directArgColumnIndex} to
+ * return {@code -1}, which exercises the {@code argColumnIndex < 0} side of the
+ * {@code argAddr} ternary in every {@code computeKeyedBatch} override.
  */
 final class KeyedBatchTestUtils {
 
@@ -58,7 +75,7 @@ final class KeyedBatchTestUtils {
     private static final boolean[] PRIME_IS_NEW = {true, true, true, true};
     private static final long[] PRIME_ROWS = {0, 2, 4, 6};
     private static final boolean[] TEST_IS_NEW = {false, false, false, false, true, true, true, true};
-    private static final long[] TEST_ROWS = {3, 1, 7, 5, 0, 1, 2, 5};
+    private static final long[] TEST_ROWS = {3, 1, 6, 5, 0, 1, 2, 5};
 
     private KeyedBatchTestUtils() {
     }
@@ -159,72 +176,6 @@ final class KeyedBatchTestUtils {
     }
 
     /**
-     * Packs (rowIndex, entryOffset, isNew) triples into a native buffer of
-     * packed longs matching the layout consumed by {@code computeKeyedBatch}.
-     * Each entry occupies 8 bytes.
-     */
-    static long buildBatchBuffer(long[] rowIndexes, long[] entryOffsets, boolean[] isNewFlags) {
-        final int n = rowIndexes.length;
-        Assert.assertEquals(n, entryOffsets.length);
-        Assert.assertEquals(n, isNewFlags.length);
-        final long bytes = (long) n * Long.BYTES;
-        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
-        for (int i = 0; i < n; i++) {
-            final long encoded = Map.encodeBatchEntry(rowIndexes[i], entryOffsets[i], isNewFlags[i]);
-            Unsafe.getUnsafe().putLong(addr + (long) i * Long.BYTES, encoded);
-        }
-        return addr;
-    }
-
-    /**
-     * Initializes a function's value-column indices via
-     * {@link GroupByFunction#initValueTypes} and returns the resulting total
-     * value-region size in bytes, derived from the registered column types.
-     */
-    static long initFunctionTypes(GroupByFunction function, ArrayColumnTypes types) {
-        function.initValueTypes(types);
-        long size = 0;
-        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
-            size += ColumnType.sizeOf(types.getColumnType(i));
-        }
-        return size;
-    }
-
-    /**
-     * Runs the default {@link GroupByFunction#computeKeyedBatch} skeleton
-     * inline: for each entry, positions {@code flyweight} at the entry's value
-     * region, calls {@code setRowIndex} on the record, and dispatches to
-     * {@code computeFirst} / {@code computeNext}.
-     * <p>
-     * Intentionally not delegated to {@code GroupByFunction#computeKeyedBatch}
-     * so the equivalence test does not depend on the default implementation
-     * remaining unchanged.
-     */
-    static void runReferencePath(
-            GroupByFunction function,
-            PageFrameMemoryRecord record,
-            FlyweightPackedMapValue flyweight,
-            long baseValueAddress,
-            long batchAddr,
-            long rowCount,
-            long baseRowId
-    ) {
-        for (long i = 0; i < rowCount; i++) {
-            final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
-            final long valueOffset = Map.decodeBatchOffset(encoded);
-            final int rowIndex = Map.decodeBatchRowIndex(encoded);
-            final boolean isNew = Map.isNewBatchEntry(encoded);
-            record.setRowIndex(rowIndex);
-            flyweight.of(baseValueAddress + valueOffset);
-            if (isNew) {
-                function.computeFirst(flyweight, record, baseRowId + rowIndex);
-            } else {
-                function.computeNext(flyweight, record, baseRowId + rowIndex);
-            }
-        }
-    }
-
-    /**
      * Asserts that {@code function.computeKeyedBatch} produces the same final
      * value region as the reference loop over {@code computeFirst} /
      * {@code computeNext}. The batch layout intentionally hits every branch
@@ -291,6 +242,177 @@ final class KeyedBatchTestUtils {
                 Unsafe.free(baseA, regionBytes, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(baseB, regionBytes, MemoryTag.NATIVE_DEFAULT);
             }
+        }
+    }
+
+    /**
+     * Packs (rowIndex, entryOffset, isNew) triples into a native buffer of
+     * packed longs matching the layout consumed by {@code computeKeyedBatch}.
+     * Each entry occupies 8 bytes.
+     */
+    static long buildBatchBuffer(long[] rowIndexes, long[] entryOffsets, boolean[] isNewFlags) {
+        final int n = rowIndexes.length;
+        Assert.assertEquals(n, entryOffsets.length);
+        Assert.assertEquals(n, isNewFlags.length);
+        final long bytes = (long) n * Long.BYTES;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < n; i++) {
+            final long encoded = Map.encodeBatchEntry(rowIndexes[i], entryOffsets[i], isNewFlags[i]);
+            Unsafe.getUnsafe().putLong(addr + (long) i * Long.BYTES, encoded);
+        }
+        return addr;
+    }
+
+    /**
+     * Initializes a function's value-column indices via
+     * {@link GroupByFunction#initValueTypes} and returns the resulting total
+     * value-region size in bytes, derived from the registered column types.
+     */
+    static long initFunctionTypes(GroupByFunction function, ArrayColumnTypes types) {
+        function.initValueTypes(types);
+        long size = 0;
+        for (int i = 0, n = types.getColumnCount(); i < n; i++) {
+            size += ColumnType.sizeOf(types.getColumnType(i));
+        }
+        return size;
+    }
+
+    /**
+     * Runs the default {@link GroupByFunction#computeKeyedBatch} skeleton
+     * inline: for each entry, positions {@code flyweight} at the entry's value
+     * region, calls {@code setRowIndex} on the record, and dispatches to
+     * {@code computeFirst} / {@code computeNext}.
+     * <p>
+     * Intentionally not delegated to {@code GroupByFunction#computeKeyedBatch}
+     * so the equivalence test does not depend on the default implementation
+     * remaining unchanged.
+     */
+    static void runReferencePath(
+            GroupByFunction function,
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue flyweight,
+            long baseValueAddress,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        for (long i = 0; i < rowCount; i++) {
+            final long encoded = Unsafe.getUnsafe().getLong(batchAddr + (i << 3));
+            final long valueOffset = Map.decodeBatchOffset(encoded);
+            final int rowIndex = Map.decodeBatchRowIndex(encoded);
+            final boolean isNew = Map.isNewBatchEntry(encoded);
+            record.setRowIndex(rowIndex);
+            flyweight.of(baseValueAddress + valueOffset);
+            if (isNew) {
+                function.computeFirst(flyweight, record, baseRowId + rowIndex);
+            } else {
+                function.computeNext(flyweight, record, baseRowId + rowIndex);
+            }
+        }
+    }
+
+    static final class IndirectByteArg extends ByteFunction {
+        private final int columnIndex;
+
+        IndirectByteArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public byte getByte(Record rec) {
+            return rec.getByte(columnIndex);
+        }
+    }
+
+    static final class IndirectDateArg extends DateFunction {
+        private final int columnIndex;
+
+        IndirectDateArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return rec.getDate(columnIndex);
+        }
+    }
+
+    static final class IndirectDoubleArg extends DoubleFunction {
+        private final int columnIndex;
+
+        IndirectDoubleArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return rec.getDouble(columnIndex);
+        }
+    }
+
+    static final class IndirectFloatArg extends FloatFunction {
+        private final int columnIndex;
+
+        IndirectFloatArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            return rec.getFloat(columnIndex);
+        }
+    }
+
+    static final class IndirectIntArg extends IntFunction {
+        private final int columnIndex;
+
+        IndirectIntArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            return rec.getInt(columnIndex);
+        }
+    }
+
+    static final class IndirectLongArg extends LongFunction {
+        private final int columnIndex;
+
+        IndirectLongArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return rec.getLong(columnIndex);
+        }
+    }
+
+    static final class IndirectShortArg extends ShortFunction {
+        private final int columnIndex;
+
+        IndirectShortArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public short getShort(Record rec) {
+            return rec.getShort(columnIndex);
+        }
+    }
+
+    static final class IndirectTimestampArg extends TimestampFunction {
+        private final int columnIndex;
+
+        IndirectTimestampArg(int columnIndex, int timestampType) {
+            super(timestampType);
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return rec.getTimestamp(columnIndex);
         }
     }
 

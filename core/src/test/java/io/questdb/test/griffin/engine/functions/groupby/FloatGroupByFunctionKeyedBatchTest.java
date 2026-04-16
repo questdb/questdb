@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.IndirectFloatArg;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.allocArgBuffer;
 import static io.questdb.test.griffin.engine.functions.groupby.KeyedBatchTestUtils.assertEquivalence;
 
@@ -58,6 +59,12 @@ public class FloatGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testCountFloatIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new CountFloatGroupByFunction(new IndirectFloatArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testCountFloatSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new CountFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -67,6 +74,12 @@ public class FloatGroupByFunctionKeyedBatchTest {
     public void testMaxFloatFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MaxFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testMaxFloatIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MaxFloatGroupByFunction(new IndirectFloatArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test
@@ -82,6 +95,12 @@ public class FloatGroupByFunctionKeyedBatchTest {
     }
 
     @Test
+    public void testMinFloatIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new MinFloatGroupByFunction(new IndirectFloatArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
     public void testMinFloatSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new MinFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), false));
@@ -91,6 +110,12 @@ public class FloatGroupByFunctionKeyedBatchTest {
     public void testSumFloatFastPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new SumFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testSumFloatIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new SumFloatGroupByFunction(new IndirectFloatArg(ARG_COLUMN_INDEX)), false));
     }
 
     @Test
