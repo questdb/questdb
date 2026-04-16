@@ -183,7 +183,9 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     /**
      * Ensures the map can accept up to {@code additionalKeys} new entries
-     * without triggering a rehash that would invalidate harvested offsets.
+     * while keeping offsets harvested by {@link #probeBatch} stable for the
+     * duration of the batch. Implementations whose offsets are invariant
+     * across internal growth may treat this as a no-op.
      */
     default void reserveCapacity(long additionalKeys) {
         // no-op by default
