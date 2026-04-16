@@ -50,13 +50,7 @@ pub fn encode_string(
         bloom_set,
         |window, bloom| {
             let page_segments = slice_varlen_segments(&segments, window);
-            string_segments_to_page(
-                &page_segments,
-                options,
-                primitive_type.clone(),
-                Encoding::Plain,
-                bloom,
-            )
+            string_segments_to_page(&page_segments, options, primitive_type.clone(), bloom)
         },
     )
 }
@@ -88,13 +82,7 @@ pub fn encode_binary(
         bloom_set,
         |window, bloom| {
             let page_segments = slice_varlen_segments(&segments, window);
-            binary_segments_to_page(
-                &page_segments,
-                options,
-                primitive_type.clone(),
-                Encoding::Plain,
-                bloom,
-            )
+            binary_segments_to_page(&page_segments, options, primitive_type.clone(), bloom)
         },
     )
 }
@@ -126,13 +114,7 @@ pub fn encode_varchar(
         bloom_set,
         |window, bloom| {
             let page_segments = slice_varlen_segments(&segments, window);
-            varchar_segments_to_page(
-                &page_segments,
-                options,
-                primitive_type.clone(),
-                Encoding::Plain,
-                bloom,
-            )
+            varchar_segments_to_page(&page_segments, options, primitive_type.clone(), bloom)
         },
     )
 }
@@ -141,7 +123,6 @@ fn binary_segments_to_page(
     segments: &[BinarySegment<'_>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows: usize = segments.iter().map(BinarySegment::num_rows).sum();
@@ -165,52 +146,17 @@ fn binary_segments_to_page(
     let definition_levels_byte_length = def_levels.definition_levels_byte_length;
     let null_count = def_levels.null_count;
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
-    match encoding {
-        Encoding::Plain => {
-            for segment in segments {
-                for &offset in segment.index {
-                    if let Some(value) = binary_get_slice(segment.data, offset)? {
-                        let len = value.len();
-                        buffer.extend_from_slice(&(len as u32).to_le_bytes());
-                        buffer.extend_from_slice(value);
-                        stats.update(value);
-                        if let Some(ref mut h) = bloom_hashes {
-                            h.insert(hash_byte(value));
-                        }
-                    }
+    for segment in segments {
+        for &offset in segment.index {
+            if let Some(value) = binary_get_slice(segment.data, offset)? {
+                let len = value.len();
+                buffer.extend_from_slice(&(len as u32).to_le_bytes());
+                buffer.extend_from_slice(value);
+                stats.update(value);
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_byte(value));
                 }
             }
-        }
-        Encoding::DeltaLengthByteArray => {
-            let non_null_count = num_rows - null_count;
-            let mut lengths = Vec::with_capacity(non_null_count);
-            for segment in segments.iter() {
-                for &offset in segment.index {
-                    if let Some(value) = binary_get_slice(segment.data, offset)? {
-                        lengths.push(value.len() as i64);
-                    }
-                }
-            }
-            let lengths = ExactSizedIter::new(lengths.into_iter(), non_null_count);
-            delta_bitpacked::encode(lengths, &mut buffer);
-
-            for segment in segments {
-                for &offset in segment.index {
-                    if let Some(value) = binary_get_slice(segment.data, offset)? {
-                        buffer.extend_from_slice(value);
-                        stats.update(value);
-                        if let Some(ref mut h) = bloom_hashes {
-                            h.insert(hash_byte(value));
-                        }
-                    }
-                }
-            }
-        }
-        _ => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported encoding {encoding:?} while writing a binary column"
-            ))
         }
     }
 
@@ -226,7 +172,7 @@ fn binary_segments_to_page(
         },
         primitive_type,
         options,
-        encoding,
+        Encoding::Plain,
         false,
     )
     .map(Page::Data)
@@ -236,7 +182,6 @@ fn string_segments_to_page(
     segments: &[BinarySegment<'_>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows: usize = segments.iter().map(BinarySegment::num_rows).sum();
@@ -260,58 +205,20 @@ fn string_segments_to_page(
     let definition_levels_byte_length = def_levels.definition_levels_byte_length;
     let null_count = def_levels.null_count;
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
-    match encoding {
-        Encoding::Plain => {
-            for segment in segments {
-                for &offset in segment.index {
-                    if let Some(utf16) = string_get_utf16_at_offset(segment.data, offset)? {
-                        let len_offset = buffer.len();
-                        buffer.extend_from_slice(&[0; 4]);
-                        let utf8_start = buffer.len();
-                        let utf8_len = append_utf8_from_utf16(&mut buffer, utf16)?;
-                        buffer[len_offset..utf8_start]
-                            .copy_from_slice(&(utf8_len as u32).to_le_bytes());
-                        let value = &buffer[utf8_start..utf8_start + utf8_len];
-                        stats.update(value);
-                        if let Some(ref mut h) = bloom_hashes {
-                            h.insert(hash_byte(value));
-                        }
-                    }
+    for segment in segments {
+        for &offset in segment.index {
+            if let Some(utf16) = string_get_utf16_at_offset(segment.data, offset)? {
+                let len_offset = buffer.len();
+                buffer.extend_from_slice(&[0; 4]);
+                let utf8_start = buffer.len();
+                let utf8_len = append_utf8_from_utf16(&mut buffer, utf16)?;
+                buffer[len_offset..utf8_start].copy_from_slice(&(utf8_len as u32).to_le_bytes());
+                let value = &buffer[utf8_start..utf8_start + utf8_len];
+                stats.update(value);
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_byte(value));
                 }
             }
-        }
-        Encoding::DeltaLengthByteArray => {
-            let non_null_count = num_rows - null_count;
-            let mut lengths = Vec::with_capacity(non_null_count);
-            for segment in segments.iter() {
-                for &offset in segment.index {
-                    if let Some(utf16) = string_get_utf16_at_offset(segment.data, offset)? {
-                        lengths.push(compute_utf8_length(utf16) as i64);
-                    }
-                }
-            }
-            let lengths = ExactSizedIter::new(lengths.into_iter(), non_null_count);
-            delta_bitpacked::encode(lengths, &mut buffer);
-
-            for segment in segments {
-                for &offset in segment.index {
-                    if let Some(utf16) = string_get_utf16_at_offset(segment.data, offset)? {
-                        let utf8_start = buffer.len();
-                        let utf8_len = append_utf8_from_utf16(&mut buffer, utf16)?;
-                        let value = &buffer[utf8_start..utf8_start + utf8_len];
-                        stats.update(value);
-                        if let Some(ref mut h) = bloom_hashes {
-                            h.insert(hash_byte(value));
-                        }
-                    }
-                }
-            }
-        }
-        _ => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported encoding {encoding:?} while writing a string column"
-            ))
         }
     }
 
@@ -327,7 +234,7 @@ fn string_segments_to_page(
         },
         primitive_type,
         options,
-        encoding,
+        Encoding::Plain,
         false,
     )
     .map(Page::Data)
@@ -337,7 +244,6 @@ fn varchar_segments_to_page(
     segments: &[VarcharSegment<'_>],
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows: usize = segments.iter().map(VarcharSegment::num_rows).sum();
@@ -361,52 +267,17 @@ fn varchar_segments_to_page(
     let definition_levels_byte_length = def_levels.definition_levels_byte_length;
     let null_count = def_levels.null_count;
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
-    match encoding {
-        Encoding::Plain => {
-            for segment in segments {
-                for entry in segment.index {
-                    if let Some(value) = varchar_get_slice(entry, segment.data)? {
-                        let len = value.len();
-                        buffer.extend_from_slice(&(len as u32).to_le_bytes());
-                        buffer.extend_from_slice(value);
-                        stats.update(value);
-                        if let Some(ref mut h) = bloom_hashes {
-                            h.insert(hash_byte(value));
-                        }
-                    }
+    for segment in segments {
+        for entry in segment.index {
+            if let Some(value) = varchar_get_slice(entry, segment.data)? {
+                let len = value.len();
+                buffer.extend_from_slice(&(len as u32).to_le_bytes());
+                buffer.extend_from_slice(value);
+                stats.update(value);
+                if let Some(ref mut h) = bloom_hashes {
+                    h.insert(hash_byte(value));
                 }
             }
-        }
-        Encoding::DeltaLengthByteArray => {
-            let non_null_count = num_rows - null_count;
-            let mut lengths = Vec::with_capacity(non_null_count);
-            for segment in segments.iter() {
-                for entry in segment.index {
-                    if let Some(value) = varchar_get_slice(entry, segment.data)? {
-                        lengths.push(value.len() as i64);
-                    }
-                }
-            }
-            let lengths = ExactSizedIter::new(lengths.into_iter(), non_null_count);
-            delta_bitpacked::encode(lengths, &mut buffer);
-
-            for segment in segments {
-                for entry in segment.index {
-                    if let Some(value) = varchar_get_slice(entry, segment.data)? {
-                        buffer.extend_from_slice(value);
-                        stats.update(value);
-                        if let Some(ref mut h) = bloom_hashes {
-                            h.insert(hash_byte(value));
-                        }
-                    }
-                }
-            }
-        }
-        _ => {
-            return Err(fmt_err!(
-                Unsupported,
-                "unsupported encoding {encoding:?} while writing a varchar column"
-            ))
         }
     }
 
@@ -422,7 +293,7 @@ fn varchar_segments_to_page(
         },
         primitive_type,
         options,
-        encoding,
+        Encoding::Plain,
         false,
     )
     .map(Page::Data)

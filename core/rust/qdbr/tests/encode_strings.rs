@@ -2,7 +2,8 @@ mod common;
 
 use arrow::array::{Array, StringArray};
 use common::encode::{
-    build_qdb_string_data, generate_nulls, make_string_column, read_parquet_batches, write_parquet,
+    assert_single_column_bloom_metadata, build_qdb_string_data, generate_nulls, make_string_column,
+    read_parquet_batches, write_parquet, write_parquet_with_bloom, ALL_BLOOM_FILTER_STATES,
     ALL_NULL_PATTERNS,
 };
 use common::types::strings::expected_str_value;
@@ -23,59 +24,66 @@ const STRING_ENCODINGS: [Encoding; 3] = [
 fn test_encode_string() {
     for encoding in &STRING_ENCODINGS {
         for null_pattern in &ALL_NULL_PATTERNS {
-            let nulls = generate_nulls(COUNT, *null_pattern);
-            let values: Vec<String> = (0..COUNT).map(expected_str_value).collect();
-            let value_refs: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
+            for bloom_enabled in ALL_BLOOM_FILTER_STATES {
+                let nulls = generate_nulls(COUNT, *null_pattern);
+                let values: Vec<String> = (0..COUNT).map(expected_str_value).collect();
+                let value_refs: Vec<&str> = values.iter().map(|s| s.as_str()).collect();
 
-            let (primary, offsets) = build_qdb_string_data(&value_refs, &nulls);
-            let offsets_bytes = unsafe {
-                std::slice::from_raw_parts(
-                    offsets.as_ptr() as *const u8,
-                    offsets.len() * std::mem::size_of::<i64>(),
-                )
-            };
+                let (primary, offsets) = build_qdb_string_data(&value_refs, &nulls);
+                let offsets_bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        offsets.as_ptr() as *const u8,
+                        offsets.len() * std::mem::size_of::<i64>(),
+                    )
+                };
 
-            let column = make_string_column(
-                "col",
-                ColumnType::new(ColumnTypeTag::String, 0).code(),
-                primary.as_ptr(),
-                primary.len(),
-                offsets_bytes.as_ptr(),
-                offsets_bytes.len(),
-                COUNT,
-                encoding.config(),
-            );
+                let column = make_string_column(
+                    "col",
+                    ColumnType::new(ColumnTypeTag::String, 0).code(),
+                    primary.as_ptr(),
+                    primary.len(),
+                    offsets_bytes.as_ptr(),
+                    offsets_bytes.len(),
+                    COUNT,
+                    encoding.config(),
+                );
 
-            let partition = Partition {
-                table: "test_table".to_string(),
-                columns: vec![column],
-            };
-            let bytes = write_parquet(partition);
-            let batches = read_parquet_batches(&bytes);
-
-            let arr = batches[0]
-                .column(0)
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .expect("StringArray");
-            assert_eq!(arr.len(), COUNT);
-
-            for i in 0..COUNT {
-                if nulls[i] {
-                    assert!(
-                        arr.is_null(i),
-                        "String {encoding:?}/{null_pattern:?}: expected null at {i}"
-                    );
+                let partition = Partition {
+                    table: "test_table".to_string(),
+                    columns: vec![column],
+                };
+                let bytes = if bloom_enabled {
+                    write_parquet_with_bloom(partition)
                 } else {
-                    assert!(
-                        !arr.is_null(i),
-                        "String {encoding:?}/{null_pattern:?}: expected non-null at {i}"
-                    );
-                    assert_eq!(
-                        arr.value(i),
-                        values[i].as_str(),
-                        "String {encoding:?}/{null_pattern:?}: mismatch at {i}"
-                    );
+                    write_parquet(partition)
+                };
+                assert_single_column_bloom_metadata(&bytes, bloom_enabled);
+                let batches = read_parquet_batches(&bytes);
+
+                let arr = batches[0]
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .expect("StringArray");
+                assert_eq!(arr.len(), COUNT);
+
+                for i in 0..COUNT {
+                    if nulls[i] {
+                        assert!(
+                            arr.is_null(i),
+                            "String {encoding:?}/{null_pattern:?}/bloom={bloom_enabled}: expected null at {i}"
+                        );
+                    } else {
+                        assert!(
+                            !arr.is_null(i),
+                            "String {encoding:?}/{null_pattern:?}/bloom={bloom_enabled}: expected non-null at {i}"
+                        );
+                        assert_eq!(
+                            arr.value(i),
+                            values[i].as_str(),
+                            "String {encoding:?}/{null_pattern:?}/bloom={bloom_enabled}: mismatch at {i}"
+                        );
+                    }
                 }
             }
         }

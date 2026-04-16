@@ -20,7 +20,7 @@ use crate::parquet_write::encoders::helpers::{
 use crate::parquet_write::encoders::numeric::{build_statistics, SimdEncodable, StatsUpdater};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
-use crate::parquet_write::util::{build_plain_page, FastMaxMin, MaxMin};
+use crate::parquet_write::util::{build_plain_page, MaxMin, SimdMaxMin};
 use crate::parquet_write::Nullable;
 
 use super::encode_column_chunk;
@@ -255,7 +255,12 @@ fn simd_single_view_page<T: SimdEncodable>(
         options.write_statistics,
         bloom_hashes,
     )
-    .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
+    .map_err(|e| {
+        fmt_err!(
+            Io(std::sync::Arc::new(e)),
+            "failed to encode definition levels"
+        )
+    })?;
 
     if matches!(options.version, parquet2::write::Version::V1) {
         let def_levels_len = (buffer.len() - def_levels_start) as i32;
@@ -278,8 +283,15 @@ fn simd_single_view_page<T: SimdEncodable>(
     };
 
     build_plain_page(
-        buffer, num_rows, null_count, definition_levels_byte_length, statistics,
-        primitive_type, options, Encoding::Plain, false,
+        buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        statistics,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        false,
     )
     .map(Page::Data)
 }
@@ -287,9 +299,7 @@ fn simd_single_view_page<T: SimdEncodable>(
 /// Scalar fallback for multi-partition pages.
 fn simd_multi_view_page<'a, T: SimdEncodable>(
     first: PartitionChunkView<'a, T>,
-    remaining: impl Iterator<
-        Item = PartitionChunkView<'a, T>,
-    >,
+    remaining: impl Iterator<Item = PartitionChunkView<'a, T>>,
     window: PageRowWindow,
     options: WriteOptions,
     primitive_type: PrimitiveType,
@@ -299,7 +309,7 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
     let mut buffer = Vec::with_capacity(size_of::<T>() * num_rows);
-    let mut statistics = FastMaxMin::new(T::min(), T::max());
+    let mut statistics = SimdMaxMin::new();
 
     for view in std::iter::once(first).chain(remaining) {
         for _ in 0..view.adjusted_column_top {
@@ -337,8 +347,15 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
     };
 
     build_plain_page(
-        buffer, num_rows, null_count, definition_levels_byte_length, stats,
-        primitive_type, options, Encoding::Plain, false,
+        buffer,
+        num_rows,
+        null_count,
+        definition_levels_byte_length,
+        stats,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        false,
     )
     .map(Page::Data)
 }

@@ -1,6 +1,7 @@
 use std::{cmp, io, mem, slice};
 
 use crate::parquet::error::ParquetResult;
+use crate::parquet_write::encoders::numeric::SimdEncodable;
 use crate::parquet_write::file::WriteOptions;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::ceil8;
@@ -8,15 +9,13 @@ use parquet2::encoding::hybrid_rle::{encode_bool, encode_u32};
 use parquet2::encoding::uleb128;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
-use parquet2::page::{
-    DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2, DictPage, Page,
-};
+use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
 use parquet2::schema::types::{PhysicalType, PrimitiveType};
 use parquet2::statistics::{serialize_statistics, BinaryStatistics, ParquetStatistics, Statistics};
 use parquet2::types::NativeType;
-use parquet2::write::{DynIter, Version};
+use parquet2::write::Version;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct MaxMin<T> {
     pub max: Option<T>,
     pub min: Option<T>,
@@ -48,15 +47,15 @@ impl<T: Copy + NativeType> MaxMin<T> {
     }
 }
 
-#[derive(Debug)]
-pub struct FastMaxMin<T> {
+#[derive(Debug, Clone, Copy)]
+pub struct SimdMaxMin<T> {
     pub max: T,
     pub min: T,
 }
 
-impl<T: Copy + NativeType> FastMaxMin<T> {
-    pub fn new(min: T, max: T) -> Self {
-        FastMaxMin { max: min, min: max }
+impl<T: Copy + SimdEncodable> SimdMaxMin<T> {
+    pub fn new() -> Self {
+        SimdMaxMin { max: T::min(), min: T::max() }
     }
 
     #[inline(always)]
@@ -68,7 +67,7 @@ impl<T: Copy + NativeType> FastMaxMin<T> {
         }
     }
 
-    pub fn to_minmax_stats(&self, has_non_null: bool) -> MaxMin<T> {
+    pub fn to_minmax_stats(self, has_non_null: bool) -> MaxMin<T> {
         if has_non_null {
             MaxMin { max: Some(self.max), min: Some(self.min) }
         } else {
@@ -482,70 +481,6 @@ pub fn build_plain_page(
         },
         Some(num_rows),
     ))
-}
-
-/// Build a DynIter yielding [DictPage, DataPage] from pre-built buffers.
-/// This avoids duplicating the DictPage + DataPage assembly in each dict encoder.
-pub fn dict_pages_iter(
-    dict_buffer: Vec<u8>,
-    unique_count: usize,
-    data_page: DataPage,
-) -> DynIter<'static, ParquetResult<Page>> {
-    let dict_page = DictPage::new(dict_buffer, unique_count, false);
-    DynIter::new(
-        [Page::Dict(dict_page), Page::Data(data_page)]
-            .into_iter()
-            .map(Ok),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn encode_dict_rle_pages(
-    dict_buffer: Vec<u8>,
-    dict_entry_count: usize,
-    keys: Vec<u32>,
-    non_null_count: usize,
-    mut data_buffer: Vec<u8>,
-    definition_levels_byte_length: usize,
-    num_rows: usize,
-    null_count: usize,
-    statistics: Option<ParquetStatistics>,
-    primitive_type: PrimitiveType,
-    options: WriteOptions,
-    required: bool,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    let max_key = if dict_entry_count == 0 {
-        0u32
-    } else {
-        (dict_entry_count - 1) as u32
-    };
-    let bits_per_key = bit_width(max_key as u64);
-    data_buffer.push(bits_per_key);
-    encode_u32(
-        &mut data_buffer,
-        keys.into_iter(),
-        non_null_count,
-        bits_per_key as u32,
-    )?;
-
-    let data_page = build_plain_page(
-        data_buffer,
-        num_rows,
-        null_count,
-        definition_levels_byte_length,
-        statistics,
-        primitive_type,
-        options,
-        Encoding::RleDictionary,
-        required,
-    )?;
-
-    let unique_count = if dict_buffer.is_empty() {
-        0
-    } else {
-        dict_entry_count
-    };
-    Ok(dict_pages_iter(dict_buffer, unique_count, data_page))
 }
 
 /// # Safety

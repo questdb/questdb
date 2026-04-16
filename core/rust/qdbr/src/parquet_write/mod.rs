@@ -19,9 +19,7 @@ pub mod bench {
     // Curated page-level helpers kept for the existing micro-benchmarks.
     pub use super::array::array_to_raw_page;
     pub use super::encoders::numeric::{
-        decimal_slice_to_dict_pages, int_slice_to_dict_pages_notnull,
-        int_slice_to_dict_pages_nullable, int_slice_to_page_notnull, int_slice_to_page_nullable,
-        slice_to_dict_pages_simd, slice_to_page_simd,
+        int_slice_to_page_notnull, int_slice_to_page_nullable, slice_to_page_simd,
     };
     pub use super::encoders::plain::boolean_to_page;
     pub use super::encoders::plain::{

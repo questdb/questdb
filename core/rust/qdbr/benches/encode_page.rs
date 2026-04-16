@@ -9,10 +9,9 @@ use parquet2::schema::Repetition;
 use parquet2::write::Version;
 use qdb_core::col_type::{encode_array_type, ColumnType, ColumnTypeTag};
 use questdbr::parquet_write::bench::{
-    array_to_raw_page, binary_to_page, boolean_to_page, bytes_to_page, decimal_slice_to_dict_pages,
-    encode_column_chunk, int_slice_to_dict_pages_notnull, int_slice_to_dict_pages_nullable,
-    int_slice_to_page_notnull, int_slice_to_page_nullable, slice_to_dict_pages_simd,
-    slice_to_page_simd, string_to_page, symbol_to_pages, varchar_to_page, Column, WriteOptions,
+    array_to_raw_page, binary_to_page, boolean_to_page, bytes_to_page, encode_column_chunk,
+    int_slice_to_page_notnull, int_slice_to_page_nullable, slice_to_page_simd, string_to_page,
+    symbol_to_pages, varchar_to_page, Column, WriteOptions,
 };
 use questdbr::parquet_write::schema::column_type_to_parquet_type;
 use questdbr::parquet_write::Nullable;
@@ -820,27 +819,27 @@ fn make_partitioned_dict_long128_data(
     data
 }
 
-fn make_dict_ipv4_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<BenchIPv4> {
+fn make_dict_ipv4_data_raw(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<i32> {
     let mut data = Vec::with_capacity(row_count);
     for i in 0..row_count {
         let v = if is_null_at(i, null_pct) {
-            BenchIPv4(0)
+            0
         } else {
-            BenchIPv4((0x0A00_0000u32 + (i as u32 % cardinality as u32) + 1) as i32)
+            (0x0A00_0000u32 + (i as u32 % cardinality as u32) + 1) as i32
         };
         data.push(v);
     }
     data
 }
 
-fn make_dict_geobyte_data(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<BenchGeoByte> {
+fn make_dict_geobyte_data_raw(row_count: usize, null_pct: u8, cardinality: usize) -> Vec<i8> {
     let effective_card = cardinality.min(127);
     let mut data = Vec::with_capacity(row_count);
     for i in 0..row_count {
         let v = if is_null_at(i, null_pct) {
-            BenchGeoByte(-1)
+            -1
         } else {
-            BenchGeoByte((i % effective_card) as i8)
+            (i % effective_card) as i8
         };
         data.push(v);
     }
@@ -1037,8 +1036,10 @@ macro_rules! encode_simd_dict_cases {
             for &$np in null_pcts(true) {
                 let data = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
-                let pt = primitive_type_for(ct);
+                let parquet_type =
+                    column_type_to_parquet_type(0, "col", ct, false, false).expect("type");
                 let opts = $opts;
+                let row_count = data.len();
                 $cases.push(EncodeBenchCase {
                     name: format!(
                         concat!($name, "_dict_c{card}_n{np}"),
@@ -1047,10 +1048,19 @@ macro_rules! encode_simd_dict_cases {
                     ),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter = slice_to_dict_pages_simd(&data, 0, opts, pt.clone(), None)
-                            .expect("encode");
-                        for page in iter {
-                            black_box(page.expect("page"));
+                        let col = make_test_column("col", ColumnTypeTag::$tag, &data);
+                        let pages = encode_column_chunk(
+                            Encoding::RleDictionary,
+                            &parquet_type,
+                            &[col],
+                            0,
+                            row_count,
+                            opts,
+                            None,
+                        )
+                        .expect("encode");
+                        for page in pages {
+                            black_box(page);
                         }
                     }),
                 });
@@ -1059,39 +1069,17 @@ macro_rules! encode_simd_dict_cases {
     };
 }
 
-macro_rules! encode_int_notnull_dict_cases {
+macro_rules! encode_dict_cases {
     ($cases:ident, $opts:ident, $name:literal, $tag:ident,
-     $T:ty, $U:ty, |$card:ident| $data:expr) => {
+     $nullable:expr, |$np:ident, $card:ident| $data:expr) => {
         for &$card in &DICT_CARDINALITIES {
-            let data: Vec<$T> = $data;
-            let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
-            let pt = primitive_type_for(ct);
-            let opts = $opts;
-            $cases.push(EncodeBenchCase {
-                name: format!(concat!($name, "_dict_c{card}_n0"), card = $card),
-                row_count: ROW_COUNT,
-                encode_fn: Box::new(move || {
-                    let iter =
-                        int_slice_to_dict_pages_notnull::<$T, $U>(&data, 0, opts, pt.clone(), None)
-                            .expect("encode");
-                    for page in iter {
-                        black_box(page.expect("page"));
-                    }
-                }),
-            });
-        }
-    };
-}
-
-macro_rules! encode_int_nullable_dict_cases {
-    ($cases:ident, $opts:ident, $name:literal, $tag:ident,
-     $T:ty, $U:ty, |$np:ident, $card:ident| $data:expr) => {
-        for &$card in &DICT_CARDINALITIES {
-            for &$np in null_pcts(true) {
-                let data: Vec<$T> = $data;
+            for &$np in null_pcts($nullable) {
+                let data = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
-                let pt = primitive_type_for(ct);
+                let parquet_type =
+                    column_type_to_parquet_type(0, "col", ct, false, false).expect("type");
                 let opts = $opts;
+                let row_count = data.len();
                 $cases.push(EncodeBenchCase {
                     name: format!(
                         concat!($name, "_dict_c{card}_n{np}"),
@@ -1100,16 +1088,19 @@ macro_rules! encode_int_nullable_dict_cases {
                     ),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter = int_slice_to_dict_pages_nullable::<$T, $U>(
-                            &data,
+                        let col = make_test_column("col", ColumnTypeTag::$tag, &data);
+                        let pages = encode_column_chunk(
+                            Encoding::RleDictionary,
+                            &parquet_type,
+                            &[col],
                             0,
+                            row_count,
                             opts,
-                            pt.clone(),
                             None,
                         )
                         .expect("encode");
-                        for page in iter {
-                            black_box(page.expect("page"));
+                        for page in pages {
+                            black_box(page);
                         }
                     }),
                 });
@@ -1526,47 +1517,53 @@ fn build_cases() -> Vec<EncodeBenchCase> {
     });
 
     // Non-nullable int types — dict
-    encode_int_notnull_dict_cases!(cases, options, "byte", Byte, i8, i32, |card| {
+    encode_dict_cases!(cases, options, "byte", Byte, false, |_np, card| {
         make_dict_i8_data(ROW_COUNT, card)
     });
-    encode_int_notnull_dict_cases!(cases, options, "short", Short, i16, i32, |card| {
+    encode_dict_cases!(cases, options, "short", Short, false, |_np, card| {
         make_dict_i16_data(ROW_COUNT, card)
     });
-    encode_int_notnull_dict_cases!(cases, options, "char", Char, u16, i32, |card| {
+    encode_dict_cases!(cases, options, "char", Char, false, |_np, card| {
         make_dict_char_data(ROW_COUNT, card)
     });
 
     // Nullable int types — dict
-    encode_int_nullable_dict_cases!(cases, options, "ipv4", IPv4, BenchIPv4, i32, |np, card| {
-        make_dict_ipv4_data(ROW_COUNT, np, card)
+    encode_dict_cases!(cases, options, "ipv4", IPv4, true, |np, card| {
+        make_dict_ipv4_data_raw(ROW_COUNT, np, card)
     });
-    encode_int_nullable_dict_cases!(
-        cases,
-        options,
-        "geobyte",
-        GeoByte,
-        BenchGeoByte,
-        i32,
-        |np, card| { make_dict_geobyte_data(ROW_COUNT, np, card) }
-    );
+    encode_dict_cases!(cases, options, "geobyte", GeoByte, true, |np, card| {
+        make_dict_geobyte_data_raw(ROW_COUNT, np, card)
+    });
 
     // Decimal Int32 — dict
     {
-        let precision = 9usize;
-        let scale = 2usize;
-        let primitive_type = decimal_primitive_type(PhysicalType::Int32, precision, scale);
+        let precision = 9u8;
+        let scale = 2u8;
+        let column_type = decimal_col_type(precision, scale);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
         for &card in &DICT_CARDINALITIES {
             for &null_pct in null_pcts(true) {
                 let data = make_dict_decimal_i32_data(ROW_COUNT, null_pct, card);
-                let pt = primitive_type.clone();
+                let pt = parquet_type.clone();
+                let row_count = data.len();
                 cases.push(EncodeBenchCase {
                     name: format!("decimal_int32_dict_c{card}_n{null_pct}"),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter = decimal_slice_to_dict_pages(&data, 0, options, pt.clone(), None)
-                            .expect("encode");
-                        for page in iter {
-                            black_box(page.expect("page"));
+                        let col = make_test_column_ct("col", column_type, &data);
+                        let pages = encode_column_chunk(
+                            Encoding::RleDictionary,
+                            &pt,
+                            &[col],
+                            0,
+                            row_count,
+                            options,
+                            None,
+                        )
+                        .expect("encode");
+                        for page in pages {
+                            black_box(page);
                         }
                     }),
                 });
@@ -1576,21 +1573,33 @@ fn build_cases() -> Vec<EncodeBenchCase> {
 
     // Decimal Int64 — dict
     {
-        let precision = 18usize;
-        let scale = 3usize;
-        let primitive_type = decimal_primitive_type(PhysicalType::Int64, precision, scale);
+        let precision = 18u8;
+        let scale = 3u8;
+        let column_type = decimal_col_type(precision, scale);
+        let parquet_type =
+            column_type_to_parquet_type(0, "col", column_type, false, false).expect("type");
         for &card in &DICT_CARDINALITIES {
             for &null_pct in null_pcts(true) {
                 let data = make_dict_decimal_i64_data(ROW_COUNT, null_pct, card);
-                let pt = primitive_type.clone();
+                let pt = parquet_type.clone();
+                let row_count = data.len();
                 cases.push(EncodeBenchCase {
                     name: format!("decimal_int64_dict_c{card}_n{null_pct}"),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter = decimal_slice_to_dict_pages(&data, 0, options, pt.clone(), None)
-                            .expect("encode");
-                        for page in iter {
-                            black_box(page.expect("page"));
+                        let col = make_test_column_ct("col", column_type, &data);
+                        let pages = encode_column_chunk(
+                            Encoding::RleDictionary,
+                            &pt,
+                            &[col],
+                            0,
+                            row_count,
+                            options,
+                            None,
+                        )
+                        .expect("encode");
+                        for page in pages {
+                            black_box(page);
                         }
                     }),
                 });
@@ -1611,10 +1620,14 @@ fn build_cases() -> Vec<EncodeBenchCase> {
 }
 
 fn make_test_column<T>(name: &'static str, tag: ColumnTypeTag, data: &[T]) -> Column {
+    make_test_column_ct(name, ColumnType::new(tag, 0), data)
+}
+
+fn make_test_column_ct<T>(name: &'static str, column_type: ColumnType, data: &[T]) -> Column {
     Column::from_raw_data(
         0,
         name,
-        ColumnType::new(tag, 0).code(),
+        column_type.code(),
         0,
         data.len(),
         data.as_ptr() as *const u8,

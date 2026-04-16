@@ -95,6 +95,7 @@ fn encode_fixed_plain<const N: usize>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bytes_segments_to_page<const N: usize>(
     columns: &[Column],
     first_partition_start: usize,
