@@ -29,6 +29,8 @@ import io.questdb.griffin.engine.functions.columns.ByteColumn;
 import io.questdb.griffin.engine.functions.groupby.BitAndByteGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitOrByteGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitXorByteGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstByteGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -108,6 +110,42 @@ public class ByteGroupByFunctionKeyedBatchTest {
     public void testBitXorByteSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitXorByteGroupByFunction(ByteColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstByteFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstByteGroupByFunction(ByteColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstByteIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstByteGroupByFunction(new IndirectByteArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstByteSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstByteGroupByFunction(ByteColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastByteFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastByteGroupByFunction(ByteColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastByteIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastByteGroupByFunction(new IndirectByteArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastByteSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastByteGroupByFunction(ByteColumn.newInstance(ARG_COLUMN_INDEX)), false));
     }
 
     private static void testEquivalence(GroupByFunction function, boolean fastPath) {

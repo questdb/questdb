@@ -27,6 +27,10 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
 import io.questdb.griffin.engine.functions.groupby.CountFloatGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstFloatGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullFloatGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastFloatGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullFloatGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MaxFloatGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunction;
@@ -68,6 +72,78 @@ public class FloatGroupByFunctionKeyedBatchTest {
     public void testCountFloatSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new CountFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstFloatFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstFloatIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstFloatGroupByFunction(new IndirectFloatArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstFloatSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullFloatFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstNotNullFloatIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullFloatGroupByFunction(new IndirectFloatArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullFloatSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastFloatFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastFloatIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastFloatGroupByFunction(new IndirectFloatArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastFloatSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullFloatFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastNotNullFloatIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullFloatGroupByFunction(new IndirectFloatArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullFloatSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullFloatGroupByFunction(FloatColumn.newInstance(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

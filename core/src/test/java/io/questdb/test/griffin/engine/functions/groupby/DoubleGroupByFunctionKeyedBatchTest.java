@@ -28,6 +28,10 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountDoubleGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstDoubleGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullDoubleGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastDoubleGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MaxDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinDoubleGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
@@ -87,6 +91,78 @@ public class DoubleGroupByFunctionKeyedBatchTest {
     public void testCountDoubleSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new CountDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstDoubleFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstDoubleIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstDoubleGroupByFunction(new IndirectDoubleArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstDoubleSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullDoubleFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstNotNullDoubleIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullDoubleGroupByFunction(new IndirectDoubleArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullDoubleSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastDoubleFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastDoubleIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastDoubleGroupByFunction(new IndirectDoubleArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastDoubleSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullDoubleFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastNotNullDoubleIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullDoubleGroupByFunction(new IndirectDoubleArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullDoubleSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullDoubleGroupByFunction(DoubleColumn.newInstance(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

@@ -29,11 +29,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.ShortFunction;
@@ -91,6 +94,15 @@ final class KeyedBatchTestUtils {
         final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
         for (int i = 0; i < values.length; i++) {
             Unsafe.getUnsafe().putByte(addr + i, values[i]);
+        }
+        return addr;
+    }
+
+    static long allocArgBuffer(char[] values) {
+        final long bytes = (long) values.length * Character.BYTES;
+        final long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_DEFAULT);
+        for (int i = 0; i < values.length; i++) {
+            Unsafe.getUnsafe().putChar(addr + (long) i * Character.BYTES, values[i]);
         }
         return addr;
     }
@@ -311,6 +323,19 @@ final class KeyedBatchTestUtils {
         }
     }
 
+    static final class IndirectBoolArg extends BooleanFunction {
+        private final int columnIndex;
+
+        IndirectBoolArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return rec.getBool(columnIndex);
+        }
+    }
+
     static final class IndirectByteArg extends ByteFunction {
         private final int columnIndex;
 
@@ -321,6 +346,19 @@ final class KeyedBatchTestUtils {
         @Override
         public byte getByte(Record rec) {
             return rec.getByte(columnIndex);
+        }
+    }
+
+    static final class IndirectCharArg extends CharFunction {
+        private final int columnIndex;
+
+        IndirectCharArg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public char getChar(Record rec) {
+            return rec.getChar(columnIndex);
         }
     }
 
@@ -360,6 +398,19 @@ final class KeyedBatchTestUtils {
         @Override
         public float getFloat(Record rec) {
             return rec.getFloat(columnIndex);
+        }
+    }
+
+    static final class IndirectIPv4Arg extends IPv4Function {
+        private final int columnIndex;
+
+        IndirectIPv4Arg(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int getIPv4(Record rec) {
+            return rec.getIPv4(columnIndex);
         }
     }
 
@@ -449,8 +500,38 @@ final class KeyedBatchTestUtils {
         }
 
         @Override
+        public boolean getBool(int columnIndex) {
+            return Unsafe.getUnsafe().getByte(bufferAddr + rowIndex * elemSize) != 0;
+        }
+
+        @Override
         public byte getByte(int columnIndex) {
             return Unsafe.getUnsafe().getByte(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public char getChar(int columnIndex) {
+            return Unsafe.getUnsafe().getChar(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public byte getGeoByte(int columnIndex) {
+            return Unsafe.getUnsafe().getByte(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public int getGeoInt(int columnIndex) {
+            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public long getGeoLong(int columnIndex) {
+            return Unsafe.getUnsafe().getLong(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public short getGeoShort(int columnIndex) {
+            return Unsafe.getUnsafe().getShort(bufferAddr + rowIndex * elemSize);
         }
 
         @Override
@@ -461,6 +542,11 @@ final class KeyedBatchTestUtils {
         @Override
         public float getFloat(int columnIndex) {
             return Unsafe.getUnsafe().getFloat(bufferAddr + rowIndex * elemSize);
+        }
+
+        @Override
+        public int getIPv4(int columnIndex) {
+            return Unsafe.getUnsafe().getInt(bufferAddr + rowIndex * elemSize);
         }
 
         @Override

@@ -31,6 +31,10 @@ import io.questdb.griffin.engine.functions.groupby.BitOrLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitXorLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountLongGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstLongGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullLongGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastLongGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MaxLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinLongGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumLongGroupByFunction;
@@ -133,6 +137,78 @@ public class LongGroupByFunctionKeyedBatchTest {
     public void testCountLongSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new CountLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstLongFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstLongSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullLongFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstNotNullLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullLongSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastLongFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastLongSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullLongFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastNotNullLongIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullLongGroupByFunction(new IndirectLongArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullLongSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullLongGroupByFunction(LongColumn.newInstance(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

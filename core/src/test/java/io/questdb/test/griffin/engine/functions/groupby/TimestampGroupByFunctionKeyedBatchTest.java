@@ -27,6 +27,10 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullTimestampGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstTimestampGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullTimestampGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastTimestampGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MaxTimestampGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunction;
 import io.questdb.std.Numbers;
@@ -51,6 +55,102 @@ public class TimestampGroupByFunctionKeyedBatchTest {
             1_700_000_000_000_000L, Numbers.LONG_NULL, 1_600_000_000_000_000L, 1_800_000_000_000_000L,
             0L, Numbers.LONG_NULL, -1L, 1_900_000_000_000_000L
     };
+
+    @Test
+    public void testFirstNotNullTimestampFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullTimestampGroupByFunction(
+                        TimestampColumn.newInstance(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), true));
+    }
+
+    @Test
+    public void testFirstNotNullTimestampIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullTimestampGroupByFunction(
+                        new IndirectTimestampArg(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
+    }
+
+    @Test
+    public void testFirstNotNullTimestampSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullTimestampGroupByFunction(
+                        TimestampColumn.newInstance(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
+    }
+
+    @Test
+    public void testFirstTimestampFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstTimestampGroupByFunction(
+                        TimestampColumn.newInstance(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), true));
+    }
+
+    @Test
+    public void testFirstTimestampIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstTimestampGroupByFunction(
+                        new IndirectTimestampArg(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
+    }
+
+    @Test
+    public void testFirstTimestampSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstTimestampGroupByFunction(
+                        TimestampColumn.newInstance(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
+    }
+
+    @Test
+    public void testLastNotNullTimestampFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullTimestampGroupByFunction(
+                        TimestampColumn.newInstance(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), true));
+    }
+
+    @Test
+    public void testLastNotNullTimestampIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullTimestampGroupByFunction(
+                        new IndirectTimestampArg(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
+    }
+
+    @Test
+    public void testLastNotNullTimestampSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullTimestampGroupByFunction(
+                        TimestampColumn.newInstance(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
+    }
+
+    @Test
+    public void testLastTimestampFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastTimestampGroupByFunction(
+                        TimestampColumn.newInstance(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), true));
+    }
+
+    @Test
+    public void testLastTimestampIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastTimestampGroupByFunction(
+                        new IndirectTimestampArg(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
+    }
+
+    @Test
+    public void testLastTimestampSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastTimestampGroupByFunction(
+                        TimestampColumn.newInstance(ARG_COLUMN_INDEX, ColumnType.TIMESTAMP),
+                        ColumnType.TIMESTAMP), false));
+    }
 
     @Test
     public void testMaxTimestampFastPath() throws Exception {

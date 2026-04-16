@@ -464,6 +464,19 @@ public class GroupByUtils {
         return -1;
     }
 
+    /**
+     * Variant of {@link #directArgColumnIndex} that matches by column type tag
+     * rather than by full type. Useful for parameterised types such as geohashes
+     * whose full {@code arg.getType()} value packs storage bits into the upper
+     * half and so never equals a bare tag like {@link ColumnType#GEOBYTE}.
+     */
+    public static int directArgColumnIndexByTag(Function arg, int expectedTag) {
+        if (arg instanceof ColumnFunction cf && ColumnType.tagOf(arg.getType()) == expectedTag) {
+            return cf.getColumnIndex();
+        }
+        return -1;
+    }
+
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).isEarlyExitSupported()) {

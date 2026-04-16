@@ -30,6 +30,10 @@ import io.questdb.griffin.engine.functions.groupby.BitAndIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitOrIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitXorIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountIntGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstIntGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullIntGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastIntGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MaxIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumIntGroupByFunction;
@@ -125,6 +129,78 @@ public class IntGroupByFunctionKeyedBatchTest {
     public void testCountIntSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new CountIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstIntFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstIntSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullIntFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstNotNullIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullIntSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastIntFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastIntSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullIntFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastNotNullIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullIntSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
     }
 
     @Test

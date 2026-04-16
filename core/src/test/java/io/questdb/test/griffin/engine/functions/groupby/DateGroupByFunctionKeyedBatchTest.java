@@ -26,6 +26,10 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.groupby.FirstDateGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstNotNullDateGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastDateGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastNotNullDateGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MaxDateGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunction;
 import io.questdb.std.Numbers;
@@ -50,6 +54,78 @@ public class DateGroupByFunctionKeyedBatchTest {
             1_700_000_000_000L, Numbers.LONG_NULL, 1_600_000_000_000L, 1_800_000_000_000L,
             0L, Numbers.LONG_NULL, -1L, 1_900_000_000_000L
     };
+
+    @Test
+    public void testFirstDateFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstDateIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstDateGroupByFunction(new IndirectDateArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstDateSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullDateFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstNotNullDateIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullDateGroupByFunction(new IndirectDateArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstNotNullDateSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstNotNullDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastDateFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastDateIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastDateGroupByFunction(new IndirectDateArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastDateSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullDateFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastNotNullDateIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullDateGroupByFunction(new IndirectDateArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastNotNullDateSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastNotNullDateGroupByFunction(DateColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
 
     @Test
     public void testMaxDateFastPath() throws Exception {

@@ -30,6 +30,8 @@ import io.questdb.griffin.engine.functions.groupby.AvgShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitAndShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitOrShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitXorShortGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.FirstShortGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.LastShortGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.SumShortGroupByFunction;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -128,6 +130,42 @@ public class ShortGroupByFunctionKeyedBatchTest {
     public void testBitXorShortSlowPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> testEquivalence(
                 new BitXorShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstShortFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testFirstShortIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstShortGroupByFunction(new IndirectShortArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testFirstShortSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new FirstShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastShortFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testLastShortIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastShortGroupByFunction(new IndirectShortArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testLastShortSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new LastShortGroupByFunction(ShortColumn.newInstance(ARG_COLUMN_INDEX)), false));
     }
 
     @Test
