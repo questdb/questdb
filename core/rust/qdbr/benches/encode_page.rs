@@ -940,7 +940,7 @@ macro_rules! encode_simd_cases {
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
                         black_box(
-                            slice_to_page_simd(&data, 0, opts, pt.clone(), encoding, None)
+                            slice_to_page_simd(&data, 0, opts, pt.clone(), encoding, None, false)
                                 .expect("encode"),
                         );
                     }),
@@ -1012,6 +1012,7 @@ macro_rules! encode_int_nullable_cases {
                                 pt.clone(),
                                 encoding,
                                 None,
+                                false,
                             )
                             .expect("encode"),
                         );
@@ -1085,8 +1086,9 @@ macro_rules! encode_simd_dict_cases {
                     ),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter = slice_to_dict_pages_simd(&data, 0, opts, pt.clone(), None)
-                            .expect("encode");
+                        let iter =
+                            slice_to_dict_pages_simd(&data, 0, opts, pt.clone(), None, false)
+                                .expect("encode");
                         for page in iter {
                             black_box(page.expect("page"));
                         }
@@ -1144,6 +1146,7 @@ macro_rules! encode_int_nullable_dict_cases {
                             opts,
                             pt.clone(),
                             None,
+                            false,
                         )
                         .expect("encode");
                         for page in iter {
@@ -1551,6 +1554,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                             pt.clone(),
                             Encoding::Plain,
                             None,
+                            false,
                         )
                         .expect("encode"),
                     );
@@ -1584,6 +1588,7 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                                 pt.clone(),
                                 encoding,
                                 None,
+                                false,
                             )
                             .expect("encode"),
                         );
@@ -1756,8 +1761,9 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                     name: format!("decimal_int32_dict_c{card}_n{null_pct}"),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter = decimal_slice_to_dict_pages(&data, 0, options, pt.clone(), None)
-                            .expect("encode");
+                        let iter =
+                            decimal_slice_to_dict_pages(&data, 0, options, pt.clone(), None, false)
+                                .expect("encode");
                         for page in iter {
                             black_box(page.expect("page"));
                         }
@@ -1780,8 +1786,9 @@ fn build_cases() -> Vec<EncodeBenchCase> {
                     name: format!("decimal_int64_dict_c{card}_n{null_pct}"),
                     row_count: ROW_COUNT,
                     encode_fn: Box::new(move || {
-                        let iter = decimal_slice_to_dict_pages(&data, 0, options, pt.clone(), None)
-                            .expect("encode");
+                        let iter =
+                            decimal_slice_to_dict_pages(&data, 0, options, pt.clone(), None, false)
+                                .expect("encode");
                         for page in iter {
                             black_box(page.expect("page"));
                         }

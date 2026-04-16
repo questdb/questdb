@@ -45,16 +45,10 @@ where
     if not_null {
         // NOT NULL path: sentinel values are real data, never null.
         // column_top rows are genuinely missing — they are null.
-        if column_top == 0 {
-            encode_all_ones_def_levels(&mut buffer, num_rows, options.version);
-        } else {
-            let def_levels = (0..num_rows).map(|i| i >= column_top);
-            encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)
-                .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
-        }
+        encode_not_null_def_levels(&mut buffer, column_top, num_rows, options.version)?;
         let definition_levels_byte_length = buffer.len();
 
-        buffer.reserve(size_of::<T>() * slice.len());
+        buffer.reserve(std::mem::size_of_val(slice));
         for &v in slice {
             if write_stats {
                 statistics.update(v);
@@ -213,6 +207,7 @@ impl<const UNSIGNED: bool> StatsUpdater<i64, UNSIGNED> for MaxMin<i64> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn slice_to_page_nullable_impl<T, P, const UNSIGNED_STATS: bool, F>(
     slice: &[T],
     column_top: usize,
@@ -240,14 +235,7 @@ where
     if not_null {
         // NOT NULL path: sentinel values are real data, never null.
         // column_top rows are genuinely missing — they are null.
-
-        if column_top == 0 {
-            encode_all_ones_def_levels(&mut buffer, num_rows, options.version);
-        } else {
-            let def_levels = (0..num_rows).map(|i| i >= column_top);
-            encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)
-                .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
-        }
+        encode_not_null_def_levels(&mut buffer, column_top, num_rows, options.version)?;
         let definition_levels_byte_length = buffer.len();
 
         buffer.reserve(size_of::<P>() * slice.len());
@@ -521,6 +509,31 @@ where
     buffer
 }
 
+/// Encode definition levels for NOT NULL columns.
+///
+/// When `column_top == 0`, all rows are non-null and we emit all-ones.
+/// Otherwise, the first `column_top` rows are null (the column was added after
+/// those rows were written) and the remaining rows are all non-null.
+fn encode_not_null_def_levels(
+    buffer: &mut Vec<u8>,
+    column_top: usize,
+    num_rows: usize,
+    version: parquet2::write::Version,
+) -> ParquetResult<()> {
+    if column_top == 0 {
+        encode_all_ones_def_levels(buffer, num_rows, version);
+    } else {
+        let def_levels = (0..num_rows).map(|i| i >= column_top);
+        encode_primitive_def_levels(buffer, def_levels, num_rows, version).map_err(|e| {
+            fmt_err!(
+                Io(std::sync::Arc::new(e)),
+                "failed to encode definition levels"
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn build_statistics<P: NativeType>(
     null_count: Option<i64>,
     statistics: MaxMin<P>,
@@ -731,25 +744,17 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
         // NOT NULL path: sentinel values (NaN, INT_MIN, etc.) are real data, never null.
         // column_top rows are genuinely missing (column added later) — they are null.
         // All data values from the slice are written without sentinel filtering.
-
-        // 1. Definition levels
-        if column_top == 0 {
-            encode_all_ones_def_levels(&mut buffer, num_rows, options.version);
-        } else {
-            let def_levels = (0..num_rows).map(|i| i >= column_top);
-            encode_primitive_def_levels(&mut buffer, def_levels, num_rows, options.version)
-                .map_err(|e| fmt_err!(Io(std::sync::Arc::new(e)), "failed to encode definition levels"))?;
-        }
+        encode_not_null_def_levels(&mut buffer, column_top, num_rows, options.version)?;
         let definition_levels_byte_length = buffer.len();
 
-        // 2. Data: write ALL values from slice, no sentinel filtering
+        // Data: write ALL values from slice, no sentinel filtering
         let actual_encoding = match encoding {
             Encoding::DeltaBinaryPacked if T::encode_delta_all(slice, &mut buffer) => {
                 Encoding::DeltaBinaryPacked
             }
             _ => {
                 // Plain: memcpy entire slice
-                buffer.reserve(size_of::<T>() * slice.len());
+                buffer.reserve(std::mem::size_of_val(slice));
                 let bytes = unsafe {
                     std::slice::from_raw_parts(slice.as_ptr() as *const u8, size_of_val(slice))
                 };
@@ -910,12 +915,7 @@ where
     let mut data_buffer = Vec::new();
 
     if not_null {
-        if column_top == 0 {
-            encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
-        } else {
-            let def_levels = (0..num_rows).map(|i| i >= column_top);
-            encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-        }
+        encode_not_null_def_levels(&mut data_buffer, column_top, num_rows, options.version)?;
     } else {
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
@@ -1008,12 +1008,7 @@ where
     let mut data_buffer = Vec::new();
 
     if not_null {
-        if column_top == 0 {
-            encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
-        } else {
-            let def_levels = (0..num_rows).map(|i| i >= column_top);
-            encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-        }
+        encode_not_null_def_levels(&mut data_buffer, column_top, num_rows, options.version)?;
     } else {
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {
@@ -1188,12 +1183,7 @@ where
     let mut data_buffer = Vec::new();
 
     if not_null {
-        if column_top == 0 {
-            encode_all_ones_def_levels(&mut data_buffer, num_rows, options.version);
-        } else {
-            let def_levels = (0..num_rows).map(|i| i >= column_top);
-            encode_primitive_def_levels(&mut data_buffer, def_levels, num_rows, options.version)?;
-        }
+        encode_not_null_def_levels(&mut data_buffer, column_top, num_rows, options.version)?;
     } else {
         let def_levels = (0..num_rows).map(|i| {
             if i < column_top {

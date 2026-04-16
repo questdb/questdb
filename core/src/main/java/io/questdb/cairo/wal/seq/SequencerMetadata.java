@@ -54,6 +54,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable {
+    private static final long NOT_NULL_SECTION_SEED = 0x4E4F544E554C4CL; // "NOTNULL" as ASCII long
     private final int commitMode;
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
@@ -396,7 +397,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             }
 
             // Read NOT NULL flags (optional section, backward compatible)
-            long notNullMagic = checkSum * 31 + 0x4E4F544E554C4CL;
+            long notNullMagic = checkSum * 31 + NOT_NULL_SECTION_SEED;
             if (memSize > offset + Long.BYTES + Integer.BYTES) {
                 long sectionMagic = metaMem.getLong(offset);
                 offset += Long.BYTES;
@@ -463,7 +464,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         }
 
         // write NOT NULL flags (optional section, backward compatible)
-        long notNullMagic = checkSum * 31 + 0x4E4F544E554C4CL; // "NOTNULL" as long seed
+        long notNullMagic = checkSum * 31 + NOT_NULL_SECTION_SEED; // "NOTNULL" as long seed
         metaMem.putLong(notNullMagic);
         metaMem.putInt(columnCount);
         for (int i = 0; i < columnCount; i++) {

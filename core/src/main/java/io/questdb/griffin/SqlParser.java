@@ -1993,10 +1993,13 @@ public class SqlParser {
             }
 
             if (isNotKeyword(tok)) {
+                int notPos = lexer.lastTokenPosition();
                 tok = tok(lexer, "'NULL'");
                 if (isNullKeyword(tok)) {
                     model.setNotNullFlag(true);
                     tok = tok(lexer, "','");
+                } else {
+                    throw SqlException.$(notPos, "'NULL' expected after 'NOT'");
                 }
             } else if (isNullKeyword(tok)) {
                 tok = tok(lexer, "','");

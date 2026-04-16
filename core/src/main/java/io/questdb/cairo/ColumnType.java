@@ -443,11 +443,6 @@ public final class ColumnType {
         return columnType == ColumnType.BOOLEAN;
     }
 
-    public static boolean isImplicitlyNotNull(int columnType) {
-        int tag = tagOf(columnType);
-        return tag == BOOLEAN || tag == BYTE || tag == SHORT;
-    }
-
     /**
      * Checks if a type conversion can be performed using built-in Function getters without a cast wrapper.
      * <p>

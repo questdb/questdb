@@ -287,7 +287,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case CONVERT_PARTITION_TO_NATIVE -> securityContext.authorizeAlterTableConvertPartitionToNative(tableToken);
             case SET_PARQUET_ENCODING -> securityContext.authorizeAlterTableSetParquetSettings(tableToken);
             case SET_COLUMN_NOT_NULL, DROP_COLUMN_NOT_NULL ->
-                    securityContext.authorizeAlterTableAlterColumnCache(tableToken, getAuthColumnNames());
+                    securityContext.authorizeAlterTableAlterColumnNotNull(tableToken, getAuthColumnNames());
             case SET_MAT_VIEW_REFRESH_LIMIT -> securityContext.authorizeAlterMatViewSetRefreshLimit(tableToken);
             case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH ->
                     securityContext.authorizeAlterMatViewSetRefreshType(tableToken);

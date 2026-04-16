@@ -63,7 +63,7 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
 
     @Override
     public boolean isNullConstant() {
-        return !Numbers.isFinite(value);
+        return Numbers.isNull(value);
     }
 
     @Override

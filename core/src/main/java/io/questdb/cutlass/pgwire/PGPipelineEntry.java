@@ -164,6 +164,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
+    private boolean[] isColumnNotNull;
+    private int isColumnNotNullLen;
     private int msgBindParameterValueCount;
     private short msgBindSelectFormatCodeCount = 0;
     private Utf8String namedPortal;
@@ -316,6 +318,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         empty = false;
         errorMessagePosition = 0;
         factory = Misc.free(factory);
+        isColumnNotNullLen = 0;
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
         outResendResumePoint = -1;
@@ -1120,6 +1123,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.pgResultSetColumnNames.clear();
         this.pgResultSetColumnNames.addAll(blueprint.pgResultSetColumnNames);
 
+        final int notNullLen = blueprint.isColumnNotNullLen;
+        if (notNullLen > 0) {
+            if (this.isColumnNotNull == null || this.isColumnNotNull.length < notNullLen) {
+                this.isColumnNotNull = new boolean[notNullLen];
+            }
+            System.arraycopy(blueprint.isColumnNotNull, 0, this.isColumnNotNull, 0, notNullLen);
+        }
+        this.isColumnNotNullLen = notNullLen;
+
         this.compiledQuery = blueprint.compiledQuery;
 
         // copy only the fields set at the PARSE time
@@ -1154,12 +1166,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         pgResultSetColumnTypes.setPos(2 * columnCount);
         pgResultSetColumnNames.setPos(columnCount);
+        if (isColumnNotNull == null || isColumnNotNull.length < columnCount) {
+            isColumnNotNull = new boolean[columnCount];
+        }
+        isColumnNotNullLen = columnCount;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = m.getColumnType(i);
             pgResultSetColumnTypes.setQuick(2 * i, columnType);
             // the extra values stored here are used to render geo-hashes as strings
             pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
             pgResultSetColumnNames.setQuick(i, m.getColumnName(i));
+            isColumnNotNull[i] = m.isNotNull(i);
         }
     }
 
@@ -1709,9 +1726,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putNetworkShort(value);
     }
 
-    private void outColBinDate(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColBinDate(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final long longValue = record.getDate(columnIndex);
-        if (longValue != Numbers.LONG_NULL) {
+        if (notNull || longValue != Numbers.LONG_NULL) {
             utf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
             utf8Sink.putNetworkLong(longValue * 1000 - Numbers.JULIAN_EPOCH_OFFSET_USEC);
@@ -1984,9 +2001,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinInt(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColBinInt(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final int value = record.getInt(columnIndex);
-        if (value != Numbers.INT_NULL) {
+        if (notNull || value != Numbers.INT_NULL) {
             utf8Sink.checkCapacity(8);
             utf8Sink.putIntUnsafe(0, INT_BYTES_X);
             utf8Sink.putIntUnsafe(4, Numbers.bswap(value));
@@ -1996,9 +2013,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinLong(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColBinLong(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final long longValue = record.getLong(columnIndex);
-        if (longValue != Numbers.LONG_NULL) {
+        if (notNull || longValue != Numbers.LONG_NULL) {
             utf8Sink.putNetworkInt(Long.BYTES);
             utf8Sink.putNetworkLong(longValue);
         } else {
@@ -2012,9 +2029,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putNetworkShort(value);
     }
 
-    private void outColBinTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+    private void outColBinTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType, boolean notNull) {
         final long longValue = record.getTimestamp(columnIndex);
-        if (longValue == Numbers.LONG_NULL) {
+        if (!notNull && longValue == Numbers.LONG_NULL) {
             utf8Sink.setNullValue();
         } else {
             utf8Sink.putNetworkInt(Long.BYTES);
@@ -2023,10 +2040,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColBinUuid(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColBinUuid(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final long lo = record.getLong128Lo(columnIndex);
         final long hi = record.getLong128Hi(columnIndex);
-        if (Uuid.isNull(lo, hi)) {
+        if (!notNull && Uuid.isNull(lo, hi)) {
             utf8Sink.setNullValue();
         } else {
             utf8Sink.putNetworkInt(Long.BYTES * 2);
@@ -2054,9 +2071,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColChar(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColChar(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final char charValue = record.getChar(columnIndex);
-        if (charValue == 0) {
+        if (!notNull && charValue == 0) {
             utf8Sink.setNullValue();
         } else {
             long a = utf8Sink.skipInt();
@@ -2122,9 +2139,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putLenEx(a);
     }
 
-    private void outColTxtDate(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColTxtDate(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final long longValue = record.getDate(columnIndex);
-        if (longValue != Numbers.LONG_NULL) {
+        if (notNull || longValue != Numbers.LONG_NULL) {
             final long a = utf8Sink.skipInt();
             PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, EN_LOCALE, null, utf8Sink);
             utf8Sink.putLenEx(a);
@@ -2250,9 +2267,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outColTxtGeoHash(utf8Sink, rec.getGeoShort(columnIndex), bitFlags);
     }
 
-    private void outColTxtIPv4(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColTxtIPv4(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         int value = record.getIPv4(columnIndex);
-        if (value == Numbers.IPv4_NULL) {
+        if (!notNull && value == Numbers.IPv4_NULL) {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
@@ -2261,9 +2278,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtInt(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColTxtInt(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final int intValue = record.getInt(columnIndex);
-        if (intValue != Numbers.INT_NULL) {
+        if (notNull || intValue != Numbers.INT_NULL) {
             final long a = utf8Sink.skipInt();
             utf8Sink.put(intValue);
             utf8Sink.putLenEx(a);
@@ -2272,9 +2289,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtLong(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColTxtLong(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final long longValue = record.getLong(columnIndex);
-        if (longValue != Numbers.LONG_NULL) {
+        if (notNull || longValue != Numbers.LONG_NULL) {
             final long a = utf8Sink.skipInt();
             utf8Sink.put(longValue);
             utf8Sink.putLenEx(a);
@@ -2303,10 +2320,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.putLenEx(a);
     }
 
-    private void outColTxtTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int timestampType) {
+    private void outColTxtTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int timestampType, boolean notNull) {
         long offset;
         long timestamp = record.getTimestamp(columnIndex);
-        if (timestamp == Numbers.LONG_NULL) {
+        if (!notNull && timestamp == Numbers.LONG_NULL) {
             utf8Sink.setNullValue();
         } else {
             offset = utf8Sink.skipInt();
@@ -2315,10 +2332,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtUuid(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColTxtUuid(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final long lo = record.getLong128Lo(columnIndex);
         final long hi = record.getLong128Hi(columnIndex);
-        if (Uuid.isNull(lo, hi)) {
+        if (!notNull && Uuid.isNull(lo, hi)) {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
@@ -2516,7 +2533,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             Record record,
             int columnCount
     ) throws PGMessageProcessingException {
-        final RecordMetadata metadata = factory.getMetadata();
         long messageLengthAddress = 0;
         // message header can be sent alone if we run out of space on the first column
         if (outResendColumnIndex == 0 && outResendRecordHeader) {
@@ -2536,13 +2552,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, columnTag);
                 switch (tagWithFlag) {
                     case BINARY_TYPE_INT:
-                        outColBinInt(utf8Sink, record, colIndex);
+                        outColBinInt(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.INT:
-                        outColTxtInt(utf8Sink, record, colIndex);
+                        outColTxtInt(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.IPv4:
-                        outColTxtIPv4(utf8Sink, record, colIndex);
+                        outColTxtIPv4(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.INTERVAL:
                     case BINARY_TYPE_INTERVAL:
@@ -2566,46 +2582,46 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColSymbol(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_LONG:
-                        outColBinLong(utf8Sink, record, colIndex);
+                        outColBinLong(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.LONG:
-                        outColTxtLong(utf8Sink, record, colIndex);
+                        outColTxtLong(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.SHORT:
                         outColTxtShort(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_DOUBLE:
-                        outColBinDouble(utf8Sink, record, colIndex, metadata.isNotNull(colIndex));
+                        outColBinDouble(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.DOUBLE:
-                        outColTxtDouble(utf8Sink, record, colIndex, metadata.isNotNull(colIndex));
+                        outColTxtDouble(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case BINARY_TYPE_FLOAT:
-                        outColBinFloat(utf8Sink, record, colIndex, metadata.isNotNull(colIndex));
+                        outColBinFloat(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case BINARY_TYPE_SHORT:
                         outColBinShort(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_DATE:
-                        outColBinDate(utf8Sink, record, colIndex);
+                        outColBinDate(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case BINARY_TYPE_TIMESTAMP:
-                        outColBinTimestamp(utf8Sink, record, colIndex, columnType);
+                        outColBinTimestamp(utf8Sink, record, colIndex, columnType, isColumnNotNull[colIndex]);
                         break;
                     case BINARY_TYPE_BYTE:
                         outColBinByte(utf8Sink, record, colIndex);
                         break;
                     case BINARY_TYPE_UUID:
-                        outColBinUuid(utf8Sink, record, colIndex);
+                        outColBinUuid(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.FLOAT:
-                        outColTxtFloat(utf8Sink, record, colIndex, metadata.isNotNull(colIndex));
+                        outColTxtFloat(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.TIMESTAMP:
-                        outColTxtTimestamp(utf8Sink, record, colIndex, columnType);
+                        outColTxtTimestamp(utf8Sink, record, colIndex, columnType, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.DATE:
-                        outColTxtDate(utf8Sink, record, colIndex);
+                        outColTxtDate(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.BOOLEAN:
                         outColTxtBool(utf8Sink, record, colIndex);
@@ -2622,7 +2638,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         break;
                     case ColumnType.CHAR:
                     case BINARY_TYPE_CHAR:
-                        outColChar(utf8Sink, record, colIndex);
+                        outColChar(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.LONG256:
                     case BINARY_TYPE_LONG256:
@@ -2644,7 +2660,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         utf8Sink.setNullValue();
                         break;
                     case ColumnType.UUID:
-                        outColTxtUuid(utf8Sink, record, colIndex);
+                        outColTxtUuid(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.ARRAY:
                         outColTxtArr(utf8Sink, record, colIndex, columnType);
@@ -3367,6 +3383,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // from questdb record
             pgResultSetColumnTypes.setQuick(2 * i, currentColumnType);
             pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(currentColumnType));
+            isColumnNotNull[i] = currentMetadata.isNotNull(i);
         }
     }
 
@@ -3525,7 +3542,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     boolean isColumnNotNull(int columnIndex) {
-        return factory != null && factory.getMetadata().isNotNull(columnIndex);
+        return columnIndex < isColumnNotNullLen && isColumnNotNull[columnIndex];
     }
 
     boolean isDirty() {

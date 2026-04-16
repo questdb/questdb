@@ -188,7 +188,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             );
                             """,
                     "show create table foo");
@@ -202,7 +202,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             );
                             """,
@@ -307,7 +307,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta VARCHAR PARQUET(bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
@@ -322,7 +322,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(plain, bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
@@ -337,7 +337,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(delta_binary_packed, zstd(3), bloom_filter)
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """,
@@ -368,7 +368,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ta INT PARQUET(bloom_filter),
                             \tb VARCHAR PARQUET(delta_length_byte_array, bloom_filter),
                             \tc DOUBLE
@@ -440,7 +440,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL NOCACHE
                             );
                             """,
@@ -455,7 +455,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL NOCACHE INDEX CAPACITY 1024
                             );
                             """,
@@ -580,7 +580,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             );
                             """,
@@ -600,7 +600,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             );
                             """,
@@ -616,7 +616,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             assertSql("""
                             ddl
                             CREATE TABLE 'foo' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             );
                             """,

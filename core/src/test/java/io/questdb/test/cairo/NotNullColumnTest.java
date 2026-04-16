@@ -631,6 +631,90 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropNotNullOnDesignatedTimestampFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            assertTrue(getNotNull("t", "ts"));
+
+            try {
+                execute("ALTER TABLE t ALTER COLUMN ts SET NULL");
+                fail("Expected error for dropping NOT NULL on designated timestamp");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "cannot drop NOT NULL constraint on designated timestamp");
+            }
+
+            assertTrue(getNotNull("t", "ts"));
+        });
+    }
+
+    @Test
+    public void testNotKeywordWithoutNull() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE t (x INT NOT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+                fail("Expected parse error");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "'NULL' expected after 'NOT'");
+            }
+        });
+    }
+
+    @Test
+    public void testNotKeywordWithoutNullAlterTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                execute("ALTER TABLE t ADD COLUMN y DOUBLE NOT");
+                fail("Expected parse error");
+            } catch (SqlException e) {
+                assertContains(e.getFlyweightMessage(), "'NULL' expected after 'NOT'");
+            }
+        });
+    }
+
+    @Test
+    public void testNotNullRoundTrip() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            assertFalse(getNotNull("t", "x"));
+
+            execute("ALTER TABLE t ALTER COLUMN x SET NOT NULL");
+            assertTrue(getNotNull("t", "x"));
+
+            execute("ALTER TABLE t ALTER COLUMN x SET NULL");
+            assertFalse(getNotNull("t", "x"));
+
+            execute("ALTER TABLE t ALTER COLUMN x SET NOT NULL");
+            assertTrue(getNotNull("t", "x"));
+        });
+    }
+
+    @Test
+    public void testAlterColumnSetNotNullWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertFalse(getNotNull("t", "x"));
+
+            execute("ALTER TABLE t ALTER COLUMN x SET NOT NULL");
+            drainWalQueue();
+            assertTrue(getNotNull("t", "x"));
+        });
+    }
+
+    @Test
+    public void testAlterColumnDropNotNullWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertTrue(getNotNull("t", "x"));
+
+            execute("ALTER TABLE t ALTER COLUMN x SET NULL");
+            drainWalQueue();
+            assertFalse(getNotNull("t", "x"));
+        });
+    }
+
+    @Test
     public void testNullableColumnsStillPrintNull() throws Exception {
         assertMemoryLeak(() -> {
             // Verify nullable columns still print "null" for sentinel values (no regression)

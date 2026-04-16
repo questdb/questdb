@@ -3034,6 +3034,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.nonCritical().put("column does not exist [table=")
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
         }
+        if (!isNotNull && columnIndex == metadata.getTimestampIndex()) {
+            throw CairoException.nonCritical().put("cannot drop NOT NULL constraint on designated timestamp [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
         commit();
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
         columnMetadata.setNotNullFlag(isNotNull);

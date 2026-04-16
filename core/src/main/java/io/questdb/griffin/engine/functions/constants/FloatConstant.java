@@ -61,7 +61,7 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
 
     @Override
     public boolean isNullConstant() {
-        return !Numbers.isFinite(value);
+        return Numbers.isNull(value);
     }
 
     @Override

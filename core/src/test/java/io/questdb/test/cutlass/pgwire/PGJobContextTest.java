@@ -3989,7 +3989,7 @@ if __name__ == "__main__":
                             column[VARCHAR],type[VARCHAR],indexed[BIT],indexBlockCapacity[INTEGER],symbolCached[BIT],symbolCapacity[INTEGER],symbolTableSize[INTEGER],designated[BIT],notNull[BIT],upsertKey[BIT]
                             a,INT,false,0,false,0,0,false,false,false
                             b,LONG,false,0,false,0,0,false,false,false
-                            ts,TIMESTAMP,false,0,false,0,0,false,false,false
+                            ts,TIMESTAMP,false,0,false,0,0,false,true,false
                             """,
                     6
             );
