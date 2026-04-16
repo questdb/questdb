@@ -55,6 +55,24 @@ public interface PluginLifecycle {
     void onLoad(PluginContext context) throws Exception;
 
     /**
+     * Called when the server is shutting down, before worker pools are halted.
+     * <p>
+     * This method is <b>not</b> called on plugin reload — only on server shutdown.
+     * Use it to flush pending work, execute final SQL, or perform graceful
+     * finalization that requires server resources to still be available.
+     * <p>
+     * After this method returns for all plugins, worker pools are halted
+     * and {@link #onUnload()} is called.
+     * <p>
+     * The default implementation is a no-op, so existing plugins that do not
+     * need shutdown-specific behavior do not need to implement this method.
+     *
+     * @param context plugin context; server resources are still available
+     * @throws Exception if shutdown work fails; the error is logged and shutdown continues
+     */
+    default void onShutdown(PluginContext context) throws Exception {}
+
+    /**
      * Called before the plugin's functions are removed and classloader is closed.
      * Must release all resources acquired in {@link #onLoad(PluginContext)}.
      *

@@ -206,6 +206,63 @@ public interface PluginContext {
     void registerJob(Job job);
 
     /**
+     * Registers a timer that fires a callback at a fixed interval.
+     * <p>
+     * The callback runs on the shared worker pool thread and must return
+     * promptly. Long-running work should be enqueued to a registered
+     * {@link Job} instead.
+     * <p>
+     * The first firing occurs approximately {@code intervalMicros} after
+     * registration. If a callback is still executing when the next firing
+     * is due, the next firing is deferred (no concurrent executions).
+     * <p>
+     * <b>Lifecycle:</b> automatically cancelled when the plugin is unloaded.
+     * <p>
+     * Example — flush pending data every 30 seconds:
+     * <pre>
+     *   handle = context.registerTimer(30_000_000L, this::flushPendingData);
+     * </pre>
+     *
+     * @param intervalMicros interval between firings in microseconds; must be positive
+     * @param callback       the task to run on each firing; must not be null
+     * @return a handle that can be used to cancel the timer early
+     */
+    PluginTimerHandle registerTimer(long intervalMicros, Runnable callback);
+
+    /**
+     * Registers a calendar-aligned scheduled task using QuestDB's interval
+     * syntax (e.g., {@code "1h"}, {@code "1d"}, {@code "1M"}).
+     * <p>
+     * Unlike {@link #registerTimer(long, Runnable)} which uses a fixed
+     * microsecond interval, this method aligns firings to calendar boundaries
+     * (e.g., midnight for daily, first of month for monthly) and handles
+     * timezone transitions (DST) correctly.
+     * <p>
+     * The callback runs on the shared worker pool thread and must return
+     * promptly.
+     * <p>
+     * <b>Supported intervals:</b> {@code s} (seconds), {@code m} (minutes),
+     * {@code h} (hours), {@code d} (days), {@code M} (months), {@code y} (years).
+     * Examples: {@code "5m"}, {@code "1d"}, {@code "1M"}, {@code "6h"}.
+     * <p>
+     * <b>Lifecycle:</b> automatically cancelled when the plugin is unloaded.
+     * <p>
+     * Example — run daily at 2:00 AM US/Eastern:
+     * <pre>
+     *   // startMicros = 2 hours after epoch (defines the 2am alignment)
+     *   long twoAmOffset = 2L * 60 * 60 * 1_000_000;
+     *   handle = context.registerCalendarTask("1d", "US/Eastern", twoAmOffset, this::runDailyExport);
+     * </pre>
+     *
+     * @param interval    QuestDB interval string (e.g., {@code "5m"}, {@code "1d"})
+     * @param timezone    IANA timezone (e.g., {@code "US/Eastern"}), or null for UTC
+     * @param startMicros epoch microseconds defining the alignment origin
+     * @param callback    the task to run on each firing; must not be null
+     * @return a handle that can be used to cancel the timer early
+     */
+    PluginTimerHandle registerCalendarTask(CharSequence interval, CharSequence timezone, long startMicros, Runnable callback);
+
+    /**
      * Returns a plugin configuration property, or {@code defaultValue} if not set.
      * <p>
      * Resolution order:

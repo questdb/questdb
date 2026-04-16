@@ -190,6 +190,8 @@ public class ServerMain implements Closeable {
             }
             // Signal long-running task to exit ASAP
             engine.signalClose();
+            // Notify plugins while worker pools are still running
+            engine.notifyPluginShutdown();
             if (initialized) {
                 workerPoolManager.halt();
             }

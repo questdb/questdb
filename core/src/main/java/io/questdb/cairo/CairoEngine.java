@@ -1820,6 +1820,16 @@ public class CairoEngine implements Closeable, WriterSource {
         this.walLocker = walLocker;
     }
 
+    /**
+     * Called by ServerMain before halting worker pools during shutdown.
+     * Notifies plugins that the server is shutting down so they can
+     * flush pending work while resources are still available.
+     * No-op in OSS; overridden by enterprise engine.
+     */
+    public void notifyPluginShutdown() {
+        // no-op in OSS — no plugin manager
+    }
+
     public void signalClose() {
         closing = true;
     }
