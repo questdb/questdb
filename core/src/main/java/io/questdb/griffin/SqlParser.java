@@ -934,6 +934,10 @@ public class SqlParser {
         return false;
     }
 
+    private boolean isUnexpectedRightParenInTopLevelSelect(CharSequence tok) {
+        return Chars.equals(tok, ')') && !(subQueryMode || createTableMode || copyMode || createViewMode);
+    }
+
     private ExpressionNode literal(GenericLexer lexer, CharSequence name) {
         return literal(name, lexer.lastTokenPosition());
     }
@@ -1550,16 +1554,7 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
-        if (tok != null && isTtlKeyword(tok)) {
-            final int ttlValuePos = lexer.getPosition();
-            final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
-            if (partitionBy != -1) {
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
-            }
-            tableOpBuilder.setTtlHoursOrMonths(ttlHoursOrMonths);
-            tableOpBuilder.setTtlPosition(ttlValuePos);
-            tok = optTok(lexer);
-        }
+        tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, tableOpBuilder, true);
 
         if (tok != null && isInKeyword(tok)) {
             parseInVolume(lexer, tableOpBuilder);
@@ -1711,13 +1706,7 @@ public class SqlParser {
             builder.setPartitionByExpr(partitionByExpr);
             tok = optTok(lexer);
 
-            if (tok != null && isTtlKeyword(tok)) {
-                final int ttlValuePos = lexer.getPosition();
-                final int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
-                builder.setTtlHoursOrMonths(ttlHoursOrMonths);
-                tok = optTok(lexer);
-            }
+            tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, builder, false);
 
             if (tok != null) {
                 if (isWalKeyword(tok)) {
@@ -3094,6 +3083,11 @@ public class SqlParser {
             } else {
                 lexer.unparseLast();
             }
+            // questdb accepts open-ended limits like 'LIMIT 5,' and 'LIMIT ,5'.
+            // so reject only when neither side of the LIMIT clause parsed.
+            if (lo == null && hi == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "limit expression expected");
+            }
             model.setLimit(lo, hi);
         } else {
             lexer.unparseLast();
@@ -4034,6 +4028,10 @@ public class SqlParser {
                         throw SqlException.$(lexer.getPosition(), "reserved name");
                     }
 
+                    if (isUnexpectedRightParenInTopLevelSelect(tok)) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
+                    }
+
                     lexer.unparseLast();
                     expr = expr(lexer, model, sqlParserCallback, model.getDecls());
 
@@ -4116,13 +4114,13 @@ public class SqlParser {
                 }
 
                 if (Chars.equals(tok, ')')) {
-                    if (subQueryMode || createTableMode || copyMode || createViewMode) {
+                    if (isUnexpectedRightParenInTopLevelSelect(tok)) {
+                        // it's an unbalanced ')' in top-level SELECT
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
+                    } else {
                         // it's a balanced: ')'
                         lexer.unparseLast();
                         break;
-                    } else {
-                        // it's an unbalanced ')' in top-level SELECT
-                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [)]");
                     }
                 }
 
@@ -5334,7 +5332,7 @@ public class SqlParser {
             expectTok(lexer, "select");
         }
         lexer.unparseLast();
-        parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        parseAsSubQuery(lexer, null, true, sqlParserCallback, null, false);
         final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
         final String viewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);

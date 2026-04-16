@@ -3956,6 +3956,16 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorFunctionCannotBeUsedAsColumnFreesParsedFunction() throws Exception {
+        assertException(
+                "SELECT pg_attrdef() AS c FROM long_sequence(1)",
+                7,
+                "cursor function cannot be used as a column [column=c]",
+                sqlExecutionContext
+        );
+    }
+
+    @Test
     public void testDeallocateMissingStatementName() throws Exception {
         assertMemoryLeak(() -> {
             try {
