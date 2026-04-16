@@ -1787,7 +1787,7 @@ public final class TableUtils {
 
                             final long fileLength = ff.length(path.$());
                             if (fileLength < SymbolMapWriter.HEADER_SIZE) {
-                                LOG.error().$(path).$("symbol file is too small [fileLength=").$(fileLength).$(']').$();
+                                LOG.error().$(path).$(", symbol file is too small [fileLength=").$(fileLength).$(']').$();
                                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
                             }
 
