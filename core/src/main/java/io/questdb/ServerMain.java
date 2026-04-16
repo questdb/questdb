@@ -389,6 +389,10 @@ public class ServerMain implements Closeable {
                     if (pluginJob != null) {
                         sharedPoolWrite.assign(pluginJob);
                     }
+                    final Job pluginTimerJob = engine.getPluginTimerJob();
+                    if (pluginTimerJob != null) {
+                        sharedPoolWrite.assign(pluginTimerJob);
+                    }
 
                 } catch (Throwable thr) {
                     throw new Bootstrap.BootstrapException(thr);

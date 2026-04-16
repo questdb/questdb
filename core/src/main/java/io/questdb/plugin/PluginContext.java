@@ -158,6 +158,23 @@ public interface PluginContext {
     CharSequence getPluginName();
 
     /**
+     * Returns a plugin configuration property, or {@code defaultValue} if not set.
+     * <p>
+     * Resolution order:
+     * <ol>
+     *   <li>Environment variable {@code QDB_PLUGIN_<NORMALIZED_NAME>_<KEY>}
+     *       (key is uppercased, dots/hyphens become underscores)</li>
+     *   <li>{@code <plugin_root>/<plugin-name>.conf} properties file</li>
+     *   <li>{@code defaultValue}</li>
+     * </ol>
+     *
+     * @param key          the property key (e.g., "port", "bind.address")
+     * @param defaultValue returned if the key is not found in any source
+     * @return the resolved value or defaultValue
+     */
+    String getProperty(String key, String defaultValue);
+
+    /**
      * Returns the server's {@link SecurityContextFactory} for creating user-specific
      * security contexts. Plugins that accept external requests (e.g., HTTP endpoints)
      * should use this to authenticate users and enforce permissions.
@@ -249,35 +266,24 @@ public interface PluginContext {
      * <p>
      * Example — run daily at 2:00 AM US/Eastern:
      * <pre>
-     *   // startMicros = 2 hours after epoch (defines the 2am alignment)
-     *   long twoAmOffset = 2L * 60 * 60 * 1_000_000;
+     *   // startMicros = 2 hours past the Unix epoch, defining the alignment origin.
+     *   // For a daily interval this means "fire at 2 AM". The sampler rounds to the
+     *   // nearest interval boundary relative to this origin.
+     *   long twoAmOffset = 2L * 60 * 60 * 1_000_000L;
      *   handle = context.registerCalendarTask("1d", "US/Eastern", twoAmOffset, this::runDailyExport);
      * </pre>
      *
      * @param interval    QuestDB interval string (e.g., {@code "5m"}, {@code "1d"})
-     * @param timezone    IANA timezone (e.g., {@code "US/Eastern"}), or null for UTC
-     * @param startMicros epoch microseconds defining the alignment origin
+     * @param timezone    IANA timezone (e.g., {@code "US/Eastern"}), or null/empty for UTC
+     * @param startMicros microseconds since 1970-01-01 00:00:00 UTC that defines the
+     *                    alignment origin. For example, {@code 2 * 3600 * 1_000_000L}
+     *                    means "align to 2 hours past the epoch". For a daily interval
+     *                    this produces firings at 2:00 AM.
      * @param callback    the task to run on each firing; must not be null
      * @return a handle that can be used to cancel the timer early
+     * @throws SqlException if the interval string or timezone is invalid
      */
-    PluginTimerHandle registerCalendarTask(CharSequence interval, CharSequence timezone, long startMicros, Runnable callback);
-
-    /**
-     * Returns a plugin configuration property, or {@code defaultValue} if not set.
-     * <p>
-     * Resolution order:
-     * <ol>
-     *   <li>Environment variable {@code QDB_PLUGIN_<NORMALIZED_NAME>_<KEY>}
-     *       (key is uppercased, dots/hyphens become underscores)</li>
-     *   <li>{@code <plugin_root>/<plugin-name>.conf} properties file</li>
-     *   <li>{@code defaultValue}</li>
-     * </ol>
-     *
-     * @param key          the property key (e.g., "port", "bind.address")
-     * @param defaultValue returned if the key is not found in any source
-     * @return the resolved value or defaultValue
-     */
-    String getProperty(String key, String defaultValue);
+    PluginTimerHandle registerCalendarTask(CharSequence interval, CharSequence timezone, long startMicros, Runnable callback) throws SqlException;
 
     /**
      * Registers a {@link CheckpointListener} to receive callbacks when checkpoints

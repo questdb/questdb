@@ -913,6 +913,15 @@ public class CairoEngine implements Closeable, WriterSource {
         return null;
     }
 
+    /**
+     * Returns a {@link Job} that schedules periodic timer callbacks for plugins,
+     * or {@code null} if the engine does not support plugins.
+     * Overridden by enterprise engine.
+     */
+    public Job getPluginTimerJob() {
+        return null;
+    }
+
     public QueryRegistry getQueryRegistry() {
         return queryRegistry;
     }

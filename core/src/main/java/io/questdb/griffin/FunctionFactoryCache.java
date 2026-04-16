@@ -169,23 +169,6 @@ public class FunctionFactoryCache {
         return name != null && windowFunctionNames.contains(name);
     }
 
-    protected void replaceFactory(FunctionFactory replacement) {
-        try {
-            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(replacement);
-            final String name = descriptor.getName();
-            final int index = factories.keyIndex(name);
-            if (index < 0) {
-                ObjList<FunctionFactoryDescriptor> overloads = factories.valueAtQuick(index);
-                overloads.clear();
-                overloads.add(descriptor);
-            } else {
-                addFactoryToList(factories, descriptor);
-            }
-        } catch (SqlException e) {
-            LOG.error().$("Failed to replace factory: ").$((Sinkable) e).$();
-        }
-    }
-
     protected static void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {
         String name = descriptor.getName();
         int index = list.keyIndex(name);
