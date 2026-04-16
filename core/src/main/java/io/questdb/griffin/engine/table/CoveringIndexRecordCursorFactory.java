@@ -518,7 +518,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             try {
                 PartitionFrame frame;
                 while ((frame = frameCursor.next()) != null) {
-                    IndexReader reader = tableReader.getBitmapIndexReader(
+                    IndexReader reader = tableReader.getIndexReader(
                             frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
                     try (RowCursor rc = reader.getCursor(TableUtils.toIndexKey(symbolKey),
                             frame.getRowLo(), frame.getRowHi() - 1)) {
@@ -614,7 +614,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // index, evaluating the filter on each row. When the backward
                     // reader has covering data, use it directly to avoid column
                     // file I/O; otherwise fall back to column files.
-                    IndexReader bwdReader = tableReader.getBitmapIndexReader(
+                    IndexReader bwdReader = tableReader.getIndexReader(
                             partitionIndex, indexColumnIndex, IndexReader.DIR_BACKWARD);
                     RowCursor bwdCursor = bwdReader.getCursor(indexKey, rowLo, rowHi);
                     try {
@@ -654,7 +654,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                 } else {
                     // No filter: use forward reader and seekToLast for covering data
-                    IndexReader fwdReader = tableReader.getBitmapIndexReader(
+                    IndexReader fwdReader = tableReader.getIndexReader(
                             partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
                     RowCursor rowCursor = fwdReader.getCursor(indexKey, rowLo, rowHi);
                     try {
@@ -721,7 +721,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private boolean tryOpenKey(int partitionIndex, int rawSymbolKey, long rowLo, long rowHi) {
-            IndexReader indexReader = tableReader.getBitmapIndexReader(
+            IndexReader indexReader = tableReader.getIndexReader(
                     partitionIndex,
                     indexColumnIndex,
                     IndexReader.DIR_FORWARD
@@ -1050,7 +1050,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi) {
-            IndexReader indexReader = tableReader.getBitmapIndexReader(
+            IndexReader indexReader = tableReader.getIndexReader(
                     partitionIndex,
                     indexColumnIndex,
                     IndexReader.DIR_FORWARD

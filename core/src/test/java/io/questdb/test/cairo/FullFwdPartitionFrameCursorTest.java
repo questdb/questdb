@@ -1013,7 +1013,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at partition frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            IndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, indexDirection);
+            IndexReader indexReader = record.getReader().getIndexReader(frame.getPartitionIndex(), columnIndex, indexDirection);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
@@ -1057,7 +1057,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private long assertIndex(TestTableReaderRecord record, int columnIndex, StaticSymbolTable symbolTable, long count, PartitionFrame frame, int direction) {
-        IndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, direction);
+        IndexReader indexReader = record.getReader().getIndexReader(frame.getPartitionIndex(), columnIndex, direction);
 
         // because out Symbol column 0 is indexed, frame has to have an index.
         Assert.assertNotNull(indexReader);
@@ -1103,7 +1103,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
         PartitionFrame frame;
         while ((frame = cursor.next()) != null) {
             try {
-                record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), 4, IndexReader.DIR_BACKWARD);
+                record.getReader().getIndexReader(frame.getPartitionIndex(), 4, IndexReader.DIR_BACKWARD);
                 Assert.fail();
             } catch (CairoException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "Not indexed"));

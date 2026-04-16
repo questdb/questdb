@@ -1057,7 +1057,7 @@ public class ParquetTest extends AbstractCairoTest {
             try (var reader = engine.getReader("x")) {
                 for (int i = 0; i < reader.getPartitionCount(); i++) {
                     reader.openPartition(i);
-                    reader.getBitmapIndexReader(i, idColumnIndex, IndexReader.DIR_BACKWARD);
+                    reader.getIndexReader(i, idColumnIndex, IndexReader.DIR_BACKWARD);
                 }
             }
 

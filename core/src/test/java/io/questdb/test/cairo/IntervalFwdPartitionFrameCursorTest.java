@@ -660,7 +660,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at partition frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            IndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, IndexReader.DIR_BACKWARD);
+            IndexReader indexReader = record.getReader().getIndexReader(frame.getPartitionIndex(), columnIndex, IndexReader.DIR_BACKWARD);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);

@@ -73,7 +73,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     createX();
                     try (TableReader reader = getReader("x")) {
                         try {
-                            reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), IndexReader.DIR_FORWARD);
+                            reader.getIndexReader(0, reader.getMetadata().getColumnIndex("ik"), IndexReader.DIR_FORWARD);
                             Assert.fail();
                         } catch (CairoException ignored) {
                         }
@@ -82,7 +82,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                     execute("alter table x alter column ik add index");
 
                     try (TableReader reader = getReader("x")) {
-                        Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), IndexReader.DIR_FORWARD));
+                        Assert.assertNotNull(reader.getIndexReader(0, reader.getMetadata().getColumnIndex("ik"), IndexReader.DIR_FORWARD));
                     }
                 }
         );

@@ -529,11 +529,11 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 Assert.assertTrue("Column sym2 must exist", columnIndex2 >= 0);
                 Assert.assertEquals(
                         511,
-                        reader.getBitmapIndexReader(0, columnIndex, IndexReader.DIR_FORWARD).getValueBlockCapacity()
+                        reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD).getValueBlockCapacity()
                 );
                 Assert.assertEquals(
                         1023,
-                        reader.getBitmapIndexReader(0, columnIndex2, IndexReader.DIR_FORWARD).getValueBlockCapacity()
+                        reader.getIndexReader(0, columnIndex2, IndexReader.DIR_FORWARD).getValueBlockCapacity()
                 );
             }
         });
@@ -642,11 +642,11 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 Assert.assertTrue("Column sym2 must exist", columnIndex2 >= 0);
                 Assert.assertEquals(
                         511,
-                        reader.getBitmapIndexReader(0, columnIndex, IndexReader.DIR_FORWARD).getValueBlockCapacity()
+                        reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD).getValueBlockCapacity()
                 );
                 Assert.assertEquals(
                         1023,
-                        reader.getBitmapIndexReader(0, columnIndex2, IndexReader.DIR_FORWARD).getValueBlockCapacity()
+                        reader.getIndexReader(0, columnIndex2, IndexReader.DIR_FORWARD).getValueBlockCapacity()
                 );
             }
         });

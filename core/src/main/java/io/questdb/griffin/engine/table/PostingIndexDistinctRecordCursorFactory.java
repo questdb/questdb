@@ -221,7 +221,7 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 if (frame == null) {
                     return;
                 }
-                IndexReader indexReader = tableReader.getBitmapIndexReader(
+                IndexReader indexReader = tableReader.getIndexReader(
                         frame.getPartitionIndex(),
                         readerColumnIndex,
                         IndexReader.DIR_FORWARD

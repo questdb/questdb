@@ -846,7 +846,7 @@ public final class TestUtils {
 
                 for (int partitionIndex = 0; partitionIndex < rdr.getPartitionCount(); partitionIndex++) {
                     IndexReader indexReader =
-                            rdr.getBitmapIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
+                            rdr.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                     Assert.assertEquals(expectedCapacity, indexReader.getValueBlockCapacity() + 1);
                 }
             }

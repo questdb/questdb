@@ -3791,7 +3791,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 // Verify bitmap index reader works for the previously-skipped indexed column
                 int symIndex = reader.getMetadata().getColumnIndex("sym");
-                IndexReader indexReader = reader.getBitmapIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
+                IndexReader indexReader = reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                 Assert.assertNotNull(indexReader);
                 Assert.assertTrue(indexReader.isOpen());
             }
@@ -3844,7 +3844,7 @@ public class TableReaderTest extends AbstractCairoTest {
                 // to populate the bitmapIndexes slot with a non-null reader.
                 reader.openPartition(0);
                 int symIndex = reader.getMetadata().getColumnIndex("sym");
-                reader.getBitmapIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
+                reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
                 assertOpenPartitionCount(reader);
 
                 // Close the partition. The bitmap index reader is closed but

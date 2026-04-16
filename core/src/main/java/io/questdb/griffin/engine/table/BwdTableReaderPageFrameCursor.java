@@ -495,7 +495,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public IndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
+            return reader.getIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }
 
         @Override

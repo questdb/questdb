@@ -24,25 +24,29 @@
 
 package io.questdb.cairo.idx;
 
+
+import io.questdb.NullIndexFrameCursor;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.IndexFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
-public class BitmapIndexBwdNullReader implements IndexReader {
+public class IndexFwdNullReader implements IndexReader {
     private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
     private long partitionTxn;
 
-    public BitmapIndexBwdNullReader(long columnTxn, long partitionTxn) {
+    public IndexFwdNullReader(long columnTxn, long partitionTxn) {
         this.columnTxn = columnTxn;
         this.partitionTxn = partitionTxn;
     }
 
     @Override
     public void close() {
-        freeCursors.clear();
+        Misc.clear(freeCursors);
     }
 
     @Override
@@ -64,8 +68,14 @@ public class BitmapIndexBwdNullReader implements IndexReader {
         } else {
             c = new NullCursor(this.freeCursors);
         }
-        c.value = key == 0 ? maxValue - minValue : -1;
+        c.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
+        c.value = 0;
         return c;
+    }
+
+    @Override
+    public IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
+        return NullIndexFrameCursor.INSTANCE;
     }
 
     @Override
@@ -110,8 +120,8 @@ public class BitmapIndexBwdNullReader implements IndexReader {
 
     @Override
     public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, long partitionTxn, long columnTop, RecordMetadata metadata) {
-        this.columnTxn = columnNameTxn;
         this.partitionTxn = partitionTxn;
+        this.columnTxn = columnNameTxn;
     }
 
     @Override
@@ -123,6 +133,7 @@ public class BitmapIndexBwdNullReader implements IndexReader {
     private static class NullCursor implements RowCursor {
         private final ObjList<NullCursor> pool;
         private boolean isPooled;
+        private long maxValue;
         private long value;
 
         NullCursor(ObjList<NullCursor> freeCursors) {
@@ -131,7 +142,7 @@ public class BitmapIndexBwdNullReader implements IndexReader {
 
         @Override
         public void close() {
-            if (pool.size() < MAX_CACHED_FREE_CURSORS && !isPooled) {
+            if (!isPooled && pool.size() < MAX_CACHED_FREE_CURSORS) {
                 pool.add(this);
                 isPooled = true;
             }
@@ -139,12 +150,12 @@ public class BitmapIndexBwdNullReader implements IndexReader {
 
         @Override
         public boolean hasNext() {
-            return value > -1;
+            return value < maxValue;
         }
 
         @Override
         public long next() {
-            return value--;
+            return value++;
         }
     }
 }

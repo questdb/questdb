@@ -24,14 +24,14 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.idx.BitmapIndexBwdNullReader;
+import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class BitmapIndexBwdNullReaderTest {
-    private static final BitmapIndexBwdNullReader reader = new BitmapIndexBwdNullReader(-1, -1);
+public class IndexBwdNullReaderTest {
+    private static final IndexBwdNullReader reader = new IndexBwdNullReader(-1, -1);
 
     @Test
     public void testAlwaysOpen() {

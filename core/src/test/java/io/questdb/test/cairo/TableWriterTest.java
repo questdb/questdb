@@ -3306,7 +3306,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private void assertIndex(TableReader reader, TestTableReaderRecord record, int columnIndex) {
         final int partitionIndex = 0;
         reader.openPartition(partitionIndex);
-        final IndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, IndexReader.DIR_FORWARD);
+        final IndexReader indexReader = reader.getIndexReader(partitionIndex, columnIndex, IndexReader.DIR_FORWARD);
         final SymbolMapReader r = reader.getSymbolMapReader(columnIndex);
         final int symbolCount = r.getSymbolCount();
 

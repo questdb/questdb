@@ -1540,7 +1540,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                         int columnIndex = metadata.getColumnIndex("sym");
                         Assert.assertTrue("Column sym must exist", columnIndex >= 0);
 
-                        IndexReader indexReader = reader.getBitmapIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
+                        IndexReader indexReader = reader.getIndexReader(0, columnIndex, IndexReader.DIR_FORWARD);
                         Assert.assertNotNull(indexReader);
                         Assert.assertTrue(indexReader.getKeyCount() > 0);
                         Assert.assertTrue(indexReader.getValueMemorySize() > 0);

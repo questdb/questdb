@@ -788,7 +788,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         tableReader.openPartition(0);
                         final int columnBase = tableReader.getColumnBase(0);
                         final int columnIndex = tableReader.getMetadata().getColumnIndex("c");
-                        IndexReader reader = tableReader.getBitmapIndexReader(
+                        IndexReader reader = tableReader.getIndexReader(
                                 0,
                                 columnIndex,
                                 IndexReader.DIR_BACKWARD
