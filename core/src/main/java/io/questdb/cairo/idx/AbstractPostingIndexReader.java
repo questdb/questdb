@@ -334,8 +334,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             path.trimTo(plen);
             return;
         }
-        // Without metadata we cannot resolve covered-column types, so fail
-        // closed: covering disabled, readers fall back to main column files.
         if (metadata == null) {
             path.trimTo(plen);
             return;
