@@ -51,9 +51,10 @@ public class DefaultPGCircuitBreakerRegistryTest extends AbstractCairoTest {
             try (NetworkSqlExecutionCircuitBreaker cb = newCircuitBreaker()) {
                 int idx = registry.add(cb);
                 cb.setSecret(123_456);
-                // happy path: correct idx and secret causes cancel() to flip the cancelled flag
+                Assert.assertFalse("circuit breaker must not be tripped before cancel()", cb.checkIfTripped());
+                // happy path: correct idx and secret causes cancel() to trip the breaker
                 registry.cancel(idx, 123_456);
-                Assert.assertTrue(cb.getCancelledFlag() == null || cb.getCancelledFlag().get() || cb.checkIfTripped());
+                Assert.assertTrue("cancel() must trip the circuit breaker", cb.checkIfTripped());
             } finally {
                 registry.close();
             }
