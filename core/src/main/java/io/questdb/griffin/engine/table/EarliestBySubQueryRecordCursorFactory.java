@@ -68,20 +68,25 @@ public class EarliestBySubQueryRecordCursorFactory extends AbstractPageFrameReco
             @NotNull IntList columnSizeShifts
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
-        this.symbolKeys = new IntHashSet();
-        this.filter = filter;
-        this.columnIndex = columnIndex;
-        this.recordCursorFactory = recordCursorFactory;
-        this.func = func;
-        this.cursor = new EarliestByValueListRecordCursor(
-                configuration,
-                metadata,
-                columnIndex,
-                filter,
-                configuration.getDefaultSymbolCapacity(),
-                true,
-                false
-        );
+        try {
+            this.symbolKeys = new IntHashSet();
+            this.filter = filter;
+            this.columnIndex = columnIndex;
+            this.recordCursorFactory = recordCursorFactory;
+            this.func = func;
+            this.cursor = new EarliestByValueListRecordCursor(
+                    configuration,
+                    metadata,
+                    columnIndex,
+                    filter,
+                    configuration.getDefaultSymbolCapacity(),
+                    true,
+                    false
+            );
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

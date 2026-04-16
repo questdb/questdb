@@ -47,6 +47,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -266,7 +267,7 @@ public class EarliestByRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
                     long newTimestamp = baseRecord.getTimestamp(timestampIndex);
-                    if (newTimestamp < prevTimestamp) {
+                    if (newTimestamp != Numbers.LONG_NULL && (prevTimestamp == Numbers.LONG_NULL || newTimestamp < prevTimestamp)) {
                         value.putLong(RECORD_INDEX_VALUE_IDX, index);
                         value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                     }

@@ -44,6 +44,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -271,7 +272,7 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
                 } else {
                     long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
                     long newTimestamp = baseRecord.getTimestamp(timestampIndex);
-                    if (newTimestamp < prevTimestamp) {
+                    if (newTimestamp != Numbers.LONG_NULL && (prevTimestamp == Numbers.LONG_NULL || newTimestamp < prevTimestamp)) {
                         value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
                         value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                     }

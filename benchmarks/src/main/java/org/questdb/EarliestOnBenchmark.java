@@ -52,6 +52,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Compares EARLIEST ON against GROUP BY + JOIN for finding the first row
  * per partition key. 1M rows, 1000 distinct symbols, ~41 day partitions.
+ * Factories are compiled once in setup; only cursor iteration is measured.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
@@ -62,6 +63,13 @@ public class EarliestOnBenchmark {
     private SqlCompilerImpl compiler;
     private SqlExecutionContextImpl ctx;
     private CairoEngine engine;
+    private RecordCursorFactory earliestOnFactory;
+    private RecordCursorFactory earliestOnFilteredFactory;
+    private RecordCursorFactory earliestOnIndexedFactory;
+    private RecordCursorFactory earliestOnIntervalFactory;
+    private RecordCursorFactory groupByJoinFactory;
+    private RecordCursorFactory groupByJoinFilteredFactory;
+    private RecordCursorFactory groupByJoinIntervalFactory;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -106,27 +114,20 @@ public class EarliestOnBenchmark {
                     FROM long_sequence(1_000_000)
                 ), INDEX(device_id) TIMESTAMP(ts) PARTITION BY DAY
                 """, ctx);
-    }
 
-    @TearDown(Level.Trial)
-    public void tearDown() {
-        compiler.close();
-        engine.close();
-    }
-
-    @Benchmark
-    public long testEarliestOn() throws SqlException {
-        return drainQuery("SELECT * FROM sensor_data EARLIEST ON ts PARTITION BY device_id");
-    }
-
-    @Benchmark
-    public long testEarliestOnIndexed() throws SqlException {
-        return drainQuery("SELECT * FROM sensor_data_indexed EARLIEST ON ts PARTITION BY device_id");
-    }
-
-    @Benchmark
-    public long testGroupByJoin() throws SqlException {
-        return drainQuery("""
+        earliestOnFactory = compiler.compile(
+                "SELECT * FROM sensor_data EARLIEST ON ts PARTITION BY device_id", ctx
+        ).getRecordCursorFactory();
+        earliestOnFilteredFactory = compiler.compile(
+                "SELECT * FROM sensor_data WHERE temperature > 50 EARLIEST ON ts PARTITION BY device_id", ctx
+        ).getRecordCursorFactory();
+        earliestOnIndexedFactory = compiler.compile(
+                "SELECT * FROM sensor_data_indexed EARLIEST ON ts PARTITION BY device_id", ctx
+        ).getRecordCursorFactory();
+        earliestOnIntervalFactory = compiler.compile(
+                "SELECT * FROM sensor_data WHERE ts IN '2024-01-15' EARLIEST ON ts PARTITION BY device_id", ctx
+        ).getRecordCursorFactory();
+        groupByJoinFactory = compiler.compile("""
                 SELECT d.*
                 FROM sensor_data d
                 JOIN (
@@ -134,17 +135,8 @@ public class EarliestOnBenchmark {
                     FROM sensor_data
                     GROUP BY device_id
                 ) g ON d.device_id = g.device_id AND d.ts = g.min_ts
-                """);
-    }
-
-    @Benchmark
-    public long testEarliestOnFiltered() throws SqlException {
-        return drainQuery("SELECT * FROM sensor_data WHERE temperature > 50 EARLIEST ON ts PARTITION BY device_id");
-    }
-
-    @Benchmark
-    public long testGroupByJoinFiltered() throws SqlException {
-        return drainQuery("""
+                """, ctx).getRecordCursorFactory();
+        groupByJoinFilteredFactory = compiler.compile("""
                 SELECT d.*
                 FROM sensor_data d
                 JOIN (
@@ -154,17 +146,8 @@ public class EarliestOnBenchmark {
                     GROUP BY device_id
                 ) g ON d.device_id = g.device_id AND d.ts = g.min_ts
                 WHERE d.temperature > 50
-                """);
-    }
-
-    @Benchmark
-    public long testEarliestOnInterval() throws SqlException {
-        return drainQuery("SELECT * FROM sensor_data WHERE ts IN '2024-01-15' EARLIEST ON ts PARTITION BY device_id");
-    }
-
-    @Benchmark
-    public long testGroupByJoinInterval() throws SqlException {
-        return drainQuery("""
+                """, ctx).getRecordCursorFactory();
+        groupByJoinIntervalFactory = compiler.compile("""
                 SELECT d.*
                 FROM sensor_data d
                 JOIN (
@@ -174,13 +157,60 @@ public class EarliestOnBenchmark {
                     GROUP BY device_id
                 ) g ON d.device_id = g.device_id AND d.ts = g.min_ts
                 WHERE d.ts IN '2024-01-15'
-                """);
+                """, ctx).getRecordCursorFactory();
     }
 
-    private long drainQuery(String sql) throws SqlException {
+    @TearDown(Level.Trial)
+    public void tearDown() {
+        earliestOnFactory.close();
+        earliestOnFilteredFactory.close();
+        earliestOnIndexedFactory.close();
+        earliestOnIntervalFactory.close();
+        groupByJoinFactory.close();
+        groupByJoinFilteredFactory.close();
+        groupByJoinIntervalFactory.close();
+        compiler.close();
+        engine.close();
+    }
+
+    @Benchmark
+    public long testEarliestOn() throws SqlException {
+        return drainFactory(earliestOnFactory);
+    }
+
+    @Benchmark
+    public long testEarliestOnFiltered() throws SqlException {
+        return drainFactory(earliestOnFilteredFactory);
+    }
+
+    @Benchmark
+    public long testEarliestOnIndexed() throws SqlException {
+        return drainFactory(earliestOnIndexedFactory);
+    }
+
+    @Benchmark
+    public long testEarliestOnInterval() throws SqlException {
+        return drainFactory(earliestOnIntervalFactory);
+    }
+
+    @Benchmark
+    public long testGroupByJoin() throws SqlException {
+        return drainFactory(groupByJoinFactory);
+    }
+
+    @Benchmark
+    public long testGroupByJoinFiltered() throws SqlException {
+        return drainFactory(groupByJoinFilteredFactory);
+    }
+
+    @Benchmark
+    public long testGroupByJoinInterval() throws SqlException {
+        return drainFactory(groupByJoinIntervalFactory);
+    }
+
+    private long drainFactory(RecordCursorFactory factory) throws SqlException {
         long count = 0;
-        try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(ctx)) {
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
             while (cursor.hasNext()) {
                 count++;
             }

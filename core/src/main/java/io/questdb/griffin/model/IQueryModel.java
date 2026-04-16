@@ -60,12 +60,12 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int JOIN_UNNEST = 17;
     int JOIN_MAX = JOIN_UNNEST;
     int JOIN_WINDOW = 7;
-    int LATEST_BY_DEPRECATED = 1;
-    int LATEST_BY_NEW = 2;
-    int LATEST_BY_NONE = 0;
     int EARLIEST_BY_DEPRECATED = 3;
     int EARLIEST_BY_NEW = 4;
     int EARLIEST_BY_NONE = 0;
+    int LATEST_BY_DEPRECATED = 1;
+    int LATEST_BY_NEW = 2;
+    int LATEST_BY_NONE = 0;
     String NO_ROWID_MARKER = "*!*";
     int ORDER_DIRECTION_ASCENDING = 0;
     int ORDER_DIRECTION_DESCENDING = 1;
@@ -201,9 +201,9 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void addJoinModel(IQueryModel joinModel);
 
-    void addLatestBy(ExpressionNode latestBy);
-
     void addEarliestBy(ExpressionNode earliestBy);
+
+    void addLatestBy(ExpressionNode latestBy);
 
     boolean addModelAliasIndex(ExpressionNode node, int index);
 
@@ -315,13 +315,13 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<CharSequence> getLateralCountColumns();
 
-    ObjList<ExpressionNode> getLatestBy();
-
-    int getLatestByType();
-
     ObjList<ExpressionNode> getEarliestBy();
 
     int getEarliestByType();
+
+    ObjList<ExpressionNode> getLatestBy();
+
+    int getLatestByType();
 
     ExpressionNode getLimitAdviceHi();
 
@@ -583,9 +583,9 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setJoinType(int joinType);
 
-    void setLatestByType(int latestByType);
-
     void setEarliestByType(int earliestByType);
+
+    void setLatestByType(int latestByType);
 
     void setLimit(ExpressionNode lo, ExpressionNode hi);
 
