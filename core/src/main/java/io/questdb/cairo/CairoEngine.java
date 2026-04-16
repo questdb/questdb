@@ -113,6 +113,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.Job;
 import io.questdb.mp.NoOpQueue;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
@@ -216,6 +217,7 @@ public class CairoEngine implements Closeable, WriterSource {
             return WatchRegistry.UNREGISTERED;
         }
     }; // no-op
+    private @NotNull CheckpointListener checkpointListener = DefaultCheckpointListener.INSTANCE;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
@@ -232,7 +234,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker) {
         try {
             this.walLocker = walLocker;
-            this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
+            this.ffCache = createFunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyImportContext = new CopyImportContext(this, configuration);
@@ -266,6 +268,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
+            this.checkpointListener = configuration.getCheckpointListener();
 
             // IMPORTANT: Do not reorder statements!
             // The backup recovery process needs the `dataID` (since it will set it),
@@ -312,6 +315,7 @@ public class CairoEngine implements Closeable, WriterSource {
             case CREATE_MAT_VIEW:
             case CREATE_VIEW:
             case DROP:
+            case PLUGIN_OPERATION:
                 assert sqlExecutionContext.getCairoEngine() == compiler.getEngine();
                 try (Operation op = cq.getOperation()) {
                     assert op != null;
@@ -794,7 +798,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull CheckpointListener getCheckpointListener() {
-        return configuration.getCheckpointListener();
+        return checkpointListener;
     }
 
     public DatabaseCheckpointStatus getCheckpointStatus() {
@@ -895,6 +899,27 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();
+    }
+
+    /**
+     * Returns a {@link Job} that delegates to all jobs registered by plugins
+     * via {@link io.questdb.plugin.PluginContext#registerJob(Job)}, or {@code null}
+     * if the engine does not support plugins.
+     * <p>
+     * The returned job should be registered on a worker pool before it is started.
+     * Overridden by enterprise engine to provide the plugin job coordinator.
+     */
+    public Job getPluginJob() {
+        return null;
+    }
+
+    /**
+     * Returns a {@link Job} that schedules periodic timer callbacks for plugins,
+     * or {@code null} if the engine does not support plugins.
+     * Overridden by enterprise engine.
+     */
+    public Job getPluginTimerJob() {
+        return null;
     }
 
     public QueryRegistry getQueryRegistry() {
@@ -1753,6 +1778,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.configReloader = configReloader;
     }
 
+    public void setCheckpointListener(@NotNull CheckpointListener checkpointListener) {
+        this.checkpointListener = checkpointListener;
+    }
+
     public void setDdlListener(@NotNull DdlListener ddlListener) {
         this.ddlListener = ddlListener;
     }
@@ -1798,6 +1827,16 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void setWalLocker(@NotNull WalLocker walLocker) {
         this.walLocker = walLocker;
+    }
+
+    /**
+     * Called by ServerMain before halting worker pools during shutdown.
+     * Notifies plugins that the server is shutting down so they can
+     * flush pending work while resources are still available.
+     * No-op in OSS; overridden by enterprise engine.
+     */
+    public void notifyPluginShutdown() {
+        // no-op in OSS — no plugin manager
     }
 
     public void signalClose() {
@@ -2237,6 +2276,13 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected FunctionFactoryCache createFunctionFactoryCache(
+            CairoConfiguration configuration,
+            Iterable<FunctionFactory> functionFactories
+    ) {
+        return new FunctionFactoryCache(configuration, functionFactories);
     }
 
     protected @NotNull MatViewGraph createMatViewGraph() {

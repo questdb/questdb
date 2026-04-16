@@ -190,6 +190,8 @@ public class ServerMain implements Closeable {
             }
             // Signal long-running task to exit ASAP
             engine.signalClose();
+            // Notify plugins while worker pools are still running
+            engine.notifyPluginShutdown();
             if (initialized) {
                 workerPoolManager.halt();
             }
@@ -213,6 +215,10 @@ public class ServerMain implements Closeable {
             throw new IllegalStateException("close was called");
         }
         return engine;
+    }
+
+    protected HttpServer getHttpServer() {
+        return httpServer;
     }
 
     public int getHttpServerPort() {
@@ -376,6 +382,16 @@ public class ServerMain implements Closeable {
                         final TelemetryJob telemetryJob = new TelemetryJob(engine);
                         freeOnExit(telemetryJob);
                         sharedPoolWrite.assign(telemetryJob);
+                    }
+
+                    // plugin jobs
+                    final Job pluginJob = engine.getPluginJob();
+                    if (pluginJob != null) {
+                        sharedPoolWrite.assign(pluginJob);
+                    }
+                    final Job pluginTimerJob = engine.getPluginTimerJob();
+                    if (pluginTimerJob != null) {
+                        sharedPoolWrite.assign(pluginTimerJob);
                     }
 
                 } catch (Throwable thr) {

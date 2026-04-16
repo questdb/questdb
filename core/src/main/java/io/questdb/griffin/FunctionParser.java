@@ -273,6 +273,17 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return functionFactoryCache;
     }
 
+    protected ObjList<FunctionFactoryDescriptor> resolveOverloadList(
+            ExpressionNode node,
+            ObjList<Function> args
+    ) throws SqlException {
+        final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
+        if (overload == null) {
+            throw invalidFunction(node, args);
+        }
+        return overload;
+    }
+
     /**
      * Creates function instance. When node type is {@link ExpressionNode#LITERAL} a column or parameter
      * function is returned. We will be using the supplied {@link #metadata} to resolve type of column. When node token
@@ -821,10 +832,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             @Transient ObjList<Function> args,
             @Transient IntList argPositions
     ) throws SqlException {
-        final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
-        if (overload == null) {
-            throw invalidFunction(node, args);
-        }
+        final ObjList<FunctionFactoryDescriptor> overload = resolveOverloadList(node, args);
 
         final int argCount = args == null ? 0 : args.size();
         FunctionFactory candidate = null;
