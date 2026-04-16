@@ -39,7 +39,7 @@ public class SqlLoggingTest extends AbstractCairoTest {
                 // HTTP JSON test
                 try (TestHttpClient httpClient = new TestHttpClient(HttpClientFactory.newPlainTextInstance())) {
                     final int port = serverMain.getHttpServerPort();
-                    exec(httpClient, "{\"ddl\":\"OK\"}", "create table x(a int, ts timestamp) timestamp(ts) partition by day", port);
+                    exec(httpClient, "{\"ddl\":\"OK\"}", "create table x(a int, ts timestamp NOT NULL) timestamp(ts) partition by day", port);
                     waitForRegex("fin.*?create table x");
                     exec(httpClient, "{\"dml\":\"OK\"}", "insert into x values (1,0)", port);
                     waitForRegex("fin.*?insert into x values");

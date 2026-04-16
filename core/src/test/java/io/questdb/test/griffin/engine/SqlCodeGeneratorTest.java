@@ -2358,7 +2358,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByConstantMatchingColumnName() throws Exception {
-        assertQuery("nts\tmin\nnts\t\n", "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
+        assertQuery("nts\tmin\nnts\t\n", "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'", "create table tt (dts timestamp NOT NULL, nts timestamp) timestamp(dts)", null, "insert into tt " +
                 "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
                 "from long_sequence(2L)", """
                 nts\tmin
@@ -2671,8 +2671,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testJoinUseNonExistColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders ( id LONG, order_ts TIMESTAMP, sym SYMBOL CAPACITY 1024, volume DOUBLE ) TIMESTAMP(order_ts) PARTITION BY DAY;");
-            execute("CREATE TABLE prices ( ts TIMESTAMP, sym SYMBOL CAPACITY 1024, bid DOUBLE, ask DOUBLE ) timestamp(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE orders ( id LONG, order_ts TIMESTAMP NOT NULL, sym SYMBOL CAPACITY 1024, volume DOUBLE ) TIMESTAMP(order_ts) PARTITION BY DAY;");
+            execute("CREATE TABLE prices ( ts TIMESTAMP NOT NULL, sym SYMBOL CAPACITY 1024, bid DOUBLE, ask DOUBLE ) timestamp(ts) PARTITION BY DAY;");
             assertExceptionNoLeakCheck(
                     "SELECT o.*, avg(p.bid) avg_big, avg(p.ask) avg_ask FROM orders o LEFT OUTER JOIN prices p ON p.sym = o.sym and p.ts >= dateadd('s', -1, o.ts) and p.ts <= dateadd('s', 1, o.ts);",
                     136,
@@ -3285,7 +3285,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllIndexedFilteredMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
+            execute("create table trips(id int, vendor symbol index, ts timestamp NOT NULL) timestamp(ts) partition by DAY");
             // insert three partitions
             execute(
                     "insert into trips select " +
@@ -3959,7 +3959,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllIndexedListMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
+            execute("create table trips(id int, vendor symbol index, ts timestamp NOT NULL) timestamp(ts) partition by DAY");
             // insert three partitions
             execute(
                     "insert into trips select " +
@@ -4101,7 +4101,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertMemoryLeak(
                 () -> {
-                    execute("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
+                    execute("create table trips(id int, vendor symbol index, ts timestamp NOT NULL) timestamp(ts) partition by DAY");
                     // insert three partitions
                     execute(
                             "insert into trips select " +
@@ -4192,7 +4192,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByAllMultiplePartitions() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    execute("create table trips(id int, vendor symbol, ts timestamp) timestamp(ts) partition by DAY");
+                    execute("create table trips(id int, vendor symbol, ts timestamp NOT NULL) timestamp(ts) partition by DAY");
                     // insert three partitions
                     execute(
                             "insert into trips select " +
@@ -4274,7 +4274,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     cust_id SYMBOL index,
                     balance_ccy SYMBOL,
                     balance DOUBLE,
-                    timestamp TIMESTAMP
+                    timestamp TIMESTAMP NOT NULL
                     )
                     timestamp(timestamp)""");
 
@@ -4383,7 +4383,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    id symbol, " +
                         "    name symbol, " +
                         "    value double, " +
-                        "    ts timestamp" +
+                        "    ts timestamp NOT NULL" +
                         ")",
                 14,
                 "latest by over a table requires designated TIMESTAMP"
@@ -4394,7 +4394,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByFilteredBySymbolInAllIndexed() throws Exception {
         testLatestByFilteredBySymbolIn("""
                 create table x (
-                  ts timestamp,
+                  ts timestamp NOT NULL,
                   node symbol index,
                   metric symbol index,
                   value long)\s
@@ -4405,7 +4405,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByFilteredBySymbolInNoIndexes() throws Exception {
         testLatestByFilteredBySymbolIn("""
                 create table x (
-                  ts timestamp,
+                  ts timestamp NOT NULL,
                   node symbol,
                   metric symbol,
                   value long)\s
@@ -4416,7 +4416,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByFilteredSymbolInPartiallyIndexed1() throws Exception {
         testLatestByFilteredBySymbolIn("""
                 create table x (
-                  ts timestamp,
+                  ts timestamp NOT NULL,
                   node symbol index,
                   metric symbol,
                   value long)\s
@@ -4427,7 +4427,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestByFilteredSymbolInPartiallyIndexed2() throws Exception {
         testLatestByFilteredBySymbolIn("""
                 create table x (
-                  ts timestamp,
+                  ts timestamp NOT NULL,
                   node symbol,
                   metric symbol index,
                   value long)\s
@@ -5210,7 +5210,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    id symbol, " +
                 "    name symbol, " +
                 "    value double, " +
-                "    ts timestamp" +
+                "    ts timestamp NOT NULL" +
                 ") timestamp(ts)");
     }
 
@@ -5220,7 +5220,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    id symbol, " +
                 "    name symbol, " +
                 "    value double, " +
-                "    ts timestamp" +
+                "    ts timestamp NOT NULL" +
                 ") timestamp(ts) partition by DAY");
     }
 
@@ -5230,7 +5230,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    id symbol index, " +
                 "    name symbol, " +
                 "    value double, " +
-                "    ts timestamp" +
+                "    ts timestamp NOT NULL" +
                 ") timestamp(ts) partition by DAY");
     }
 
@@ -5240,7 +5240,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    id symbol, " +
                 "    name symbol index, " +
                 "    value double, " +
-                "    ts timestamp" +
+                "    ts timestamp NOT NULL" +
                 ") timestamp(ts) partition by DAY");
     }
 
@@ -5250,7 +5250,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    id symbol index, " +
                 "    name symbol index, " +
                 "    value double, " +
-                "    ts timestamp" +
+                "    ts timestamp NOT NULL" +
                 ") timestamp(ts) partition by DAY");
     }
 
@@ -5260,7 +5260,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    id symbol index, " +
                 "    name symbol index, " +
                 "    value double, " +
-                "    ts timestamp" +
+                "    ts timestamp NOT NULL" +
                 ") timestamp(ts)");
     }
 
@@ -5270,7 +5270,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    id symbol, " +
                 "    name symbol index, " +
                 "    value double, " +
-                "    ts timestamp" +
+                "    ts timestamp NOT NULL" +
                 ") timestamp(ts)");
     }
 
@@ -5280,7 +5280,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "    id symbol index, " +
                 "    name symbol, " +
                 "    value double, " +
-                "    ts timestamp" +
+                "    ts timestamp NOT NULL" +
                 ") timestamp(ts)");
     }
 
@@ -5387,7 +5387,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "    id symbol, " +
                     "    name symbol, " +
                     "    value long, " +
-                    "    ts timestamp, " +
+                    "    ts timestamp NOT NULL, " +
                     "    other_ts timestamp" +
                     ") timestamp(ts) partition by day");
 
@@ -5475,7 +5475,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "    id symbol, " +
                     "    name symbol, " +
                     "    value long, " +
-                    "    ts timestamp, " +
+                    "    ts timestamp NOT NULL, " +
                     "    other_ts timestamp" +
                     ") timestamp(ts) partition by day");
 
@@ -5530,7 +5530,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySelectAllFilteredBySymbolInAllIndexed() throws Exception {
         testLatestBySelectAllFilteredBySymbolIn("""
                 create table x (
-                  ts timestamp,
+                  ts timestamp NOT NULL,
                   node symbol index,
                   metric symbol index,
                   value long)\s
@@ -5541,7 +5541,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySelectAllFilteredBySymbolInNoIndexes() throws Exception {
         testLatestBySelectAllFilteredBySymbolIn("""
                 create table x (
-                  ts timestamp,
+                  ts timestamp NOT NULL,
                   node symbol,
                   metric symbol,
                   value long)\s
@@ -5552,7 +5552,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySelectAllFilteredBySymbolInPartiallyIndexed1() throws Exception {
         testLatestBySelectAllFilteredBySymbolIn("""
                 create table x (
-                  ts timestamp,
+                  ts timestamp NOT NULL,
                   node symbol index,
                   metric symbol,
                   value long)\s
@@ -5563,7 +5563,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testLatestBySelectAllFilteredBySymbolInPartiallyIndexed2() throws Exception {
         testLatestBySelectAllFilteredBySymbolIn("""
                 create table x (
-                  ts timestamp,
+                  ts timestamp NOT NULL,
                   node symbol,
                   metric symbol index,
                   value long)\s
@@ -5930,7 +5930,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    char char, " +
                         "    string string, " +
                         "    symbol symbol, " +
-                        "    ts timestamp" +
+                        "    ts timestamp NOT NULL" +
                         ") timestamp(ts)"
         );
     }
@@ -5947,7 +5947,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    char char, " +
                         "    string string, " +
                         "    symbol symbol, " +
-                        "    ts timestamp" +
+                        "    ts timestamp NOT NULL" +
                         ") timestamp(ts) partition by DAY"
         );
     }
@@ -5966,7 +5966,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    char char, " +
                         "    string string, " +
                         "    symbol symbol index, " +
-                        "    ts timestamp" +
+                        "    ts timestamp NOT NULL" +
                         ") timestamp(ts)"
         );
     }
@@ -5985,7 +5985,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    char char, " +
                         "    string string, " +
                         "    symbol symbol index, " +
-                        "    ts timestamp" +
+                        "    ts timestamp NOT NULL" +
                         ") timestamp(ts) partition by DAY"
         );
     }
@@ -7634,7 +7634,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testParallelFilterNullPointerExceptionCase1() throws Exception {
         String ddl = """
                 CREATE TABLE foo (
-                a timestamp,
+                a timestamp NOT NULL,
                 b symbol,
                 c int,
                 d int,
@@ -7688,7 +7688,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testParallelFilterNullPointerExceptionCase2() throws Exception {
         String ddl = """
                 CREATE TABLE foo (
-                a timestamp,
+                a timestamp NOT NULL,
                 b symbol,
                 c int,
                 d int,
@@ -7742,7 +7742,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testParallelFilterNullPointerExceptionCase3() throws Exception {
         String ddl = """
                 CREATE TABLE foo (
-                a timestamp,
+                a timestamp NOT NULL,
                 b symbol,
                 c int,
                 d int,
@@ -7804,8 +7804,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testResolveUnionOrderByPositionInJoinModel() throws Exception {
-        execute("create table t1 (id symbol, value double, timestamp timestamp) timestamp(timestamp)");
-        execute("create table t2 (id symbol, value double, value_max double, timestamp timestamp) timestamp(timestamp)");
+        execute("create table t1 (id symbol, value double, timestamp timestamp NOT NULL) timestamp(timestamp)");
+        execute("create table t2 (id symbol, value double, value_max double, timestamp timestamp NOT NULL) timestamp(timestamp)");
         execute("insert into t1 (id, value, timestamp) values ('id1', 2, '2024-12-26T14:30:00Z');\n");
         execute("insert into t2 (id, value, value_max, timestamp) values ('id2', 1, 10, '2024-12-26T14:30:00Z');\n");
         assertQueryNoLeakCheck("""
@@ -8416,7 +8416,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "    id symbol index, " +
                     "    name symbol index, " +
                     "    value double, " +
-                    "    ts timestamp" +
+                    "    ts timestamp NOT NULL" +
                     ") timestamp(ts) partition by DAY");
             execute("insert into tab values ('d1', 'c1', 101.1, '2021-10-05T11:31:35.878Z')");
             execute("insert into tab values ('d1', 'c1', 101.2, '2021-10-05T12:31:35.878Z')");
@@ -8777,8 +8777,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testTimestampCrossReference() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (val double, t timestamp)");
-            execute("create table y (timestamp timestamp, d double)");
+            execute("create table x (val double, t timestamp NOT NULL)");
+            execute("create table y (timestamp timestamp NOT NULL, d double)");
             execute("insert into y select timestamp_sequence(cast('2018-01-31T23:00:00.000000Z' as timestamp), 100), rnd_double() from long_sequence(1000)");
 
             // to shut up memory leak check
@@ -8868,8 +8868,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testUnionAllSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
-            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP)");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP NOT NULL)");
             execute("""
                     INSERT INTO trades VALUES
                      (10.0, '2024-01-01T00:00:10Z'),
@@ -8903,8 +8903,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testUnionAllSampleBy2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
-            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP)");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE trades_agg (high DOUBLE, timestamp TIMESTAMP NOT NULL)");
             execute("""
                     INSERT INTO trades VALUES
                      (10.0, '2024-01-01T00:00:10Z'),
@@ -8938,8 +8938,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testUnionAllWithFilterUsesAliasFromFirstBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (name1 VARCHAR, ts1 TIMESTAMP, sym1 SYMBOL) TIMESTAMP(ts1)");
-            execute("CREATE TABLE t2 (name2 VARCHAR, ts2 TIMESTAMP, sym2 SYMBOL) TIMESTAMP(ts2)");
+            execute("CREATE TABLE t1 (name1 VARCHAR, ts1 TIMESTAMP NOT NULL, sym1 SYMBOL) TIMESTAMP(ts1)");
+            execute("CREATE TABLE t2 (name2 VARCHAR, ts2 TIMESTAMP NOT NULL, sym2 SYMBOL) TIMESTAMP(ts2)");
             execute("""
                     INSERT INTO t1 VALUES
                      ('alice', '2025-12-01T01:30:00Z', 'X'),
@@ -9156,7 +9156,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         // Test that when using dateadd on timestamp column, the result metadata has correct timestamp
         // even without explicit timestamp(ts) clause
         assertMemoryLeak(() -> {
-            execute("create table trades (timestamp TIMESTAMP, price DOUBLE, amount DOUBLE) timestamp(timestamp) partition by DAY");
+            execute("create table trades (timestamp TIMESTAMP NOT NULL, price DOUBLE, amount DOUBLE) timestamp(timestamp) partition by DAY");
             execute("insert into trades values ('2022-01-15T12:00:00.000000Z', 100.0, 10.0)");
             execute("insert into trades values ('2022-06-15T12:00:00.000000Z', 150.0, 20.0)");
 
@@ -9404,7 +9404,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         String ddlTrips = """
                 CREATE TABLE trips (
-                pickup_datetime TIMESTAMP,
+                pickup_datetime TIMESTAMP NOT NULL,
                 pickup_geohash GEOHASH(12c)
                 ) timestamp(pickup_datetime)
                 """;
@@ -9484,7 +9484,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     private void createGeoHashTable(int chars) throws SqlException {
-        execute(String.format("create table pos(time timestamp, uuid symbol, hash geohash(%dc))", chars) + ", index(uuid) timestamp(time) partition by DAY");
+        execute(String.format("create table pos(time timestamp NOT NULL, uuid symbol, hash geohash(%dc))", chars) + ", index(uuid) timestamp(time) partition by DAY");
 
         execute("insert into pos values('2021-05-10T23:59:59.150000Z','XXX','f91t48s7')");
         execute("insert into pos values('2021-05-10T23:59:59.322000Z','ddd','bbqyzfp6')");
@@ -9557,7 +9557,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create TABLE 'alcatel_traffic_tmp' (" +
                     "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
-                    "time TIMESTAMP, " +
+                    "time TIMESTAMP NOT NULL, " +
                     "slot SYMBOL, " +
                     "port SYMBOL, " +
                     "downStream DOUBLE, " +
@@ -9609,7 +9609,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create TABLE 'alcatel_traffic_tmp' (" +
                     "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
-                    "time TIMESTAMP, " +
+                    "time TIMESTAMP NOT NULL, " +
                     "slot SYMBOL, " +
                     "port SYMBOL, " +
                     "downStream DOUBLE, " +

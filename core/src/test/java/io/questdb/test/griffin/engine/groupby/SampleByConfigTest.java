@@ -40,7 +40,7 @@ import java.util.HashMap;
 public class SampleByConfigTest extends AbstractBootstrapTest {
 
     final CharSequence ddl = "CREATE TABLE sensors (\n" +
-            "ts TIMESTAMP,\n" +
+            "ts TIMESTAMP NOT NULL,\n" +
             "val INT\n" +
             ") TIMESTAMP(ts) PARTITION BY DAY WAL";
     final CharSequence dml = "INSERT INTO sensors (ts, val) VALUES \n" +

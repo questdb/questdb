@@ -105,7 +105,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     "a_varchar VARCHAR PARQUET(RLE_DICTIONARY)," +
                     " a_long LONG PARQUET(RLE_DICTIONARY)," +
                     " a_int INT PARQUET(RLE_DICTIONARY)," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
             execute("INSERT INTO x SELECT" +
@@ -139,7 +139,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     "a_long LONG PARQUET(DELTA_BINARY_PACKED)," +
                     " a_date DATE PARQUET(DELTA_BINARY_PACKED)," +
                     " a_ts TIMESTAMP PARQUET(DELTA_BINARY_PACKED)," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
             execute("INSERT INTO x SELECT" +
@@ -173,7 +173,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     "a_string STRING PARQUET(DELTA_LENGTH_BYTE_ARRAY)," +
                     " a_varchar VARCHAR PARQUET(DELTA_LENGTH_BYTE_ARRAY)," +
                     " a_bin BINARY PARQUET(DELTA_LENGTH_BYTE_ARRAY)," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
             execute("INSERT INTO x SELECT" +
@@ -206,11 +206,11 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             // Per-column ZSTD on symbol column with enough distinct symbols to trigger auto-scaling
             execute("CREATE TABLE x (" +
                     "a_symbol SYMBOL PARQUET(default, ZSTD)," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
             // Baseline: same data, no per-column compression
-            execute("CREATE TABLE y (a_symbol SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("CREATE TABLE y (a_symbol SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY MONTH");
 
             execute("INSERT INTO x SELECT" +
                     " rnd_symbol(10_000, 10, 40, 0)," +
@@ -271,7 +271,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " a_string STRING PARQUET(DELTA_LENGTH_BYTE_ARRAY, GZIP(5))," +
                     " a_long LONG PARQUET(DELTA_BINARY_PACKED, SNAPPY)," +
                     " a_varchar VARCHAR PARQUET(RLE_DICTIONARY, ZSTD)," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
             execute("ALTER TABLE x ALTER COLUMN a_symbol SET PARQUET(RLE_DICTIONARY, LZ4_RAW)");
 
@@ -306,7 +306,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             inputRoot = root;
             execute("CREATE TABLE x (" +
                     "a_long LONG," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
             execute("INSERT INTO x SELECT" +
@@ -346,7 +346,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             inputRoot = root;
             execute("CREATE TABLE x (" +
                     "a_long LONG," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
 
             execute("INSERT INTO x SELECT" +
@@ -420,7 +420,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " a_double DOUBLE PARQUET(RLE_DICTIONARY)," +
                     " a_long LONG PARQUET(RLE_DICTIONARY)," +
                     " an_int INT PARQUET(RLE_DICTIONARY)," +
-                    " ts TIMESTAMP" +
+                    " ts TIMESTAMP NOT NULL" +
                     ") TIMESTAMP(ts) PARTITION BY MONTH");
             execute("ALTER TABLE x ALTER COLUMN a_symbol SET PARQUET(RLE_DICTIONARY)");
 

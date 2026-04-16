@@ -36,7 +36,7 @@ public class InLongTest extends AbstractCairoTest {
     @Test
     public void testBindVarConstants() throws SqlException {
         execute("create table MovementLog(\n" +
-                "ts timestamp,\n" +
+                "ts timestamp NOT NULL,\n" +
                 "initParticipantId long,\n" +
                 "initParticipantIdType symbol,\n" +
                 "movementBusinessDate date,\n" +
@@ -60,7 +60,7 @@ public class InLongTest extends AbstractCairoTest {
     @Test
     public void testBindVarRuntimeConstants() throws SqlException {
         execute("create table MovementLog(\n" +
-                "ts timestamp,\n" +
+                "ts timestamp NOT NULL,\n" +
                 "initParticipantId long,\n" +
                 "initParticipantIdType symbol,\n" +
                 "movementBusinessDate date,\n" +

@@ -95,7 +95,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         testBusyPoll(
                 1000000,
                 300_000,
-                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by DAY"
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP NOT NULL) timestamp(stamp) partition by DAY"
         );
     }
 
@@ -104,7 +104,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         testBusyPoll(
                 40000000,
                 300_000,
-                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by MONTH"
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP NOT NULL) timestamp(stamp) partition by MONTH"
         );
     }
 
@@ -113,7 +113,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         testBusyPoll(
                 10000000,
                 300_000,
-                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by WEEK"
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP NOT NULL) timestamp(stamp) partition by WEEK"
         );
     }
 
@@ -122,7 +122,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         testBusyPoll(
                 480000000,
                 300_000,
-                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by YEAR"
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP NOT NULL) timestamp(stamp) partition by YEAR"
         );
     }
 
@@ -131,7 +131,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         testBusyPoll(
                 10000,
                 3_000_000,
-                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by NONE"
+                "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP NOT NULL) timestamp(stamp) partition by NONE"
         );
     }
 
@@ -243,7 +243,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            execute("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
+            execute("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP NOT NULL) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
 
             TableToken tableToken = engine.verifyTableName("xyz");
             try (TableWriter writer = getWriter(tableToken)) {
@@ -299,7 +299,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int n = 1000;
         assertMemoryLeak(() -> {
             execute(
-                    "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
+                    "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP NOT NULL) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
                     sqlExecutionContext
             );
 

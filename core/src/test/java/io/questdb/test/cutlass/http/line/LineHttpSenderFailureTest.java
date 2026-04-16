@@ -48,7 +48,7 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
         String tableName = UUID.randomUUID().toString();
         TestUtils.assertMemoryLeak(() -> {
             try {
-                controller.startAndExecute("create table '" + tableName + "' (value long, ts timestamp) timestamp (ts) partition by DAY WAL DEDUP UPSERT KEYS(ts)");
+                controller.startAndExecute("create table '" + tableName + "' (value long, ts timestamp NOT NULL) timestamp (ts) partition by DAY WAL DEDUP UPSERT KEYS(ts)");
                 CountDownLatch senderLatch = new CountDownLatch(2); // one for Sender and one for Restarter
 
                 AtomicReference<Exception> senderException = new AtomicReference<>();

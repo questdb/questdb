@@ -155,7 +155,7 @@ public class SqlValidationTest extends AbstractCairoTest {
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
                                 "{\"queryType\":\"CREATE TABLE\"}",
-                                "create table should_not_exist(a int, ts timestamp) timestamp(ts) partition by hour"
+                                "create table should_not_exist(a int, ts timestamp NOT NULL) timestamp(ts) partition by hour"
                         );
 
                         // check that table is still exists

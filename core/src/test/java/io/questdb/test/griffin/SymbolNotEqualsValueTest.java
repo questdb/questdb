@@ -49,7 +49,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -69,7 +69,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "    sym symbol cache index,\n" +
                 "    sym2 symbol cache index,\n" +
                 "    price double,\n" +
-                "    ts timestamp\n" +
+                "    ts timestamp NOT NULL\n" +
                 ") timestamp(ts) partition by DAY", "ts", "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
                 "        rnd_symbol('D', 'E', 'F') sym2, \n" +
                 "        rnd_double() price, \n" +
@@ -90,7 +90,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                         "    sym symbol cache index,\n" +
                         "    sym2 symbol cache index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -117,7 +117,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                         "    sym symbol cache index,\n" +
                         "    sym2 symbol cache index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -145,7 +145,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -174,7 +174,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                         "    sym symbol cache index,\n" +
                         "    sym2 symbol cache index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -203,7 +203,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -251,7 +251,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -280,7 +280,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol nocache index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -602,7 +602,7 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
                 "create table x (\n" +
                         "    sym symbol cache index,\n" +
                         "    price double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 "ts",
                 "insert into x select * from (select rnd_symbol(120, 3, 3, 0) sym, \n" +

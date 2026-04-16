@@ -499,7 +499,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     public void testExportWithAddColumn() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
-                    engine.execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
+                    engine.execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
                     engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1), ('2020-01-03T00:00:00.000000Z', 3)");
                     drainWalQueue(engine);
                     engine.execute("alter table test_table add column y int");
@@ -529,7 +529,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     public void testExportWithProjection() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
-                    engine.execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
+                    engine.execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
                     engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1), ('2020-01-03T00:00:00.000000Z', 2)");
                     drainWalQueue(engine);
                     params.clear();
@@ -542,7 +542,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     public void testExportWithTimestampDescending() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
-                    engine.execute("create table test_table (ts TIMESTAMP, x int)");
+                    engine.execute("create table test_table (ts TIMESTAMP NOT NULL, x int)");
                     engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1), ('2020-01-03T00:00:00.000000Z', 2)");
                     drainWalQueue(engine);
                     params.clear();
@@ -556,7 +556,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     public void testExportWithoutTimestamp() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
-                    engine.execute("create table test_table (ts TIMESTAMP, x int)");
+                    engine.execute("create table test_table (ts TIMESTAMP NOT NULL, x int)");
                     engine.execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1), ('2020-01-03T00:00:00.000000Z', 2)");
                     drainWalQueue(engine);
                     params.clear();
@@ -655,7 +655,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     public void testOnParquetPartition() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
-                    engine.execute("create table test_table (ts TIMESTAMP, x int, sym symbol) timestamp(ts) partition by day wal;");
+                    engine.execute("create table test_table (ts TIMESTAMP NOT NULL, x int, sym symbol) timestamp(ts) partition by day wal;");
                     engine.execute("insert into test_table " +
                             "select dateadd('d', ((x-1)/1000)::int, '2020-01-01T00:00:00.000000Z'::timestamp) + ((x-1) % 1000) * 1000000L, " +
                             "x::int, " +
@@ -1633,7 +1633,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 .run((engine, sqlExecutionContext) -> {
                     // Create a WAL table with data across multiple partitions
                     engine.execute(
-                            "CREATE TABLE coltop_test (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                            "CREATE TABLE coltop_test (x LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL",
                             sqlExecutionContext
                     );
                     engine.execute("""

@@ -106,10 +106,10 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
     }
 
     private void createNonPartitionedTable() throws SqlException {
-        execute("create table table_non_partitioned (ts TIMESTAMP, x long)");
+        execute("create table table_non_partitioned (ts TIMESTAMP NOT NULL, x long)");
     }
 
     private void createTable(String tableName, String walMode) throws SqlException {
-        execute("create table " + tableName + " (ts TIMESTAMP, x long) timestamp(ts) PARTITION BY DAY " + walMode);
+        execute("create table " + tableName + " (ts TIMESTAMP NOT NULL, x long) timestamp(ts) PARTITION BY DAY " + walMode);
     }
 }

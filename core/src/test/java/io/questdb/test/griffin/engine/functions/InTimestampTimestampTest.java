@@ -40,7 +40,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     public void testBindVarRuntimeConstantsWithConstant() throws SqlException {
         execute("""
                 create table MovementLog(
-                ts timestamp,
+                ts timestamp NOT NULL,
                 initParticipantId long,
                 initParticipantIdType symbol,
                 movementBusinessDate date,

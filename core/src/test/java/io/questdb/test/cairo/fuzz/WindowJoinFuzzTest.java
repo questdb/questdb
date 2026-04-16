@@ -406,7 +406,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                             price double,
                             boundLo int,
                             boundHi int,
-                            ts timestamp
+                            ts timestamp NOT NULL
                         ) timestamp(ts) partition by day bypass wal;
                         """
         );
@@ -432,7 +432,7 @@ public class WindowJoinFuzzTest extends AbstractCairoTest {
                             id int,
                             sym symbol,
                         """ + columnsCreation + """
-                            ts timestamp
+                            ts timestamp NOT NULL
                         ) timestamp(ts) partition by day bypass wal;
                         """
         );

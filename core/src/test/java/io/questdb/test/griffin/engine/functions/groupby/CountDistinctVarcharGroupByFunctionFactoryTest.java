@@ -47,7 +47,7 @@ public class CountDistinctVarcharGroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testSampleBy() throws Exception {
-        execute("create table x (ts timestamp, vch varchar) timestamp(ts);");
+        execute("create table x (ts timestamp NOT NULL, vch varchar) timestamp(ts);");
         execute("insert into x values ('2000-01-01', 'foo'), ('2000-01-01T04:30', 'bar'), ('2000-01-01T05:30', 'foobar'), ('2000-01-03', 'foo');");
 
         String expectedDefault = """

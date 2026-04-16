@@ -1,5 +1,5 @@
 statement ok
-CREATE TABLE students (id INT, name STRING, major STRING, year INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE students (id INT, name STRING, major STRING, year INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO students VALUES
@@ -7,7 +7,7 @@ INSERT INTO students VALUES
 (2, 'Dirk', 'CS', 2017, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE exams (sid INT, course STRING, curriculum STRING, grade INT, year INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE exams (sid INT, course STRING, curriculum STRING, grade INT, year INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO exams VALUES
@@ -29,7 +29,7 @@ Dirk 14
 # ============================================================
 
 statement ok
-CREATE TABLE chain_t1 (id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE chain_t1 (id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO chain_t1 VALUES
@@ -38,7 +38,7 @@ INSERT INTO chain_t1 VALUES
 (3, 30, '2024-01-01T02:00:00.000000Z')
 
 statement ok
-CREATE TABLE chain_t2 (t1_id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE chain_t2 (t1_id INT, x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO chain_t2 VALUES
@@ -47,7 +47,7 @@ INSERT INTO chain_t2 VALUES
 (2, 300, '2024-01-01T01:10:00.000000Z')
 
 statement ok
-CREATE TABLE chain_t3 (t2_x INT, label STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE chain_t3 (t2_x INT, label STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO chain_t3 VALUES
@@ -72,10 +72,10 @@ ORDER BY c.id, s1.x
 # ============================================================
 
 statement ok
-CREATE TABLE orders (id INT, customer STRING, min_qty DOUBLE, priority INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders (id INT, customer STRING, min_qty DOUBLE, priority INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
-CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, category STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, category STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders VALUES
@@ -137,7 +137,7 @@ ORDER BY o.id
 
 # COUNT aggregate inside lateral with LEFT JOIN — unmatched outer row
 statement ok
-CREATE TABLE orders2 (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders2 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders2 VALUES
@@ -146,7 +146,7 @@ INSERT INTO orders2 VALUES
 (3, '2024-01-01T02:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades2 (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades2 (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades2 VALUES
@@ -179,7 +179,7 @@ ORDER BY o.id
 # ============================================================
 
 statement ok
-CREATE TABLE orders_left (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_left (id INT, customer STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_left VALUES
@@ -188,7 +188,7 @@ INSERT INTO orders_left VALUES
 (3, 'Charlie', '2024-01-01T02:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_left (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_left (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_left VALUES
@@ -212,7 +212,7 @@ ORDER BY o.id, t.qty
 # ============================================================
 
 statement ok
-CREATE TABLE orders_empty (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_empty (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_empty VALUES
@@ -220,7 +220,7 @@ INSERT INTO orders_empty VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_empty (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_empty (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 # No trades at all — LEFT JOIN fills NULLs
 query IR nosort
@@ -237,7 +237,7 @@ ORDER BY o.id
 # ============================================================
 
 statement ok
-CREATE TABLE orders_limit (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_limit (id INT, customer STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_limit VALUES
@@ -245,7 +245,7 @@ INSERT INTO orders_limit VALUES
 (2, 'Bob', '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_limit (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_limit (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_limit VALUES
@@ -273,7 +273,7 @@ ORDER BY o.id, t.qty DESC
 # ============================================================
 
 statement ok
-CREATE TABLE orders_dist (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_dist (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_dist VALUES
@@ -281,7 +281,7 @@ INSERT INTO orders_dist VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_dist (id INT, order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_dist (id INT, order_id INT, category STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_dist VALUES
@@ -307,7 +307,7 @@ ORDER BY o.id, t.category
 # ============================================================
 
 statement ok
-CREATE TABLE orders_union (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_union (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_union VALUES
@@ -315,7 +315,7 @@ INSERT INTO orders_union VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_a VALUES
@@ -323,7 +323,7 @@ INSERT INTO trades_a VALUES
 (2, 2, 20.0, '2024-01-01T01:10:00.000000Z')
 
 statement ok
-CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_b VALUES
@@ -351,7 +351,7 @@ ORDER BY o.id, t.qty
 # ============================================================
 
 statement ok
-CREATE TABLE trades_b2 (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_b2 (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_b2 VALUES
@@ -379,7 +379,7 @@ ORDER BY o.id, t.qty
 # ============================================================
 
 statement ok
-CREATE TABLE t_outer_ul (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_outer_ul (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_outer_ul VALUES
@@ -387,7 +387,7 @@ INSERT INTO t_outer_ul VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE t_data_ul (oid INT, val INT, src STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_data_ul (oid INT, val INT, src STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_data_ul VALUES
@@ -421,7 +421,7 @@ ORDER BY o.id, sub.val
 # ============================================================
 
 statement ok
-CREATE TABLE orders_isect (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_isect (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_isect VALUES
@@ -429,7 +429,7 @@ INSERT INTO orders_isect VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_ia (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_ia (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_ia VALUES
@@ -438,7 +438,7 @@ INSERT INTO trades_ia VALUES
 (3, 2, 30.0, '2024-01-01T01:10:00.000000Z')
 
 statement ok
-CREATE TABLE trades_ib (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_ib (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_ib VALUES
@@ -487,7 +487,7 @@ ORDER BY o.id, t.qty
 # ============================================================
 
 statement ok
-CREATE TABLE master_mc (mm_id INT, symbol STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE master_mc (mm_id INT, symbol STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO master_mc VALUES
@@ -496,7 +496,7 @@ INSERT INTO master_mc VALUES
 (3, 'MSFT', '2024-01-01T02:00:00.000000Z')
 
 statement ok
-CREATE TABLE detail_mc (id INT, mm_id INT, symbol STRING, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE detail_mc (id INT, mm_id INT, symbol STRING, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO detail_mc VALUES
@@ -523,7 +523,7 @@ ORDER BY m.mm_id
 # ============================================================
 
 statement ok
-CREATE TABLE orders_win (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_win (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_win VALUES
@@ -531,7 +531,7 @@ INSERT INTO orders_win VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_win (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_win (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_win VALUES
@@ -560,7 +560,7 @@ ORDER BY o.id, t.qty
 
 # Window + LIMIT + LEFT JOIN — order 3 has no trades -> NULL fill
 statement ok
-CREATE TABLE orders_wl (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_wl (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_wl VALUES
@@ -569,7 +569,7 @@ INSERT INTO orders_wl VALUES
 (3, '2024-01-01T02:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_wl (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_wl (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_wl VALUES
@@ -602,7 +602,7 @@ ORDER BY o.id, t.qty DESC
 # ============================================================
 
 statement ok
-CREATE TABLE orders_null (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_null (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_null VALUES
@@ -611,7 +611,7 @@ INSERT INTO orders_null VALUES
 (2, '2024-01-01T02:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_null (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_null (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_null VALUES
@@ -644,7 +644,7 @@ NULL 20.000000
 # ============================================================
 
 statement ok
-CREATE TABLE orders_uncorr (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_uncorr (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_uncorr VALUES
@@ -652,7 +652,7 @@ INSERT INTO orders_uncorr VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_uncorr (id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_uncorr (id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_uncorr VALUES
@@ -676,19 +676,19 @@ ORDER BY o.id, t.qty
 # ============================================================
 
 statement ok
-CREATE TABLE n_t1 (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE n_t1 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO n_t1 VALUES (1, '2024-01-01T00:00:00.000000Z')
 
 statement ok
-CREATE TABLE n_t2 (id INT, t1_id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE n_t2 (id INT, t1_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO n_t2 VALUES (1, 1, '2024-01-01T00:30:00.000000Z')
 
 statement ok
-CREATE TABLE n_t3 (id INT, t2_id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE n_t3 (id INT, t2_id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO n_t3 VALUES (1, 1, '2024-01-01T01:00:00.000000Z')
@@ -711,7 +711,7 @@ JOIN LATERAL (
 # ============================================================
 
 statement ok
-CREATE TABLE orders_ij (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_ij (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_ij VALUES
@@ -719,7 +719,7 @@ INSERT INTO orders_ij VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE products (id INT, order_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE products (id INT, order_id INT, name STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO products VALUES
@@ -727,7 +727,7 @@ INSERT INTO products VALUES
 (2, 2, 'Gadget', '2024-01-01T01:10:00.000000Z')
 
 statement ok
-CREATE TABLE prices (id INT, product_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE prices (id INT, product_id INT, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO prices VALUES
@@ -754,7 +754,7 @@ ORDER BY o.id
 # ============================================================
 
 statement ok
-CREATE TABLE t_outer_lj (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_outer_lj (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_outer_lj VALUES
@@ -762,7 +762,7 @@ INSERT INTO t_outer_lj VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE t_left_lj (id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_left_lj (id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_left_lj VALUES
@@ -771,7 +771,7 @@ INSERT INTO t_left_lj VALUES
 (3, 30, '2024-01-01T02:10:00.000000Z')
 
 statement ok
-CREATE TABLE t_right_lj (id INT, ref_id INT, info STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_right_lj (id INT, ref_id INT, info STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_right_lj VALUES
@@ -797,7 +797,7 @@ ORDER BY o.id
 # ============================================================
 
 statement ok
-CREATE TABLE t_outer_cj (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_outer_cj (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_outer_cj VALUES
@@ -805,7 +805,7 @@ INSERT INTO t_outer_cj VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE t_a_cj (oid INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_a_cj (oid INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_a_cj VALUES
@@ -814,7 +814,7 @@ INSERT INTO t_a_cj VALUES
 (2, 30, '2024-01-01T01:10:00.000000Z')
 
 statement ok
-CREATE TABLE t_b_cj (oid INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_b_cj (oid INT, qty INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_b_cj VALUES
@@ -841,7 +841,7 @@ ORDER BY o.id, sub.val
 # ============================================================
 
 statement ok
-CREATE TABLE t1_deep (x INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t1_deep (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t1_deep VALUES
@@ -849,7 +849,7 @@ INSERT INTO t1_deep VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE t2_deep (x INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t2_deep (x INT, a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t2_deep VALUES
@@ -858,7 +858,7 @@ INSERT INTO t2_deep VALUES
 (2, 30, '2024-01-01T01:10:00.000000Z')
 
 statement ok
-CREATE TABLE t3_deep (x INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t3_deep (x INT, b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t3_deep VALUES
@@ -888,7 +888,7 @@ ORDER BY t1_deep.x, sub.val
 # ============================================================
 
 statement ok
-CREATE TABLE t_outer_uw (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_outer_uw (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_outer_uw VALUES
@@ -896,7 +896,7 @@ INSERT INTO t_outer_uw VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE t_data_uw (oid INT, val INT, src STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t_data_uw (oid INT, val INT, src STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t_data_uw VALUES
@@ -928,7 +928,7 @@ ORDER BY o.id, sub.val
 # ============================================================
 
 statement ok
-CREATE TABLE t1_ua (x INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t1_ua (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t1_ua VALUES
@@ -936,7 +936,7 @@ INSERT INTO t1_ua VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE t2_ua (x INT, a INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t2_ua (x INT, a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t2_ua VALUES
@@ -944,7 +944,7 @@ INSERT INTO t2_ua VALUES
 (2, 20, '2024-01-01T01:10:00.000000Z')
 
 statement ok
-CREATE TABLE t3_ua (x INT, b INT, cat STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t3_ua (x INT, b INT, cat STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t3_ua VALUES
@@ -975,7 +975,7 @@ ORDER BY t1_ua.x, sub.val
 # ============================================================
 
 statement ok
-CREATE TABLE orders_gb (id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_gb (id INT, category STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_gb VALUES
@@ -983,7 +983,7 @@ INSERT INTO orders_gb VALUES
 (2, 'Y', '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_gb (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_gb (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_gb VALUES
@@ -1011,7 +1011,7 @@ ORDER BY o.id
 # ============================================================
 
 statement ok
-CREATE TABLE t1_or (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t1_or (a INT, b INT, threshold INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t1_or VALUES
@@ -1019,7 +1019,7 @@ INSERT INTO t1_or VALUES
 (2, 200, 25, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE t2_or (t1_id INT, val INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE t2_or (t1_id INT, val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO t2_or VALUES
@@ -1070,10 +1070,10 @@ ORDER BY t1_or.a
 # ============================================================
 
 statement ok
-CREATE TABLE orders_err (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_err (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
-CREATE TABLE trades_err (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_err (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement error
 SELECT * FROM orders_err o JOIN LATERAL trades_err t
@@ -1093,7 +1093,7 @@ SELECT * FROM orders_err o RIGHT JOIN LATERAL (SELECT * FROM trades_err WHERE id
 
 # -- INT4_TBL --
 statement ok
-CREATE TABLE int4_tbl (f1 INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE int4_tbl (f1 INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO int4_tbl VALUES
@@ -1105,7 +1105,7 @@ INSERT INTO int4_tbl VALUES
 
 # -- INT8_TBL --
 statement ok
-CREATE TABLE int8_tbl (q1 LONG, q2 LONG, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE int8_tbl (q1 LONG, q2 LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO int8_tbl VALUES
@@ -1117,7 +1117,7 @@ INSERT INTO int8_tbl VALUES
 
 # -- TEXT_TBL --
 statement ok
-CREATE TABLE text_tbl (f1 STRING, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE text_tbl (f1 STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO text_tbl VALUES
@@ -1170,7 +1170,7 @@ ORDER BY o.id, t.x
 # ============================================================
 
 statement ok
-CREATE TABLE orders_sb (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_sb (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_sb VALUES
@@ -1178,7 +1178,7 @@ INSERT INTO orders_sb VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_sb (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_sb (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_sb VALUES
@@ -1208,7 +1208,7 @@ ORDER BY o.id, t.ts
 
 # SAMPLE BY + LEFT JOIN — order 3 has no trades -> NULL fill
 statement ok
-CREATE TABLE orders_sb2 (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_sb2 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_sb2 VALUES
@@ -1217,7 +1217,7 @@ INSERT INTO orders_sb2 VALUES
 (3, '2024-01-01T02:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_sb2 (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_sb2 (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_sb2 VALUES
@@ -1246,7 +1246,7 @@ ORDER BY o.id, t.ts
 # ============================================================
 
 statement ok
-CREATE TABLE orders_lt (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_lt (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_lt VALUES
@@ -1254,7 +1254,7 @@ INSERT INTO orders_lt VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_lt (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_lt (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_lt VALUES
@@ -1286,7 +1286,7 @@ ORDER BY o.id, t.category
 # ============================================================
 
 statement ok
-CREATE TABLE orders_pv (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_pv (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_pv VALUES
@@ -1294,7 +1294,7 @@ INSERT INTO orders_pv VALUES
 (2, '2024-01-01T01:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_pv (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_pv (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_pv VALUES
@@ -1322,7 +1322,7 @@ ORDER BY o.id
 
 # PIVOT + LEFT JOIN — order 3 has no trades -> NULL fill
 statement ok
-CREATE TABLE orders_pv2 (id INT, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE orders_pv2 (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO orders_pv2 VALUES
@@ -1331,7 +1331,7 @@ INSERT INTO orders_pv2 VALUES
 (3, '2024-01-01T02:00:00.000000Z')
 
 statement ok
-CREATE TABLE trades_pv2 (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) 
+CREATE TABLE trades_pv2 (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) 
 
 statement ok
 INSERT INTO trades_pv2 VALUES

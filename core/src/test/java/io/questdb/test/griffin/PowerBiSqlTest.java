@@ -44,7 +44,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
 
     @Test
     public void testCheckConstraints1() throws SqlException {
-        execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
+        execute("create table trades(a int, b double, t timestamp NOT NULL) timestamp(t) partition by hour");
         assertSql("PK_COLUMN_NAME\tFK_TABLE_SCHEMA\tFK_TABLE_NAME\tFK_COLUMN_NAME\tORDINAL\tFK_NAME\n",
                 "select\n" +
                         "    pkcol.COLUMN_NAME as PK_COLUMN_NAME,\n" +
@@ -70,7 +70,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
 
     @Test
     public void testCheckConstraints2() throws SqlException {
-        execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
+        execute("create table trades(a int, b double, t timestamp NOT NULL) timestamp(t) partition by hour");
         assertSql(
                 "INDEX_NAME\tCOLUMN_NAME\tORDINAL_POSITION\tPRIMARY_KEY\n",
                 "select i.CONSTRAINT_SCHEMA || '_' || i.CONSTRAINT_NAME as INDEX_NAME, ii.COLUMN_NAME, ii.ORDINAL_POSITION, case when i.CONSTRAINT_TYPE = 'PRIMARY KEY' then 'Y' else 'N' end as PRIMARY_KEY\n" +
@@ -143,7 +143,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
 
     @Test
     public void testTableColumns() throws SqlException {
-        execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
+        execute("create table trades(a int, b double, t timestamp NOT NULL) timestamp(t) partition by hour");
         assertSql(
                 "COLUMN_NAME\tORDINAL_POSITION\tIS_NULLABLE\tDATA_TYPE\n" +
                         "a\t0\tyes\tinteger\n" +
@@ -158,7 +158,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
 
     @Test
     public void testTableListing() throws SqlException {
-        execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
+        execute("create table trades(a int, b double, t timestamp NOT NULL) timestamp(t) partition by hour");
         assertSql(
                 "TABLE_SCHEMA\tTABLE_NAME\tTABLE_TYPE\n" +
                         "public\ttrades\tBASE TABLE\n",

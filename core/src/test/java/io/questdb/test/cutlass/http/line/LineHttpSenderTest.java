@@ -229,7 +229,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 serverMain.execute("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, u uuid, tss timestamp, " +
-                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
+                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -827,7 +827,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 serverMain.start();
-                serverMain.execute("create table foo (ts TIMESTAMP, d LONG256) timestamp(ts) partition by day wal;");
+                serverMain.execute("create table foo (ts TIMESTAMP NOT NULL, d LONG256) timestamp(ts) partition by day wal;");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -968,7 +968,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
                         "sensor symbol, " +
                         "temperature double, " +
-                        "ts timestamp" +
+                        "ts timestamp NOT NULL" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
@@ -1033,7 +1033,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
                         "sensor symbol, " +
                         "temperature double, " +
-                        "ts timestamp" +
+                        "ts timestamp NOT NULL" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 // Wait for sender thread to complete
@@ -1197,7 +1197,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             dec128 DECIMAL(34, 8),
                             dec256 DECIMAL(64, 16),
                             value INT,
-                            ts TIMESTAMP
+                            ts TIMESTAMP NOT NULL
                         ) TIMESTAMP(ts) PARTITION BY DAY WAL
                         """);
                 serverMain.awaitTxn("decimal_test", 0);
@@ -1233,7 +1233,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "empty_arrays_test";
                 serverMain.execute("CREATE TABLE " + tableName +
-                        " (a1 double[], a2 double[][], a3 double[][][], ts TIMESTAMP)" +
+                        " (a1 double[], a2 double[][], a3 double[][][], ts TIMESTAMP NOT NULL)" +
                         " TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
@@ -1300,7 +1300,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
                 String tableName = "arr_double_test";
-                serverMain.execute("CREATE TABLE " + tableName + " (a1 double[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE " + tableName + " (a1 double[], ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -1334,7 +1334,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "1024"
             )) {
                 String tableName = "esoteric_arrays_test";
-                serverMain.execute("CREATE TABLE " + tableName + " (a1 double[][][], a2 double[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE " + tableName + " (a1 double[][][], a2 double[][][], ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -1452,7 +1452,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.execute("create table " + tableName + " (" +
                             "balance1 symbol capacity 16, " +
                             "balance10 symbol capacity 16, " +
-                            "timestamp timestamp)" +
+                            "timestamp timestamp NOT NULL)" +
                             " timestamp(timestamp) partition by DAY WAL " +
                             " dedup upsert keys (balance1, balance10, timestamp)");
                     assertSql(serverMain.getEngine(), "SELECT count() FROM (table_columns('Accounts')) WHERE upsertKey=true AND ( column = 'timestamp' )", """
@@ -1492,7 +1492,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "binary_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, y varchar, a1 DOUBLE," +
-                        " ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        " ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -1627,7 +1627,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
                 String tableName = "decimal_test";
-                serverMain.execute("CREATE TABLE " + tableName + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE " + tableName + " (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -1682,7 +1682,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "decimal_text_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (price DECIMAL(10, 2), quantity DECIMAL(15, 4), " +
-                        "rate DECIMAL(8, 5), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "rate DECIMAL(8, 5), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -1744,7 +1744,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "decimal_edge_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (value DECIMAL(20, 10), " +
-                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -1804,7 +1804,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "decimal_equiv_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (text_format DECIMAL(10, 3), binary_format DECIMAL(10, 3), " +
-                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -1967,7 +1967,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "decimal_overflow_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (x DECIMAL(6, 3), " +
-                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2008,7 +2008,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "decimal_scientific_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (large DECIMAL(15, 2), small DECIMAL(20, 15), " +
-                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2059,7 +2059,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "decimal_trailing_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (value1 DECIMAL(10, 3), value2 DECIMAL(12, 5), " +
-                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2108,7 +2108,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "simple_decimal_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (a DECIMAL(9, 0), b DECIMAL(9, 3), " +
-                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2188,7 +2188,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
                         "a1 DOUBLE[][][], a2 DOUBLE[][][], a3 DOUBLE[][][], a4 DOUBLE[][][], " +
                         "b1 DOUBLE[], b2 DOUBLE[][], b3 DOUBLE[][][], " +
-                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2251,7 +2251,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 String tableName = "arr_exception_test";
-                serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, a1 DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, a1 DOUBLE[], ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2282,7 +2282,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 String tableName = "decimal_exception_test";
-                serverMain.execute("CREATE TABLE " + tableName + " (x DECIMAL(6, 3), y DECIMAL(76, 73), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("CREATE TABLE " + tableName + " (x DECIMAL(6, 3), y DECIMAL(76, 73), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2384,7 +2384,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 String tableName = "arr_large_test";
-                serverMain.execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, arr DOUBLE[])" +
+                serverMain.execute("CREATE TABLE " + tableName + " (ts TIMESTAMP NOT NULL, arr DOUBLE[])" +
                         " TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
@@ -2426,7 +2426,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
                         "a1 LONG[][][], a2 LONG[][][], a3 LONG[][][], a4 LONG[][][], " +
                         "b1 LONG[], b2 LONG[][], b3 LONG[][][], " +
-                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2492,7 +2492,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "arr_nullable_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, l1 LONG, a1 DOUBLE[], " +
-                        "a2 DOUBLE[][], a3 DOUBLE[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "a2 DOUBLE[][], a3 DOUBLE[][][], ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2532,7 +2532,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "simple_double_test";
                 serverMain.execute("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
-                        "a double, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "a double, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -2603,7 +2603,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 String tableName = "h2o_feet";
-                serverMain.execute("create table " + tableName + " (async symbol, location symbol, level varchar, water_level long, ts timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.execute("create table " + tableName + " (async symbol, location symbol, level varchar, water_level long, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
 
                 int count = 10;
 
@@ -2650,7 +2650,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
                         "sensor symbol, " +
                         "temperature double, " +
-                        "ts timestamp" +
+                        "ts timestamp NOT NULL" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
@@ -2678,7 +2678,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.execute("CREATE TABLE " + tableName + " (" +
                             "sensor symbol, " +
                             "temperature double, " +
-                            "ts timestamp" +
+                            "ts timestamp NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                     // Build a large batch and flush. The error can occur either during
@@ -2765,7 +2765,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false"
             )) {
                 serverMain.execute("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
+                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -2806,7 +2806,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.LINE_AUTO_CREATE_NEW_TABLES.getEnvVarName(), "false"
             )) {
                 serverMain.execute("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
+                        "i int, l long, ip ipv4, g geohash(4c), ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -2865,7 +2865,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
                         "sensor symbol, " +
                         "temperature double, " +
-                        "ts timestamp" +
+                        "ts timestamp NOT NULL" +
                         ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
@@ -2894,7 +2894,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     serverMain.execute("CREATE TABLE " + tableName + " (" +
                             "sensor symbol, " +
                             "temperature double, " +
-                            "ts timestamp" +
+                            "ts timestamp NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                     // Now send more data with the SAME sender instance (same HTTP connection).
@@ -3207,7 +3207,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
-                serverMain.execute("create table tab (ts timestamp, ts2 timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.execute("create table tab (ts timestamp NOT NULL, ts2 timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)

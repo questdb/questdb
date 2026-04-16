@@ -432,7 +432,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAddDecimalsColumnsWithColTopsSelect() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute(
-                    "create table x (ts timestamp) timestamp (ts)" +
+                    "create table x (ts timestamp NOT NULL) timestamp (ts)" +
                             " partition by day" +
                             (isWal ? " wal" : "") +
                             ";"
@@ -486,7 +486,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAddDefaultDecimalColumn() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute(
-                    "create table x (ts timestamp) timestamp (ts)" +
+                    "create table x (ts timestamp NOT NULL) timestamp (ts)" +
                             " partition by day" +
                             (isWal ? " wal" : "") +
                             ";"
@@ -1149,7 +1149,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     execute(
-                            "create table x (ts timestamp) timestamp (ts)" +
+                            "create table x (ts timestamp NOT NULL) timestamp (ts)" +
                                     " partition by month" +
                                     (isWal ? " wal" : "") +
                                     ";"

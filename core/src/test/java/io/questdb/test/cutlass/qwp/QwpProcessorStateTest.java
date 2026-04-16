@@ -173,7 +173,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         // the map. We trigger this by closing the TUD's WAL writer before
         // calling clear(), so rollback() hits a NullPointerException.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE clear_distress (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE clear_distress (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -208,7 +208,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         // rollback and go straight to freeing all TUDs and clearing
         // the map.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE distressed_clear (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE distressed_clear (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -252,7 +252,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testCommitAllBestEffortHandlesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE be_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE be_drop (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -283,7 +283,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testCommitAllBestEffortNonDropCommitFailure() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE be_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE be_fail (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -316,8 +316,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testCommitAllBestEffortSkipsAlreadyDroppedTud() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE be_skip_1 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE be_skip_2 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE be_skip_1 (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE be_skip_2 (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -361,7 +361,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testCommitAllRemovesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE commit_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE commit_drop (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -403,7 +403,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testCommitAllRethrowsNonDropCommitFailure() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE commit_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE commit_fail (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -442,8 +442,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testCommitAllSkipsAlreadyDroppedTud() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE skip_1 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE skip_2 (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE skip_1 (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE skip_2 (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -550,7 +550,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         // which fires after the WalTableUpdateDetails is successfully constructed
         // but before it is returned.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tud_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE tud_fail (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -672,7 +672,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testGetTableUpdateDetailsReturnsNullForMatView() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE mv_base (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE mv_base (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE MATERIALIZED VIEW mv_target AS (SELECT ts, count() cnt FROM mv_base SAMPLE BY 1h)");
 
             LineHttpProcessorConfiguration lineConfig =
@@ -718,7 +718,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testGetTableUpdateDetailsThrowsWhenMaxTablesExceeded() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE max_tbl (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE max_tbl (ts TIMESTAMP NOT NULL, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);

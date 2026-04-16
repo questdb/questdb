@@ -72,7 +72,7 @@ public class LineTcpPartitionReadOnlyTest extends AbstractLinePartitionReadOnlyT
                         .col("i", ColumnType.INT)
                         .col("s", ColumnType.SYMBOL).symbolCapacity(32)
                         .timestamp("ts");
-                engine.execute("create table " + tableName + " (l long, i int, s symbol, ts timestamp) timestamp(ts) partition by day bypass wal", context);
+                engine.execute("create table " + tableName + " (l long, i int, s symbol, ts timestamp NOT NULL) timestamp(ts) partition by day bypass wal", context);
                 CharSequence insertSql = insertFromSelectPopulateTableStmt(tableModel, 1111, firstPartitionName, 4);
                 engine.execute(insertSql, context);
 

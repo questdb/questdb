@@ -342,7 +342,7 @@ public class PGVarcharArrayBindVariablesTest extends AbstractBootstrapTest {
                                 .with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(engine.getConfiguration()))
                 ) {
                     engine.execute(
-                            "create table special_chars (ts TIMESTAMP, val varchar) timestamp(ts) partition by day",
+                            "create table special_chars (ts TIMESTAMP NOT NULL, val varchar) timestamp(ts) partition by day",
                             executionContext
                     );
                     engine.execute(
@@ -545,7 +545,7 @@ public class PGVarcharArrayBindVariablesTest extends AbstractBootstrapTest {
                         .with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(engine.getConfiguration()))
         ) {
             engine.execute(
-                    "create table tab (ts TIMESTAMP, " + colName + " " + colType + ") timestamp(ts) partition by day",
+                    "create table tab (ts TIMESTAMP NOT NULL, " + colName + " " + colType + ") timestamp(ts) partition by day",
                     executionContext
             );
             engine.execute(

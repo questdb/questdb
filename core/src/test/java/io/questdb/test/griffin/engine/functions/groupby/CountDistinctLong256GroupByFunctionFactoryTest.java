@@ -164,7 +164,7 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
             assertQueryNoLeakCheck(
                     "a\ts\tts\n",
                     "select * from x",
-                    "create table x ( a SYMBOL, s long256, ts TIMESTAMP ) timestamp(ts)",
+                    "create table x ( a SYMBOL, s long256, ts TIMESTAMP NOT NULL ) timestamp(ts)",
                     "ts",
                     true
             );

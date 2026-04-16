@@ -123,7 +123,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
     @Test
     public void testTimeoutInLatestByAll() throws Exception {
         assertMemoryLeak(() -> assertTimeout(
-                "create table xx(value long256, ts timestamp) timestamp(ts)",
+                "create table xx(value long256, ts timestamp NOT NULL) timestamp(ts)",
                 "insert into xx values(null, 0)",
                 "select * from xx latest on ts partition by value"
         ));
@@ -167,7 +167,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
     @Test
     public void testTimeoutInLatestByValueFiltered() throws Exception {
         assertMemoryLeak(() -> assertTimeout(
-                "create table trades(symbol symbol, side symbol, ts timestamp) timestamp(ts)",
+                "create table trades(symbol symbol, side symbol, ts timestamp NOT NULL) timestamp(ts)",
                 "insert into trades " +
                         "select 'BTC' || x, 'buy' || x, dateadd( 's', x::int, now() ) " +
                         "from long_sequence(10000)",

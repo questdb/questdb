@@ -192,7 +192,7 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                                             a_uuid UUID,
                                             a_str STRING,
                                             a_varchar VARCHAR,
-                                            ts TIMESTAMP
+                                            ts TIMESTAMP NOT NULL
                                         ) TIMESTAMP(ts) PARTITION BY DAY""",
                                 sqlExecutionContext
                         );

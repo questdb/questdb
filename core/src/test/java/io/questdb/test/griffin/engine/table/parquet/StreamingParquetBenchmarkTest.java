@@ -140,7 +140,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                 "pnl_ccy_usd_rate DOUBLE," +
                 "fee_ccy_usd_rate DOUBLE," +
                 "last_seen_md_id LONG," +
-                "timestamp TIMESTAMP" +
+                "timestamp TIMESTAMP NOT NULL" +
                 ") TIMESTAMP(timestamp) PARTITION BY DAY");
 
         execute("INSERT INTO " + TABLE_NAME + " " +

@@ -39,7 +39,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -184,7 +184,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 49,
                 "Invalid table name or alias"
@@ -200,7 +200,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 49,
                 "Invalid table name or alias"
@@ -307,7 +307,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 15,
                 "column must appear in GROUP BY clause or aggregate function"
@@ -324,7 +324,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -355,7 +355,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -384,7 +384,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -413,7 +413,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -441,7 +441,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 80,
                 "Invalid column: a.ccy"
@@ -457,7 +457,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 77,
                 "Invalid table name or alias"
@@ -474,7 +474,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -503,7 +503,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -532,7 +532,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -564,7 +564,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -609,7 +609,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "GROUP BY ts, sym2, totalCost\n" +
                         "ORDER BY ts ASC",
                 "create table x (\n" +
-                        "  ts timestamp,\n" +
+                        "  ts timestamp NOT NULL,\n" +
                         "  tsMs long,\n" +
                         "  sym1 symbol,\n" +
                         "  sym2 symbol,\n" +
@@ -645,7 +645,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    a double,\n" +
                         "    b double,\n" +
                         "    c double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 null,
                 "insert into x select * from (select " +
@@ -692,7 +692,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 57,
                 "aggregate functions are not allowed in GROUP BY"
@@ -708,7 +708,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
-                        "    ts timestamp\n" +
+                        "    ts timestamp NOT NULL\n" +
                         ") timestamp(ts) partition by DAY",
                 7,
                 "column must appear in GROUP BY clause or aggregate function"

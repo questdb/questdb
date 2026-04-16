@@ -131,7 +131,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 // Create a non-WAL table (like data_temp in ReplicationFuzzTest)
-                serverMain.getEngine().execute("CREATE TABLE test_temp (x INT, ts TIMESTAMP) TIMESTAMP(ts)", sqlExecutionContext);
+                serverMain.getEngine().execute("CREATE TABLE test_temp (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)", sqlExecutionContext);
                 serverMain.getEngine().execute("INSERT INTO test_temp VALUES (1, '2024-01-01T00:00:00.000000Z')", sqlExecutionContext);
             }
 
@@ -184,7 +184,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
 
                 Rnd rnd = TestUtils.generateRandom(LOG);
                 for (int i = 0; i < tableCount; i++) {
-                    serverMain.getEngine().execute("create table test" + i + " (ts timestamp, x int) timestamp(ts) partition by day WAL");
+                    serverMain.getEngine().execute("create table test" + i + " (ts timestamp NOT NULL, x int) timestamp(ts) partition by day WAL");
                     tableMap.put(i, true);
                     int threadId = i;
 
@@ -294,8 +294,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 // Create WAL tables and write data
-                serverMain.getEngine().execute("CREATE TABLE tracker_test1 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-                serverMain.getEngine().execute("CREATE TABLE tracker_test2 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+                serverMain.getEngine().execute("CREATE TABLE tracker_test1 (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+                serverMain.getEngine().execute("CREATE TABLE tracker_test2 (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
 
                 serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES ('2024-01-01T00:00:00.000000Z', 1)", sqlExecutionContext);
                 serverMain.getEngine().execute("INSERT INTO tracker_test1 VALUES ('2024-01-01T00:00:01.000000Z', 2)", sqlExecutionContext);

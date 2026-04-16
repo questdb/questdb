@@ -51,7 +51,7 @@ public class ViewModificationTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table prices (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day wal"
             );
 
@@ -92,7 +92,7 @@ public class ViewModificationTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table prices (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day wal"
             );
 
@@ -122,7 +122,7 @@ public class ViewModificationTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table prices (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day wal"
             );
 
@@ -152,7 +152,7 @@ public class ViewModificationTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table prices (" +
-                            "sym varchar, price double, ts timestamp" +
+                            "sym varchar, price double, ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day wal"
             );
 

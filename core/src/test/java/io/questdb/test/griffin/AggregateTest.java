@@ -2018,7 +2018,7 @@ public class AggregateTest extends AbstractCairoTest {
         engine.execute("insert into x values  (0::timestamp), (1::timestamp), ((3600L*1000000)::timestamp) ", sqlExecutionContext);
         engine.execute("alter table x add column k int", sqlExecutionContext);
         engine.execute("insert into x values ((1+3600L*1000000)::timestamp, 3), ((2*3600L*1000000)::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), ((3*3600L*1000000)::timestamp, 0) ", sqlExecutionContext);
-        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp NOT NULL", sqlExecutionContext);
         engine.execute(
                 "insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null, null, null,null), " +
                         " ((2+3*3600L*1000000)::timestamp,2, 8,8, 8.0, cast(8 as date), 8::timestamp)," +
@@ -2097,7 +2097,7 @@ public class AggregateTest extends AbstractCairoTest {
     private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
         engine.execute("create table x ( tstmp " + timestampTypeName + " ) timestamp (tstmp) partition by hour", sqlExecutionContext);
         engine.execute("insert into x values  (0::timestamp), (1::timestamp), ((3600L*1000000)::timestamp) ", sqlExecutionContext);
-        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp NOT NULL", sqlExecutionContext);
         engine.execute("insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
         engine.execute("alter table x add column k int", sqlExecutionContext);
         engine.execute("insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);

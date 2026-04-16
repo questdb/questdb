@@ -64,7 +64,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
                         "invalid syntax, should be BYPASS WAL but was BYPASS WALL"
                 );
                 Assert.assertEquals(
-                        "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY BYPASS ".length(),
+                        "create table my_table_wal (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts) PARTITION BY DAY BYPASS ".length(),
                         ex.getPosition()
                 );
             }
@@ -109,7 +109,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
                         "invalid syntax, should be BYPASS WAL but was BYPASS"
                 );
                 Assert.assertEquals(
-                        "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY BYPASS".length(),
+                        "create table my_table_wal (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts) PARTITION BY DAY BYPASS".length(),
                         ex.getPosition()
                 );
             }
@@ -152,7 +152,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
                         "unexpected token [NONE]"
                 );
                 Assert.assertEquals(
-                        "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY DAY ".length(),
+                        "create table my_table_wal (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts) PARTITION BY DAY ".length(),
                         ex.getPosition()
                 );
             }
@@ -171,7 +171,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
                         "WAL Write Mode can only be used on partitioned tables"
                 );
                 Assert.assertEquals(
-                        "create table my_table_wal (ts TIMESTAMP, x long, s symbol) timestamp(ts) PARTITION BY NONE ".length(),
+                        "create table my_table_wal (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts) PARTITION BY NONE ".length(),
                         ex.getPosition()
                 );
             }
@@ -204,7 +204,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
     private void createTableWrite(String tableName, String walMode, String partitionBY) throws SqlException {
         execute(
                 "create table " + tableName +
-                        " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                        " (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts)" +
                         " PARTITION BY " + partitionBY +
                         (walMode != null ? " " + walMode : "")
         );

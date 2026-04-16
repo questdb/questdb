@@ -160,7 +160,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Test
     public void fuzzRenamesOnlyOneTablePresentAtATime() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+            execute("create table foo ( ts timestamp NOT NULL, x int ) timestamp(ts) partition by day wal;");
             AtomicReference<Throwable> exception = new AtomicReference<>();
 
             Thread fooToBahThread = new Thread(() -> {
@@ -270,7 +270,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     public void fuzzRenamesWithConcurrentAlters() throws Exception {
 
         assertMemoryLeak(() -> {
-            execute("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+            execute("create table foo ( ts timestamp NOT NULL, x int ) timestamp(ts) partition by day wal;");
             AtomicReference<Throwable> exception = new AtomicReference<>();
 
             Thread fooToBahThread = new Thread(() -> {
@@ -410,7 +410,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     public void testAlterTableColumnAddIndex() throws Exception {
         assertMemoryLeak(() -> {
 
-            execute("CREATE TABLE y (ts TIMESTAMP, foo SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE y (ts TIMESTAMP NOT NULL, foo SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -438,7 +438,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
 
-            execute("CREATE TABLE y ( ts TIMESTAMP, x SYMBOL ) timestamp(ts) partition by day wal;");
+            execute("CREATE TABLE y ( ts TIMESTAMP NOT NULL, x SYMBOL ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -476,7 +476,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
 
-            execute("CREATE TABLE y (ts TIMESTAMP, foo SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE y (ts TIMESTAMP NOT NULL, foo SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -503,7 +503,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     public void testAlterTableColumnType() throws Exception {
         assertMemoryLeak(() -> {
 
-            execute("CREATE TABLE y (ts TIMESTAMP, foo VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE y (ts TIMESTAMP NOT NULL, foo VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -530,7 +530,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
 
-            execute("CREATE TABLE y ( ts TIMESTAMP, foo INT ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, foo)");
+            execute("CREATE TABLE y ( ts TIMESTAMP NOT NULL, foo INT ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, foo)");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -592,7 +592,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
 
-            execute("CREATE TABLE y ( bar SYMBOL, ts TIMESTAMP, foo INT ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, foo)");
+            execute("CREATE TABLE y ( bar SYMBOL, ts TIMESTAMP NOT NULL, foo INT ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, foo)");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -631,7 +631,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
 
-            execute("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
+            execute("CREATE TABLE y ( ts TIMESTAMP NOT NULL, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -658,7 +658,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
 
-            execute("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
+            execute("CREATE TABLE y ( ts TIMESTAMP NOT NULL, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -760,7 +760,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Test
     public void testDropTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
+            execute("CREATE TABLE y ( ts TIMESTAMP NOT NULL, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -806,7 +806,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Test
     public void testMetadataUpdatedCorrectlyWhenRenamingTables() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table foo ( ts timestamp, x int) timestamp(ts) partition by day wal;");
+            execute("create table foo ( ts timestamp NOT NULL, x int) timestamp(ts) partition by day wal;");
             assertSql(
                     """
                             id	table_name	designatedTimestamp	partitionBy	maxUncommittedRows	o3MaxLag	walEnabled	directoryName	dedup	ttlValue	ttlUnit	matView	table_type
@@ -830,7 +830,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Test
     public void testParquetEncodingConfig() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, temp DOUBLE PARQUET(plain, zstd(3)), status INT PARQUET(delta_binary_packed)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t (ts TIMESTAMP NOT NULL, temp DOUBLE PARQUET(plain, zstd(3)), status INT PARQUET(delta_binary_packed)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -906,7 +906,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
 
-            execute("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
+            execute("CREATE TABLE y ( ts TIMESTAMP NOT NULL, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
             assertCairoMetadata("""
@@ -932,7 +932,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     public void testSnapshotSortedWithInitialListOfTables() throws Exception {
         assertMemoryLeak(() -> {
             for (int cu = 'Z'; cu > 'A' - 1; cu--) {
-                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP NOT NULL, x INT, y DOUBLE, z SYMBOL );");
             }
 
             assertTableNamesOrderedWith(new CharSequenceObjSortedHashMap<>(), "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);
@@ -945,7 +945,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             CharSequenceObjSortedHashMap<CairoTable> sortedMap = new CharSequenceObjSortedHashMap<>();
 
             for (int cu = 'Z'; cu > 'A' - 1; cu--) {
-                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+                execute("CREATE TABLE " + new String(new char[]{(char) cu}) + " ( ts TIMESTAMP NOT NULL, x INT, y DOUBLE, z SYMBOL );");
             }
 
             long version = assertTableNamesOrderedWith(sortedMap, "[A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z]", -1);
@@ -956,7 +956,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
             for (int cu = 'z'; cu > 'a' - 1; cu = cu - 2) {
                 for (int cd = 0; cd < 2; cd++) {
-                    execute("CREATE TABLE " + new String(new char[]{(char) cu, (char) (cd + 48)}) + " ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );");
+                    execute("CREATE TABLE " + new String(new char[]{(char) cu, (char) (cd + 48)}) + " ( ts TIMESTAMP NOT NULL, x INT, y DOUBLE, z SYMBOL );");
                 }
             }
 
@@ -1029,7 +1029,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     private TableToken createY() throws SqlException {
-        execute("create table y ( ts timestamp ) timestamp(ts) partition by day wal;");
+        execute("create table y ( ts timestamp NOT NULL ) timestamp(ts) partition by day wal;");
         return engine.verifyTableName("y");
     }
 
@@ -1064,7 +1064,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
     @SuppressWarnings({"BusyWait", "InfiniteLoopStatement"})
     private void fuzzConcurrentCreatesAndDropsCreatorThread(AtomicInteger counter) throws SqlException, InterruptedException {
-        String createDdl = "CREATE TABLE IF NOT EXISTS foo ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );";
+        String createDdl = "CREATE TABLE IF NOT EXISTS foo ( ts TIMESTAMP NOT NULL, x INT, y DOUBLE, z SYMBOL );";
 
         try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
             while (true) {

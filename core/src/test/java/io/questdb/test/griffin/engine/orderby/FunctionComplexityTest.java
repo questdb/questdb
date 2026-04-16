@@ -54,7 +54,7 @@ public class FunctionComplexityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // a::DOUBLE on a column has complexity COMPLEXITY_CAST + COMPLEXITY_COLUMN = 4,
             // which exceeds default threshold (3) and triggers materialization
-            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
             assertPlanNoLeakCheck(
                     "SELECT a::DOUBLE AS x FROM t ORDER BY x",
                     """

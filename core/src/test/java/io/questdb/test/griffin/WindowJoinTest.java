@@ -253,14 +253,14 @@ public class WindowJoinTest extends AbstractCairoTest {
             execute(
                     "create table x (" +
                             "  s symbol," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table y (" +
                             "  s symbol," +
                             "  x long," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -588,8 +588,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(lo_bound, hi_bound, ts) VALUES
@@ -665,8 +665,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(lo_bound, hi_bound, ts) VALUES
@@ -752,8 +752,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -828,8 +828,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -949,8 +949,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (sym SYMBOL, bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (sym SYMBOL, bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (sym SYMBOL, val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(sym, bound, ts) VALUES
@@ -1030,8 +1030,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (sym SYMBOL, bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (sym SYMBOL, bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (sym SYMBOL, val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(sym, bound, ts) VALUES
@@ -1180,8 +1180,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -1312,8 +1312,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(lo_bound, hi_bound, ts) VALUES
@@ -1481,8 +1481,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -1554,8 +1554,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -1641,8 +1641,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -1707,8 +1707,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (lo_bound INT, hi_bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(lo_bound, hi_bound, ts) VALUES
@@ -1781,8 +1781,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -1864,8 +1864,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -1941,8 +1941,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -2031,8 +2031,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -2105,8 +2105,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -2188,8 +2188,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute("""
                     INSERT INTO master(bound, ts) VALUES
@@ -2262,8 +2262,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             // 9_223_372_036_855 seconds overflows MicrosTimestampDriver.fromSeconds
             // (9_223_372_036_855 * 1_000_000 > Long.MAX_VALUE).
@@ -2337,8 +2337,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE master (bound LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE master (bound LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             // 9_223_372_036_855 seconds overflows MicrosTimestampDriver.fromSeconds
             // (9_223_372_036_855 * 1_000_000 > Long.MAX_VALUE).
@@ -2825,13 +2825,13 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             execute("""
                     CREATE TABLE left_t (
-                        ts TIMESTAMP,
+                        ts TIMESTAMP NOT NULL,
                         sym SYMBOL
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                     """);
             execute("""
                     CREATE TABLE right_t (
-                        ts TIMESTAMP,
+                        ts TIMESTAMP NOT NULL,
                         sym SYMBOL,
                         val INT
                     ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
@@ -2925,14 +2925,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "create table trades (" +
                             "  sym symbol," +
                             "  price double," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table prices (" +
                             "  sym symbol," +
                             "  bid double," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -3024,14 +3024,14 @@ public class WindowJoinTest extends AbstractCairoTest {
             Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
             execute(
                     "create table trades (" +
-                            "  ts timestamp, " +
+                            "  ts timestamp NOT NULL, " +
                             "  sym symbol, " +
                             "  price double " +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table prices (" +
-                            "  ts timestamp, " +
+                            "  ts timestamp NOT NULL, " +
                             "  sym symbol, " +
                             "  price double" +
                             ") timestamp(ts) partition by day;"
@@ -3114,14 +3114,14 @@ public class WindowJoinTest extends AbstractCairoTest {
             Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
             execute(
                     "create table trades (" +
-                            "  ts timestamp, " +
+                            "  ts timestamp NOT NULL, " +
                             "  sym symbol, " +
                             "  price double " +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table prices (" +
-                            "  ts timestamp, " +
+                            "  ts timestamp NOT NULL, " +
                             "  sym symbol, " +
                             "  price double" +
                             ") timestamp(ts) partition by day;"
@@ -3208,13 +3208,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table x (" +
-                            "  ts timestamp," +
+                            "  ts timestamp NOT NULL," +
                             "  sym symbol" +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table y (" +
-                            "  ts timestamp," +
+                            "  ts timestamp NOT NULL," +
                             "  sym symbol," +
                             "  val int" +
                             ") timestamp(ts) partition by day;"
@@ -3261,13 +3261,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table x (" +
-                            "  ts timestamp," +
+                            "  ts timestamp NOT NULL," +
                             "  sym symbol" +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table y (" +
-                            "  ts timestamp," +
+                            "  ts timestamp NOT NULL," +
                             "  sym symbol," +
                             "  val int" +
                             ") timestamp(ts) partition by day;"
@@ -3314,13 +3314,13 @@ public class WindowJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table x (" +
-                            "  ts timestamp," +
+                            "  ts timestamp NOT NULL," +
                             "  id int" +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table y (" +
-                            "  ts timestamp," +
+                            "  ts timestamp NOT NULL," +
                             "  id int," +
                             "  val int" +
                             ") timestamp(ts) partition by day;"
@@ -3419,14 +3419,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "create table trades (" +
                             "  sym symbol," +
                             "  price double," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table prices (" +
                             "  sym symbol," +
                             "  bid double," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -3659,14 +3659,14 @@ public class WindowJoinTest extends AbstractCairoTest {
             execute(
                     "create table x (" +
                             "  s symbol," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table y (" +
                             "  s symbol," +
                             "  x float," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -4871,8 +4871,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP NOT NULL, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute(
                     """
@@ -4944,8 +4944,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelWindowJoinEnabled(false);
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP NOT NULL, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute(
                     """
@@ -4994,8 +4994,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP NOT NULL, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute(
                     """
                             INSERT INTO trades VALUES
@@ -5046,9 +5046,9 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE instruments (id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (id INT, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO instruments VALUES
                     (1, 'A', '2024-01-01T00:00:00.000000Z'),
@@ -5094,10 +5094,10 @@ public class WindowJoinTest extends AbstractCairoTest {
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE categories (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE instruments (id INT, category_id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE categories (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE instruments (id INT, category_id INT, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (instrument_id INT, price DOUBLE, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (price DOUBLE, tag SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO categories VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -5751,7 +5751,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         //        WHERE t.symbol = 'EURUSD' ORDER BY t.timestamp LIMIT 100
         assertMemoryLeak(() -> {
             execute("CREATE TABLE fx_trades (" +
-                    "timestamp TIMESTAMP, " +
+                    "timestamp TIMESTAMP NOT NULL, " +
                     "symbol SYMBOL, " +
                     "side SYMBOL, " +
                     "price DOUBLE, " +
@@ -5823,7 +5823,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         // Create fx_trades-like table
                         engine.execute(
                                 "create table fx_trades (" +
-                                        "  timestamp timestamp," +
+                                        "  timestamp timestamp NOT NULL," +
                                         "  symbol symbol," +
                                         "  price double," +
                                         "  quantity double," +
@@ -5890,7 +5890,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             execute(
                     """
                             CREATE TABLE trades (
-                                ts TIMESTAMP,
+                                ts TIMESTAMP NOT NULL,
                                 sym SYMBOL,
                                 price DOUBLE
                             ) timestamp(ts);
@@ -5899,7 +5899,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             execute(
                     """
                             CREATE TABLE prices (
-                                ts TIMESTAMP,
+                                ts TIMESTAMP NOT NULL,
                                 sym SYMBOL,
                                 val0 DOUBLE,
                                 val1 DOUBLE
@@ -6410,7 +6410,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "    side SYMBOL," +
                             "    price DOUBLE," +
                             "    amount DOUBLE," +
-                            "    timestamp TIMESTAMP" +
+                            "    timestamp TIMESTAMP NOT NULL" +
                             ") timestamp(timestamp) PARTITION BY HOUR"
             );
 
@@ -6428,7 +6428,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             // Create prices table (slave)
             execute(
                     "CREATE TABLE prices (" +
-                            "    ts TIMESTAMP," +
+                            "    ts TIMESTAMP NOT NULL," +
                             "    sym SYMBOL," +
                             "    bid DOUBLE," +
                             "    ask DOUBLE" +
@@ -6820,14 +6820,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "create table x (" +
                             "  s symbol," +
                             "  s1 symbol," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
             execute(
                     "create table y (" +
                             "  s symbol," +
                             "  s1 symbol," +
-                            "  ts timestamp" +
+                            "  ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by day;"
             );
 

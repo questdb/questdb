@@ -398,7 +398,7 @@ public class CopyImportTest extends AbstractCairoTest {
                     CREATE TABLE reading (
                       readingTypeId SYMBOL,
                       value FLOAT,
-                      readingDate TIMESTAMP
+                      readingDate TIMESTAMP NOT NULL
                     ) timestamp (readingDate) PARTITION BY DAY;""");
             runAndFetchCopyID("copy reading from 'test-quotes-rawts.csv';", sqlExecutionContext);
         };
@@ -411,7 +411,7 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoExistingTable() throws Exception {
         CopyRunnable stmt = () -> {
-            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
+            execute("create table x ( ts timestamp NOT NULL, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
         };
@@ -430,7 +430,7 @@ public class CopyImportTest extends AbstractCairoTest {
         }
 
         CopyRunnable stmt = () -> {
-            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
+            execute("create table x ( ts timestamp NOT NULL, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW;", sqlExecutionContext);
         };
@@ -445,7 +445,7 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoExistingTableWithoutExplicitTimestampAndFormatInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
-            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
+            execute("create table x ( ts timestamp NOT NULL, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
                     "on error SKIP_ROW; ", sqlExecutionContext);
         };
@@ -458,7 +458,7 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoExistingTableWithoutExplicitTimestampInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
-            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
+            execute("create table x ( ts timestamp NOT NULL, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
         };
@@ -834,7 +834,7 @@ public class CopyImportTest extends AbstractCairoTest {
     @Test
     public void testSerialCopyIntoExistingTableWithoutExplicitTimestampInCOPY() throws Exception {
         CopyRunnable stmt = () -> {
-            execute("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts);");
+            execute("create table x ( ts timestamp NOT NULL, line symbol, description symbol, d double ) timestamp(ts);");
             runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error SKIP_ROW; ", sqlExecutionContext);
         };
@@ -1200,7 +1200,7 @@ public class CopyImportTest extends AbstractCairoTest {
                     "  in_ int,\n" +
                     "  lo long,\n" +
                     "  dat date, \n" +
-                    "  tstmp timestamp, \n" +
+                    "  tstmp timestamp NOT NULL, \n" +
                     "  ft float,\n" +
                     "  db double,\n" +
                     "  str string,\n" +

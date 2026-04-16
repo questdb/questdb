@@ -83,7 +83,7 @@ public class PGArraysTest extends BasePGTest {
     public void testArrayBind() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement stmt = connection.prepareStatement(
-                    "create table tango (arr double[], ts timestamp) timestamp(ts) partition by hour")
+                    "create table tango (arr double[], ts timestamp NOT NULL) timestamp(ts) partition by hour")
             ) {
                 stmt.execute();
             }
@@ -346,7 +346,7 @@ public class PGArraysTest extends BasePGTest {
     @Test
     public void testArrayUpdateBind() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[], i int, ts timestamp) timestamp(ts) partition by hour")) {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[], i int, ts timestamp NOT NULL) timestamp(ts) partition by hour")) {
                 stmt.execute();
             }
 
@@ -406,7 +406,7 @@ public class PGArraysTest extends BasePGTest {
     public void testArrayViewWithBindingVars() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
-                stmt.execute("create table tango (arr double[], ts timestamp) timestamp(ts) partition by hour");
+                stmt.execute("create table tango (arr double[], ts timestamp NOT NULL) timestamp(ts) partition by hour");
                 stmt.execute("insert into tango values ('{1.0, 2.0}', '2000'), ('{3.0, 4.0}', '2001')");
                 stmt.execute("create view v_tango as select arr[1] as x, arr[2] as y from tango");
             }

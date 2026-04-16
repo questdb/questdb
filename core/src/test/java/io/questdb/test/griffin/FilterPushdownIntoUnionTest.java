@@ -40,7 +40,7 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
         // that has LATEST ON. Pushing a filter before LATEST ON would narrow the
         // scan window, changing which row is considered "latest" for each partition.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t_sym (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE t_sym (ts TIMESTAMP NOT NULL, sym SYMBOL, x LONG) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t_sym VALUES
                         ('2024-01-01T00:00:00.000000Z', 'A', 1),
@@ -48,7 +48,7 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
                         ('2024-01-03T00:00:00.000000Z', 'A', 3)
                     """);
 
-            execute("CREATE TABLE t_plain (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE t_plain (ts TIMESTAMP NOT NULL, sym SYMBOL, x LONG) TIMESTAMP(ts)");
             execute("INSERT INTO t_plain VALUES ('2024-01-02T00:00:00.000000Z', 'C', 99)");
 
             // Correct semantics:
@@ -85,7 +85,7 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
         // UNION ALL branch. Pushing a filter before LIMIT would change which
         // rows are selected.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE t1 (ts TIMESTAMP NOT NULL, x LONG) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t1 VALUES
                         ('2024-01-01T00:00:00.000000Z', 1),
@@ -94,7 +94,7 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
                         ('2024-01-04T00:00:00.000000Z', 4)
                     """);
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, x LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE t2 (ts TIMESTAMP NOT NULL, x LONG) TIMESTAMP(ts)");
             execute("INSERT INTO t2 VALUES ('2024-01-03T00:00:00.000000Z', 30)");
 
             // Correct semantics:
@@ -130,7 +130,7 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
         // to the whole union result. A timestamp filter must not be pushed into
         // any branch because it would change which rows enter the LIMIT window.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (ts TIMESTAMP, x LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE t1 (ts TIMESTAMP NOT NULL, x LONG) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t1 VALUES
                         ('2024-01-01T00:00:00.000000Z', 1),
@@ -138,7 +138,7 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
                         ('2024-01-03T00:00:00.000000Z', 3)
                     """);
 
-            execute("CREATE TABLE t2 (ts TIMESTAMP, x LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE t2 (ts TIMESTAMP NOT NULL, x LONG) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t2 VALUES
                         ('2024-01-04T00:00:00.000000Z', 4),
@@ -181,10 +181,10 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
         // applied AFTER the SAMPLE BY aggregation (like HAVING), not before it
         // (as a scan-level WHERE that changes which rows are aggregated).
         assertMemoryLeak(() -> {
-            execute("create table t1 (ts timestamp, x double) timestamp(ts)");
+            execute("create table t1 (ts timestamp NOT NULL, x double) timestamp(ts)");
             execute("insert into t1 values ('2024-01-01T00:00:00.000000Z', 9.0)");
 
-            execute("create table t2 (ts timestamp, x double) timestamp(ts)");
+            execute("create table t2 (ts timestamp NOT NULL, x double) timestamp(ts)");
             execute("insert into t2 values ('2024-01-01T00:00:00.000000Z', 3.0)");
             execute("insert into t2 values ('2024-01-01T00:00:01.000000Z', 4.0)");
             execute("insert into t2 values ('2024-01-01T00:00:02.000000Z', 8.0)");

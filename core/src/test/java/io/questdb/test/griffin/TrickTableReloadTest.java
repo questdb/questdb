@@ -34,7 +34,7 @@ public class TrickTableReloadTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolAddAndReaderReload() throws SqlException {
-        execute("create table x (a int, b int, ts timestamp) timestamp(ts) partition by DAY");
+        execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts) partition by DAY");
 
         getWriter("x").close();
         engine.releaseAllWriters();

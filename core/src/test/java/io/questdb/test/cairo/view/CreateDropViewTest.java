@@ -43,7 +43,7 @@ public class CreateDropViewTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table price (" +
-                            "  sym varchar, price double, ts timestamp" +
+                            "  sym varchar, price double, ts timestamp NOT NULL" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("insert into price values('gbpusd', 1.320, now())");

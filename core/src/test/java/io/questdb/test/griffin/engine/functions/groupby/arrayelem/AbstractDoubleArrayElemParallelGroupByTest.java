@@ -61,7 +61,7 @@ public abstract class AbstractDoubleArrayElemParallelGroupByTest extends Abstrac
 
     protected void assertParallelGroupBy(String columnType, String expected, String[][] timestampedRows) throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, arr " + columnType + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr " + columnType + ") TIMESTAMP(ts) PARTITION BY DAY");
             for (String[] row : timestampedRows) {
                 execute("INSERT INTO tab VALUES ('" + row[0] + "', " + row[1] + ")");
             }
@@ -85,7 +85,7 @@ public abstract class AbstractDoubleArrayElemParallelGroupByTest extends Abstrac
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
-                            "CREATE TABLE tab (ts TIMESTAMP, grp INT, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY",
+                            "CREATE TABLE tab (ts TIMESTAMP NOT NULL, grp INT, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY",
                             sqlExecutionContext
                     );
                     for (String[] row : rows) {

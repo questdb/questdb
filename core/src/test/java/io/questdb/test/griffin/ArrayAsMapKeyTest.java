@@ -31,7 +31,7 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
 
     @Test
     public void testArrayAsGroupByKey() throws Exception {
-        execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp) timestamp(ts) partition by day ;");
+        execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp NOT NULL) timestamp(ts) partition by day ;");
         execute(
                 "insert into array_test values \n" +
                         "   ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),\n" +
@@ -60,7 +60,7 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
 
     @Test
     public void testArrayAsOrderByColumn() throws Exception {
-        execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp) timestamp(ts) partition by day ;");
+        execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp NOT NULL) timestamp(ts) partition by day ;");
         execute(
                 "insert into array_test values \n" +
                         "   ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),\n" +

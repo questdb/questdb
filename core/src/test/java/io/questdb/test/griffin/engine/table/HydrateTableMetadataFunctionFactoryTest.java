@@ -32,8 +32,8 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testHappyPath() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
-            execute("CREATE TABLE 'b' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'a' ( ts timestamp NOT NULL) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'b' ( ts timestamp NOT NULL) timestamp(ts) partition by day wal");
             assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
@@ -51,7 +51,7 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNoValidArgsGiven() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'a' ( ts timestamp NOT NULL) timestamp(ts) partition by day wal");
             assertException("select hydrate_table_metadata('foo')", 7, "no valid table names provided");
         });
     }
@@ -59,7 +59,7 @@ public class HydrateTableMetadataFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNotAllTablesAreValid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'a' ( ts timestamp) timestamp(ts) partition by day wal");
+            execute("CREATE TABLE 'a' ( ts timestamp NOT NULL) timestamp(ts) partition by day wal");
             assertSql("hydrate_table_metadata\ntrue\n", "select hydrate_table_metadata('a', 'b')");
         });
     }

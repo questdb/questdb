@@ -72,7 +72,7 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
     @Test
     public void testMultipleNamedWindows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into t select x, rnd_symbol('A','B','C'), timestamp_sequence(0, 1000000) from long_sequence(20)");
 
             for (int i = 0; i < ITERATIONS; i++) {
@@ -107,7 +107,7 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowEquivalence() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into t select x, rnd_symbol('A','B','C'), timestamp_sequence(0, 1000000) from long_sequence(20)");
 
             for (int i = 0; i < ITERATIONS; i++) {
@@ -132,7 +132,7 @@ public class NamedWindowFuzzTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowSharedByMultipleFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
             execute("insert into t select x, rnd_symbol('A','B','C'), timestamp_sequence(0, 1000000) from long_sequence(20)");
 
             for (int i = 0; i < ITERATIONS; i++) {

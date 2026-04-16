@@ -139,7 +139,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                                       runner VARCHAR,
                                       age BYTE,
                                       remarks SYMBOL CAPACITY 2048 CACHE INDEX CAPACITY 256,
-                                      timestamp TIMESTAMP
+                                      timestamp TIMESTAMP NOT NULL
                                     ) timestamp (timestamp) PARTITION BY MONTH WAL
                                     DEDUP UPSERT KEYS(timestamp, id);""",
                             sqlExecutionContext
@@ -352,7 +352,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                             dec128 DECIMAL(34, 8),
                             dec256 DECIMAL(64, 16),
                             value INT,
-                            ts TIMESTAMP
+                            ts TIMESTAMP NOT NULL
                         ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
@@ -379,7 +379,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 CairoEngine engine = serverMain.getEngine();
                 try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
 
-                    engine.execute("create table x (ts timestamp, a int) timestamp(ts) partition by day wal", sqlExecutionContext);
+                    engine.execute("create table x (ts timestamp NOT NULL, a int) timestamp(ts) partition by day wal", sqlExecutionContext);
                 }
 
                 int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
@@ -479,7 +479,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                             x SYMBOL,
                             y VARCHAR,
                             a1 DOUBLE,
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY YEAR BYPASS WAL
                         """);
                 // send text double to symbol column
@@ -543,7 +543,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                             price DECIMAL(10, 2),
                             quantity DECIMAL(15, 4),
                             rate DECIMAL(8, 5),
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
@@ -590,7 +590,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 serverMain.execute("""
                         CREATE TABLE test_decimal_text_format_edge_cases (
                             value DECIMAL(20, 10),
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
@@ -634,7 +634,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         CREATE TABLE test_decimal_text_format_equivalence (
                             text_format DECIMAL(10, 3),
                             binary_format DECIMAL(10, 3),
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
@@ -672,7 +672,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 serverMain.execute("""
                         CREATE TABLE test_decimal_text_format_precision_overflow (
                             x DECIMAL(6, 3),
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
@@ -700,7 +700,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         CREATE TABLE test_decimal_text_format_scientific_notation (
                             large DECIMAL(15, 2),
                             small DECIMAL(20, 15),
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
@@ -739,7 +739,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         CREATE TABLE test_decimal_text_format_trailing_zeros (
                             value1 DECIMAL(10, 3),
                             value2 DECIMAL(12, 5),
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
@@ -778,7 +778,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         CREATE TABLE test_insert_decimals (
                             a DECIMAL(9, 0),
                             b DECIMAL(9, 3),
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
@@ -837,7 +837,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         CREATE TABLE test_invalid_decimal_test (
                             x DECIMAL(6, 3),
                             y DECIMAL(76, 73),
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V3)) {
@@ -916,7 +916,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         CREATE TABLE test_insert_non_ascii_string_and_uuid (
                             s STRING,
                             u UUID,
-                            ts TIMESTAMP
+                            ts TIMESTAMP NOT NULL
                         ) TIMESTAMP(ts) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
@@ -953,7 +953,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                             u1 UUID,
                             u2 UUID,
                             u3 UUID,
-                            ts TIMESTAMP
+                            ts TIMESTAMP NOT NULL
                         ) TIMESTAMP(ts) PARTITION BY NONE BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
@@ -983,7 +983,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 serverMain.execute("""
                         CREATE TABLE test_insert_timestamp_as_instant (
                             ts_col TIMESTAMP,
-                            timestamp TIMESTAMP
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY YEAR BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
@@ -1010,8 +1010,8 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 serverMain.execute("""
                         CREATE TABLE test_insert_timestamp_misc_units (
                             unit STRING,
-                            ts TIMESTAMP,
-                            timestamp TIMESTAMP
+                            ts TIMESTAMP NOT NULL,
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY YEAR BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
@@ -1059,8 +1059,8 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
                 serverMain.execute("""
                         CREATE TABLE test_insert_timestamp_nano_overflow (
-                            ts TIMESTAMP,
-                            timestamp TIMESTAMP
+                            ts TIMESTAMP NOT NULL,
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY YEAR BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
@@ -1088,8 +1088,8 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 serverMain.execute("""
                         CREATE TABLE test_insert_timestamp_nano_units (
                             unit STRING,
-                            ts TIMESTAMP,
-                            timestamp TIMESTAMP
+                            ts TIMESTAMP NOT NULL,
+                            timestamp TIMESTAMP NOT NULL
                         ) TIMESTAMP(timestamp) PARTITION BY YEAR BYPASS WAL
                         """);
                 try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
@@ -1475,7 +1475,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
                 serverMain.execute(
-                        "CREATE TABLE test_ts_ingest (ts TIMESTAMP, dts TIMESTAMP) TIMESTAMP(dts) PARTITION BY DAY BYPASS WAL");
+                        "CREATE TABLE test_ts_ingest (ts TIMESTAMP NOT NULL, dts TIMESTAMP NOT NULL) TIMESTAMP(dts) PARTITION BY DAY BYPASS WAL");
 
                 try (Sender sender = createTcpSender(port, protocolVersion)) {
                     long tsNs = MicrosFormatUtils.parseTimestamp("2025-11-19T10:55:24.123456Z") * 1000 + 789;
@@ -1567,7 +1567,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
                 serverMain.execute("CREATE TABLE " + tableName + " ("
                         + "u1 UUID,"
-                        + "ts TIMESTAMP"
+                        + "ts TIMESTAMP NOT NULL"
                         + ") TIMESTAMP(ts) PARTITION BY NONE BYPASS WAL");
 
                 // this sender fails as the string is not UUID

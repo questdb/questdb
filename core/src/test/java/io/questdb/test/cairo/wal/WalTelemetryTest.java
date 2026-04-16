@@ -50,7 +50,7 @@ public class WalTelemetryTest extends AbstractCairoTest {
             setCurrentMicros(1000);
             try (TelemetryJob telemetryJob = new TelemetryJob(engine)) {
                 String tableName = testName.getMethodName();
-                execute("CREATE TABLE " + tableName + " (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE " + tableName + " (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
                 setCurrentMicros(2000);
                 execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00.000000Z'), (2, '2022-02-24T00:00:01.000000Z')");

@@ -225,7 +225,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testColTops() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id long, ts timestamp) timestamp(ts) partition by month;");
+            execute("create table x (id long, ts timestamp NOT NULL) timestamp(ts) partition by month;");
             execute("insert into x values(1, '2024-06-10T00:00:00.000000Z');");
             execute("insert into x values(2, '2024-06-11T00:00:00.000000Z');");
             execute("insert into x values(3, '2024-06-12T00:00:00.000000Z');");
@@ -257,7 +257,7 @@ public class ParquetTest extends AbstractCairoTest {
     public void testConvertToNativeFailure() throws Exception {
         // Verify that we aren't closing garbage fds when parquetDecoder.of() fail.
         assertMemoryLeak(() -> {
-            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (id symbol, ts timestamp NOT NULL) timestamp(ts) partition by day;");
             execute("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
             execute("insert into x values('k2', '2024-06-11T00:00:00.000000Z');");
             execute("insert into x values('k3', '2024-06-12T00:00:00.000000Z');");
@@ -282,7 +282,7 @@ public class ParquetTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (" +
                     "id long, " +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "dec8 decimal(2,1), " +
                     "dec16 decimal(4,2), " +
                     "dec32 decimal(9,4), " +
@@ -361,7 +361,7 @@ public class ParquetTest extends AbstractCairoTest {
                 int s256 = rnd.nextInt(p256 + 1);
 
                 // Create table with initial rows (no decimal columns yet)
-                execute("create table x (ts timestamp) timestamp(ts) partition by month;");
+                execute("create table x (ts timestamp NOT NULL) timestamp(ts) partition by month;");
                 execute("insert into x " +
                         "select timestamp_sequence('2024-01-01', 100000000) as ts " +
                         "from long_sequence(" + initialRows + ")");
@@ -455,7 +455,7 @@ public class ParquetTest extends AbstractCairoTest {
 
                 // Create table with all decimal sizes using random precision/scale
                 execute("create table x (" +
-                        "ts timestamp, " +
+                        "ts timestamp NOT NULL, " +
                         "dec8 decimal(" + p8 + "," + s8 + "), " +
                         "dec16 decimal(" + p16 + "," + s16 + "), " +
                         "dec32 decimal(" + p32 + "," + s32 + "), " +
@@ -536,7 +536,7 @@ public class ParquetTest extends AbstractCairoTest {
 
                 // Create table focusing on large decimal types
                 execute("create table x (" +
-                        "ts timestamp, " +
+                        "ts timestamp NOT NULL, " +
                         "dec128_small decimal(" + p128a + "," + s128a + "), " +
                         "dec128_large decimal(" + p128b + "," + s128b + "), " +
                         "dec256_small decimal(" + p256a + "," + s256a + "), " +
@@ -593,7 +593,7 @@ public class ParquetTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (" +
                     "id long, " +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "dec32 decimal(9,4), " +
                     "dec64 decimal(18,6), " +
                     "dec128 decimal(38,10)" +
@@ -629,7 +629,7 @@ public class ParquetTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table x (" +
                     "id long, " +
-                    "ts timestamp, " +
+                    "ts timestamp NOT NULL, " +
                     "dec32 decimal(9,4), " +
                     "dec64 decimal(18,6)" +
                     ") timestamp(ts) partition by day;");
@@ -657,7 +657,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testDedupFixedKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts, x) ;");
+            execute("create table x (x int, ts timestamp NOT NULL) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts, x) ;");
 
             execute("insert into x(x,ts) values (1, '2020-01-01T00:00:00.000Z');");
             execute("insert into x(x,ts) values (2, '2020-01-02T00:00:00.000Z');");
@@ -707,7 +707,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testDedupTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts) ;");
+            execute("create table x (x int, ts timestamp NOT NULL) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts) ;");
 
             execute("insert into x(x,ts) values (1, '2020-01-01T00:00:00.000Z');");
             execute("insert into x(x,ts) values (2, '2020-01-02T00:00:00.000Z');");
@@ -752,7 +752,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testDedupVarlenKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (x varchar, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts, x) ;");
+            execute("create table x (x varchar, ts timestamp NOT NULL) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts, x) ;");
 
             execute("insert into x(x,ts) values ('1', '2020-01-01T00:00:00.000Z');");
             execute("insert into x(x,ts) values ('2', '2020-01-02T00:00:00.000Z');");
@@ -859,7 +859,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndex() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (id symbol, ts timestamp NOT NULL) timestamp(ts) partition by day;");
             execute("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
             execute("insert into x values('k2', '2024-06-11T00:00:00.000000Z');");
             execute("insert into x values('k3', '2024-06-12T00:00:00.000000Z');");
@@ -896,7 +896,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndexReloadAfterConvertToParquet() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (id SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (id SYMBOL INDEX, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute(
                     "INSERT INTO x VALUES" +
                             "('k1', '2024-06-10T00:00:00.000000Z')," +
@@ -941,7 +941,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndexBumpedColumnVersion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (id symbol, ts timestamp NOT NULL) timestamp(ts) partition by day;");
 
             // bump column version
             execute("alter table x drop column id;");
@@ -981,7 +981,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndexColTopColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (ts timestamp NOT NULL) timestamp(ts) partition by day;");
             execute("insert into x values('2024-06-10T00:00:00.000000Z');");
 
             execute("alter table x add column id symbol");
@@ -1008,7 +1008,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndexO3Writes() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (id symbol, ts timestamp NOT NULL) timestamp(ts) partition by day;");
             execute("insert into x values('k1', '2024-06-10T01:00:00.000000Z');");
             execute("insert into x values('k2', '2024-06-11T01:00:00.000000Z');");
             execute("insert into x values('k3', '2024-06-12T01:00:00.000000Z');");
@@ -1043,7 +1043,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndexO3WritesBumpedColumnVersion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (id symbol, ts timestamp NOT NULL) timestamp(ts) partition by day;");
 
             execute("insert into x (id, ts) values('k1', '2024-06-10T01:00:00.000000Z');");
             execute("insert into x (id, ts) values('k2', '2024-06-11T01:00:00.000000Z');");
@@ -1314,7 +1314,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testO3Inserts() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (x int, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (x int, ts timestamp NOT NULL) timestamp(ts) partition by day;");
 
             execute("insert into x(x,ts) values ('1', '2020-01-01T00:00:00.000Z');");
             execute("insert into x(x,ts) values ('2', '2020-01-02T00:00:00.000Z');");
@@ -1369,7 +1369,7 @@ public class ParquetTest extends AbstractCairoTest {
                     CREATE TABLE x (
                         val DOUBLE,
                         sym SYMBOL,
-                        ts TIMESTAMP
+                        ts TIMESTAMP NOT NULL
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL
                     """);
             execute("""
@@ -1505,7 +1505,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testSymbolColumnContainNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (id symbol, ts timestamp NOT NULL) timestamp(ts) partition by day;");
             execute("insert into x values('k1', '2024-06-10T01:00:00.000000Z');");
             execute("insert into x values('k2', '2024-06-11T01:00:00.000000Z');");
             execute("insert into x values('k3', '2024-06-12T01:00:00.000000Z');");
@@ -1530,7 +1530,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testSymbolColumnNullFlag() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (id symbol, ts timestamp NOT NULL) timestamp(ts) partition by day;");
             execute("insert into x(ts) values('2024-06-10T01:00:00.000000Z');");
             execute("insert into x(id, ts) values('k1', '2024-06-11T01:00:00.000000Z');");
             execute("alter table x convert partition to parquet where ts >= 0");
@@ -1553,7 +1553,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testSymbolColumnNullFlagOnWalTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day wal;");
+            execute("create table x (id symbol, ts timestamp NOT NULL) timestamp(ts) partition by day wal;");
             execute("insert into x(ts) values('2024-06-10T01:00:00.000000Z');");
             execute("insert into x(id, ts) values('k1', '2024-06-11T01:00:00.000000Z');");
             drainWalQueue();
@@ -1583,7 +1583,7 @@ public class ParquetTest extends AbstractCairoTest {
                     """
                             create table x (
                               id int,
-                              ts timestamp,
+                              ts timestamp NOT NULL,
                               name symbol
                             ) timestamp(ts) partition by day;"""
             );
@@ -1680,7 +1680,7 @@ public class ParquetTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
 
         assertMemoryLeak(() -> {
-            execute("create table x (id long, ts timestamp) timestamp(ts) partition by month;");
+            execute("create table x (id long, ts timestamp NOT NULL) timestamp(ts) partition by month;");
             execute("insert into x values(1, '2024-06-10T00:00:00.000000Z');");
             execute("insert into x values(2, '2024-06-11T00:00:00.000000Z');");
             execute("insert into x values(3, '2024-06-12T00:00:00.000000Z');");
@@ -1731,7 +1731,7 @@ public class ParquetTest extends AbstractCairoTest {
                 .replace("ARRAY", "");
 
         assertMemoryLeak(() -> {
-            execute("create table x (a1 " + columnType + ", ts timestamp) timestamp(ts) partition by month;");
+            execute("create table x (a1 " + columnType + ", ts timestamp NOT NULL) timestamp(ts) partition by month;");
             execute("insert into x values(" + arr + ", '2024-01-10T00:00:00.000000Z');");
             execute("insert into x values(" + arr + ", '2024-01-10T00:00:00.000000Z');");
             execute("insert into x values(" + arr + ", '2024-02-10T00:00:00.000000Z');");

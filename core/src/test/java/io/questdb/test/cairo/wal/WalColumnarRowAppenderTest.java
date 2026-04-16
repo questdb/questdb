@@ -590,7 +590,7 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
     @Test
     public void testColumnarWrite_MultipleSortedBatchesInSingleDedupTxn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_multi_batch_dedup (id int, ts timestamp) timestamp(ts) partition by HOUR WAL DEDUP UPSERT KEYS(ts, id)");
+            execute("create table test_multi_batch_dedup (id int, ts timestamp NOT NULL) timestamp(ts) partition by HOUR WAL DEDUP UPSERT KEYS(ts, id)");
 
             try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("test_multi_batch_dedup"))) {
                 ColumnarRowAppender appender = walWriter.getColumnarRowAppender();

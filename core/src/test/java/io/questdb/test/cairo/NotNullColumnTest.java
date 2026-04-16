@@ -45,7 +45,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testAlterTableAddColumnNotNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("ALTER TABLE t ADD COLUMN y DOUBLE NOT NULL");
 
             try (TableReader reader = engine.getReader("t")) {
@@ -59,7 +59,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testAlterTableAddColumnNotNullWal() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("ALTER TABLE t ADD COLUMN y DOUBLE NOT NULL");
             drainWalQueue();
 
@@ -74,7 +74,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testBareNullKeywordMeansNullable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             try (TableReader reader = engine.getReader("t")) {
                 TableReaderMetadata metadata = reader.getMetadata();
@@ -86,7 +86,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testBooleanExplicitNotNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (b BOOLEAN NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (b BOOLEAN NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             try (TableReader reader = engine.getReader("t")) {
                 assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
             }
@@ -97,7 +97,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testBooleanNullAccepted() throws Exception {
         assertMemoryLeak(() -> {
             // BOOLEAN NULL is valid — the column is nullable (will use null bitmap when available)
-            execute("CREATE TABLE t (b BOOLEAN NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (b BOOLEAN NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             try (TableReader reader = engine.getReader("t")) {
                 assertFalse(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
             }
@@ -107,7 +107,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testAlterColumnDropNotNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             assertTrue(getNotNull("t", "x"));
 
             execute("ALTER TABLE t ALTER COLUMN x SET NULL");
@@ -118,7 +118,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testAlterColumnDropNotNullBoolean() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (b BOOLEAN NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (b BOOLEAN NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             assertTrue(getNotNull("t", "b"));
 
             execute("ALTER TABLE t ALTER COLUMN b SET NULL");
@@ -129,7 +129,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testAlterColumnSetNotNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             assertFalse(getNotNull("t", "x"));
 
             execute("ALTER TABLE t ALTER COLUMN x SET NOT NULL");
@@ -151,7 +151,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testAlterColumnSetNotNullThenEnforce() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1, '2024-01-01')");
             execute("ALTER TABLE t ALTER COLUMN x SET NOT NULL");
 
@@ -170,7 +170,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // CREATE TABLE AS SELECT does not propagate NOT NULL from source columns,
             // because compiled query RecordMetadata doesn't carry column properties.
             // Users must re-specify NOT NULL via CAST or ALTER TABLE after creation.
-            execute("CREATE TABLE src (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE src (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO src VALUES (1, 2.0, '2024-01-01')");
             execute("CREATE TABLE dst AS (SELECT * FROM src)");
 
@@ -183,7 +183,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testCreateTableNotNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             try (TableReader reader = engine.getReader("t")) {
                 TableReaderMetadata metadata = reader.getMetadata();
@@ -209,7 +209,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testDropNotNullColumnThenInsert() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("ALTER TABLE t DROP COLUMN x");
             execute("INSERT INTO t VALUES (1.5, '2024-01-01')");
 
@@ -226,7 +226,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testEnforceNotNullMissingColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             try {
                 execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
                 fail("Expected NOT NULL violation");
@@ -240,7 +240,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testEnforceNotNullMissingColumnWal() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
                 execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
                 fail("Expected NOT NULL violation");
@@ -254,7 +254,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testEnforceNotNullNullableColumnsAcceptNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             // y is nullable, so missing it is fine
             execute("INSERT INTO t (x, ts) VALUES (1, '2024-01-01')");
 
@@ -275,7 +275,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
             // NOT NULL only means "column must be written to", not "no sentinel values".
             // For NOT NULL columns, sentinel values print as their real representation:
             // INT_NULL → "-2147483648", NaN → "NaN"
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (NULL, NULL, '2024-01-01')");
 
             assertSql(
@@ -291,7 +291,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testEnforceNotNullValidInsertSucceeds() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (42, 1.5, '2024-01-01')");
             execute("INSERT INTO t VALUES (0, NULL, '2024-01-02')");
 
@@ -309,7 +309,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testFilterOnNotNullColumnWithJit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
                         (1, 10.0, '2024-01-01'),
@@ -335,7 +335,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testBooleanAutoFillsDefault() throws Exception {
         assertMemoryLeak(() -> {
             // BOOLEAN without NOT NULL auto-fills with false when not provided
-            execute("CREATE TABLE t (b BOOLEAN, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (b BOOLEAN, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
 
             assertSql(
@@ -352,7 +352,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testBooleanNotNullEnforced() throws Exception {
         assertMemoryLeak(() -> {
             // BOOLEAN NOT NULL is enforced — missing value throws
-            execute("CREATE TABLE t (b BOOLEAN NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (b BOOLEAN NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             try {
                 execute("INSERT INTO t (y, ts) VALUES (1.5, '2024-01-01')");
                 fail("Expected NOT NULL violation for BOOLEAN NOT NULL column");
@@ -366,7 +366,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testInformationSchemaColumnsShowsNullability() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             assertSql(
                     """
@@ -383,7 +383,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testExplicitNotNullPreservedOnTypeChange() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (b INT NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (b INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             try (TableReader reader = engine.getReader("t")) {
                 assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
@@ -422,7 +422,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testNotNullSurvivesColumnTypeChange() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             try (TableReader reader = engine.getReader("t")) {
                 assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("x")));
@@ -439,7 +439,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testNotNullSurvivesMetadataReload() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             try (TableReader reader = engine.getReader("t")) {
                 assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("x")));
@@ -460,7 +460,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testShowColumnsIncludesNotNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT NOT NULL, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             assertSql(
                     """
@@ -482,7 +482,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
                         a INT NOT NULL,
                         b DOUBLE,
                         c STRING NOT NULL,
-                        ts TIMESTAMP
+                        ts TIMESTAMP NOT NULL
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
 
@@ -506,7 +506,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Non-finite values are preserved on write. For NOT NULL columns they print
             // as their IEEE 754 representation instead of "null".
-            execute("CREATE TABLE t (x DOUBLE NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x DOUBLE NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
                         (NULL, '2024-01-01'),
@@ -533,7 +533,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testNotNullFloatSpecialValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x FLOAT NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x FLOAT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
                         (NULL, '2024-01-01'),
@@ -560,7 +560,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testNotNullLongSentinelPrintsValue() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x LONG NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x LONG NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
             execute("INSERT INTO t VALUES (42, '2024-01-02')");
 
@@ -578,7 +578,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testNotNullIpv4SentinelPrintsValue() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x IPv4 NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x IPv4 NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
             execute("INSERT INTO t VALUES ('192.168.1.1', '2024-01-02')");
 
@@ -596,7 +596,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testNotNullUuidSentinelPrintsValue() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x UUID NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x UUID NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
             execute("INSERT INTO t VALUES ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-02')");
 
@@ -614,7 +614,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testNotNullCharSentinelPrintsValue() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (x CHAR NOT NULL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x CHAR NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
             execute("INSERT INTO t VALUES ('A', '2024-01-02')");
 
@@ -634,7 +634,7 @@ public class NotNullColumnTest extends AbstractCairoTest {
     public void testNullableColumnsStillPrintNull() throws Exception {
         assertMemoryLeak(() -> {
             // Verify nullable columns still print "null" for sentinel values (no regression)
-            execute("CREATE TABLE t (x INT, y DOUBLE, z LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (x INT, y DOUBLE, z LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t (ts) VALUES ('2024-01-01')");
 
             assertSql(

@@ -107,7 +107,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             execute(
                     """
                             CREATE TABLE t (
-                              created timestamp,
+                              created timestamp NOT NULL,
                               event short,
                               origin short
                             ) TIMESTAMP(created) PARTITION BY DAY;"""
@@ -144,7 +144,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             execute(
                     """
                             CREATE TABLE t (
-                              created timestamp,
+                              created timestamp NOT NULL,
                               event symbol,
                               origin symbol
                             ) TIMESTAMP(created) PARTITION BY DAY;"""
@@ -185,7 +185,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             execute(
                     """
                             CREATE TABLE t1 (
-                              created timestamp,
+                              created timestamp NOT NULL,
                               event short,
                               origin short
                             ) TIMESTAMP(created) PARTITION BY DAY;"""
@@ -196,7 +196,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             execute(
                     """
                             CREATE TABLE t2 (
-                              created timestamp,
+                              created timestamp NOT NULL,
                               event short,
                               origin short
                             ) TIMESTAMP(created) PARTITION BY DAY;"""
@@ -234,7 +234,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         execute(
                                 compiler,
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  price DOUBLE," +
                                         "  quantity LONG) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
@@ -900,7 +900,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
                         execute(compiler,
-                                "CREATE TABLE tango (ts TIMESTAMP, arr1d DOUBLE[], arr2d DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY",
+                                "CREATE TABLE tango (ts TIMESTAMP NOT NULL, arr1d DOUBLE[], arr2d DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY",
                                 sqlExecutionContext);
                         execute(compiler,
                                 """
@@ -954,7 +954,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
                         execute(compiler,
-                                "create table tango (ts timestamp, a double, arr double[]) timestamp(ts) partition by DAY",
+                                "create table tango (ts timestamp NOT NULL, a double, arr double[]) timestamp(ts) partition by DAY",
                                 sqlExecutionContext);
                         execute(compiler,
                                 "insert into tango values " +
@@ -1376,7 +1376,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         // Create a table with high-cardinality VARCHAR keys to force map growth during reduce.
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  price DOUBLE," +
                                         "  quantity DOUBLE," +
                                         "  key VARCHAR" +
@@ -2004,7 +2004,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (" +
-                                    "  ts TIMESTAMP," +
+                                    "  ts TIMESTAMP NOT NULL," +
                                     "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                             sqlExecutionContext
                     );
@@ -3048,7 +3048,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (" +
-                                    "  ts TIMESTAMP," +
+                                    "  ts TIMESTAMP NOT NULL," +
                                     "  key STRING," +
                                     "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                             sqlExecutionContext
@@ -3119,7 +3119,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (" +
-                                    "  ts TIMESTAMP," +
+                                    "  ts TIMESTAMP NOT NULL," +
                                     "  key STRING," +
                                     "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                             sqlExecutionContext
@@ -3956,7 +3956,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         execute(
                                 compiler,
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  key STRING," +
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
@@ -4078,7 +4078,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  key DECIMAL(2,0)," +
                                         "  d8 DECIMAL(2,0)," +
                                         "  d16 DECIMAL(4,1)," +
@@ -4199,7 +4199,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  price DOUBLE," +
                                         "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
@@ -4268,7 +4268,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         try {
                             engine.execute(
                                     "CREATE TABLE tab ( " +
-                                            "  ts TIMESTAMP, " +
+                                            "  ts TIMESTAMP NOT NULL, " +
                                             "  price DOUBLE, " +
                                             "  quantity DOUBLE, " +
                                             "  id INT " +
@@ -4316,7 +4316,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  key IPv4," +
                                         "  value DOUBLE" +
                                         ") TIMESTAMP (ts) PARTITION BY DAY",
@@ -4347,7 +4347,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  key VARCHAR," +
                                         "  price DOUBLE," +
                                         "  quantity LONG) timestamp (ts) PARTITION BY DAY",
@@ -4380,7 +4380,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  short_key SHORT," +
                                         "  int_key INT," +
                                         "  long_key LONG," +
@@ -4412,7 +4412,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         engine.execute(
                                 "CREATE TABLE tab (\n" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  key1 SYMBOL," +
                                         "  key2 SYMBOL," +
                                         "  key3 SYMBOL," +
@@ -4451,7 +4451,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  price DOUBLE," +
                                         "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
@@ -4553,7 +4553,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         // try with a String table first
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  key STRING," +
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
@@ -4578,7 +4578,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         engine.execute("DROP TABLE tab", sqlExecutionContext);
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  key VARCHAR," +
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
@@ -4617,7 +4617,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP," +
+                                        "  ts TIMESTAMP NOT NULL," +
                                         "  key SYMBOL," +
                                         "  price DOUBLE," +
                                         "  quantity LONG) timestamp (ts) PARTITION BY DAY",

@@ -1673,7 +1673,7 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeTrue(walEnabled);
         assertMemoryLeak(() -> {
             execute(
-                    "create table test (ts timestamp, x int, y string, sym symbol, symi symbol index) timestamp(ts) partition by DAY WAL"
+                    "create table test (ts timestamp NOT NULL, x int, y string, sym symbol, symi symbol index) timestamp(ts) partition by DAY WAL"
             );
             execute("insert into test select timestamp_sequence('2022-02-24T01:01', 1000000L * 60 * 60), x, 'a', 'abc', 'i' from long_sequence(5)");
 
@@ -3247,7 +3247,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateWithTimestampMicrosArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table metrics (id int, ts timestamp, value double, adjusted_ts timestamp) timestamp(ts) partition by day");
+            execute("create table metrics (id int, ts timestamp NOT NULL, value double, adjusted_ts timestamp) timestamp(ts) partition by day");
 
             long baseMicros = 1_704_067_200_000_000L; // 2024-01-01T00:00:00.000000
 
@@ -3271,7 +3271,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateWithTimestampMixedArithmetic_microsToNanos() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table metrics (id int, ts timestamp, value double, adjusted_ts_ns timestamp_ns) timestamp(ts) partition by day");
+            execute("create table metrics (id int, ts timestamp NOT NULL, value double, adjusted_ts_ns timestamp_ns) timestamp(ts) partition by day");
 
             long baseMicros = 1_704_067_200_000_000L; // 2024-01-01T00:00:00.000000
 

@@ -52,7 +52,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     create table table_1 (
-                              ts timestamp,
+                              ts timestamp NOT NULL,
                               name string,
                               age int,
                               member boolean
@@ -65,7 +65,7 @@ public class JoinTest extends AbstractCairoTest {
 
             execute("""
                     create table table_2 (
-                              ts timestamp,
+                              ts timestamp NOT NULL,
                               name string,
                               age int,
                               address string
@@ -258,8 +258,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfCorrectness() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)");
-            execute("create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)");
+            execute("create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP NOT NULL) timestamp(timestamp)");
+            execute("create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP NOT NULL) timestamp(timestamp)");
 
             try (
                     TableWriter orders = getWriter("orders");
@@ -1731,8 +1731,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testAsofJoinWithComplexConditionFails1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 asof join t2 on l1=l2+5", "unsupported ASOF join expression [expr='l1 = l2 + 5']", 35);
         });
@@ -1741,8 +1741,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testAsofJoinWithComplexConditionFails2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 asof join t2 on l1>l2", "unsupported ASOF join expression [expr='l1 > l2']", 35);
         });
@@ -1751,8 +1751,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testAsofJoinWithComplexConditionFails3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 asof join t2 on l1=abs(l2)", "unsupported ASOF join expression [expr='l1 = abs(l2)']", 35);
         });
@@ -1823,19 +1823,19 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // 1 partition
             execute("create table TabA ( " +
-                    "          ts timestamp, " +
+                    "          ts timestamp NOT NULL, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by month");
 
             // 3 partitions
             execute("create table TabB ( " +
-                    "          ts timestamp, " +
+                    "          ts timestamp NOT NULL, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by hour");
 
             // 0 partitions
             execute("create table TabC ( " +
-                    "          ts timestamp, " +
+                    "          ts timestamp NOT NULL, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by year");
 
@@ -2010,7 +2010,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithMultiColumnQualifiedJoinKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (event INT, origin INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (event INT, origin INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1, 1, '2024-01-01T00:00:00.000000Z'), (2, 2, '2024-01-02T00:00:00.000000Z')");
             assertQueryNoLeakCheck(
                     """
@@ -2093,7 +2093,7 @@ public class JoinTest extends AbstractCairoTest {
                             "  symbol SYMBOL," +
                             "  price DOUBLE," +
                             "  amount DOUBLE," +
-                            "  timestamp TIMESTAMP " +
+                            "  timestamp TIMESTAMP NOT NULL " +
                             ") timestamp (timestamp) PARTITION BY DAY;"
             );
 
@@ -2158,7 +2158,7 @@ public class JoinTest extends AbstractCairoTest {
             execute(
                     """
                             CREATE TABLE t (
-                              created timestamp,
+                              created timestamp NOT NULL,
                               event short,
                               origin short
                             ) TIMESTAMP(created) PARTITION BY DAY;"""
@@ -2196,7 +2196,7 @@ public class JoinTest extends AbstractCairoTest {
             execute(
                     """
                             CREATE TABLE t (
-                              created timestamp,
+                              created timestamp NOT NULL,
                               event short,
                               origin short
                             ) TIMESTAMP(created) PARTITION BY DAY;"""
@@ -2378,7 +2378,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinInnerConstantFilterWithNonBooleanExpressionFails() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE IF NOT EXISTS x (ts timestamp, event short) TIMESTAMP(ts);");
+            execute("CREATE TABLE IF NOT EXISTS x (ts timestamp NOT NULL, event short) TIMESTAMP(ts);");
 
             assertFailure(
                     "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now()",
@@ -2462,7 +2462,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinInnerFunctionInJoinExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE IF NOT EXISTS x (ts timestamp, event short) TIMESTAMP(ts);");
+            execute("CREATE TABLE IF NOT EXISTS x (ts timestamp NOT NULL, event short) TIMESTAMP(ts);");
             execute("INSERT INTO x VALUES (now(), 42)");
             assertQueryNoLeakCheck(
                     """
@@ -2811,7 +2811,7 @@ public class JoinTest extends AbstractCairoTest {
         // the optimizer merges them into a single postJoinWhereClause so the code
         // generator applies one filter instead of nesting FilteredRecordCursorFactory.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2839,7 +2839,7 @@ public class JoinTest extends AbstractCairoTest {
         // (e.g. false AND NOW() = NOW()), the optimizer splits them: false stays
         // as constWhereClause and the code generator folds it to EmptyTableRecordCursorFactory.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
             assertQueryNoLeakCheck(
                     "val\tval1\n",
@@ -2857,7 +2857,7 @@ public class JoinTest extends AbstractCairoTest {
         // NOW() = NOW() into postJoinWhereClause and the code generator folds
         // the remaining constant true away.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2957,9 +2957,9 @@ public class JoinTest extends AbstractCairoTest {
         // Tests multi-way join with post-join WHERE conditions referencing
         // columns from different join pairs.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t3 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t3 (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3140,7 +3140,7 @@ public class JoinTest extends AbstractCairoTest {
                         dec64 decimal(18, 3),
                         dec128 decimal(38, 4),
                         dec256 decimal(76, 5),
-                        ts timestamp
+                        ts timestamp NOT NULL
                     ) timestamp(ts)
                     """);
             execute("""
@@ -3160,7 +3160,7 @@ public class JoinTest extends AbstractCairoTest {
                         dec64 decimal(18, 3),
                         dec128 decimal(38, 4),
                         dec256 decimal(76, 5),
-                        ts timestamp
+                        ts timestamp NOT NULL
                     ) timestamp(ts)
                     """);
             execute("""
@@ -3187,8 +3187,8 @@ public class JoinTest extends AbstractCairoTest {
     public void testJoinOnDecimalFailureMixedScale() throws Exception {
         // We don't support implicit casting between different decimals during join resolution
         assertMemoryLeak(() -> {
-            execute("create table t1 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
-            execute("create table t2 (dec decimal(8, 4), ts timestamp) timestamp(ts)");
+            execute("create table t1 (dec decimal(4, 2), ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t2 (dec decimal(8, 4), ts timestamp NOT NULL) timestamp(ts)");
 
             try {
                 assertQueryNoLeakCheck("", "select * from t1 join t2 on t1.dec = t2.dec");
@@ -3202,7 +3202,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinOnDecimalKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
+            execute("create table t1 (dec decimal(4, 2), ts timestamp NOT NULL) timestamp(ts)");
             execute("""
                     insert into t1 (dec, ts) values
                     (1.1m, '1970-01-01T00:00:00.000000Z'),
@@ -3211,7 +3211,7 @@ public class JoinTest extends AbstractCairoTest {
                     (1.4m, '1970-01-01T00:00:03.000000Z')
                     """);
 
-            execute("create table t2 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
+            execute("create table t2 (dec decimal(4, 2), ts timestamp NOT NULL) timestamp(ts)");
             execute("""
                     insert into t2 (dec, ts) values
                     (1.5m, '1970-01-01T00:00:04.000000Z'),
@@ -3236,7 +3236,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinOnDecimalKeyMixedScales() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (dec decimal(4, 2), ts timestamp) timestamp(ts)");
+            execute("create table t1 (dec decimal(4, 2), ts timestamp NOT NULL) timestamp(ts)");
             execute("""
                     insert into t1 (dec, ts) values
                     (1.1m, '1970-01-01T00:00:00.000000Z'),
@@ -3245,7 +3245,7 @@ public class JoinTest extends AbstractCairoTest {
                     (1.41m, '1970-01-01T00:00:03.000000Z')
                     """);
 
-            execute("create table t2 (dec decimal(8, 4), ts timestamp) timestamp(ts)");
+            execute("create table t2 (dec decimal(8, 4), ts timestamp NOT NULL) timestamp(ts)");
             execute("""
                     insert into t2 (dec, ts) values
                     (1.5432m, '1970-01-01T00:00:04.000000Z'),
@@ -4042,9 +4042,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition17() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (i int, s1 symbol, ts1 timestamp) timestamp(ts1)");
+            execute("create table t1 (i int, s1 symbol, ts1 timestamp NOT NULL) timestamp(ts1)");
             execute("insert into t1 values (1, 'a', 1), (2, 'b', 2);");
-            execute("create table t2 (j int, s2 symbol, ts2 timestamp) timestamp(ts2) ");
+            execute("create table t2 (j int, s2 symbol, ts2 timestamp NOT NULL) timestamp(ts2) ");
             execute("insert into t2 values (1,'a', 1), (1,'f', 2), (1, 'g', 3), (1, 'd', 4), (3,'c', 5);");
 
             assertHashJoinSql(
@@ -5456,8 +5456,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithComplexConditionFails1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 lt join t2 on l1=l2+5", "unsupported LT join expression [expr='l1 = l2 + 5']", 33);
         });
@@ -5466,8 +5466,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithComplexConditionFails2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 lt join t2 on l1>l2", "unsupported LT join expression [expr='l1 > l2']", 33);
         });
@@ -5476,8 +5476,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithComplexConditionFails3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 lt join t2 on l1=abs(l2)", "unsupported LT join expression [expr='l1 = abs(l2)']", 33);
         });
@@ -5486,9 +5486,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithCondition01() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
             execute("insert into t1 select x, x::timestamp from long_sequence(3)");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
             execute("insert into t2 select x, x::timestamp from long_sequence(3)");
 
             assertQueryNoLeakCheck(
@@ -5507,9 +5507,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithoutCondition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
             execute("insert into t1 select x, x::timestamp from long_sequence(3)");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
             execute("insert into t2 select x, x::timestamp from long_sequence(3)");
 
             assertQueryNoLeakCheck(
@@ -5529,9 +5529,9 @@ public class JoinTest extends AbstractCairoTest {
     public void testLtJoinWithoutCondition2() throws Exception {
         // Here we test case when all slave records have newer timestamps than what's in the master table.
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
             execute("insert into t1 select x, x::timestamp from long_sequence(3)");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
             execute("insert into t2 select x, (x + 1000000)::timestamp from long_sequence(3)");
 
             assertQueryNoLeakCheck(
@@ -5551,7 +5551,7 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testMarkoutCrossJoinCount() throws Exception {
-        execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+        execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
         // Insert 10 master rows with 1-second spacing
         for (int i = 1; i <= 10; i++) {
             execute("INSERT INTO orders VALUES (" + i + ", " + (i * 1_000_000_000L) + ")");
@@ -5575,7 +5575,7 @@ public class JoinTest extends AbstractCairoTest {
             execute(
                     "CREATE TABLE train ( " +
                             "  id INT, " +
-                            "  date timestamp, " +
+                            "  date timestamp NOT NULL, " +
                             "  store_nbr INT, " +
                             "  family SYMBOL, " +
                             "  sales DOUBLE " +
@@ -5742,7 +5742,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP NOT NULL, price INT) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute(
                     "INSERT INTO trades VALUES " +
@@ -5771,7 +5771,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP NOT NULL, price INT) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute(
                     "INSERT INTO trades VALUES " +
@@ -5802,7 +5802,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts TIMESTAMP NOT NULL, price INT) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute(
                     "INSERT INTO trades VALUES " +
@@ -5827,7 +5827,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (sym1 SYMBOL, sym2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (sym1 SYMBOL, sym2 SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute(
                     "INSERT INTO x VALUES " +
@@ -5856,7 +5856,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey5() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP NOT NULL, price INT) TIMESTAMP(ts) PARTITION BY DAY");
 
             execute(
                     "INSERT INTO trades VALUES " +
@@ -5885,8 +5885,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSpliceCorrectness() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)");
-            execute("create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)");
+            execute("create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP NOT NULL) timestamp(timestamp)");
+            execute("create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP NOT NULL) timestamp(timestamp)");
 
             try (
                     TableWriter orders = getWriter("orders");
@@ -6186,7 +6186,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE trade (
-                      ts TIMESTAMP,
+                      ts TIMESTAMP NOT NULL,
                       instrument SYMBOL,
                       price DOUBLE,
                       qty DOUBLE
@@ -6222,7 +6222,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE trade (
-                      ts TIMESTAMP,
+                      ts TIMESTAMP NOT NULL,
                       instrument SYMBOL,
                       price DOUBLE,
                       qty DOUBLE
@@ -6509,8 +6509,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoinWithComplexConditionFails1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 splice join t2 on l1=l2+5", "unsupported SPLICE join expression [expr='l1 = l2 + 5']", 37);
         });
@@ -6519,8 +6519,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoinWithComplexConditionFails2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 splice join t2 on l1>l2", "unsupported SPLICE join expression [expr='l1 > l2']", 37);
         });
@@ -6529,8 +6529,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoinWithComplexConditionFails3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            execute("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            execute("create table t1 (l1 long, ts1 timestamp NOT NULL) timestamp(ts1) partition by year");
+            execute("create table t2 (l2 long, ts2 timestamp NOT NULL) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 splice join t2 on l1=abs(l2)", "unsupported SPLICE join expression [expr='l1 = abs(l2)']", 37);
         });
@@ -6540,13 +6540,13 @@ public class JoinTest extends AbstractCairoTest {
     public void testSpliceOfJoinAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
-            execute("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
+            execute("create table asks(ask int, ts timestamp NOT NULL) timestamp(ts) partition by none");
             execute("insert into asks values(100, 0)");
             execute("insert into asks values(101, 2);");
             execute("insert into asks values(102, 4);");
 
             // BIDS
-            execute("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
+            execute("create table bids(bid int, ts timestamp NOT NULL) timestamp(ts) partition by none");
             execute("insert into bids values(101, 1);");
             execute("insert into bids values(102, 3);");
             execute("insert into bids values(103, 5);");
@@ -6747,19 +6747,19 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // 1 partition
             execute("create table TabA ( " +
-                    "          ts timestamp, " +
+                    "          ts timestamp NOT NULL, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by month");
 
             // 3 partitions
             execute("create table TabB ( " +
-                    "          ts timestamp, " +
+                    "          ts timestamp NOT NULL, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by hour");
 
             // 0 partitions
             execute("create table TabC ( " +
-                    "          ts timestamp, " +
+                    "          ts timestamp NOT NULL, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by year");
 

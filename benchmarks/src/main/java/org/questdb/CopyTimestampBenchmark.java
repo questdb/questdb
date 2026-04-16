@@ -42,7 +42,7 @@ public class CopyTimestampBenchmark {
 
     public static void setup() throws SqlException {
         execute("drop table if exists tab");
-        execute("create table tab (ts timestamp) timestamp(ts) partition by year");
+        execute("create table tab (ts timestamp NOT NULL) timestamp(ts) partition by year");
         execute("drop table if exists tab1");
         execute("create table tab1 (ts timestamp_ns) timestamp(ts) partition by year");
         execute("insert into tab select timestamp_sequence(0, x) ts from long_sequence(100000000)");

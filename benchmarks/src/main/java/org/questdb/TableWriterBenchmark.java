@@ -90,8 +90,8 @@ public class TableWriterBenchmark {
         final CairoConfiguration configuration = getConfiguration();
 
         executeDdl("create table if not exists test1(f long)", configuration);
-        executeDdl("create table if not exists test2(f timestamp) timestamp (f)", configuration);
-        executeDdl("create table if not exists test3(f timestamp) timestamp (f) PARTITION BY DAY", configuration);
+        executeDdl("create table if not exists test2(f timestamp NOT NULL) timestamp (f)", configuration);
+        executeDdl("create table if not exists test3(f timestamp NOT NULL) timestamp (f) PARTITION BY DAY", configuration);
 
         LogFactory.haltInstance();
 

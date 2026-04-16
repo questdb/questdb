@@ -296,7 +296,7 @@ public class TelemetryTest extends AbstractCairoTest {
     public void testTelemetryTableUpgrade() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE " + TelemetryTask.TABLE_NAME + " (" +
-                    "created TIMESTAMP, " +
+                    "created TIMESTAMP NOT NULL, " +
                     "event SHORT, " +
                     "origin SHORT" +
                     ") TIMESTAMP(created)");
@@ -322,7 +322,7 @@ public class TelemetryTest extends AbstractCairoTest {
     public void testTelemetryTableUpgrade1() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE " + TelemetryTask.TABLE_NAME + " (" +
-                    "created TIMESTAMP, " +
+                    "created TIMESTAMP NOT NULL, " +
                     "event SHORT, " +
                     "origin SHORT" +
                     ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK");
@@ -388,7 +388,7 @@ public class TelemetryTest extends AbstractCairoTest {
         String tableName = configuration.getSystemTableNamePrefix() + TelemetryWalTask.TABLE_NAME;
         assertMemoryLeak(() -> {
             execute("CREATE TABLE '" + tableName + "' (" +
-                    "created TIMESTAMP, " +
+                    "created TIMESTAMP NOT NULL, " +
                     "event SHORT, " +
                     "tableId INT, " +
                     "walId INT, " +

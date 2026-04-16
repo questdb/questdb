@@ -58,7 +58,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testVwemaAlphaModeExplainPlan() throws Exception {
         // VwemaOverUnboundedRowsFrameFunction
-        execute("create table tab (ts timestamp, price double, volume double) timestamp(ts)");
+        execute("create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)");
         assertPlanNoLeakCheck(
                 "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts) as vwema from tab",
                 """
@@ -166,7 +166,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testVwemaAlphaPartitionExplainPlan() throws Exception {
         // VwemaOverPartitionFunction
-        execute("create table tab (ts timestamp, sym symbol, price double, volume double) timestamp(ts)");
+        execute("create table tab (ts timestamp NOT NULL, sym symbol, price double, volume double) timestamp(ts)");
         assertPlanNoLeakCheck(
                 "select ts, sym, price, volume, avg(price, 'alpha', 0.5, volume) over (partition by sym order by ts) as vwema from tab",
                 """
@@ -324,7 +324,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaExceptionAlphaMustBeBetween0And1() throws Exception {
         assertException(
                 "select ts, price, volume, avg(price, 'alpha', 1.5, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)",
                 46,
                 "alpha must be between 0 (exclusive) and 1 (inclusive)"
         );
@@ -334,7 +334,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaExceptionFramingNotSupported() throws Exception {
         assertException(
                 "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over (order by ts rows between 1 preceding and current row) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)",
                 26,
                 "avg() does not support framing; remove ROWS/RANGE clause"
         );
@@ -344,7 +344,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaExceptionInvalidKind() throws Exception {
         assertException(
                 "select ts, price, volume, avg(price, 'invalid', 0.5, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)",
                 37,
                 "invalid kind parameter: expected 'alpha', 'period', or a time unit (second, minute, hour, day, week)"
         );
@@ -354,7 +354,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaExceptionKindCannotBeNull() throws Exception {
         assertException(
                 "select ts, price, volume, avg(price, cast(null as string), 0.5, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)",
                 37,
                 "kind parameter cannot be null"
         );
@@ -364,7 +364,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaExceptionKindMustBeConstant() throws Exception {
         assertException(
                 "select ts, kind, price, volume, avg(price, kind, 0.5, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, kind string, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, kind string, price double, volume double) timestamp(ts)",
                 43,
                 "kind parameter must be a constant"
         );
@@ -374,7 +374,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaExceptionNegativeParameterValue() throws Exception {
         assertException(
                 "select ts, price, volume, avg(price, 'period', -1, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)",
                 47,
                 "parameter value must be a positive number"
         );
@@ -384,7 +384,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaExceptionOrderByRequired() throws Exception {
         assertException(
                 "select ts, price, volume, avg(price, 'alpha', 0.5, volume) over () from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)",
                 26,
                 "avg() requires ORDER BY"
         );
@@ -394,7 +394,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaExceptionParameterMustBeConstant() throws Exception {
         assertException(
                 "select ts, price, volume, avg(price, 'alpha', price, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)",
                 46,
                 "parameter value must be a constant"
         );
@@ -404,7 +404,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     public void testVwemaExceptionZeroParameterValue() throws Exception {
         assertException(
                 "select ts, price, volume, avg(price, 'alpha', 0, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)",
                 46,
                 "parameter value must be a positive number"
         );
@@ -438,7 +438,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
         // alpha=0.0 should be invalid (exclusive lower bound) - caught by general positive check
         assertException(
                 "select ts, price, volume, avg(price, 'alpha', 0.0, volume) over (order by ts) from tab",
-                "create table tab (ts timestamp, price double, volume double) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)",
                 46,
                 "parameter value must be a positive number"
         );
@@ -542,7 +542,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testVwemaTimeWeightedModeExplainPlan() throws Exception {
         // VwemaTimeWeightedOverUnboundedRowsFrameFunction
-        execute("create table tab (ts timestamp, price double, volume double) timestamp(ts)");
+        execute("create table tab (ts timestamp NOT NULL, price double, volume double) timestamp(ts)");
         assertPlanNoLeakCheck(
                 "select ts, price, volume, avg(price, 'second', 1, volume) over (order by ts) as vwema from tab",
                 """
@@ -928,7 +928,7 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testVwemaTimeWeightedPartitionExplainPlan() throws Exception {
         // VwemaTimeWeightedOverPartitionFunction
-        execute("create table tab (ts timestamp, sym symbol, price double, volume double) timestamp(ts)");
+        execute("create table tab (ts timestamp NOT NULL, sym symbol, price double, volume double) timestamp(ts)");
         assertPlanNoLeakCheck(
                 "select ts, sym, price, volume, avg(price, 'second', 1, volume) over (partition by sym order by ts) as vwema from tab",
                 """

@@ -36,7 +36,7 @@ public class PivotTest extends AbstractSqlParserTest {
     public static String ddlMonthlySales = "CREATE TABLE monthly_sales (empid INT, amount INT, month TEXT);";
     public static String ddlSensors = """
             CREATE TABLE IF NOT EXISTS sensors (
-              timestamp TIMESTAMP,
+              timestamp TIMESTAMP NOT NULL,
               vehicle_id SYMBOL,
               sensor_name SYMBOL,
               int_value LONG,
@@ -49,7 +49,7 @@ public class PivotTest extends AbstractSqlParserTest {
               side SYMBOL,
               price DOUBLE,
               amount DOUBLE,
-              timestamp TIMESTAMP
+              timestamp TIMESTAMP NOT NULL
             ) timestamp (timestamp) PARTITION BY NONE""";
     public static String dmlCities =
             """
@@ -3172,7 +3172,7 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE events (ts TIMESTAMP, category SYMBOL, value INT) timestamp(ts);");
+            execute("CREATE TABLE events (ts TIMESTAMP NOT NULL, category SYMBOL, value INT) timestamp(ts);");
             execute("""
                     INSERT INTO events VALUES
                         ('2024-01-01', 'A', 10),

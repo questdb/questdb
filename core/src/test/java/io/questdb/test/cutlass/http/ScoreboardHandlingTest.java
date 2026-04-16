@@ -62,7 +62,7 @@ public class ScoreboardHandlingTest extends AbstractBootstrapTest {
                         main.getConfiguration().getPGWireConfiguration().getDefaultUsername(),
                         main.getConfiguration().getPGWireConfiguration().getDefaultPassword(),
                         main.getPgWireServerPort(),
-                        "create table trades(ts timestamp, ticker symbol index, value double) timestamp(ts) partition by day wal"
+                        "create table trades(ts timestamp NOT NULL, ticker symbol index, value double) timestamp(ts) partition by day wal"
                 );
 
                 exec(

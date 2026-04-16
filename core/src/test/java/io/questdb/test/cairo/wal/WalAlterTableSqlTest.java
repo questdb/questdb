@@ -339,7 +339,7 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
             final String tableName = testName.getMethodName();
             execute("create table " + tableName + "("
                     + "x long,"
-                    + "ts timestamp"
+                    + "ts timestamp NOT NULL"
                     + ") timestamp(ts) partition by DAY WAL");
             execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
             execute("alter table " + tableName + " add column s1 string");

@@ -1412,7 +1412,7 @@ public class InsertCastTest extends AbstractCairoTest {
     @Test
     public void testCastVarcharToDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab(d string, ts timestamp) timestamp(ts) partition by day");
+            execute("create table tab(d string, ts timestamp NOT NULL) timestamp(ts) partition by day");
             execute("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
             assertSql(
                     "d\tts\n" +
@@ -1440,7 +1440,7 @@ public class InsertCastTest extends AbstractCairoTest {
     @Test
     public void testInsertNullDateIntoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x(ts timestamp)");
+            execute("create table x(ts timestamp NOT NULL)");
             execute("insert into x values (cast(null as date))");
             assertSql(
                     "ts\n" +
@@ -1466,7 +1466,7 @@ public class InsertCastTest extends AbstractCairoTest {
     @Test
     public void testNullStringToTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab(ts timestamp) timestamp(ts)");
+            execute("create table tab(ts timestamp NOT NULL) timestamp(ts)");
             try {
                 execute("insert into tab values(null::string)");
                 Assert.fail();
@@ -1492,7 +1492,7 @@ public class InsertCastTest extends AbstractCairoTest {
     @Test
     public void testNullVarcharToTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab(ts timestamp) timestamp(ts)");
+            execute("create table tab(ts timestamp NOT NULL) timestamp(ts)");
             try {
                 execute("insert into tab values(null::varchar)");
                 Assert.fail();

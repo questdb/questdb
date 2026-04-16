@@ -30,7 +30,7 @@ import org.junit.Test;
 public class JoinPrefixedTablesTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
-        execute("create table 'a.b.c.d' (tableId int, b int, t timestamp) timestamp(t) partition by day");
+        execute("create table 'a.b.c.d' (tableId int, b int, t timestamp NOT NULL) timestamp(t) partition by day");
         execute("insert into 'a.b.c.d' select x, rnd_int(), timestamp_sequence(0, 1000)");
         execute("create table 'x.y.z' as (select x::int x, rnd_varchar() name from long_sequence(100))");
 

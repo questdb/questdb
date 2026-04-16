@@ -47,7 +47,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                 JavaEnable byte,
                 Title varchar,
                 GoodEvent byte,
-                EventTime timestamp,
+                EventTime timestamp NOT NULL,
                 EventDate date,
                 CounterID int,
                 ClientIP ipv4,

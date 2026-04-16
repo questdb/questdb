@@ -65,7 +65,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testAsyncAlterCommandInvalidSerialisation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL, name symbol nocache)", sqlExecutionContext);
             OperationFuture fut = null;
             try {
                 try (TableWriter writer = getWriter("product")) {
@@ -88,7 +88,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testAsyncAlterCommandsExceedEngineEventQueue() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL)", sqlExecutionContext);
 
             // Block event queue with stale sequence
             SCSequence staleSequence = new SCSequence();
@@ -134,7 +134,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testAsyncAlterCommandsExceedsEngineCmdQueue() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL)", sqlExecutionContext);
             SCSequence tempSequence = new SCSequence();
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -313,7 +313,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testAsyncAlterDoesNotCommitUncommittedRowsOnWriterClose() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp, name symbol nocache) timestamp(timestamp)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL, name symbol nocache) timestamp(timestamp)", sqlExecutionContext);
             OperationFuture fut = null;
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 try (TableWriter writer = getWriter("product")) {
@@ -345,7 +345,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testAsyncAlterNonExistingTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL, name symbol nocache)", sqlExecutionContext);
             OperationFuture fut = null;
             try {
                 try (TableWriter writer = getWriter("product")) {
@@ -371,7 +371,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testAsyncAlterSymbolCache() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL, name symbol nocache)", sqlExecutionContext);
             OperationFuture fut = null;
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 try (TableWriter writer = getWriter("product")) {
@@ -398,7 +398,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testAsyncRenameMultipleColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL, name symbol nocache)", sqlExecutionContext);
             OperationFuture fut = null;
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
 
@@ -425,7 +425,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     public void testCommandQueueBufferOverflow() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE, 4);
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL)", sqlExecutionContext);
 
             // Get the lock so command has to be serialized to writer command queue
             try (
@@ -446,7 +446,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testCommandQueueReused() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL)", sqlExecutionContext);
 
             // Block event queue with stale sequence
             try (
@@ -469,7 +469,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testInvalidAlterDropPartitionStatementQueued() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL, name symbol nocache)", sqlExecutionContext);
 
             try (TableWriter writer = getWriter("product")) {
                 AlterOperationBuilder creepyAlter = new AlterOperationBuilder();
@@ -493,7 +493,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
     @Test
     public void testInvalidAlterStatementQueued() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
+            execute("create table product (timestamp timestamp NOT NULL, name symbol nocache)", sqlExecutionContext);
 
             try (TableWriter writer = getWriter("product")) {
 

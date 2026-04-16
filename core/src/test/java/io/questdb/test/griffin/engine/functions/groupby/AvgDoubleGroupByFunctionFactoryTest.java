@@ -111,7 +111,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testInterpolatedAvg() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table fill_options(ts timestamp, price int) timestamp(ts);");
+            execute("create table fill_options(ts timestamp NOT NULL, price int) timestamp(ts);");
             execute("insert into fill_options values(to_timestamp('2020-01-01:10:00:00', 'yyyy-MM-dd:HH:mm:ss'), 1);");
             execute("insert into fill_options values(to_timestamp('2020-01-01:11:00:00', 'yyyy-MM-dd:HH:mm:ss'), 2);");
             execute("insert into fill_options values(to_timestamp('2020-01-01:12:00:00', 'yyyy-MM-dd:HH:mm:ss'), 3);");
@@ -165,7 +165,7 @@ public class AvgDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testWeightedAvgSampleByFill() throws Exception {
         assertMemoryLeak(() -> {
             // Create table with gaps: data at hour 0 and hour 2, gap at hour 1
-            execute("CREATE TABLE test_fill (value DOUBLE, weight DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE test_fill (value DOUBLE, weight DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
             // Hour 0: values 1,2,3 with weight 1 -> avg == 2
             execute("""
                     INSERT INTO test_fill VALUES

@@ -48,7 +48,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, x long, s symbol, i int) timestamp(ts)" +
+                            " (ts TIMESTAMP NOT NULL, x long, s symbol, i int) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS (ts, i, s ) "
             );
             execute("alter table " + tableName + " alter column s add index");
@@ -119,7 +119,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     @Test
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
-            execute("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
+            execute("create table a (ts timestamp NOT NULL, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
             String alterPrefix = "alter table a ";
 
             assertException(
@@ -163,7 +163,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     @Test
     public void testCreateTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
-            String createPrefix = "create table a (ts timestamp, i int, s symbol, l long, str string)";
+            String createPrefix = "create table a (ts timestamp NOT NULL, i int, s symbol, l long, str string)";
             assertException(
                     createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);",
                     121,
@@ -204,7 +204,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableWithArrayDedupKey() throws Exception {
-        assertMemoryLeak(() -> assertException("CREATE TABLE x (ts TIMESTAMP, arr DOUBLE[])" +
+        assertMemoryLeak(() -> assertException("CREATE TABLE x (ts TIMESTAMP NOT NULL, arr DOUBLE[])" +
                         " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)",
                 101, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
     }
@@ -247,7 +247,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             // Create table with decimal dedup key
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, amount DECIMAL(10,2), description STRING) " +
+                            " (ts TIMESTAMP NOT NULL, amount DECIMAL(10,2), description STRING) " +
                             "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, amount)"
             );
 
@@ -302,7 +302,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             // Create table with high precision decimals
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, measurement DECIMAL(38,15), sensor_id INT) " +
+                            " (ts TIMESTAMP NOT NULL, measurement DECIMAL(38,15), sensor_id INT) " +
                             "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, measurement)"
             );
 
@@ -331,7 +331,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             // Create table with mixed types including decimal as dedup keys
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, symbol SYMBOL, price DECIMAL(10,2), volume LONG, active BOOLEAN) " +
+                            " (ts TIMESTAMP NOT NULL, symbol SYMBOL, price DECIMAL(10,2), volume LONG, active BOOLEAN) " +
                             "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, symbol, price)"
             );
 
@@ -361,7 +361,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             // Create table with multiple decimal columns as dedup keys
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, price DECIMAL(10,2), tax DECIMAL(5,3), discount DECIMAL(4,2), notes STRING) " +
+                            " (ts TIMESTAMP NOT NULL, price DECIMAL(10,2), tax DECIMAL(5,3), discount DECIMAL(4,2), notes STRING) " +
                             "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, price, tax, discount)"
             );
 
@@ -403,7 +403,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             // Create table with decimal as dedup key
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, price DECIMAL(10,2), quantity INT) timestamp(ts)" +
+                            " (ts TIMESTAMP NOT NULL, price DECIMAL(10,2), quantity INT) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, price)"
             );
 
@@ -439,7 +439,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             // Create table with decimal that can have nulls
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, price DECIMAL(10,2), notes STRING) " +
+                            " (ts TIMESTAMP NOT NULL, price DECIMAL(10,2), notes STRING) " +
                             "timestamp(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts, price)"
             );
 
@@ -468,7 +468,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                            " (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUP UPSERT KEYS (ts)"
             );
             try (TableWriter writer = getWriter(tableName)) {
@@ -483,7 +483,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                            " (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL"
             );
             assertException("ALTER table " + tableName + " dedup UPSERT KEYS(ts,", 54, "')' expected");
@@ -497,7 +497,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, x long, s symbol, i int) timestamp(ts)" +
+                            " (ts TIMESTAMP NOT NULL, x long, s symbol, i int) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS (ts, i, s ) "
             );
             try (TableWriter writer = getWriter(tableName)) {
@@ -524,7 +524,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                            " (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS(ts, s)"
             );
             try (TableWriter writer = getWriter(tableName)) {
@@ -541,7 +541,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                            " (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUPLICATE UPSERT KEYS (ts)"
             );
             try (TableWriter writer = getWriter(tableName)) {
@@ -556,7 +556,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table " + tableName +
-                            " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                            " (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts)" +
                             " PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts,s)"
             );
             try (TableWriter writer = getWriter(tableName)) {
@@ -652,7 +652,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         String tableName = testName.getMethodName();
         execute(
                 "create table " + tableName +
-                        " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
+                        " (ts TIMESTAMP NOT NULL, x long, s symbol) timestamp(ts)" +
                         " PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts,s)"
         );
         assertSql(

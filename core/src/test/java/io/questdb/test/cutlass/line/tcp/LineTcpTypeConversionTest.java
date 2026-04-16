@@ -285,7 +285,7 @@ public class LineTcpTypeConversionTest extends BaseLineTcpContextTest {
         String table = "convTest";
         testConversion(
                 table,
-                "create table " + table + " (testCol " + type + ", time TIMESTAMP) timestamp(time) partition by day" + (walEnabled ? " WAL;" : ";"),
+                "create table " + table + " (testCol " + type + ", time TIMESTAMP NOT NULL) timestamp(time) partition by day" + (walEnabled ? " WAL;" : ";"),
                 table + ",testCol=questdb " + nextTime() + "\n" +
                         table + ",testCol=q " + nextTime() + "\n" +
                         table + ",testCol=\"questdbb\" " + nextTime() + "\n" +

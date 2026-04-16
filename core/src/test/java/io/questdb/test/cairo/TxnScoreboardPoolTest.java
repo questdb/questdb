@@ -127,14 +127,14 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
     @Test
     public void testWalTableRename() throws Exception {
         assertMemoryLeak(() -> {
-            engine.execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION BY DAY WAL");
+            engine.execute("create table x (i int, ts timestamp NOT NULL) timestamp(ts) PARTITION BY DAY WAL");
             TableToken token = engine.verifyTableName("x");
 
             TxnScoreboard sc1 = engine.getTxnScoreboard(token);
             Assert.assertTrue(sc1.acquireTxn(0, 10));
 
             engine.execute("rename table x to x1");
-            engine.execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION BY DAY WAL");
+            engine.execute("create table x (i int, ts timestamp NOT NULL) timestamp(ts) PARTITION BY DAY WAL");
             TableToken token2 = engine.verifyTableName("x");
 
             TxnScoreboard sc2 = engine.getTxnScoreboard(token2);

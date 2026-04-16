@@ -91,7 +91,7 @@ public class DedupWalWriterTest extends AbstractCairoTest {
     }
 
     private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated) throws SqlException {
-        execute("create table test (ts timestamp, x int, v " + columnType + ") timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
+        execute("create table test (ts timestamp NOT NULL, x int, v " + columnType + ") timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
         execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
         drainWalQueue();
 

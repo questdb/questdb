@@ -431,7 +431,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
         testBothCursors(
                 "CREATE TABLE x (" +
                         " i INT," +
-                        " t TIMESTAMP" +
+                        " t TIMESTAMP NOT NULL" +
                         ") TIMESTAMP (t) PARTITION BY DAY",
                 cursor -> {
                     Assert.assertFalse(cursor.next());
@@ -794,12 +794,12 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                 ),
                 new TestCase(
                         "filtered_t",
-                        "create table filtered_t (i int, ts timestamp) timestamp(ts) partition by day",
+                        "create table filtered_t (i int, ts timestamp NOT NULL) timestamp(ts) partition by day",
                         "filtered_t where i > 0"
                 ),
                 new TestCase(
                         "desc_ordered_t",
-                        "create table desc_ordered_t (ts timestamp) timestamp(ts) partition by day",
+                        "create table desc_ordered_t (ts timestamp NOT NULL) timestamp(ts) partition by day",
                         "desc_ordered_t order by ts desc"
                 )
         };
@@ -935,7 +935,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
         testBothCursors(
                 "CREATE TABLE x (" +
                         " i INT," +
-                        " t TIMESTAMP" +
+                        " t TIMESTAMP NOT NULL" +
                         ") TIMESTAMP (t) PARTITION BY DAY",
                 cursor -> {
                     TimeFrame frame = cursor.getTimeFrame();

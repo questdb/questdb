@@ -1242,7 +1242,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 engine,
                 textLoader -> {
                     execute("create table test(" +
-                            "ts timestamp, " +
+                            "ts timestamp NOT NULL, " +
                             "byte byte, " +
                             "short short," +
                             "char char," +
@@ -1316,7 +1316,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    execute("create table test(ts timestamp) timestamp(ts) partition by NONE");
+                    execute("create table test(ts timestamp NOT NULL) timestamp(ts) partition by NONE");
 
                     try {
                         String csv = """
@@ -1355,7 +1355,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    execute("create table test(ts timestamp) timestamp(ts) partition by NONE");
+                    execute("create table test(ts timestamp NOT NULL) timestamp(ts) partition by NONE");
 
                     try {
                         String csv = """
@@ -3660,7 +3660,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     @Test
     public void testWriteToExistingVarcharColumn() throws Exception {
         assertNoLeak(textLoader -> {
-            execute("create table test(a int, b varchar, ts timestamp)");
+            execute("create table test(a int, b varchar, ts timestamp NOT NULL)");
 
             String csv = """
                     a,b,ts
@@ -3840,7 +3840,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                 CairoEngine engine = new CairoEngine(configuration);
                 SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
         ) {
-            engine.execute("create table test(StrSym symbol, ts timestamp) " + designatedTimestamp, sqlExecutionContext);
+            engine.execute("create table test(StrSym symbol, ts timestamp NOT NULL) " + designatedTimestamp, sqlExecutionContext);
             engine.releaseAllWriters();
 
             assertNoLeak(
@@ -3925,7 +3925,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     ) throws Exception {
         assertNoLeak(
                 textLoader -> {
-                    String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
+                    String createStmt = "create table test(ts timestamp NOT NULL, int int) timestamp(ts) " + createStmtExtra;
                     execute(createStmt);
                     configureLoaderDefaults(
                             textLoader,
@@ -4216,7 +4216,7 @@ public class TextLoaderTest extends AbstractCairoTest {
     ) throws Exception {
         assertNoLeak(
                 textLoader -> {
-                    String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
+                    String createStmt = "create table test(ts timestamp NOT NULL, int int) timestamp(ts) " + createStmtExtra;
                     execute(createStmt);
                     configureLoaderDefaults(
                             textLoader,

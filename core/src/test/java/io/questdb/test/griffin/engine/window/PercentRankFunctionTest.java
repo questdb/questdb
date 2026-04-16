@@ -33,7 +33,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     public void testPercentRankAllTies() throws Exception {
         assertMemoryLeak(() -> {
             // All rows have the same ORDER BY value - all are rank 1
-            execute("create table tab (ts timestamp, v int) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, v int) timestamp(ts)");
             execute("insert into tab values (0, 1), (1, 1), (2, 1), (3, 1)");
             assertQueryNoLeakCheck(
                     """
@@ -55,7 +55,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     public void testPercentRankCombinedWithOtherRankingFunctions() throws Exception {
         assertMemoryLeak(() -> {
             // Test percent_rank() combined with rank() and dense_rank() in the same query
-            execute("create table tab (ts timestamp, v int) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, v int) timestamp(ts)");
             execute("insert into tab values (0, 1), (1, 1), (2, 2), (3, 3), (4, 3)");
             // Values: 1, 1, 2, 3, 3 (5 rows)
             // rank():        1, 1, 3, 4, 4
@@ -85,7 +85,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankDescOrder() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, v int) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, v int) timestamp(ts)");
             execute("insert into tab values (0, 1), (1, 2), (2, 3)");
             // With DESC order: ts=2 has rank 1, ts=1 has rank 2, ts=0 has rank 3
             // percent_rank: (1-1)/2=0.0, (2-1)/2=0.5, (3-1)/2=1.0
@@ -107,7 +107,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table empty_tab (ts timestamp, v int) timestamp(ts)");
+            execute("create table empty_tab (ts timestamp NOT NULL, v int) timestamp(ts)");
             assertQueryNoLeakCheck(
                     "ts\tpercent_rank\n",
                     "select ts, percent_rank() over (order by ts) from empty_tab",
@@ -122,7 +122,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     public void testPercentRankExplainPlan() throws Exception {
         // Test toPlan() method for percent_rank functions
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, i long, s symbol) timestamp(ts)");
 
             // Test plan for percent_rank() over () - no partition, no order
             assertSql(
@@ -182,7 +182,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     public void testPercentRankFramingNotSupported() throws Exception {
         assertException(
                 "select ts, percent_rank() over (order by ts rows between unbounded preceding and current row) from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, i long) timestamp(ts)",
                 11,
                 "percent_rank() does not support framing; remove ROWS/RANGE clause"
         );
@@ -192,7 +192,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     public void testPercentRankIgnoreNullsNotSupported() throws Exception {
         assertException(
                 "select ts, percent_rank() ignore nulls over (order by ts) from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, i long) timestamp(ts)",
                 26,
                 "RESPECT/IGNORE NULLS is not supported for current window function"
         );
@@ -202,7 +202,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     public void testPercentRankLargeDataset() throws Exception {
         assertMemoryLeak(() -> {
             // Test with 1000 rows to ensure no performance/memory issues
-            execute("create table tab (ts timestamp, v long) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, v long) timestamp(ts)");
             execute("insert into tab select x::timestamp, x from long_sequence(1000)");
             // All distinct values, so rank = row position
             // First row: (1-1)/(1000-1) = 0.0
@@ -221,7 +221,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankMultipleOrderByColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, a int, b int) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, a int, b int) timestamp(ts)");
             execute("insert into tab values (0, 1, 1), (1, 1, 2), (2, 2, 1), (3, 2, 2)");
             // Ordered by a, b: (1,1), (1,2), (2,1), (2,2)
             // All distinct values, so ranks are 1, 2, 3, 4
@@ -245,7 +245,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankNoOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, i long, s symbol) timestamp(ts)");
             execute("insert into tab select (x/4)::timestamp, x/2, 'k' || (x%2) ::symbol from long_sequence(12)");
 
             // percent_rank() over (partition by) - no order by, all rows are peers with rank 1
@@ -308,7 +308,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
         // When any function requires TWO_PASS, all functions go through CachedWindowRecordCursorFactory
         // which calls pass1() on all functions including the ZERO_PASS ones.
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, i long, s symbol) timestamp(ts)");
             execute("insert into tab select (x/4)::timestamp, x/2, 'k' || (x%2) ::symbol from long_sequence(12)");
 
             // percent_rank() over () returns 0 for all rows (ZERO_PASS, no ORDER BY means all peers)
@@ -344,7 +344,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     public void testPercentRankNoOverClause() throws Exception {
         assertException(
                 "select ts, percent_rank() from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, i long) timestamp(ts)",
                 11,
                 "window function called in non-window context, make sure to add OVER clause"
         );
@@ -353,7 +353,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankOrderByCastSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, v VARCHAR) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, v VARCHAR) TIMESTAMP(ts)");
             execute("INSERT INTO tab VALUES " +
                     "(0, 'cherry'), (1, 'apple'), (2, 'banana'), (3, 'apple'), (4, 'cherry')");
             assertQueryNoLeakCheck(
@@ -376,7 +376,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankOrderBySymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, s SYMBOL) TIMESTAMP(ts)");
             execute("INSERT INTO tab VALUES " +
                     "(0, 'cherry'), (1, 'apple'), (2, 'banana'), (3, 'apple'), (4, 'cherry')");
             assertQueryNoLeakCheck(
@@ -399,7 +399,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankOrderBySymbolDesc() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, s SYMBOL) TIMESTAMP(ts)");
             execute("INSERT INTO tab VALUES " +
                     "(0, 'cherry'), (1, 'apple'), (2, 'banana')");
             assertQueryNoLeakCheck(
@@ -420,7 +420,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankOrderBySymbolWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, s SYMBOL) TIMESTAMP(ts)");
             execute("INSERT INTO tab VALUES " +
                     "(0, null), (1, 'banana'), (2, null), (3, 'apple')");
             assertQueryNoLeakCheck(
@@ -442,7 +442,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankOrderBySymbolWithPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP, grp SYMBOL, s SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, grp SYMBOL, s SYMBOL) TIMESTAMP(ts)");
             execute("INSERT INTO tab VALUES " +
                     "(0, 'g1', 'cherry'), (1, 'g1', 'apple'), (2, 'g1', 'banana'), " +
                     "(3, 'g2', 'banana'), (4, 'g2', 'apple')");
@@ -467,7 +467,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     public void testPercentRankRespectNullsNotSupported() throws Exception {
         assertException(
                 "select ts, percent_rank() respect nulls over (order by ts) from tab",
-                "create table tab (ts timestamp, i long) timestamp(ts)",
+                "create table tab (ts timestamp NOT NULL, i long) timestamp(ts)",
                 26,
                 "RESPECT/IGNORE NULLS is not supported for current window function"
         );
@@ -478,7 +478,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Test single row partition - should return 0
             // TWO_PASS function uses CachedWindowRecordCursorFactory which supports random access
-            execute("create table single_row (ts timestamp, v int) timestamp(ts)");
+            execute("create table single_row (ts timestamp NOT NULL, v int) timestamp(ts)");
             execute("insert into single_row values (0, 1)");
             assertQueryNoLeakCheck(
                     """
@@ -498,7 +498,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Test single row partition with partition by - should return 0
             // This tests the totalRows <= 1 branch in PercentRankOverPartitionFunction.pass2
-            execute("create table mixed_partitions (ts timestamp, s symbol) timestamp(ts)");
+            execute("create table mixed_partitions (ts timestamp NOT NULL, s symbol) timestamp(ts)");
             execute("insert into mixed_partitions values (0, 'a'), (1, 'b'), (2, 'b')");
             assertQueryNoLeakCheck(
                     """
@@ -520,7 +520,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Two distinct rows: ranks 1 and 2
             // percent_rank: (1-1)/(2-1)=0.0, (2-1)/(2-1)=1.0
-            execute("create table tab (ts timestamp, v int) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, v int) timestamp(ts)");
             execute("insert into tab values (0, 1), (1, 2)");
             assertQueryNoLeakCheck(
                     """
@@ -540,7 +540,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     public void testPercentRankWithMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
             // Test multiple partitions with different sizes
-            execute("create table tab (ts timestamp, s symbol, v int) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, s symbol, v int) timestamp(ts)");
             execute("insert into tab values " +
                     "(0, 'a', 1), " +  // partition 'a' - 1 row
                     "(1, 'b', 1), (2, 'b', 2), " +  // partition 'b' - 2 rows
@@ -566,7 +566,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankWithNullsInOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, v int) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, v int) timestamp(ts)");
             execute("insert into tab values (0, null), (1, 1), (2, null), (3, 2)");
             // NULLs come FIRST in ASC order (QuestDB default is NULLS FIRST)
             // Order by v: null, null, 1, 2
@@ -591,7 +591,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankWithNullsInPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, s symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, s symbol) timestamp(ts)");
             execute("insert into tab values (0, null), (1, 'a'), (2, null), (3, 'a'), (4, null)");
             // Partition null: 3 rows at ts=0,2,4
             // Partition 'a': 2 rows at ts=1,3
@@ -615,7 +615,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankWithOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, i long, s symbol) timestamp(ts)");
             execute("insert into tab select (x/4)::timestamp, x/2, 'k' || (x%2) ::symbol from long_sequence(12)");
 
             // percent_rank() over (order by xxx) - 12 total rows
@@ -653,7 +653,7 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
     @Test
     public void testPercentRankWithPartitionByAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp NOT NULL, i long, s symbol) timestamp(ts)");
             execute("insert into tab select (x/4)::timestamp, x/2, 'k' || (x%2) ::symbol from long_sequence(12)");
 
             // percent_rank() over (partition by xxx order by xxx)

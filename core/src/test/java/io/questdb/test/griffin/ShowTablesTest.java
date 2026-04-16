@@ -53,7 +53,7 @@ public class ShowTablesTest extends AbstractCairoTest {
         // returned stale table IDs from cached plans after DROP TABLE + CREATE TABLE operations.
 
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
+            execute("create table x (ts timestamp NOT NULL) timestamp(ts) partition by DAY");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery compile = compiler.compile("tables()", sqlExecutionContext);
@@ -78,7 +78,7 @@ public class ShowTablesTest extends AbstractCairoTest {
 
                     // recreate the same table again
                     execute("drop table x");
-                    execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
+                    execute("create table x (ts timestamp NOT NULL) timestamp(ts) partition by DAY");
                     drainWalQueue();
 
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
@@ -321,7 +321,7 @@ public class ShowTablesTest extends AbstractCairoTest {
     @Test
     public void testTables() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table balances (ts timestamp, cust_id int, ccy symbol, balance double) timestamp(ts) partition by day wal");
+            execute("create table balances (ts timestamp NOT NULL, cust_id int, ccy symbol, balance double) timestamp(ts) partition by day wal");
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
             execute("create view balances_view as (select ts, max(balance) from balances sample by 1h)");
             drainWalAndViewQueues();

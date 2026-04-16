@@ -2687,7 +2687,7 @@ public class TableWriterTest extends AbstractCairoTest {
     @Test
     public void testShouldThrowExceptionWhenTxnLogIsCorrupted() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table product (ts TIMESTAMP, i INT) timestamp(ts) partition by day wal;");
+            execute("create table product (ts TIMESTAMP NOT NULL, i INT) timestamp(ts) partition by day wal;");
             drainWalQueue();
             TableToken token = engine.getTableTokenIfExists("product");
             engine.releaseAllWriters();

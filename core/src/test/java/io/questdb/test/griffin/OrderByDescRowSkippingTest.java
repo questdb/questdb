@@ -901,7 +901,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
     @Test
     public void testSkipOverEmptyTableWith1EmptyPartitionReturnsNoRows() throws Exception {
         assertMemoryLeak(() -> {
-            runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by none;");
+            runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP NOT NULL) timestamp(created_on) partition by none;");
 
             try (TableWriter writer = getWriter("trips")) {
                 TableWriter.Row row = writer.newRow(0L);
@@ -934,7 +934,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
     @Test
     public void testSkipOverEmptyTableWithNoPartitionsReturnsNoRows() throws Exception {
         assertMemoryLeak(() -> {
-            runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;");
+            runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP NOT NULL) timestamp(created_on) partition by day;");
 
             try (
                     TableReader reader = getReader("trips");
@@ -974,12 +974,12 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
     }
 
     private void createEmptyTable() throws Exception {
-        runQueries("CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts);");
+        runQueries("CREATE TABLE tab(l long, ts TIMESTAMP NOT NULL) timestamp(ts);");
     }
 
     private void prepare2partitionsTable() throws Exception {
         runQueries(
-                "CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
+                "CREATE TABLE tab(l long, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day;",
                 "insert into tab " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 17280000000) " +
@@ -1015,7 +1015,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
     // creates test table in descending and then ascending order 10,9,..,1, 1,2,..,10
     private void prepareNoDesignatedTsTableWithDuplicates() throws Exception {
         runQueries(
-                "CREATE TABLE tab(l long, ts TIMESTAMP);",
+                "CREATE TABLE tab(l long, ts TIMESTAMP NOT NULL);",
                 "insert into tab " +
                         "  select 11-x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:10', 'yyyy-MM-ddTHH:mm:ss'), -1000000) " +
@@ -1029,7 +1029,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
 
     private void prepareNonDesignatedTsTable() throws Exception {
         runQueries(
-                "CREATE TABLE tab(l long, ts TIMESTAMP);",
+                "CREATE TABLE tab(l long, ts TIMESTAMP NOT NULL);",
                 "insert into tab " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
@@ -1039,7 +1039,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
 
     private void prepareNormalTable() throws Exception {
         runQueries(
-                "CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts);",
+                "CREATE TABLE tab(l long, ts TIMESTAMP NOT NULL) timestamp(ts);",
                 "insert into tab " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
@@ -1049,7 +1049,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
 
     private void preparePartitionPerRowTable() throws Exception {
         runQueries(
-                "CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
+                "CREATE TABLE tab(l long, ts TIMESTAMP NOT NULL) timestamp(ts) partition by day;",
                 "insert into tab " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
@@ -1059,7 +1059,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
 
     private void preparePartitionPerRowTableWithLongNames() throws Exception {
         runQueries(
-                "CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;",
+                "CREATE TABLE trips(record_type long, created_on TIMESTAMP NOT NULL) timestamp(created_on) partition by day;",
                 "insert into trips " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +

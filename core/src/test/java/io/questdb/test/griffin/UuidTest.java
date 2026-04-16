@@ -525,7 +525,7 @@ public class UuidTest extends AbstractCairoTest {
     public void testInsertAddUuidColumnAndThenO3Insert() throws Exception {
         assertMemoryLeak(() -> {
             // testing O3 insert when uuid columnTop > 0
-            execute("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");
+            execute("create table x (ts timestamp NOT NULL, i int) timestamp(ts) partition by MONTH");
             execute("insert into x values ('2018-01-01', 1)");
             execute("insert into x values ('2018-01-03', 1)");
             execute("alter table x add column u uuid");
@@ -671,7 +671,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testLatestOn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, u uuid, i int) timestamp(ts) partition by DAY");
+            execute("create table x (ts timestamp NOT NULL, u uuid, i int) timestamp(ts) partition by DAY");
             execute("insert into x values ('2020-01-01T00:00:00.000000Z', '00000000-0000-0000-0000-000000000001', 0)");
             execute("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000001', 2)");
             execute("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000002', 0)");
@@ -817,7 +817,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testO3_differentPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, u UUID) timestamp(ts) partition by DAY");
+            execute("create table x (ts timestamp NOT NULL, u UUID) timestamp(ts) partition by DAY");
             execute("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             execute("insert into x values (to_timestamp('2010-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
 
@@ -833,7 +833,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testO3_samePartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp, u UUID) timestamp(ts) partition by YEAR");
+            execute("create table x (ts timestamp NOT NULL, u UUID) timestamp(ts) partition by YEAR");
             execute("insert into x values (to_timestamp('2018-06', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             execute("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
 
@@ -1298,7 +1298,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUpdateByUuid_partitionedTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts TIMESTAMP, i INT, u UUID) timestamp(ts) partition by DAY");
+            execute("create table x (ts TIMESTAMP NOT NULL, i INT, u UUID) timestamp(ts) partition by DAY");
             execute("insert into x values (now(), 0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             update("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
             assertSql(

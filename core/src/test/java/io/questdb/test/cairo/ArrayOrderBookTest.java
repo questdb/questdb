@@ -33,7 +33,7 @@ public class ArrayOrderBookTest extends AbstractCairoTest {
 
     @Before
     public void setUpThisTest() throws Exception {
-        execute("CREATE TABLE order_book (ts TIMESTAMP, asks DOUBLE[][], bids DOUBLE[][])" +
+        execute("CREATE TABLE order_book (ts TIMESTAMP NOT NULL, asks DOUBLE[][], bids DOUBLE[][])" +
                 "TIMESTAMP(ts) PARTITION BY HOUR");
         SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = true;
     }

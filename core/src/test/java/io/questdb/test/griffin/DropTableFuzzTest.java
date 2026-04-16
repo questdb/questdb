@@ -51,7 +51,7 @@ public class DropTableFuzzTest extends AbstractCairoTest {
     public void testDropTable() throws Exception {
         assertMemoryLeak(() -> {
             String dropDdl = "DROP TABLE " + rndCase();
-            execute("CREATE TABLE tango (ts TIMESTAMP)");
+            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery dropQuery = compiler.compile(dropDdl, sqlExecutionContext);
                 boolean tableRenamed = rnd.nextBoolean();
@@ -71,7 +71,7 @@ public class DropTableFuzzTest extends AbstractCairoTest {
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getMessage(), "[11] table does not exist");
                     }
-                    execute("CREATE TABLE tango (ts TIMESTAMP)");
+                    execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL)");
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     }
@@ -84,7 +84,7 @@ public class DropTableFuzzTest extends AbstractCairoTest {
     public void testDropTableDoesNotReturnErrorThatTableIsDropped() throws Exception {
         assertMemoryLeak(() -> {
             for (int c = 0; c < 100; c++) {
-                execute("CREATE TABLE tango (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) timestamp(ts) PARTITION BY DAY WAL");
 
                 final int dropThreads = 5;
                 CyclicBarrier dropsStart = new CyclicBarrier(dropThreads);
@@ -127,7 +127,7 @@ public class DropTableFuzzTest extends AbstractCairoTest {
     public void testDropTableIfExistsDoesNotFailWhenTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             for (int c = 0; c < 10; c++) {
-                execute("CREATE TABLE tango (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) timestamp(ts) PARTITION BY DAY WAL");
 
                 final int dropThreads = 5;
                 CyclicBarrier dropsStart = new CyclicBarrier(dropThreads);

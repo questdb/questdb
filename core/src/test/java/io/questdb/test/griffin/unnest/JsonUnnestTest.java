@@ -916,7 +916,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             val
                             1704067200000000
                             """,
-                    "SELECT u.ts::LONG val FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
+                    "SELECT u.ts::LONG val FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP NOT NULL)) u",
                     (String) null
             );
         });
@@ -1575,7 +1575,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
         // Reproduces the exact scenario from issue #6869: nested JSON array
         // extracted via json_extract, unnested, and filtered by an id field.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE events (ts TIMESTAMP, payload VARCHAR) TIMESTAMP(ts)");
+            execute("CREATE TABLE events (ts TIMESTAMP NOT NULL, payload VARCHAR) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO events VALUES (
                         '2026-01-01',
@@ -2210,7 +2210,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "i\tl\td\tb\ts\tts\n",
                     "SELECT u.i, u.l, u.d, u.b, u.s, u.ts FROM t, UNNEST(t.payload" +
-                            " COLUMNS(i INT, l LONG, d DOUBLE, b BOOLEAN, s VARCHAR, ts TIMESTAMP)) u",
+                            " COLUMNS(i INT, l LONG, d DOUBLE, b BOOLEAN, s VARCHAR, ts TIMESTAMP NOT NULL)) u",
                     (String) null
             );
         });
@@ -2491,7 +2491,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             3\t300\t3.5\tfalse\tworld\t2024-06-15T00:00:00.000000Z
                             """,
                     "SELECT u.i, u.l, u.d, u.b, u.s, u.ts FROM t, UNNEST(t.payload" +
-                            " COLUMNS(i INT, l LONG, d DOUBLE, b BOOLEAN, s VARCHAR, ts TIMESTAMP)) u",
+                            " COLUMNS(i INT, l LONG, d DOUBLE, b BOOLEAN, s VARCHAR, ts TIMESTAMP NOT NULL)) u",
                     (String) null
             );
         });
@@ -2564,7 +2564,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z
                             
                             """,
-                    "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
+                    "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP NOT NULL)) u",
                     (String) null
             );
         });
@@ -2581,7 +2581,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z
                             
                             """,
-                    "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
+                    "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP NOT NULL)) u",
                     (String) null
             );
         });
@@ -3719,7 +3719,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             2024-01-15T09:30:00.000000Z
                             """,
                     "SELECT u.ts FROM t, UNNEST("
-                            + "t.payload COLUMNS(ts TIMESTAMP)"
+                            + "t.payload COLUMNS(ts TIMESTAMP NOT NULL)"
                             + ") u",
                     (String) null
             );
@@ -3741,7 +3741,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                             2024-06-20T14:00:00.000000Z
                             """,
                     "SELECT u.ts FROM t, UNNEST("
-                            + "t.payload COLUMNS(ts TIMESTAMP)"
+                            + "t.payload COLUMNS(ts TIMESTAMP NOT NULL)"
                             + ") u",
                     (String) null
             );
@@ -3758,7 +3758,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('[{\"ts\":\"" + bigTs + "\"}]')");
             assertExceptionNoLeakCheck(
                     "SELECT u.ts FROM t, UNNEST("
-                            + "t.payload COLUMNS(ts TIMESTAMP)"
+                            + "t.payload COLUMNS(ts TIMESTAMP NOT NULL)"
                             + ") u",
                     0,
                     "JSON UNNEST: value exceeds maximum size of "
@@ -3776,7 +3776,7 @@ public class JsonUnnestTest extends AbstractCairoTest {
                     "\"}]";
             execute("INSERT INTO t VALUES ('" + sb + "')");
             assertException(
-                    "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP)) u",
+                    "SELECT u.ts FROM t, UNNEST(t.payload COLUMNS(ts TIMESTAMP NOT NULL)) u",
                     0,
                     "JSON UNNEST: value exceeds maximum size"
             );

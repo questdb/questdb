@@ -50,8 +50,8 @@ public final class TestUtilsTest extends AbstractCairoTest {
     @Test
     public void testOrderTolerantRecordComparison() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (x long, ts timestamp) timestamp(ts) partition by day");
-            execute("create table y (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("create table x (x long, ts timestamp NOT NULL) timestamp(ts) partition by day");
+            execute("create table y (x long, ts timestamp NOT NULL) timestamp(ts) partition by day");
 
             execute("insert into x values (1, '2022-02-24T00:00:01.000000Z')");
             execute("insert into x values (2, '2022-02-24T00:00:01.000000Z')");

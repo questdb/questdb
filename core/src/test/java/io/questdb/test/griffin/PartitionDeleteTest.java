@@ -39,7 +39,7 @@ public class PartitionDeleteTest extends AbstractCairoTest {
 
     @Test
     public void testBCSequence() throws SqlException, NumericException {
-        execute("create table events (sequence long, event binary, timestamp timestamp) timestamp(timestamp) partition by DAY");
+        execute("create table events (sequence long, event binary, timestamp timestamp NOT NULL) timestamp(timestamp) partition by DAY");
         engine.releaseAllWriters();
 
         try (TableWriter writer = newOffPoolWriter(configuration, "events")) {

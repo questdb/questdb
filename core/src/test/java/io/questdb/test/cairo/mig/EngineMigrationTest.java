@@ -164,8 +164,8 @@ public class EngineMigrationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-            execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-            execute("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create table abc (a int, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
+            execute("create table def (a int, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
             TableToken tokenAbc = engine.verifyTableName("abc");
             TableToken tokenDef = engine.verifyTableName("def");
 
@@ -203,7 +203,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
             // Run migration
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
 
-            execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create table abc (a int, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
             TableToken token = engine.verifyTableName("abc");
             CairoConfiguration config = engine.getConfiguration();
 
@@ -236,7 +236,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-            execute("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create table abc (a int, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
             TableToken token = engine.verifyTableName("abc");
 
             CairoConfiguration config = engine.getConfiguration();
@@ -1769,7 +1769,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
                 " from long_sequence(15)"
         );
 
-        execute("create table o3_0(a string, b binary, t timestamp) timestamp(t) partition by DAY");
+        execute("create table o3_0(a string, b binary, t timestamp NOT NULL) timestamp(t) partition by DAY");
 
         try (TableWriter w = getWriter("o3_0")) {
             TableWriter.Row r;

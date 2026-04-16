@@ -203,7 +203,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testKeyedFirstLast1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
+            execute("create table test (ts timestamp NOT NULL, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
             execute("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
                     "        ('2023-12-18T18:00:00', 'A', null, null)," +
                     "        ('2023-12-18T18:00:00', 'B', null, null)," +
@@ -241,7 +241,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testKeyedFirstLast2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
+            execute("create table test (ts timestamp NOT NULL, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
             execute("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
                     "        ('2023-12-18T18:00:00', 'A', 'hot_1', 150)," +
                     "        ('2023-12-18T18:00:00', 'B', 'cold_1', 3)," +
@@ -279,7 +279,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testVarcharColoredPointerDoesNotLeak() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp, vch varchar) timestamp(ts) partition by day");
+            execute("create table test (ts timestamp NOT NULL, vch varchar) timestamp(ts) partition by day");
             execute("insert into test (ts, vch) VALUES ('2023-12-17T18:00:00', 'first')");
             execute("insert into test (ts, vch) VALUES ('2023-12-18T18:00:00', 'last')");
 

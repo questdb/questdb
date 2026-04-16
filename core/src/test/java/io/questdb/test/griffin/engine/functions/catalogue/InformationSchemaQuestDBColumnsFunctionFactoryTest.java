@@ -58,7 +58,7 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
     @Test
     public void testRename() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
+            execute("create table test_rename ( ts timestamp NOT NULL, x int ) timestamp(ts) partition by day wal");
             drainWalQueue();
 
             assertSql(

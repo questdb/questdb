@@ -601,7 +601,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                             id int,
                             sym symbol,
                             price double,
-                            ts timestamp
+                            ts timestamp NOT NULL
                         ) timestamp(ts) partition by day bypass wal;
                         """
         );
@@ -627,7 +627,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                             id int,
                             sym symbol,
                         """ + columnsCreation + """
-                            ts timestamp
+                            ts timestamp NOT NULL
                         ) timestamp(ts) partition by day bypass wal;
                         """
         );
@@ -758,7 +758,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                             id int,
                             sym symbol,
                             price double,
-                            ts timestamp
+                            ts timestamp NOT NULL
                         ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL;
                         """
         );
@@ -782,7 +782,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                             "    id int,\n" +
                             "    sym symbol,\n" +
                             columnsCreation +
-                            "    ts timestamp\n" +
+                            "    ts timestamp NOT NULL\n" +
                             ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL;"
             );
 
