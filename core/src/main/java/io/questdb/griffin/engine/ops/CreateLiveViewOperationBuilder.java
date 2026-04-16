@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Mutable;
 
 public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
@@ -35,7 +35,7 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     private long lagValue;
     private char retentionUnit;
     private long retentionValue;
-    private QueryModel selectModel;
+    private IQueryModel selectModel;
     private String selectSql;
     private String viewName;
     private int viewNamePosition;
@@ -74,7 +74,7 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     }
 
     @Override
-    public QueryModel getQueryModel() {
+    public IQueryModel getQueryModel() {
         return selectModel;
     }
 
@@ -106,7 +106,7 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
         this.retentionValue = retentionValue;
     }
 
-    public void setSelectModel(QueryModel selectModel) {
+    public void setSelectModel(IQueryModel selectModel) {
         this.selectModel = selectModel;
     }
 
