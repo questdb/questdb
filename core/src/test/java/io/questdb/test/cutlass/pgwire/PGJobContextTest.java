@@ -1612,6 +1612,15 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBadInitMessageLengthTooLarge() throws Exception {
+        // msgLen=0x00200000 (2 MB) exceeds the 1 MB default receive buffer. The server
+        // must reject before pointer arithmetic can walk outside the buffer.
+        assertHexScript("""
+                >0020000000030000
+                <!!""");
+    }
+
+    @Test
     public void testBadInitMessageLengthTooSmall() throws Exception {
         // msgLen=4 is below the 8-byte protocol minimum (size + protocol fields).
         assertHexScript("""
@@ -1658,6 +1667,21 @@ if __name__ == "__main__":
                         >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
                         <520000000800000003
                         >70ffffffff
+                        <!!"""
+        );
+    }
+
+    @Test
+    public void testBadPasswordLengthTooLarge() throws Exception {
+        // PasswordMessage with msgLen 0x00200000 (2 MB) exceeds the 1 MB default receive buffer.
+        // Server must reject before computing msgLimit = recvBufReadPos + msgLen + 1.
+        assertHexScript(
+                """
+                        >0000000804d2162f
+                        <4e
+                        >0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >7000200000
                         <!!"""
         );
     }
@@ -2235,6 +2259,50 @@ if __name__ == "__main__":
             ResultSet rs4 = statement4.executeQuery("select * from anothertab");
             assertResultSet(expected, sink, rs4);
         });
+    }
+
+    @Test
+    public void testBindBinaryArrayDimensionSizeNegative() throws Exception {
+        // Regression for a negative dimension size (0xFFFFFFFF) in a binary array BIND value.
+        // Without the dimensionSize < 0 guard, a negative size would feed into flat-length
+        // multiplication and pointer arithmetic in setPtrAndCalculateStrides. The server must
+        // reject cleanly and remain usable.
+        //
+        // Wire sequence mirrors testBindBinaryArrayFlatLengthOverflow, except the Bind value
+        // carries dims=1 with dim[0]=-1.
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe42000000260000000100010001000000140000000100000000000002bdffffffff000000010000450000000900000000005300000004
+                        <450000005b433030303030004d61727261792064696d656e73696f6e2073697a652063616e6e6f74206265206e65676174697665205b64696d656e73696f6e496e6465783d302c2073697a653d2d315d00534552524f5200503100005a0000000549"""
+        );
+    }
+
+    @Test
+    public void testBindBinaryArrayFlatLengthOverflow() throws Exception {
+        // Regression for the [65537, 65537] flat-length overflow: without Math.multiplyExact
+        // flatViewLength wraps to 131_073 while shape claims ~4.3B elements, which later
+        // feeds into pointer arithmetic in setPtrAndCalculateStrides. The server must reject
+        // the BIND with "array size overflow" and keep the connection usable (RFQ afterwards).
+        //
+        // Wire sequence:
+        //   startup (admin/quest) -> cleartext auth -> password "quest"
+        //   Parse  "select $1 from long_sequence(1)" with parameter OID 1022 (float8[])
+        //   Bind   1 param, binary format, dims=2 [65537, 65537], component OID 701
+        //   Execute + Sync
+        // Expected response: ErrorResponse("array size overflow") + ReadyForQuery('I')
+        assertHexScript(
+                """
+                        >0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000
+                        <520000000800000003
+                        >700000000a717565737400
+                        <520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549
+                        >500000002b0073656c6563742024312066726f6d206c6f6e675f73657175656e6365283129000001000003fe420000002e00000001000100010000001c0000000200000000000002bd000100010000000100010001000000010000450000000900000000005300000004
+                        <450000002b433030303030004d61727261792073697a65206f766572666c6f7700534552524f5200503100005a0000000549"""
+        );
     }
 
     @Test
