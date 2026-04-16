@@ -348,21 +348,10 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     static class NthValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private final int n;
-        private double nthValue;
 
         public NthValueOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int n) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.n = n;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            // not used, two-pass function
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            return nthValue;
         }
 
         @Override
@@ -1393,22 +1382,6 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         public NthValueOverWholeResultSetFunction(Function arg, int n) {
             super(arg);
             this.n = n;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            if (!found) {
-                count++;
-                if (count == n) {
-                    value = arg.getDouble(record);
-                    found = true;
-                }
-            }
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            return value;
         }
 
         @Override
