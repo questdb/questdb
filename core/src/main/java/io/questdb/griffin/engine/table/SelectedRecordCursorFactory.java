@@ -58,6 +58,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     private final boolean crossedIndex;
     private final SelectedRecordCursor cursor;
     private SelectedPageFrameCursor pageFrameCursor;
+    private ObjList<SelectedRecordCursor> sharedCursors;
     private SelectedTimeFrameCursor timeFrameCursor;
 
     public SelectedRecordCursorFactory(RecordMetadata metadata, IntList columnCrossIndex, RecordCursorFactory base) {
@@ -147,6 +148,24 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (!crossedIndex) {
+            return base.getSharedCursor(executionContext, sharedId);
+        }
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        SelectedRecordCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            shared = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of(base.getSharedCursor(executionContext, sharedId));
+        return shared;
+    }
+
+    @Override
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
         if (baseCursor == null || !crossedIndex) {
@@ -198,6 +217,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean supportsSharedCursors() {
+        return base.supportsSharedCursors();
+    }
+
+    @Override
     public boolean supportsTimeFrameCursor() {
         return base.supportsTimeFrameCursor();
     }
@@ -226,6 +250,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     protected void _close() {
         base.close();
+        Misc.clear(sharedCursors);
     }
 
     // This wrapper handles column remapping for ConcurrentTimeFrameCursor when a

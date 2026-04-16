@@ -37,8 +37,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -219,7 +219,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
     public void validateAndUpdateMetadataFromModel(
             SqlExecutionContext sqlExecutionContext,
             FunctionFactoryCache functionFactoryCache,
-            QueryModel queryModel
+            IQueryModel queryModel
     ) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
