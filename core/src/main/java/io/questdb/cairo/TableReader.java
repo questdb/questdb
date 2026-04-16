@@ -329,32 +329,33 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
-        final BitmapIndexReader indexReader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
-        if (indexReader == null) {
-            return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
-        }
-
-        if (!indexReader.needsReopen(columnNameTxn, partitionTxn)) {
-            indexReader.reloadConditionally();
+        BitmapIndexReader indexReader = getBitmapIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader != null) {
+            if (
+                    !indexReader.isOpen()
+                            || indexReader.getColumnTxn() != columnNameTxn
+                            || indexReader.getPartitionTxn() != partitionTxn
+            ) {
+                int plen = path.size();
+                try {
+                    indexReader.of(
+                            configuration,
+                            pathGenNativePartition(partitionIndex, partitionTxn),
+                            metadata.getColumnName(columnIndex),
+                            columnNameTxn,
+                            partitionTxn,
+                            getColumnTop(columnBase, columnIndex),
+                            metadata
+                    );
+                } finally {
+                    path.trimTo(plen);
+                }
+            } else {
+                indexReader.reloadConditionally();
+            }
             return indexReader;
         }
-
-        final int plen = path.size();
-        try {
-            pathGenNativePartition(partitionIndex, partitionTxn);
-            indexReader.of(
-                    configuration,
-                    path,
-                    metadata.getColumnName(columnIndex),
-                    columnNameTxn,
-                    partitionTxn,
-                    getColumnTop(columnBase, columnIndex),
-                    metadata
-            );
-        } finally {
-            path.trimTo(plen);
-        }
-        return indexReader;
+        return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
     }
 
     public BitmapIndexReader getBitmapIndexReaderIfExists(int partitionIndex, int columnIndex, int direction) {

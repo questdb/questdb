@@ -4033,7 +4033,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Read sealTxn before removing .pk, then remove sealed .pv and sidecars
                             long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                                     ff, keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
-                            if (fromPk > 0) {
+                            if (fromPk >= 0) {
                                 sealTxn = fromPk;
                                 if (fromPk != columnNameTxn) {
                                     removeFileOrLog(ff, PostingIndexUtils.valueFileName(
@@ -4591,7 +4591,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (IndexType.isPosting(indexType)) {
                         long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                                 ff, keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
-                        if (fromPk > 0) linkSealTxn = fromPk;
+                        if (fromPk >= 0) {
+                            linkSealTxn = fromPk;
+                        }
                     }
                     if (
                             !linkFile(ff,
@@ -6446,7 +6448,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long valueTxn = PostingIndexUtils.readSealTxnFromKeyFile(
                 ff, keyFileName(IndexType.POSTING, path.trimTo(dstDirLen), columnName, columnNameTxn)
         );
-        if (valueTxn > 0 && valueTxn != columnNameTxn) {
+        if (valueTxn >= 0 && valueTxn != columnNameTxn) {
             linkFile(ff,
                     IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), columnName, columnNameTxn, valueTxn),
                     IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), columnName, columnNameTxn, valueTxn)

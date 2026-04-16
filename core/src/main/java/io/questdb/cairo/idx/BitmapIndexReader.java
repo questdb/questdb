@@ -102,12 +102,6 @@ public interface BitmapIndexReader extends Closeable {
 
     boolean isOpen();
 
-    default boolean needsReopen(long columnNameTxn, long partitionTxn) {
-        return !isOpen()
-                || getColumnTxn() != columnNameTxn
-                || getPartitionTxn() != partitionTxn;
-    }
-
     void of(
             CairoConfiguration configuration,
             @Transient Path path,

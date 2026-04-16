@@ -3303,7 +3303,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             return columnNameTxn;
         }
         long sealTxn = PostingIndexUtils.readSealTxnFromKeyFd(ff, keyFd);
-        return sealTxn >= 0 ? sealTxn : columnNameTxn;
+        return sealTxn >= 0 ? sealTxn : 0;
     }
 
     @Override
