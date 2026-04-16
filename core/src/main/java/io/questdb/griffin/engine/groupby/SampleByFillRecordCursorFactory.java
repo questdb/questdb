@@ -651,9 +651,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 case ColumnType.DECIMAL16 -> record.getDecimal16(col);
                 case ColumnType.DECIMAL32 -> record.getDecimal32(col);
                 case ColumnType.DECIMAL64 -> record.getDecimal64(col);
+                // Defensive: the optimizer gate rejects unsupported PREV source types
+                // before reaching here and routes those queries to the legacy path.
                 default ->
-                        // Defensive: the optimizer gate rejects unsupported PREV source types
-                        // before reaching here and routes those queries to the legacy path.
                         throw new UnsupportedOperationException("unsupported column type for PREV fill: " + ColumnType.nameOf(type));
             };
         }
