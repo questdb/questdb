@@ -781,7 +781,7 @@ mod tests {
             columns: vec![col3],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition1, false).unwrap();
+        let (schema, additional_meta) = to_parquet_schema(&partition1, false, -1).unwrap();
         let encodings = to_encodings(&partition1);
 
         let mut chunked = ParquetWriter::new(&mut buf)
@@ -2479,6 +2479,120 @@ mod tests {
     }
 
     #[test]
+    fn test_multi_partition_dict_fallback_non_symbol() {
+        // When writing multiple partitions, non-Symbol columns configured with
+        // RleDictionary should fall back to their default encoding (Plain for Int).
+        // This covers the multi-partition dict fallback in file.rs (lines 487-491).
+        use crate::parquet_write::schema::{to_encodings, to_parquet_schema};
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+        let data1: Vec<i32> = vec![1, 2, 3];
+        let data2: Vec<i32> = vec![4, 5, 6];
+
+        let col1 = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            data1.len(),
+            data1.as_ptr() as *const u8,
+            data1.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let col2 = Column::from_raw_data(
+            0,
+            "val",
+            ColumnTypeTag::Int.into_type().code(),
+            0,
+            data2.len(),
+            data2.as_ptr() as *const u8,
+            data2.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            rle_dict_config(),
+        )
+        .unwrap();
+
+        let partition1 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col1],
+        };
+        let partition2 = Partition {
+            table: "test_table".to_string(),
+            columns: vec![col2],
+        };
+
+        let (schema, additional_meta) = to_parquet_schema(&partition1, false, -1).unwrap();
+        let encodings = to_encodings(&partition1);
+        // Encoding should be RleDictionary since we requested it
+        assert_eq!(encodings[0], parquet2::encoding::Encoding::RleDictionary);
+
+        let mut chunked = ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .chunked(schema, encodings)
+            .unwrap();
+
+        let partitions: Vec<&Partition> = vec![&partition1, &partition2];
+        chunked
+            .write_row_group_from_partitions(&partitions, 0, data2.len())
+            .unwrap();
+        chunked.finish(additional_meta).unwrap();
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        // Verify the encoding fell back to Plain (not RLE_DICTIONARY)
+        let metadata = parquet2::read::read_metadata_with_size(
+            &mut std::io::Cursor::new(bytes.to_byte_slice()),
+            bytes.len() as u64,
+        )
+        .expect("read metadata");
+
+        let col_encoding = metadata.row_groups[0].columns()[0].column_encoding();
+        assert!(
+            col_encoding.iter().any(|e| e.0 == 0), // PLAIN = 0
+            "expected Plain encoding after fallback, got: {:?}",
+            col_encoding
+        );
+        assert!(
+            !col_encoding.iter().any(|e| e.0 == 8), // RLE_DICTIONARY = 8
+            "should not use RLE_DICTIONARY for non-symbol multi-partition, got: {:?}",
+            col_encoding
+        );
+
+        // Verify data correctness
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        let expected: Vec<Option<i32>> = vec![Some(1), Some(2), Some(3), Some(4), Some(5), Some(6)];
+        for batch in parquet_reader.flatten() {
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .expect("downcast");
+            let collected: Vec<_> = arr.iter().collect();
+            assert_eq!(collected, expected);
+        }
+    }
+
+    #[test]
     fn test_per_column_compression_multi_partition() {
         // Write a multi-partition file with per-column compression overrides.
         // Covers column_compression() in multi-partition context (file.rs line 481-482).
@@ -2575,7 +2689,7 @@ mod tests {
             columns: vec![col1_b, col2_b],
         };
 
-        let (schema, additional_meta) = to_parquet_schema(&partition_a, false).unwrap();
+        let (schema, additional_meta) = to_parquet_schema(&partition_a, false, -1).unwrap();
         let encodings = to_encodings(&partition_a);
         let compressions = to_compressions(&partition_a);
 
@@ -4385,7 +4499,7 @@ mod tests {
         end: usize,
     ) -> Bytes {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let (schema, additional_meta) = schema::to_parquet_schema(p1, false).expect("schema");
+        let (schema, additional_meta) = schema::to_parquet_schema(p1, false, -1).expect("schema");
         let encodings = schema::to_encodings(p1);
         assert_eq!(encodings[0], parquet2::encoding::Encoding::RleDictionary);
         let mut chunked = ParquetWriter::new(&mut buf)
@@ -4567,7 +4681,7 @@ mod tests {
         let single_partition = Partition { table: "t".to_string(), columns: vec![single_col] };
         let mut single_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let (single_schema, single_meta) =
-            schema::to_parquet_schema(&single_partition, false).expect("schema");
+            schema::to_parquet_schema(&single_partition, false, -1).expect("schema");
         let single_encodings = schema::to_encodings(&single_partition);
         let mut single_chunked = ParquetWriter::new(&mut single_buf)
             .with_statistics(true)
@@ -4594,7 +4708,7 @@ mod tests {
         let part_refs: Vec<&Partition> = part_objs.iter().collect();
         let mut multi_buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let (multi_schema, multi_meta) =
-            schema::to_parquet_schema(&part_objs[0], false).expect("schema");
+            schema::to_parquet_schema(&part_objs[0], false, -1).expect("schema");
         let multi_encodings = schema::to_encodings(&part_objs[0]);
         let mut multi_chunked = ParquetWriter::new(&mut multi_buf)
             .with_statistics(true)
