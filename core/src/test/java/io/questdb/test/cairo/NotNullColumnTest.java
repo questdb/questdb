@@ -169,24 +169,25 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testCastNullConstantToStringFoldsToNull() throws Exception {
         assertMemoryLeak(() -> {
-            // Without the isNullConstant() guard in each cast factory, the constant-fold
-            // branch formats INT_NULL / LONG_NULL / NaN / Long.MIN_VALUE via Numbers.append,
-            // which short-circuits to the 4-char text "null", producing a StrConstant("null")
-            // that is not semantically null. Confirm the guard folds to StrConstant.NULL /
-            // VarcharConstant.NULL so downstream IS NULL / COALESCE / output layers still
-            // see a real null.
+            // Without the isNullConstant() guard, the constant-fold branch formats
+            // INT_NULL / LONG_NULL / NaN / MIN_VALUE through Numbers.append, which
+            // writes the 4-char text "null" and yields a StrConstant("null") — not a
+            // real null. The guard folds to StrConstant.NULL / VarcharConstant.NULL so
+            // IS NULL / COALESCE / output layers keep working downstream.
             assertSql(
                     """
                             i\tl\td\tf\tdate\tts\tip
                             \t\t\t\t\t\t
                             """,
-                    "SELECT cast(cast(null as int) as string) i," +
-                            " cast(cast(null as long) as string) l," +
-                            " cast(cast(null as double) as string) d," +
-                            " cast(cast(null as float) as string) f," +
-                            " cast(cast(null as date) as string) date," +
-                            " cast(cast(null as timestamp) as string) ts," +
-                            " cast(cast(null as ipv4) as string) ip"
+                    """
+                            SELECT cast(cast(null as int) as string) i,
+                                   cast(cast(null as long) as string) l,
+                                   cast(cast(null as double) as string) d,
+                                   cast(cast(null as float) as string) f,
+                                   cast(cast(null as date) as string) date,
+                                   cast(cast(null as timestamp) as string) ts,
+                                   cast(cast(null as ipv4) as string) ip
+                            """
             );
 
             assertSql(
@@ -194,13 +195,15 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             i\tl\td\tf\tdate\tts\tip
                             \t\t\t\t\t\t
                             """,
-                    "SELECT cast(cast(null as int) as varchar) i," +
-                            " cast(cast(null as long) as varchar) l," +
-                            " cast(cast(null as double) as varchar) d," +
-                            " cast(cast(null as float) as varchar) f," +
-                            " cast(cast(null as date) as varchar) date," +
-                            " cast(cast(null as timestamp) as varchar) ts," +
-                            " cast(cast(null as ipv4) as varchar) ip"
+                    """
+                            SELECT cast(cast(null as int) as varchar) i,
+                                   cast(cast(null as long) as varchar) l,
+                                   cast(cast(null as double) as varchar) d,
+                                   cast(cast(null as float) as varchar) f,
+                                   cast(cast(null as date) as varchar) date,
+                                   cast(cast(null as timestamp) as varchar) ts,
+                                   cast(cast(null as ipv4) as varchar) ip
+                            """
             );
 
             // IS NULL against the folded constant is TRUE (would be FALSE with a StrConstant("null")).

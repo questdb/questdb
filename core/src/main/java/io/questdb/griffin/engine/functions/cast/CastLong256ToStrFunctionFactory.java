@@ -28,11 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -60,18 +57,12 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
         return new Func(arg);
     }
 
-    public static class Func extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class Func extends AbstractCastToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public Func(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -85,30 +76,14 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             return SqlUtil.implicitCastLong256AsStr(arg.getLong256A(rec), sinkB) ? sinkB : null;
         }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(arg).val("::string");
-        }
     }
 
-    public static class FuncNotNull extends StrFunction implements UnaryFunction {
-        private final Function arg;
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public FuncNotNull(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+            super(arg);
         }
 
         @Override
@@ -123,21 +98,6 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
             sinkB.clear();
             Numbers.appendLong256(arg.getLong256A(rec), sinkB);
             return sinkB;
-        }
-
-        @Override
-        public boolean isNotNull() {
-            return true;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(arg).val("::string");
         }
     }
 }
