@@ -28,23 +28,43 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 public interface ParquetColumnChunkResolver {
-    ParquetColumnChunkResolver INSTANCE = null;
 
     /**
-     * Release the column chunks.
+     * Release the column chunks previously returned by {@link #resolve}.
+     * The list is owned by the decoder; the resolver must only release the
+     * underlying native buffers it allocated.
      */
     void release(DirectLongList chunks, int columnsSize);
 
     /**
-     * Resolves the required column chunks and updates columnChunks with the address and size of column chunks.
+     * Fetches the requested column-chunk byte ranges into native buffers
+     * and writes their addresses and sizes into {@code chunksOut}.
+     * <p>
+     * The decoder reads {@code _pm} to determine byte ranges and passes them
+     * in via {@code byteRanges}. The resolver only needs to fetch the bytes
+     * (typically from object storage) and report buffer addresses.
+     * <p>
+     * Each chunk buffer must contain exactly the column-chunk bytes
+     * starting at {@code byteRanges[2*i]} of length {@code byteRanges[2*i+1]}
+     * laid down at buffer offset 0. The output buffer's index in
+     * {@code chunksOut} matches the byte range's index in {@code byteRanges}.
      *
-     * @param partitionPath   path relative to the database dir of the partition using {@link io.questdb.cairo.TableUtils#setPathForParquetPartition}
-     * @param parquetMetaAddr pointer to an mmaped _pm file
-     * @param parquetMetaSize size of the _pm file
-     * @param columns         [parquet_column_index, column_type] pairs
-     * @param columnsSize     number of pairs in columns
-     * @param rowGroupIndex   index of the row group to resolve
-     * @param chunksOut       [address, size] pair list address returned by {@link DirectLongList#getAddress()} with a pre-allocated list of 2*columnsSize elements
+     * @param partitionPath path relative to the database dir of the partition using {@link io.questdb.cairo.TableUtils#setPathForParquetPartition}
+     * @param byteRanges    pre-filled list of {@code 2 * columnsSize} longs as {@code [byte_offset, byte_length]} pairs
+     * @param columnsSize   number of byte-range / chunk-out pairs
+     * @param chunksOut     pre-allocated list with {@code 2 * columnsSize} slots for {@code [address, size]} pairs
      */
-    void resolve(DirectUtf8Sequence partitionPath, long parquetMetaAddr, long parquetMetaSize, long columns, int columnsSize, int rowGroupIndex, DirectLongList chunksOut);
+    void resolve(DirectUtf8Sequence partitionPath, DirectLongList byteRanges, int columnsSize, DirectLongList chunksOut);
+
+    /**
+     * Holds the process-wide resolver reference. Null in open-source builds;
+     * enterprise entry points set it at startup. Kept in a separate class
+     * because interface fields are implicitly {@code static final}.
+     */
+    final class Holder {
+        public static volatile ParquetColumnChunkResolver INSTANCE;
+
+        private Holder() {
+        }
+    }
 }

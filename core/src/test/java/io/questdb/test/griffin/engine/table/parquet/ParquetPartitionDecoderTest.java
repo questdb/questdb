@@ -24,13 +24,21 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ParquetMetaFileWriter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.griffin.engine.table.parquet.ParquetColumnChunkResolver;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -50,9 +58,24 @@ import org.junit.Test;
  */
 public class ParquetPartitionDecoderTest extends AbstractCairoTest {
 
+    private static final TableToken FAKE_TABLE = new TableToken(
+            "test_table",
+            "test_table~1",
+            null,
+            1,
+            false,
+            false,
+            false
+    );
+
     @BeforeClass
     public static void loadNativeLib() {
         Os.init();
+    }
+
+    @After
+    public void clearColdResolver() {
+        ParquetColumnChunkResolver.Holder.INSTANCE = null;
     }
 
     @Test
@@ -147,6 +170,171 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDecodeRowGroupColdPathInvokesResolver() throws Exception {
+        // Confirms the cold-path branch builds a partition path from the
+        // table/timestampType/partitionBy/timestamp/nameTxn fields stored on
+        // the decoder and hands it to the registered resolver.
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                CapturingResolver resolver = new CapturingResolver();
+                ParquetColumnChunkResolver.Holder.INSTANCE = resolver;
+                ParquetPartitionDecoder decoder = new ParquetPartitionDecoder();
+                try (
+                        RowGroupBuffers bufs = new RowGroupBuffers(MemoryTag.NATIVE_DEFAULT);
+                        DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    columns.add(0); // parquet column index
+                    columns.add(8); // ColumnType.TIMESTAMP_MICRO
+
+                    decoder.of(
+                            file.dataPtr,
+                            file.dataLen,
+                            0L, // parquetAddr = 0 -> cold path
+                            0L,
+                            FAKE_TABLE,
+                            PartitionBy.DAY,
+                            8, // ColumnType.TIMESTAMP_MICRO
+                            1_700_000_000_000_000L,
+                            42L,
+                            MemoryTag.NATIVE_DEFAULT
+                    );
+                    try {
+                        decoder.decodeRowGroup(bufs, columns, 0, 0, 100);
+                        Assert.fail("expected resolver sentinel exception");
+                    } catch (RuntimeException e) {
+                        Assert.assertTrue(
+                                "expected resolver sentinel, got: " + e.getMessage(),
+                                e.getMessage() != null && e.getMessage().contains("RESOLVER_REACHED")
+                        );
+                    }
+                    Assert.assertEquals(1, resolver.calls);
+                    Assert.assertEquals(1, resolver.lastColumnsSize);
+                    Assert.assertNotNull(resolver.lastPartitionPath);
+                    Assert.assertTrue(
+                            "partition path must include table dir, was: " + resolver.lastPartitionPath,
+                            resolver.lastPartitionPath.contains("test_table~")
+                    );
+                } finally {
+                    decoder.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDecodeRowGroupColdPathWithoutResolverThrows() throws Exception {
+        // No resolver registered + parquetAddr=0 must fail loudly, not NPE.
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                ParquetPartitionDecoder decoder = new ParquetPartitionDecoder();
+                try (
+                        RowGroupBuffers bufs = new RowGroupBuffers(MemoryTag.NATIVE_DEFAULT);
+                        DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    columns.add(0);
+                    columns.add(8);
+
+                    decoder.of(
+                            file.dataPtr, file.dataLen,
+                            0L, 0L,
+                            FAKE_TABLE, PartitionBy.DAY, 8,
+                            1_700_000_000_000_000L, 42L,
+                            MemoryTag.NATIVE_DEFAULT
+                    );
+                    try {
+                        decoder.decodeRowGroup(bufs, columns, 0, 0, 100);
+                        Assert.fail("expected CairoException about missing resolver");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(
+                                "unexpected message: " + e.getMessage(),
+                                e.getMessage().contains("no column chunk resolver configured")
+                        );
+                    }
+                } finally {
+                    decoder.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFindRowGroupByTimestampColdRequiresInlineStats() throws Exception {
+        // The cold-path finder errors when timestamp inline stats are
+        // unavailable (build_ts_pm equivalent: no min/max set).
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                ParquetPartitionDecoder decoder = new ParquetPartitionDecoder();
+                try {
+                    decoder.of(
+                            file.dataPtr, file.dataLen,
+                            0L, 0L,
+                            FAKE_TABLE, PartitionBy.DAY, 8,
+                            1_700_000_000_000_000L, 42L,
+                            MemoryTag.NATIVE_DEFAULT
+                    );
+                    try {
+                        decoder.findRowGroupByTimestamp(0L, 0L, 100L, 0);
+                        Assert.fail("expected error about missing inline timestamp stats");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(
+                                "unexpected message: " + e.getMessage(),
+                                e.getMessage().contains("inline timestamp stats required")
+                        );
+                    }
+                } finally {
+                    decoder.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testShallowCopyCarriesColdPathFields() throws Exception {
+        // Regression: of(other) must copy table/partitionBy/timestampType/
+        // timestamp/nameTxn so the copy can build the partition path on the
+        // cold path. Without the copy, buildColdPartitionPath() NPEs.
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                CapturingResolver resolver = new CapturingResolver();
+                ParquetColumnChunkResolver.Holder.INSTANCE = resolver;
+                ParquetPartitionDecoder source = new ParquetPartitionDecoder();
+                ParquetPartitionDecoder copy = new ParquetPartitionDecoder();
+                try (
+                        RowGroupBuffers bufs = new RowGroupBuffers(MemoryTag.NATIVE_DEFAULT);
+                        DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    columns.add(0);
+                    columns.add(8);
+
+                    source.of(
+                            file.dataPtr, file.dataLen,
+                            0L, 0L,
+                            FAKE_TABLE, PartitionBy.DAY, 8,
+                            1_700_000_000_000_000L, 42L,
+                            MemoryTag.NATIVE_DEFAULT
+                    );
+                    copy.of(source);
+
+                    try {
+                        copy.decodeRowGroup(bufs, columns, 0, 0, 100);
+                        Assert.fail("expected resolver sentinel");
+                    } catch (RuntimeException e) {
+                        Assert.assertTrue(
+                                "expected resolver sentinel, got: " + e.getMessage(),
+                                e.getMessage() != null && e.getMessage().contains("RESOLVER_REACHED")
+                        );
+                    }
+                    Assert.assertEquals(1, resolver.calls);
+                    Assert.assertNotNull(resolver.lastPartitionPath);
+                } finally {
+                    copy.close();
+                    source.close();
+                }
+            }
+        });
+    }
+
     /**
      * Builds a `_pm` byte buffer with the given column count and a single
      * row group of size {@code numRows}, then wraps it in a {@link ParquetMetaTestFile}.
@@ -167,6 +355,43 @@ public class ParquetPartitionDecoderTest extends AbstractCairoTest {
             return new ParquetMetaTestFile(resultPtr);
         } finally {
             ParquetMetaFileWriter.destroyWriter(writerPtr);
+        }
+    }
+
+    /**
+     * Test resolver that records the partition path and column count from
+     * the call, then aborts the decode by throwing a sentinel
+     * {@link CairoException}. The exception is intentional: it short-circuits
+     * the decode before any chunk pointers are dereferenced (the captured
+     * fields aren't real backing storage).
+     */
+    private static final class CapturingResolver implements ParquetColumnChunkResolver {
+        int calls;
+        long lastFirstByteLength = -1;
+        long lastFirstByteOffset = -1;
+        int lastColumnsSize;
+        String lastPartitionPath;
+
+        @Override
+        public void release(DirectLongList chunks, int columnsSize) {
+            // No-op: the resolver always throws before allocating buffers.
+        }
+
+        @Override
+        public void resolve(
+                DirectUtf8Sequence partitionPath,
+                DirectLongList byteRanges,
+                int columnsSize,
+                DirectLongList chunksOut
+        ) {
+            calls++;
+            lastColumnsSize = columnsSize;
+            lastPartitionPath = partitionPath.toString();
+            if (columnsSize > 0) {
+                lastFirstByteOffset = byteRanges.get(0);
+                lastFirstByteLength = byteRanges.get(1);
+            }
+            throw CairoException.critical(0).put("RESOLVER_REACHED");
         }
     }
 
