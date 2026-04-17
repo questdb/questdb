@@ -5,9 +5,13 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
+
+import static org.junit.Assert.fail;
 
 public class SampleByFillTest extends AbstractCairoTest {
 
@@ -792,6 +796,65 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevAcceptPrevToConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(b), NULL) and FILL(PREV(b), 42.0): the source `b` is
+            // FILL_CONSTANT at codegen (fillModes[b] = FILL_CONSTANT = -1). The
+            // D-07 chain rule rejects only when fillModes[src] >= 0, so a source
+            // column that resolves to FILL_CONSTANT is accepted. Both NULL and
+            // a literal constant are tested in a single flow.
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
+            // PREV(b) with b = NULL at gap: a carries forward from b's prev (10.0).
+            assertSql(
+                    """
+                            ts\ta\tb
+                            2024-01-01T00:00:00.000000Z\t1.0\t10.0
+                            2024-01-01T01:00:00.000000Z\t10.0\tnull
+                            2024-01-01T02:00:00.000000Z\t3.0\t30.0
+                            """,
+                    "SELECT ts, sum(a) AS a, sum(b) AS b FROM t SAMPLE BY 1h FILL(PREV(b), NULL) ALIGN TO CALENDAR"
+            );
+            // PREV(b) with b = 42.0 at gap: a carries forward from b's prev (10.0),
+            // b's own fill uses the literal 42.
+            assertSql(
+                    """
+                            ts\ta\tb
+                            2024-01-01T00:00:00.000000Z\t1.0\t10.0
+                            2024-01-01T01:00:00.000000Z\t10.0\t42.0
+                            2024-01-01T02:00:00.000000Z\t3.0\t30.0
+                            """,
+                    "SELECT ts, sum(a) AS a, sum(b) AS b FROM t SAMPLE BY 1h FILL(PREV(b), 42.0) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevAcceptPrevToSelfPrev() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(b), PREV): a references b, and b is bare PREV
+            // (FILL_PREV_SELF, internal value -2). The D-07 chain rule rejects
+            // only when fillModes[src] >= 0, so FILL_PREV_SELF is accepted.
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
+            // At gap 01:00: b carries self-prev (10.0); a reads from b's snapshot (10.0).
+            assertSql(
+                    """
+                            ts\ta\tb
+                            2024-01-01T00:00:00.000000Z\t1.0\t10.0
+                            2024-01-01T01:00:00.000000Z\t10.0\t10.0
+                            2024-01-01T02:00:00.000000Z\t3.0\t30.0
+                            """,
+                    "SELECT ts, sum(a) AS a, sum(b) AS b FROM t SAMPLE BY 1h FILL(PREV(b), PREV) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
     public void testFillPrevAllNumericTypes() throws Exception {
         assertMemoryLeak(() -> {
             // FLOAT, CHAR and DECIMAL8/16/32/64 aggregates with FILL(PREV)
@@ -1486,6 +1549,192 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     "SELECT ts, k, sum(val) AS s, last(mirror) AS m " +
                             "FROM x SAMPLE BY 1h FILL(PREV, PREV(k)) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevRejectBindVar() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV($1)) - bind variable is not a LITERAL column name.
+            // D-08 rejects at compile time with "PREV argument must be a single
+            // column name" at fillExpr.position (the `P` of PREV).
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "v");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, avg(v) FROM t SAMPLE BY 1h FILL(PREV($1)) ALIGN TO CALENDAR",
+                    43,
+                    "PREV argument must be a single column name"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevRejectFuncArg() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(abs(a))) - PREV argument is a FUNCTION, not a LITERAL.
+            // D-08 rejects with "PREV argument must be a single column name"
+            // at fillExpr.position. Uses DOUBLE aggregate so the query reaches
+            // the fast-path generateFill (STRING args would retro-fallback to
+            // legacy before the grammar check fires).
+            execute("CREATE TABLE t (a DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, sum(a) FROM t SAMPLE BY 1h FILL(PREV(abs(a))) ALIGN TO CALENDAR",
+                    43,
+                    "PREV argument must be a single column name"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevRejectMultiArg() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(a, b)) - paramCount > 1. D-08 rejects with
+            // "PREV argument must be a single column name" at fillExpr.position.
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, sum(a) a, sum(b) b FROM t SAMPLE BY 1h FILL(PREV(a, b)) ALIGN TO CALENDAR",
+                    55,
+                    "PREV argument must be a single column name"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevRejectMutualChain() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(b), PREV(a)) - mutual cycle: a -> b and b -> a. D-07
+            // rejects because fillModes[a] = b (>=0) and fillModes[b] = a (>=0).
+            // Error at fillValuesExprs[0].position (the `P` of the first PREV).
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30.0, '2024-01-01T02:00:00.000000Z')");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, sum(a) a, sum(b) b FROM t SAMPLE BY 1h FILL(PREV(b), PREV(a)) ALIGN TO CALENDAR",
+                    55,
+                    "FILL(PREV) chains are not supported"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevRejectNoArg() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV()) - zero-argument function call. The parser may accept
+            // PREV() or reject it before reaching generateFill. This test
+            // documents the observed behavior: either the parser rejects PREV()
+            // as malformed syntax, or generateFill's D-08 fires. Both produce
+            // an error with a useful message.
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            try {
+                assertSql("", "SELECT ts, avg(v) FROM t SAMPLE BY 1h FILL(PREV()) ALIGN TO CALENDAR");
+                fail("expected SqlException for FILL(PREV())");
+            } catch (SqlException e) {
+                // Any error surfacing from the parser or the grammar rule is
+                // acceptable; the key guarantee is that FILL(PREV()) does not
+                // silently pass through as if it were bare FILL(PREV).
+                Assert.assertTrue(
+                        "expected error message to indicate malformed PREV, got: " + e.getMessage(),
+                        e.getMessage().contains("PREV") || e.getMessage().contains("argument")
+                                || e.getMessage().contains("empty") || e.getMessage().contains("found")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFillPrevRejectThreeHopChain() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(b), PREV(c), PREV): a->b, b->c, c->self(FILL_PREV_SELF).
+            // For column a: fillModes[a] = b (>=0) AND fillModes[b] = c (>=0) ->
+            // D-07 chain rejection fires. Column c is self-prev (-2), which
+            // breaks the chain for column b's rule check but not for column a.
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, 10.0, 100.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30.0, 300.0, '2024-01-01T02:00:00.000000Z')");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, sum(a) a, sum(b) b, sum(c) c FROM t SAMPLE BY 1h FILL(PREV(b), PREV(c), PREV) ALIGN TO CALENDAR",
+                    65,
+                    "FILL(PREV) chains are not supported"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevRejectTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(ts)) where ts is the designated timestamp column.
+            // D-05 rejects at compile time with
+            // "PREV cannot reference the designated timestamp column"
+            // at fillExpr.rhs.position (the `t` of ts inside PREV(ts)).
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, avg(v) FROM t SAMPLE BY 1h FILL(PREV(ts)) ALIGN TO CALENDAR",
+                    48,
+                    "PREV cannot reference the designated timestamp column"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevRejectTypeMismatch() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV, PREV(i)) - column `i` is LONG-output; column `d` is
+            // DOUBLE-output. PREV(i) on column `d` gives source tag INT-family
+            // vs target tag DOUBLE -> D-09 rejects with "cannot fill target
+            // column of type" at fillExpr.rhs.position.
+            execute("CREATE TABLE t (d DOUBLE, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, 10, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, 30, '2024-01-01T02:00:00.000000Z')");
+            // Column layout in output: ts(0), i(1 aggregated first(i)), d(2 aggregated sum(d)).
+            // FILL(PREV(d), PREV) - for column `i`, source = `d` (DOUBLE tag) vs
+            // target `i` (INT tag) -> D-09 rejects.
+            assertExceptionNoLeakCheck(
+                    "SELECT ts, first(i) AS i, sum(d) AS d FROM t SAMPLE BY 1h FILL(PREV(d), PREV) ALIGN TO CALENDAR",
+                    68,
+                    "cannot fill target column of type"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevSelfAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            // FILL(PREV(a)) where `a` is the target column name. D-06 normalizes
+            // internally to FILL_PREV_SELF so the output matches bare FILL(PREV).
+            execute("CREATE TABLE t (a DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(3.0, '2024-01-01T02:00:00.000000Z')");
+            // The plan still shows fill=prev (no column-specific annotation)
+            // because FILL_PREV_SELF is the internal mode.
+            assertSql(
+                    """
+                            ts\ta
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t1.0
+                            2024-01-01T02:00:00.000000Z\t3.0
+                            """,
+                    "SELECT ts, sum(a) AS a FROM t SAMPLE BY 1h FILL(PREV(a)) ALIGN TO CALENDAR"
             );
         });
     }
