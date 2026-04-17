@@ -142,7 +142,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     /**
      * Reads the committed {@code PARQUET_META_FILE_SIZE} field from a {@code _pm} file
      * without mapping the whole file. Callers that manage their own mapping
-     * (e.g. via {@link io.questdb.cairo.vm.MemoryCMR}) use this to size the
+     * (e.g. via {@link io.questdb.cairo.vm.api.MemoryCMR}) use this to size the
      * full mapping. Never calls {@code ff.length()} — the filesystem size is
      * not a valid commit boundary.
      * <p>
