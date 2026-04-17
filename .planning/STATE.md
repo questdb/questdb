@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 12 context revised (chain rule refined)
-last_updated: "2026-04-16T23:51:37.764Z"
-last_activity: 2026-04-16 -- Phase 12 planning complete
+stopped_at: "Completed 12-01-PLAN.md (scaffolding: FallbackToLegacyException, stashedSampleByNode, Tier 1 gate)"
+last_updated: "2026-04-17T10:32:57.509Z"
+last_activity: 2026-04-17
 progress:
   total_phases: 12
   completed_phases: 10
   total_plans: 14
-  completed_plans: 10
-  percent: 71
+  completed_plans: 11
+  percent: 79
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** SAMPLE BY FILL queries execute on the GROUP BY fast path with identical output to the cursor path, enabling parallel execution.
-**Current focus:** Closed — PR #6946 ready for merge.
+**Current focus:** Phase 12 — replace-safety-net-reclassification-with-legacy-fallback-and
 
 ## Current Position
 
-Phase: 11 of 11 (Hardening — Review Findings & Missing Test Coverage)
-Plan: 1 of 1 in current phase (complete)
+Phase: 12 (replace-safety-net-reclassification-with-legacy-fallback-and) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-04-16 -- Phase 12 planning complete
+Last activity: 2026-04-17
 
 Progress: [##########] 100%
 
@@ -54,6 +54,7 @@ Progress: [##########] 100%
 | 11 | 1 | ~210m (retroactive estimate) | ~210m |
 
 Phase 5 absorbed into phases 7–10; no direct execution time attributed.
+| Phase 12 P01 | 12 | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -85,6 +86,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 11]: FILL_KEY dispatch extended to all 128/256-bit getters (UUID, Long256, Decimal128/256)
 - [Phase 11]: Null sentinels use GeoHashes.*_NULL and Decimals.*_NULL rather than 0 / Numbers.*_NULL so null is distinguishable from legitimate zero
 - [Phase 11]: Function ownership transferred from fillValues to constantFillFuncs by nulling source slot to prevent double-close on error path
+- [Phase 12]: FallbackToLegacyException: singleton + fillInStackTrace override for zero-allocation retro-fallback signal from codegen to caller
+- [Phase 12]: stashedSampleByNode nulled in clear() (not clearSampleBy()) to protect against callers that bypass the sample-by-specific reset
+- [Phase 12]: Tier 1 cross-column gate preserves PREV(key_col): LITERAL-source branch passes through regardless of key column type, since the runtime reads key values from keysMapRecord
 
 ### Roadmap Evolution
 
@@ -107,6 +111,6 @@ None blocking merge. Open pre-merge cleanup items:
 
 ## Session Continuity
 
-Last session: 2026-04-16T23:03:50.506Z
-Stopped at: Phase 12 context revised (chain rule refined)
-Resume file: .planning/phases/12-replace-safety-net-reclassification-with-legacy-fallback-and/12-CONTEXT.md
+Last session: 2026-04-17T10:32:57.507Z
+Stopped at: Completed 12-01-PLAN.md (scaffolding: FallbackToLegacyException, stashedSampleByNode, Tier 1 gate)
+Resume file: None
