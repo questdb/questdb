@@ -2082,9 +2082,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColInterval(PGResponseSink utf8Sink, Record record, int columnIndex, int intervalType) {
+    private void outColInterval(PGResponseSink utf8Sink, Record record, int columnIndex, int intervalType, boolean notNull) {
         final Interval interval = record.getInterval(columnIndex);
-        if (Interval.NULL.equals(interval)) {
+        if (!notNull && Interval.NULL.equals(interval)) {
             utf8Sink.setNullValue();
         } else {
             long a = utf8Sink.skipInt();
@@ -2150,9 +2150,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtDecimal128(PGResponseSink utf8Sink, Record rec, int col, int type, Decimal128 decimal128) {
+    private void outColTxtDecimal128(PGResponseSink utf8Sink, Record rec, int col, int type, Decimal128 decimal128, boolean notNull) {
         rec.getDecimal128(col, decimal128);
-        if (decimal128.isNull()) {
+        if (decimal128.isNull() && !notNull) {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
@@ -2161,18 +2161,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtDecimal16(PGResponseSink utf8Sink, Record rec, int col, int type) {
+    private void outColTxtDecimal16(PGResponseSink utf8Sink, Record rec, int col, int type, boolean notNull) {
         short value = rec.getDecimal16(col);
-        if (value == Decimals.DECIMAL16_NULL) {
+        if (value == Decimals.DECIMAL16_NULL && !notNull) {
             utf8Sink.setNullValue();
         } else {
             outColTxtDecimalLong(utf8Sink, value, type);
         }
     }
 
-    private void outColTxtDecimal256(PGResponseSink utf8Sink, Record rec, int col, int type, Decimal256 decimal256) {
+    private void outColTxtDecimal256(PGResponseSink utf8Sink, Record rec, int col, int type, Decimal256 decimal256, boolean notNull) {
         rec.getDecimal256(col, decimal256);
-        if (decimal256.isNull()) {
+        if (decimal256.isNull() && !notNull) {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
@@ -2182,27 +2182,27 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtDecimal32(PGResponseSink utf8Sink, Record rec, int col, int type) {
+    private void outColTxtDecimal32(PGResponseSink utf8Sink, Record rec, int col, int type, boolean notNull) {
         int value = rec.getDecimal32(col);
-        if (value == Decimals.DECIMAL32_NULL) {
+        if (value == Decimals.DECIMAL32_NULL && !notNull) {
             utf8Sink.setNullValue();
         } else {
             outColTxtDecimalLong(utf8Sink, value, type);
         }
     }
 
-    private void outColTxtDecimal64(PGResponseSink utf8Sink, Record rec, int col, int type) {
+    private void outColTxtDecimal64(PGResponseSink utf8Sink, Record rec, int col, int type, boolean notNull) {
         long value = rec.getDecimal64(col);
-        if (value == Decimals.DECIMAL64_NULL) {
+        if (value == Decimals.DECIMAL64_NULL && !notNull) {
             utf8Sink.setNullValue();
         } else {
             outColTxtDecimalLong(utf8Sink, value, type);
         }
     }
 
-    private void outColTxtDecimal8(PGResponseSink utf8Sink, Record rec, int col, int type) {
+    private void outColTxtDecimal8(PGResponseSink utf8Sink, Record rec, int col, int type, boolean notNull) {
         byte value = rec.getDecimal8(col);
-        if (value == Decimals.DECIMAL8_NULL) {
+        if (value == Decimals.DECIMAL8_NULL && !notNull) {
             utf8Sink.setNullValue();
         } else {
             outColTxtDecimalLong(utf8Sink, value, type);
@@ -2300,9 +2300,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtLong256(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColTxtLong256(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final Long256 long256Value = record.getLong256A(columnIndex);
-        if (long256Value.getLong0() == Numbers.LONG_NULL
+        if (!notNull
+                && long256Value.getLong0() == Numbers.LONG_NULL
                 && long256Value.getLong1() == Numbers.LONG_NULL
                 && long256Value.getLong2() == Numbers.LONG_NULL
                 && long256Value.getLong3() == Numbers.LONG_NULL) {
@@ -2562,7 +2563,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         break;
                     case ColumnType.INTERVAL:
                     case BINARY_TYPE_INTERVAL:
-                        outColInterval(utf8Sink, record, colIndex, columnType);
+                        outColInterval(utf8Sink, record, colIndex, columnType, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.VARCHAR:
                     case BINARY_TYPE_VARCHAR:
@@ -2642,7 +2643,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         break;
                     case ColumnType.LONG256:
                     case BINARY_TYPE_LONG256:
-                        outColTxtLong256(utf8Sink, record, colIndex);
+                        outColTxtLong256(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.GEOBYTE:
                         outColTxtGeoByte(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
@@ -2669,27 +2670,27 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColBinArr(utf8Sink, record, colIndex, columnType);
                         break;
                     case ColumnType.DECIMAL8:
-                        outColTxtDecimal8(utf8Sink, record, colIndex, columnType);
+                        outColTxtDecimal8(utf8Sink, record, colIndex, columnType, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.DECIMAL16:
-                        outColTxtDecimal16(utf8Sink, record, colIndex, columnType);
+                        outColTxtDecimal16(utf8Sink, record, colIndex, columnType, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.DECIMAL32:
-                        outColTxtDecimal32(utf8Sink, record, colIndex, columnType);
+                        outColTxtDecimal32(utf8Sink, record, colIndex, columnType, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.DECIMAL64:
-                        outColTxtDecimal64(utf8Sink, record, colIndex, columnType);
+                        outColTxtDecimal64(utf8Sink, record, colIndex, columnType, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.DECIMAL128:
-                        outColTxtDecimal128(utf8Sink, record, colIndex, columnType, sqlExecutionContext.getDecimal128());
+                        outColTxtDecimal128(utf8Sink, record, colIndex, columnType, sqlExecutionContext.getDecimal128(), isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.DECIMAL256:
-                        outColTxtDecimal256(utf8Sink, record, colIndex, columnType, sqlExecutionContext.getDecimal256());
+                        outColTxtDecimal256(utf8Sink, record, colIndex, columnType, sqlExecutionContext.getDecimal256(), isColumnNotNull[colIndex]);
                         break;
                     case BINARY_TYPE_DECIMAL8: {
                         var decimal64 = sqlExecutionContext.getDecimal64();
                         var v = record.getDecimal8(colIndex);
-                        if (v == Decimals.DECIMAL8_NULL) {
+                        if (v == Decimals.DECIMAL8_NULL && !isColumnNotNull[colIndex]) {
                             utf8Sink.setNullValue();
                         } else {
                             decimal64.ofRaw(v);
@@ -2700,7 +2701,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_DECIMAL16: {
                         var decimal64 = sqlExecutionContext.getDecimal64();
                         var v = record.getDecimal16(colIndex);
-                        if (v == Decimals.DECIMAL16_NULL) {
+                        if (v == Decimals.DECIMAL16_NULL && !isColumnNotNull[colIndex]) {
                             utf8Sink.setNullValue();
                         } else {
                             decimal64.ofRaw(v);
@@ -2711,7 +2712,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_DECIMAL32: {
                         var decimal64 = sqlExecutionContext.getDecimal64();
                         var v = record.getDecimal32(colIndex);
-                        if (v == Decimals.DECIMAL32_NULL) {
+                        if (v == Decimals.DECIMAL32_NULL && !isColumnNotNull[colIndex]) {
                             utf8Sink.setNullValue();
                         } else {
                             decimal64.ofRaw(v);
