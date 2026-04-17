@@ -669,17 +669,19 @@ pub struct ParquetMetaColumnInfo<'a> {
 /// `bytes` is always append-only: the caller seeks to the existing file size
 /// and writes them after the previous trailer. The previous bytes (including
 /// the previous trailer) are left untouched, preserving the stale-reader
-/// invariant that any earlier committed `parquetMetaFileSize` continues to
-/// resolve to a consistent older snapshot.
+/// invariant that any earlier committed `parquet_meta_file_size` continues to resolve
+/// to a consistent older snapshot.
+///
+/// After appending `bytes`, the caller must patch `new_file_size` into the
+/// header at `HEADER_PARQUET_META_FILE_SIZE_OFF` as the last step — this is the MVCC
+/// commit signal that publishes the new snapshot.
 #[derive(Debug)]
 pub struct ParquetMetaUpdateResult {
     /// Bytes to append at the existing file size.
     pub bytes: Vec<u8>,
-    /// Total `_pm` file size after the append.
+    /// Total `_pm` file size after the append. Also the value the caller
+    /// must patch into the header at `HEADER_PARQUET_META_FILE_SIZE_OFF`.
     pub new_file_size: u64,
-    /// Absolute offset of the new footer in the file.
-    /// The caller must write this at `HEADER_FOOTER_OFFSET_OFF` in the header.
-    pub new_footer_offset: u64,
 }
 
 /// Generates a complete `_pm` file from scratch.
@@ -756,14 +758,14 @@ pub fn generate_parquet_metadata(
 /// bytes intact so that any older committed `parquetMetaFileSize` continues
 /// to resolve to a consistent older snapshot.
 ///
-/// Returns the bytes the caller must append at `existing_pm_file_size` and
+/// Returns the bytes the caller must append at `existing_parquet_meta_file_size` and
 /// the resulting file size. Returns an error when the new row group count is
 /// smaller than the existing one (compaction is not supported in the in-place
 /// path; the writer's row-group entry list cannot drop existing references).
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_pm: &[u8],
-    existing_pm_file_size: u64,
+    existing_parquet_meta_file_size: u64,
     columns: &[ParquetMetaColumnInfo],
     schema_columns: &[parquet2::metadata::ColumnDescriptor],
     thrift_row_groups: &[parquet2::thrift_format::RowGroup],
@@ -772,18 +774,18 @@ pub fn update_parquet_metadata(
     bloom_bitsets: &[Vec<Option<Vec<u8>>>],
     unused_bytes: u64,
 ) -> ParquetResult<ParquetMetaUpdateResult> {
-    let existing_pm_len = usize::try_from(existing_pm_file_size).map_err(|_| {
+    let existing_pm_len = usize::try_from(existing_parquet_meta_file_size).map_err(|_| {
         parquet_meta_err!(
             ParquetMetaErrorKind::Truncated,
             "_pm file size {} exceeds addressable range",
-            existing_pm_file_size
+            existing_parquet_meta_file_size
         )
     })?;
     let existing_pm = existing_pm.get(..existing_pm_len).ok_or_else(|| {
         parquet_meta_err!(
             ParquetMetaErrorKind::Truncated,
             "_pm file size {} exceeds available data {}",
-            existing_pm_file_size,
+            existing_parquet_meta_file_size,
             existing_pm.len()
         )
     })?;
@@ -791,7 +793,7 @@ pub fn update_parquet_metadata(
     // Read the existing _pm to get row group fingerprints (byte_range_start of first column).
     let existing_reader = crate::parquet_metadata::reader::ParquetMetaReader::from_file_size(
         existing_pm,
-        existing_pm_file_size,
+        existing_parquet_meta_file_size,
     )?;
     let existing_rg_count = existing_reader.row_group_count() as usize;
 
@@ -826,11 +828,13 @@ pub fn update_parquet_metadata(
         ));
     }
 
-    // Build the update writer from existing data.
-    let existing_footer_offset = existing_reader.footer_offset();
+    // Build the update writer from existing data. The updater takes the
+    // committed parquet_meta_file_size that we were handed; its internal reader
+    // duplicates the work of `existing_reader` above but keeps the public
+    // API simple.
     let mut updater = crate::parquet_metadata::writer::ParquetMetaUpdateWriter::new(
         existing_pm,
-        existing_footer_offset,
+        existing_parquet_meta_file_size,
     )?;
 
     let col_type_tags: Vec<Option<ColumnTypeTag>> =
@@ -876,14 +880,13 @@ pub fn update_parquet_metadata(
 
     updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
     updater.unused_bytes(unused_bytes);
-    let (append_bytes, new_footer_offset) = updater.finish()?;
-    let new_file_size = existing_pm_file_size + append_bytes.len() as u64;
-
-    Ok(ParquetMetaUpdateResult {
-        bytes: append_bytes,
+    let (append_bytes, new_file_size) = updater.finish()?;
+    debug_assert_eq!(
         new_file_size,
-        new_footer_offset,
-    })
+        existing_parquet_meta_file_size + append_bytes.len() as u64
+    );
+
+    Ok(ParquetMetaUpdateResult { bytes: append_bytes, new_file_size })
 }
 
 /// Builds a `RowGroupBlockBuilder` directly from a thrift `RowGroup` struct
@@ -1118,10 +1121,10 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
-        let (pm_bytes, footer_offset) =
+        let (pm_bytes, parquet_meta_file_size) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.column_count(), 1);
         assert_eq!(reader.row_group_count(), 1);
         assert_eq!(reader.column_name(0).unwrap(), "ts");
@@ -1142,9 +1145,10 @@ mod tests {
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
 
-        let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, None, 0, 0).unwrap();
+        let (pm_bytes, parquet_meta_file_size) =
+            convert_from_parquet(&metadata, None, 0, 0).unwrap();
 
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         let chunk = reader.row_group(0).unwrap().column_chunk(0).unwrap();
         assert_eq!(chunk.codec().unwrap(), Codec::Snappy);
     }
@@ -1155,9 +1159,10 @@ mod tests {
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
 
-        let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, None, 0, 0).unwrap();
+        let (pm_bytes, parquet_meta_file_size) =
+            convert_from_parquet(&metadata, None, 0, 0).unwrap();
 
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.column_count(), 1);
         let desc = reader.column_descriptor(0).unwrap();
         // Without QdbMeta, the type is inferred from the parquet schema.
@@ -1175,9 +1180,9 @@ mod tests {
         let mut qdb_meta = extract_qdb_meta_from(&metadata).expect("test parquet has qdb meta");
         qdb_meta.squash_tracker = 42;
 
-        let (pm_bytes, footer_offset) =
+        let (pm_bytes, parquet_meta_file_size) =
             convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0).unwrap();
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         assert!(reader.feature_flags().has_squash_tracker());
         assert_eq!(reader.squash_tracker(), Some(42));
     }
@@ -1191,9 +1196,9 @@ mod tests {
         let mut qdb_meta = extract_qdb_meta_from(&metadata).expect("test parquet has qdb meta");
         qdb_meta.squash_tracker = -1;
 
-        let (pm_bytes, footer_offset) =
+        let (pm_bytes, parquet_meta_file_size) =
             convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0).unwrap();
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         assert!(!reader.feature_flags().has_squash_tracker());
         assert_eq!(reader.squash_tracker(), None);
     }
@@ -1204,8 +1209,9 @@ mod tests {
         let mut cursor = Cursor::new(&parquet_data);
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
 
-        let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, None, 0, 0).unwrap();
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let (pm_bytes, parquet_meta_file_size) =
+            convert_from_parquet(&metadata, None, 0, 0).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         assert!(!reader.feature_flags().has_squash_tracker());
         assert_eq!(reader.squash_tracker(), None);
     }
@@ -1344,10 +1350,10 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
-        let (pm_bytes, footer_offset) =
+        let (pm_bytes, parquet_meta_file_size) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 1024, 200).unwrap();
 
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.column_count(), 4);
         assert_eq!(reader.row_group_count(), 1);
         assert_eq!(reader.parquet_footer_offset(), 1024);
@@ -1403,9 +1409,10 @@ mod tests {
             ascii: Some(true),
         });
 
-        let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, Some(&meta), 0, 0).unwrap();
+        let (pm_bytes, parquet_meta_file_size) =
+            convert_from_parquet(&metadata, Some(&meta), 0, 0).unwrap();
 
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         let desc = reader.column_descriptor(0).unwrap();
         let flags = desc.flags();
         assert!(flags.is_local_key_global());
@@ -1429,10 +1436,10 @@ mod tests {
         });
 
         let qdb_meta = extract_qdb_meta_from(&metadata);
-        let (pm_bytes, footer_offset) =
+        let (pm_bytes, parquet_meta_file_size) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
 
         if has_sorting {
             assert!(reader.sorting_column_count() > 0);
@@ -1488,10 +1495,10 @@ mod tests {
         assert!(metadata.row_groups.len() >= 2);
 
         let qdb_meta = extract_qdb_meta_from(&metadata);
-        let (pm_bytes, footer_offset) =
+        let (pm_bytes, parquet_meta_file_size) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.row_group_count(), metadata.row_groups.len() as u32);
 
         // Verify each row group has correct num_rows.
@@ -1545,10 +1552,10 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
-        let (pm_bytes, footer_offset) =
+        let (pm_bytes, parquet_meta_file_size) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         let rg = reader.row_group(0).unwrap();
         let chunk = rg.column_chunk(0).unwrap();
         let flags = chunk.stat_flags();
@@ -1686,10 +1693,10 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
-        let (pm_bytes, footer_offset) =
+        let (pm_bytes, parquet_meta_file_size) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
 
-        let reader = ParquetMetaReader::new(&pm_bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         let rg = reader.row_group(0).unwrap();
 
         // Check that at least one column has distinct_count or null_count set.
@@ -2033,9 +2040,10 @@ mod tests {
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
         // Path 1: convert_from_parquet
-        let (pm_bytes_from_meta, footer_offset) =
+        let (pm_bytes_from_meta, parquet_meta_file_size) =
             convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0).unwrap();
-        let reader1 = ParquetMetaReader::new(&pm_bytes_from_meta, footer_offset).unwrap();
+        let reader1 =
+            ParquetMetaReader::from_file_size(&pm_bytes_from_meta, parquet_meta_file_size).unwrap();
 
         // Path 2: build from thrift via the writer's into_inner_and_metadata()
         // We need the ThriftFileMetaData. Write again using ChunkedWriter to get it.
@@ -2361,37 +2369,37 @@ mod tests {
             })
             .collect();
 
-        let footer_offset = 100u64;
-        let footer_length = 50u32;
+        let parquet_footer_offset = 100u64;
+        let parquet_footer_length = 50u32;
 
-        let (pm_bytes, pm_footer_offset) = generate_parquet_metadata(
+        let (pm_bytes, parquet_meta_file_size) = generate_parquet_metadata(
             &col_infos,
             schema_columns,
             &thrift_meta.row_groups,
             0,    // designated_timestamp = column 0
             &[0], // sorting on column 0
-            footer_offset,
-            footer_length,
+            parquet_footer_offset,
+            parquet_footer_length,
             &[],
             0,
             -1,
         )
         .unwrap();
 
-        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_bytes.len() as u64).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.column_count(), 4);
         assert_eq!(reader.row_group_count(), 1);
         assert_eq!(reader.designated_timestamp(), Some(0));
         assert_eq!(reader.sorting_column_count(), 1);
-        assert_eq!(reader.parquet_footer_offset(), footer_offset);
-        assert_eq!(reader.parquet_footer_length(), footer_length);
+        assert_eq!(reader.parquet_footer_offset(), parquet_footer_offset);
+        assert_eq!(reader.parquet_footer_length(), parquet_footer_length);
         assert_eq!(reader.column_name(0).unwrap(), "ts");
         assert_eq!(reader.column_name(1).unwrap(), "int_val");
 
         let rg = reader.row_group(0).unwrap();
         assert_eq!(rg.num_rows(), 80);
         assert!(reader.verify_checksum().is_ok());
-        assert!(pm_footer_offset < pm_bytes.len() as u64);
+        assert_eq!(parquet_meta_file_size, pm_bytes.len() as u64);
     }
 
     #[test]
@@ -2481,10 +2489,15 @@ mod tests {
 
         assert!(!result.bytes.is_empty(), "should have append bytes");
 
-        // Build the full file: initial + append.
+        // Build the full file: initial + append. Mimic the Java side by
+        // patching the header's parquet_meta_file_size last — this is the MVCC
+        // commit signal that publishes the new snapshot.
         let mut full_file = initial_pm.clone();
         full_file.extend_from_slice(&result.bytes);
         assert_eq!(full_file.len() as u64, result.new_file_size);
+        full_file[crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..crate::parquet_metadata::types::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&result.new_file_size.to_le_bytes());
 
         // New reader should see 2 row groups.
         let new_reader =
@@ -2492,10 +2505,11 @@ mod tests {
         assert_eq!(new_reader.row_group_count(), 2);
         assert!(new_reader.verify_checksum().is_ok());
 
-        // Old reader at old size should still see 1 row group (MVCC).
-        let old_reader =
-            ParquetMetaReader::from_file_size(&full_file[..initial_size as usize], initial_size)
-                .unwrap();
+        // Old reader pinned to the old size must still see 1 row group.
+        // MVCC on the old snapshot uses the initial slice (with the
+        // original parquet_meta_file_size still in the header), which the caller
+        // obtained before the new snapshot was published.
+        let old_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
         assert_eq!(old_reader.row_group_count(), 1);
     }
 
@@ -2718,7 +2732,7 @@ mod tests {
         }];
 
         // Generate _pm with captured bloom filter bitsets.
-        let (pm_bytes, pm_footer_offset) = generate_parquet_metadata(
+        let (pm_bytes, parquet_meta_file_size) = generate_parquet_metadata(
             &col_infos,
             chunked.schema().columns(),
             chunked.row_groups(),
@@ -2733,7 +2747,7 @@ mod tests {
         .unwrap();
 
         // Verify the _pm has a bloom filter via the feature section.
-        let reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.row_group_count(), 1);
         assert!(
             reader.has_bloom_filters(),

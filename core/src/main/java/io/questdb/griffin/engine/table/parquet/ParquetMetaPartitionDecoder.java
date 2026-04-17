@@ -230,7 +230,9 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         this.parquetAddr = parquetAddr;
         this.parquetSize = parquetSize;
         this.allocator = Unsafe.getNativeAllocator(memoryTag);
-        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
+        // Long.MAX_VALUE disables MVCC footer matching — use the latest footer
+        // as-is (caller already selected the _pm that matches its snapshot).
+        this.parquetMetaReader.of(parquetMetaAddr, Long.MAX_VALUE);
     }
 
     /**
@@ -247,7 +249,7 @@ public class ParquetMetaPartitionDecoder implements ParquetDecoder, QuietCloseab
         this.parquetAddr = other.parquetAddr;
         this.parquetSize = other.parquetSize;
         this.allocator = other.allocator;
-        this.parquetMetaReader.of(parquetMetaAddr, parquetMetaSize, Long.MAX_VALUE);
+        this.parquetMetaReader.of(parquetMetaAddr, Long.MAX_VALUE);
     }
 
     public long rowGroupMaxTimestamp(int rowGroupIndex, int timestampColumnIndex) {

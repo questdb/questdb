@@ -174,34 +174,37 @@ public final class Mig940 {
             return true;
         }
 
-        long pmFileSize = ff.length(path.$());
-        // Header is 32 bytes. Need at least that + some footer bytes.
-        if (pmFileSize < 32 + 32) {
-            path.trimTo(pathRootLen);
-            return true;
-        }
-
-        // Read footer_offset from header (8 bytes at offset 0) and
-        // parquet_footer_offset (8 bytes) + parquet_footer_length (4 bytes) from footer.
-        long pmFd = ff.openRO(path.$());
-        if (pmFd < 0) {
+        long parquetMetaFd = ff.openRO(path.$());
+        if (parquetMetaFd < 0) {
             path.trimTo(pathRootLen);
             return true;
         }
         try {
             long mem = Unsafe.malloc(32, MemoryTag.NATIVE_MIG);
             try {
-                // Read header footer_offset.
-                if (ff.read(pmFd, mem, 8, 0) != 8) {
+                // Read parquet_meta_file_size from the header (8 bytes at offset 0).
+                // The filesystem size is not a valid commit boundary — only
+                // this header field is.
+                if (ff.read(parquetMetaFd, mem, 8, 0) != 8) {
                     return true;
                 }
-                long footerOffset = Unsafe.getUnsafe().getLong(mem);
-                if (footerOffset < 32 || footerOffset >= pmFileSize) {
+                long parquetMetaFileSize = Unsafe.getUnsafe().getLong(mem);
+                if (parquetMetaFileSize < 32 + 4) {
+                    return true;
+                }
+
+                // Derive footerOffset from the trailer at parquet_meta_file_size - 4.
+                if (ff.read(parquetMetaFd, mem, 4, parquetMetaFileSize - 4) != 4) {
+                    return true;
+                }
+                int footerLength = Unsafe.getUnsafe().getInt(mem);
+                long footerOffset = parquetMetaFileSize - 4 - Integer.toUnsignedLong(footerLength);
+                if (footerOffset < 32 || footerOffset >= parquetMetaFileSize) {
                     return true;
                 }
 
                 // Read first 12 bytes of footer: parquet_footer_offset(8) + parquet_footer_length(4).
-                if (ff.read(pmFd, mem, 12, footerOffset) != 12) {
+                if (ff.read(parquetMetaFd, mem, 12, footerOffset) != 12) {
                     return true;
                 }
                 long parquetFooterOffset = Unsafe.getUnsafe().getLong(mem);
@@ -216,7 +219,7 @@ public final class Mig940 {
                 Unsafe.free(mem, 32, MemoryTag.NATIVE_MIG);
             }
         } finally {
-            ff.close(pmFd);
+            ff.close(parquetMetaFd);
             path.trimTo(pathRootLen);
         }
     }

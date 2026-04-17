@@ -85,19 +85,19 @@ public class Mig940Test extends AbstractCairoTest {
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
                 Assert.assertTrue("_pm should exist after migration", ff.exists(path.$()));
 
-                long pmSize = ff.length(path.$());
-                Assert.assertTrue("_pm should have positive size", pmSize > 0);
+                long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                Assert.assertTrue("_pm should have positive size", parquetMetaSize > 0);
 
                 // Read and validate the generated _pm file.
-                long pmAddr = TableUtils.mapRO(ff, path.$(), LOG, pmSize, MemoryTag.MMAP_DEFAULT);
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(pmAddr, pmSize, Long.MAX_VALUE);
+                    reader.of(parquetMetaAddr, Long.MAX_VALUE);
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                     Assert.assertTrue(reader.getParquetFileSize() > 0);
                 } finally {
-                    ff.munmap(pmAddr, pmSize, MemoryTag.MMAP_DEFAULT);
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 }
             }
         });
@@ -286,17 +286,17 @@ public class Mig940Test extends AbstractCairoTest {
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
                 Assert.assertTrue("_pm should exist after migration", ff.exists(path.$()));
 
-                long pmSize = ff.length(path.$());
-                Assert.assertTrue("_pm should have positive size", pmSize > 0);
+                long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                Assert.assertTrue("_pm should have positive size", parquetMetaSize > 0);
 
-                long pmAddr = TableUtils.mapRO(ff, path.$(), LOG, pmSize, MemoryTag.MMAP_DEFAULT);
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 try {
                     ParquetMetaFileReader reader = new ParquetMetaFileReader();
-                    reader.of(pmAddr, pmSize, Long.MAX_VALUE);
+                    reader.of(parquetMetaAddr, Long.MAX_VALUE);
                     Assert.assertEquals(2, reader.getColumnCount());
                     Assert.assertEquals(1, reader.getRowGroupCount());
                 } finally {
-                    ff.munmap(pmAddr, pmSize, MemoryTag.MMAP_DEFAULT);
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 }
             }
         });
@@ -321,12 +321,12 @@ public class Mig940Test extends AbstractCairoTest {
             }
 
             // Record _pm size before migration.
-            long pmSizeBefore;
+            long parquetMetaSizeBefore;
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                pmSizeBefore = ff.length(path.$());
-                Assert.assertTrue("_pm should exist", pmSizeBefore > 0);
+                parquetMetaSizeBefore = ff.length(path.$());
+                Assert.assertTrue("_pm should exist", parquetMetaSizeBefore > 0);
             }
 
             // Run migration — should skip healthy _pm.
@@ -336,7 +336,7 @@ public class Mig940Test extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                Assert.assertEquals("_pm should not be rewritten", pmSizeBefore, ff.length(path.$()));
+                Assert.assertEquals("_pm should not be rewritten", parquetMetaSizeBefore, ff.length(path.$()));
             }
         });
     }

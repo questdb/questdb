@@ -40,7 +40,10 @@ pub struct FooterRaw {
     pub parquet_footer_length: u32,
     pub row_group_count: u32,
     pub unused_bytes: u64,
-    pub prev_footer_offset: u64,
+    /// Committed `_pm` file size at the time of the previous snapshot, or 0
+    /// for the first snapshot in the chain. The previous footer is located
+    /// by reading the trailer at `prev_parquet_meta_file_size - 4`.
+    pub prev_parquet_meta_file_size: u64,
     pub feature_flags: FooterFeatureFlags,
 }
 
@@ -50,8 +53,9 @@ pub struct FooterRaw {
 ///
 /// The footer starts at the offset derived from the trailer and contains:
 /// PARQUET_FOOTER_OFFSET(u64), PARQUET_FOOTER_LENGTH(u32),
-/// ROW_GROUP_COUNT(u32), UNUSED_BYTES(u64), PREV_FOOTER_OFFSET(u64),
-/// FOOTER_FEATURE_FLAGS(u64), ROW_GROUP_ENTRIES(4B each),
+/// ROW_GROUP_COUNT(u32), UNUSED_BYTES(u64),
+/// PREV_PARQUET_META_FILE_SIZE(u64), FOOTER_FEATURE_FLAGS(u64),
+/// ROW_GROUP_ENTRIES(4B each),
 /// [feature sections gated by header or footer feature flags],
 /// CHECKSUM(u32).
 ///
@@ -84,7 +88,7 @@ impl<'a> Footer<'a> {
             parquet_footer_length: u32::from_le_bytes(data[8..12].try_into().unwrap()),
             row_group_count: u32::from_le_bytes(data[12..16].try_into().unwrap()),
             unused_bytes: u64::from_le_bytes(data[16..24].try_into().unwrap()),
-            prev_footer_offset: u64::from_le_bytes(data[24..32].try_into().unwrap()),
+            prev_parquet_meta_file_size: u64::from_le_bytes(data[24..32].try_into().unwrap()),
             feature_flags: FooterFeatureFlags::from_le_bytes(data[32..40].try_into().unwrap()),
         };
 
@@ -178,9 +182,12 @@ impl<'a> Footer<'a> {
         self.raw.unused_bytes
     }
 
-    /// Returns the offset of the previous footer in the chain (0 if first version).
-    pub fn prev_footer_offset(&self) -> u64 {
-        self.raw.prev_footer_offset
+    /// Returns the committed `_pm` file size at the time of the previous
+    /// snapshot (0 if this is the first snapshot in the chain). Walk back
+    /// by reading the trailer at `prev_parquet_meta_file_size - 4` to
+    /// locate the previous footer.
+    pub fn prev_parquet_meta_file_size(&self) -> u64 {
+        self.raw.prev_parquet_meta_file_size
     }
 
     /// Returns the feature flags stored in this footer.
@@ -234,7 +241,7 @@ pub struct FooterBuilder {
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     unused_bytes: u64,
-    prev_footer_offset: u64,
+    prev_parquet_meta_file_size: u64,
     feature_flags: FooterFeatureFlags,
     row_group_offsets: Vec<u64>,
     /// Optional bloom filter footer feature section bytes, written between
@@ -248,7 +255,7 @@ impl FooterBuilder {
             parquet_footer_offset,
             parquet_footer_length,
             unused_bytes: 0,
-            prev_footer_offset: 0,
+            prev_parquet_meta_file_size: 0,
             feature_flags: FooterFeatureFlags::new(),
             row_group_offsets: Vec::new(),
             bloom_filter_section: Vec::new(),
@@ -260,8 +267,10 @@ impl FooterBuilder {
         self
     }
 
-    pub fn prev_footer_offset(&mut self, prev_footer_offset: u64) -> &mut Self {
-        self.prev_footer_offset = prev_footer_offset;
+    /// Sets the committed `_pm` file size at the time of the previous
+    /// snapshot. Zero means "no previous snapshot" (first commit).
+    pub fn prev_parquet_meta_file_size(&mut self, prev_size: u64) -> &mut Self {
+        self.prev_parquet_meta_file_size = prev_size;
         self
     }
 
@@ -298,7 +307,7 @@ impl FooterBuilder {
         buf.extend_from_slice(&self.parquet_footer_length.to_le_bytes());
         buf.extend_from_slice(&(self.row_group_offsets.len() as u32).to_le_bytes());
         buf.extend_from_slice(&self.unused_bytes.to_le_bytes());
-        buf.extend_from_slice(&self.prev_footer_offset.to_le_bytes());
+        buf.extend_from_slice(&self.prev_parquet_meta_file_size.to_le_bytes());
         buf.extend_from_slice(&self.feature_flags.to_le_bytes());
 
         for &offset in &self.row_group_offsets {
@@ -401,7 +410,7 @@ mod tests {
         buf.extend_from_slice(&0u32.to_le_bytes()); // parquet_footer_length
         buf.extend_from_slice(&5u32.to_le_bytes()); // row_group_count = 5
         buf.extend_from_slice(&0u64.to_le_bytes()); // unused_bytes
-        buf.extend_from_slice(&0u64.to_le_bytes()); // prev_footer_offset
+        buf.extend_from_slice(&0u64.to_le_bytes()); // prev_parquet_meta_file_size
         buf.extend_from_slice(&0u64.to_le_bytes()); // footer_feature_flags
                                                     // Need 40 + 5*4 + 4 = 64 bytes, but only have 40.
         assert!(Footer::new(&buf, 40).is_err());

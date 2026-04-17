@@ -46,10 +46,10 @@ pub struct JniParquetMetaWriter {
     column_count: u32,
 }
 
-/// Holds the finished _pm file bytes and footer offset.
+/// Holds the finished _pm file bytes and the committed parquet_meta_file_size.
 pub struct ParquetMetaBuiltFile {
     data: Vec<u8>,
-    footer_offset: u64,
+    parquet_meta_file_size: u64,
 }
 
 macro_rules! check_not_null {
@@ -224,9 +224,10 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_finish(
     check_not_null!(env, ptr, "ParquetMetaFileWriter");
     let wrapper = unsafe { &mut *ptr };
     match wrapper.writer.finish() {
-        Ok((data, footer_offset)) => {
-            Box::into_raw(Box::new(ParquetMetaBuiltFile { data, footer_offset }))
-        }
+        Ok((data, parquet_meta_file_size)) => Box::into_raw(Box::new(ParquetMetaBuiltFile {
+            data,
+            parquet_meta_file_size,
+        })),
         Err(mut err) => {
             err.add_context("error in ParquetMetaFileWriter.finish");
             err.into_cairo_exception().throw(&mut env)
@@ -257,14 +258,14 @@ pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_resultDataLen
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_resultFooterOffset(
+pub extern "system" fn Java_io_questdb_cairo_ParquetMetaFileWriter_resultParquetMetaFileSize(
     mut env: JNIEnv,
     _class: JClass,
     ptr: *const ParquetMetaBuiltFile,
 ) -> u64 {
     check_not_null!(env, ptr, "ParquetMetaBuiltFile");
     let result = unsafe { &*ptr };
-    result.footer_offset
+    result.parquet_meta_file_size
 }
 
 #[no_mangle]

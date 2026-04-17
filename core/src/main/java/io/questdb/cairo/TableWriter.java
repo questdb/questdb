@@ -7389,14 +7389,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private long openParquetMetadataOrRegenerate(Path path, int partitionDirLen, long parquetFileSize, int memoryTag) {
         path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
-        lastParquetMetaFileSize = ff.length(path.$());
-        boolean isStale = lastParquetMetaFileSize <= 0;
+        // The _pm file size comes from the committed PARQUET_META_FILE_SIZE field in the
+        // header, not from ff.length() — the filesystem size may include bytes
+        // from an unpublished append. A non-positive return means missing,
+        // unreadable, or header-corrupt; treat it as stale and regenerate.
+        lastParquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
         long addr = 0;
         try {
-            if (!isStale) {
+            if (lastParquetMetaFileSize > 0) {
                 addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
                 try {
-                    parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
+                    parquetMetaReader.of(addr, parquetFileSize);
                     return addr;
                 } catch (CairoException e) {
                     ff.munmap(addr, lastParquetMetaFileSize, memoryTag);
@@ -7412,10 +7415,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
             regenerateParquetMetadata(path, partitionDirLen, parquetFileSize);
             path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
-            lastParquetMetaFileSize = ff.length(path.$());
+            lastParquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+            if (lastParquetMetaFileSize <= 0) {
+                throw CairoException.critical(0)
+                        .put("regenerated _pm is missing or invalid [path=").put(path).put(']');
+            }
             addr = mapRO(ff, path.$(), LOG, lastParquetMetaFileSize, memoryTag);
             try {
-                parquetMetaReader.of(addr, lastParquetMetaFileSize, parquetFileSize);
+                parquetMetaReader.of(addr, parquetFileSize);
                 return addr;
             } catch (CairoException e) {
                 ff.munmap(addr, lastParquetMetaFileSize, memoryTag);

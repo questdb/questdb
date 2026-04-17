@@ -266,7 +266,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 // Open _pm file for writing alongside the parquet file.
                 path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
                 final int opts = configuration.getWriterFileOpenOpts();
-                final int pmFd = Files.detach(ff.openRW(path.$(), opts));
+                final int parquetMetaFd = Files.detach(ff.openRW(path.$(), opts));
 
                 // Open parquet reader/writer fds.
                 path.trimTo(versionedDirLen).concat("data.parquet").$();
@@ -287,7 +287,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                         0L,
                         0.01,
                         0.0,
-                        pmFd,
+                        parquetMetaFd,
                         parquetPartitionSize,
                         0L
                 );
@@ -296,13 +296,13 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 updater.updateRowGroup((short) 0, descriptor);
                 updater.updateFileMetadata();
 
-                final long pmFileSize = updater.getResultParquetMetaFileSize();
-                Assert.assertTrue("_pm file size must be > 0", pmFileSize > 0);
+                final long parquetMetaFileSize = updater.getResultParquetMetaFileSize();
+                Assert.assertTrue("_pm file size must be > 0", parquetMetaFileSize > 0);
 
                 // Verify the _pm file exists on disk with the reported size.
                 path.trimTo(versionedDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
                 Assert.assertTrue("_pm file must exist", ff.exists(path.$()));
-                Assert.assertEquals("_pm file size on disk", pmFileSize, ff.length(path.$()));
+                Assert.assertEquals("_pm file size on disk", parquetMetaFileSize, ff.length(path.$()));
             }
         });
     }

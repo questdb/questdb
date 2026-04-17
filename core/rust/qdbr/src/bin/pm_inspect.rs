@@ -136,7 +136,10 @@ fn run_dump(path: &Path, file_size: u64, reader: &ParquetMetaReader) {
     );
     println!("Row groups: {}", reader.row_group_count());
     println!("Footer offset in file: {}", reader.footer_offset());
-    println!("Prev footer offset: {}", reader.prev_footer_offset());
+    println!(
+        "Prev parquet meta file size: {}",
+        reader.prev_parquet_meta_file_size()
+    );
     let footer_flags = reader.footer_feature_flags();
     if footer_flags.0 != 0 {
         println!("Footer feature flags: 0x{:016x}", footer_flags.0);

@@ -42,107 +42,119 @@ the binary format below.
 
 Binary file encoded in little-endian. One file per partition, stored in the partition directory alongside`data.parquet`.
 
-The file has a header with column descriptors, row group blocks in the middle, and a footer at the end. The footer ends
-with a 4-byte trailer that stores the footer length, allowing readers to locate the footer given only the file size. The
-`_pm` file size is stored in `_txn` field 3 for each partition. Row group blocks are referenced by offset from the
-footer. On update, only new/changed row group blocks are appended; the footer reuses offsets to unchanged blocks. The
-file is small (typically tens of KB), memory-mapped and cached in `TableReader`. Bloom filter bitsets are stored in the
-out-of-line region of each row group block (inlined mode) or referenced from the parquet file (external mode), with
-offsets in the footer feature section.
+The file has a header with column descriptors, row group blocks in the middle, and a footer at the end. The committed
+`_pm` file size is stored in the header's first 8 bytes (`PARQUET_META_FILE_SIZE`) and is patched last by the writer — readers
+treat it as the MVCC commit signal. The footer ends with a 4-byte trailer that stores the footer length, so the latest
+footer is at `PARQUET_META_FILE_SIZE - 4 - footer_length`. The parquet file size (separate concept) is stored in `_txn` field 3
+for each partition. Row group blocks are referenced by offset from the footer. On update, only new/changed row group
+blocks are appended; the footer reuses offsets to unchanged blocks. The file is small (typically tens of KB),
+memory-mapped and cached in `TableReader`. Bloom filter bitsets are stored in the out-of-line region of each row group
+block (inlined mode) or referenced from the parquet file (external mode), with offsets in the footer feature section.
+
+**Callers never use the filesystem's reported file size to bound an `_pm` read or mapping.** The on-disk length may
+include bytes from an in-progress, unpublished append and is not a valid commit boundary; only `PARQUET_META_FILE_SIZE` in the
+header is. A reader mmaps the 32-byte header prefix, reads `PARQUET_META_FILE_SIZE`, then remaps to that size.
 
 ### Overview
 
 ```
-                  _pm metadata file                         data.parquet
-                 +========================+                  +==========================+
-                 | HEADER                 |                  |                          |
-                 |  footer_offset         |                  |  ...column chunks...     |
-                 |  feature_flags         |                  |                          |
-                 |  designated_timestamp  |         +------->|  dict page  | data pages |
-                 |  sorting_column_count  |         |        |                          |
-                 |  column_count          |         |        +==========================+
-                 |  footer_offset --------+--> FOOTER
-                 |                        |         |
-                 | COLUMN DESCRIPTORS     |         |
-                 |  col 0: name, type, .. |         |
-                 |  col 1: name, type, .. |         |
-                 |  ...                   |         |
-                 |                        |         |
-                 | SORTING COLUMNS        |         |
-                 |  col indices           |         |
-                 |                        |         |
-                 | NAME STRINGS           |         |
-                 |                        |         |
-                 | HEADER FEATURE SECTIONS|         |
-                 |  (if any flags set)    |         |
-                 +------------------------+         |
-                 | ROW GROUP BLOCK 0      |         |
-                 |  num_rows              |         |
-                 |  chunk col 0:          |         |
-                 |    codec, encodings    |         |
-                 |    byte_range_start  --+---------+
-                 |    total_compressed    |
-                 |    null_count          |
-                 |    _reserved (0)       |
-                 |    min_stat, max_stat  |
-                 |  chunk col 1: ...      |
-                 |  ...                   |
-                 | (out-of-line stats)    |
-                 | (bloom filter bitsets) |
-                 +------------------------+
-                 | ROW GROUP BLOCK 1      |
-                 |  ...                   |
-                 +------------------------+
-                 |  ...                   |
-                 +------------------------+
-                 | FOOTER                 |
-                 |  parquet_footer_offset |
-                 |  parquet_footer_length |
-                 |  row_group_count       |
-                 |  unused_bytes          |
-                 |  prev_footer_offset    |  (0 if first version)
-                 |  footer_feature_flags  |  (per-footer flags)
-                 |  entry 0: offset ------+--> ROW GROUP BLOCK 0
-                 |  entry 1: offset ------+--> ROW GROUP BLOCK 1
-                 |  ...                   |
-                 | FOOTER FEATURE SECTIONS|
-                 |  bloom filter offsets  |
-                 |  (if BLOOM_FILTERS set)|
-                 |  CRC32                 |
-                 |  FOOTER_LENGTH (4B)    |
-  _txn field 3:  +========================+
+                  _pm metadata file                                 data.parquet
+                 +================================+                  +==========================+
+                 | HEADER                         |                  |                          |
+                 |  parquet_meta_file_size -------+--> end of file   |  ...column chunks...     |
+                 |  feature_flags                 |                  |                          |
+                 |  designated_timestamp          |         +------->|  dict page  | data pages |
+                 |  sorting_column_count          |         |        |                          |
+                 |  column_count                  |         |        +==========================+
+                 |                                |         |
+                 | COLUMN DESCRIPTORS             |         |
+                 |  col 0: name, type, ..         |         |
+                 |  col 1: name, type, ..         |         |
+                 |  ...                           |         |
+                 |                                |         |
+                 | SORTING COLUMNS                |         |
+                 |  col indices                   |         |
+                 |                                |         |
+                 | NAME STRINGS                   |         |
+                 |                                |         |
+                 | HEADER FEATURE SECTIONS        |         |
+                 |  (if any flags set)            |         |
+                 +--------------------------------+         |
+                 | ROW GROUP BLOCK 0              |         |
+                 |  num_rows                      |         |
+                 |  chunk col 0:                  |         |
+                 |    codec, encodings            |         |
+                 |    byte_range_start  ----------+---------+
+                 |    total_compressed            |
+                 |    null_count                  |
+                 |    _reserved (0)               |
+                 |    min_stat, max_stat          |
+                 |  chunk col 1: ...              |
+                 |  ...                           |
+                 | (out-of-line stats)            |
+                 | (bloom filter bitsets)         |
+                 +--------------------------------+
+                 | ROW GROUP BLOCK 1              |
+                 |  ...                           |
+                 +--------------------------------+
+                 |  ...                           |
+                 +--------------------------------+
+                 | FOOTER                         |
+                 |  parquet_footer_offset         |
+                 |  parquet_footer_length         |
+                 |  row_group_count               |
+                 |  unused_bytes                  |
+                 |  prev_parquet_meta_file_size   |  (0 if first version; trailer at prev - 4)
+                 |  footer_feature_flags          |  (per-footer flags)
+                 |  entry 0: offset --------------+--> ROW GROUP BLOCK 0
+                 |  entry 1: offset --------------+--> ROW GROUP BLOCK 1
+                 |  ...                           |
+                 | FOOTER FEATURE SECTIONS        |
+                 |  bloom filter offsets          |
+                 |  (if BLOOM_FILTERS set)        |
+                 |  CRC32                         |
+                 |  FOOTER_LENGTH (4B)            |  <-- trailer at parquet_meta_file_size - 4
+  _txn field 3:  +================================+
   parquet file size
 
 ```
 
+The latest footer is located by `footer_offset = parquet_meta_file_size - 4 - FOOTER_LENGTH`, where
+`FOOTER_LENGTH` is read from the 4-byte trailer at `parquet_meta_file_size - 4`.
+
 **Update mode** - only changed blocks are appended; unchanged blocks are reused:
 
 ```
-                 +========================+
-                 | HEADER                 |
-                 |  footer_offset --------+--> FOOTER (new)
-                 +------------------------+
-                 | ROW GROUP BLOCK 0      |  <-- unchanged, kept in place
-                 +------------------------+
-                 | ROW GROUP BLOCK 1      |  <-- was merged, old data now dead
-                 +------------------------+
-                 | (old footer)           |  <-- prev version, still readable via chain
-                 +------------------------+
-                 | ROW GROUP BLOCK 1'     |  <-- new version of block 1
-                 +------------------------+
-                 | ROW GROUP BLOCK 2      |  <-- newly appended
-                 +------------------------+
-                 | FOOTER (new)           |
-                 |  prev_footer_offset ---+--> (old footer)
-                 |  entry 0: offset ------+--> BLOCK 0  (old, reused)
-                 |  entry 1: offset ------+--> BLOCK 1' (new)
-                 |  entry 2: offset ------+--> BLOCK 2  (new)
-                 |  CRC32                 |
-                 |  FOOTER_LENGTH (4B)    |
-  _txn field 3:  +========================+
+                 +================================+
+                 | HEADER                         |
+                 |  parquet_meta_file_size -------+--> end of new file (patched last)
+                 +--------------------------------+
+                 | ROW GROUP BLOCK 0              |  <-- unchanged, kept in place
+                 +--------------------------------+
+                 | ROW GROUP BLOCK 1              |  <-- was merged, old data now dead
+                 +--------------------------------+
+                 | (old footer)                   |  <-- prev version, still readable via chain
+                 | (old trailer)                  |  <-- still valid for older parquet_meta_file_size
+                 +--------------------------------+
+                 | ROW GROUP BLOCK 1'             |  <-- new version of block 1
+                 +--------------------------------+
+                 | ROW GROUP BLOCK 2              |  <-- newly appended
+                 +--------------------------------+
+                 | FOOTER (new)                   |
+                 |  prev_parquet_meta_file_size --+-->|old trailer| (trailer at prev - 4 gives old footer)
+                 |  entry 0: offset --------------+--> BLOCK 0  (old, reused)
+                 |  entry 1: offset --------------+--> BLOCK 1' (new)
+                 |  entry 2: offset --------------+--> BLOCK 2  (new)
+                 |  CRC32                         |
+                 |  FOOTER_LENGTH (4B)            |  <-- new trailer at end
+  _txn field 3:  +================================+
   parquet file size (new)
 
 ```
+
+Readers pinned to the previous snapshot's `parquet_meta_file_size` still see the old trailer at their
+snapshot's end-of-file and walk the `prev_parquet_meta_file_size` chain to the footer matching their
+`_txn` parquet-size token.
 
 ### Feature flags
 
@@ -152,7 +164,7 @@ offsets in the footer feature section.
   the MVCC chain and is the right place for capabilities that are the same for
   every snapshot of the file.
 - `FOOTER_FEATURE_FLAGS` in each footer applies only to that footer. Two
-  footers reachable via `PREV_FOOTER_OFFSET` can carry different sets of
+  footers reachable via `PREV_PARQUET_META_FILE_SIZE` can carry different sets of
   footer flags, enabling per-snapshot feature sections.
 
 Both fields share the same bit policy:
@@ -171,7 +183,7 @@ without recognizing every bit.
 No footer flag bits are defined yet. Header flag bits:
 
 | bit | name                   | dependency | header section                                                                                                           | footer section                                                                                                                                 |
-|-----|------------------------|------------|--------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| --- | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0   | BLOOM_FILTERS          | none       | `4 + bloom_col_count * 4` bytes: `[u32 bloom_col_count][u32; bloom_col_count]` column indices (sorted ascending, unique) | `row_group_count * bloom_col_count * 4` bytes: inlined offsets (`>>3`) into `_pm`; `0` = absent                                                |
 | 1   | BLOOM_FILTERS_EXTERNAL | bit 0      | none (shares bit 0 header section)                                                                                       | entry width grows from 4 to 16 bytes: `[(u64 offset, u64 length); row_group_count * bloom_col_count]` into the parquet file; `(0, 0)` = absent |
 | 2   | SORTING_IS_DTS_ASC     | none       | none                                                                                                                     | none                                                                                                                                           |
@@ -190,18 +202,21 @@ file-level `column_top` metadata.
 
 ### File header
 
-| offset | size | field                   | type | description                                                             |
-|--------|------|-------------------------|------|-------------------------------------------------------------------------|
-| 0      | 8    | FOOTER_OFFSET           | u64  | byte offset of the latest footer within this file (not covered by CRC)  |
-| 8      | 8    | FEATURE_FLAGS           | u64  | reserved for future format extensions; currently always 0               |
-| 16     | 4    | DESIGNATED_TIMESTAMP    | i32  | index of the designated timestamp in descriptors (or -1)                |
-| 20     | 4    | SORTING_COLUMN_COUNT    | u32  |                                                                         |
-| 24     | 4    | COLUMN_COUNT            | u32  |                                                                         |
-| 28     | 4    | RESERVED                | u32  | must be 0 (alignment padding)                                           |
-| 32     | ..   | COLUMN_DESCRIPTORS      |      | COLUMN_COUNT * Column descriptor (32B each)                             |
-| ..     | ..   | SORTING_COLUMNS         |      | SORTING_COLUMN_COUNT * Sorting column (4B each)                         |
-| ..     | ..   | NAME_STRINGS            |      | Column names, each `[utf8 bytes]`; length from descriptor's NAME_LENGTH |
-| ..     | ..   | HEADER FEATURE SECTIONS |      | Feature-flag-gated sections, in bit order. See "Bloom filters" below.   |
+| offset | size | field                   | type | description                                                                                                         |
+| ------ | ---- | ----------------------- | ---- | ------------------------------------------------------------------------------------------------------------------- |
+| 0      | 8    | PARQUET_META_FILE_SIZE  | u64  | total committed `_pm` file size; patched last by the writer and acts as the MVCC commit signal (not covered by CRC) |
+| 8      | 8    | FEATURE_FLAGS           | u64  | reserved for future format extensions; currently always 0                                                           |
+| 16     | 4    | DESIGNATED_TIMESTAMP    | i32  | index of the designated timestamp in descriptors (or -1)                                                            |
+| 20     | 4    | SORTING_COLUMN_COUNT    | u32  |                                                                                                                     |
+| 24     | 4    | COLUMN_COUNT            | u32  |                                                                                                                     |
+| 28     | 4    | RESERVED                | u32  | must be 0 (alignment padding)                                                                                       |
+| 32     | ..   | COLUMN_DESCRIPTORS      |      | COLUMN_COUNT * Column descriptor (32B each)                                                                         |
+| ..     | ..   | SORTING_COLUMNS         |      | SORTING_COLUMN_COUNT * Sorting column (4B each)                                                                     |
+| ..     | ..   | NAME_STRINGS            |      | Column names, each `[utf8 bytes]`; length from descriptor's NAME_LENGTH                                             |
+| ..     | ..   | HEADER FEATURE SECTIONS |      | Feature-flag-gated sections, in bit order. See "Bloom filters" below.                                               |
+
+The latest footer lives at `PARQUET_META_FILE_SIZE - 4 - FOOTER_LENGTH`, where `FOOTER_LENGTH` is read from the 4-byte trailer at
+`PARQUET_META_FILE_SIZE - 4`. Readers do not consult `ff.length()` / `stat()` — the filesystem size is not a commit boundary.
 
 For a column to be the designated timestamp it must comply to these rules:
 
@@ -214,7 +229,7 @@ For a column to be the designated timestamp it must comply to these rules:
 Per-column metadata. Written once in the header, applies across all row groups.
 
 | offset | size | field          | type | description                                                                                                   |
-|--------|------|----------------|------|---------------------------------------------------------------------------------------------------------------|
+| ------ | ---- | -------------- | ---- | ------------------------------------------------------------------------------------------------------------- |
 | 0      | 8    | NAME_OFFSET    | u64  | offset from the file start to column name (utf-8 encoded, not null-terminated)                                |
 | 8      | 4    | ID             | i32  | index of the column related to QuestDB schema (or -1)                                                         |
 | 12     | 4    | TYPE           | i32  | QuestDB column type code                                                                                      |
@@ -229,7 +244,7 @@ Per-column metadata. Written once in the header, applies across all row groups.
 #### Column flags
 
 | bit offset | bit size | field               | type | description                              |
-|------------|----------|---------------------|------|------------------------------------------|
+| ---------- | -------- | ------------------- | ---- | ---------------------------------------- |
 | 0          | 1        | LOCAL_KEY_IS_GLOBAL | i1   | Symbol                                   |
 | 1          | 1        | IS_ASCII            | i1   | Varchar                                  |
 | 2          | 2        | FIELD_REPETITION    | u2   | 0 = Required, 1 = Optional, 2 = Repeated |
@@ -241,7 +256,7 @@ Per-column metadata. Written once in the header, applies across all row groups.
 Alignment: 4 bytes.
 
 | offset | size | field | type | description                                          |
-|--------|------|-------|------|------------------------------------------------------|
+| ------ | ---- | ----- | ---- | ---------------------------------------------------- |
 | 0      | 4    | INDEX | u32  | Ordinal position of the column in column descriptors |
 
 ### Row group blocks
@@ -260,7 +275,7 @@ together with it. References to the bitsets are in the footer feature section, n
 #### Row group block
 
 | offset | size | field         | type | description                            |
-|--------|------|---------------|------|----------------------------------------|
+| ------ | ---- | ------------- | ---- | -------------------------------------- |
 | 0      | 8    | NUM_ROWS      | u64  |                                        |
 | 8      | ..   | COLUMN_CHUNKS |      | COLUMN_COUNT * Column chunk (64B each) |
 
@@ -269,7 +284,7 @@ together with it. References to the bitsets are in the footer feature section, n
 Per-column-chunk metadata needed to locate and decode data from the parquet file.
 
 | offset | size | field            | type | description                                                                                                                       |
-|--------|------|------------------|------|-----------------------------------------------------------------------------------------------------------------------------------|
+| ------ | ---- | ---------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 0      | 1    | CODEC            | u8   | parquet CompressionCodec enum: 0=UNCOMPRESSED, 1=SNAPPY, 2=GZIP, 3=LZO, 4=BROTLI, 5=LZ4, 6=ZSTD, 7=LZ4_RAW                        |
 | 1      | 1    | ENCODINGS        | u8   | bitmask: bit 0=PLAIN, 1=RLE_DICTIONARY, 2=DELTA_BINARY_PACKED, 3=DELTA_LENGTH_BYTE_ARRAY, 4=DELTA_BYTE_ARRAY, 5=BYTE_STREAM_SPLIT |
 | 2      | 1    | STAT_FLAGS       | u8   |                                                                                                                                   |
@@ -286,7 +301,7 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 #### STAT_FLAGS interpretation
 
 | bit offset | bit size | field                  | type | description                            |
-|------------|----------|------------------------|------|----------------------------------------|
+| ---------- | -------- | ---------------------- | ---- | -------------------------------------- |
 | 0          | 1        | MIN_STAT_PRESENT       | i1   | Indicates if MIN_STAT is present       |
 | 1          | 1        | MIN_STAT_INLINED       | i1   | Indicates if MIN_STAT is inlined       |
 | 2          | 1        | MIN_STAT_VALUE_EXACT   | i1   | Indicates if MIN_STAT value is exact   |
@@ -311,7 +326,7 @@ Bloom filter metadata is gated by feature flag bits 0 and 1 in the header.
 **Header section** (bit 0, after name strings): declares which columns have bloom filters.
 
 | offset | size                | field                | type  | description                                |
-|--------|---------------------|----------------------|-------|--------------------------------------------|
+| ------ | ------------------- | -------------------- | ----- | ------------------------------------------ |
 | 0      | 4                   | BLOOM_COL_COUNT      | u32   | number of columns with bloom filters (> 0) |
 | 4      | BLOOM_COL_COUNT * 4 | BLOOM_FILTER_COLUMNS | u32[] | column indices, sorted ascending, unique   |
 
@@ -342,32 +357,34 @@ row-major. Entry `[rg_idx * BLOOM_COL_COUNT + pos]` where `pos` is the column's 
 #### Bloom filter bitset (inlined)
 
 | offset | size | field  | type | description                                           |
-|--------|------|--------|------|-------------------------------------------------------|
+| ------ | ---- | ------ | ---- | ----------------------------------------------------- |
 | 0      | 4    | LENGTH | i32  | length of the bloom filter bitset in bytes (not bits) |
 | 4      | ..   | BITSET |      | bloom filter bitset                                   |
 
 ### Footer
 
-The parquet file size is stored in `_txn` field 3. The reader locates the latest footer via `FOOTER_OFFSET` in the file
-header. For MVCC, the reader walks the `PREV_FOOTER_OFFSET` chain to find the footer matching the parquet file size from
-its `_txn` snapshot.
+The parquet file size is stored in `_txn` field 3. The reader locates the latest footer via the trailer at
+`PARQUET_META_FILE_SIZE - 4`: `footer_offset = PARQUET_META_FILE_SIZE - 4 - FOOTER_LENGTH`. For MVCC, the reader walks
+the chain via `PREV_PARQUET_META_FILE_SIZE` on each footer — the same size-then-trailer indirection that the header
+uses for the latest footer, so each walk-back step re-validates the previous footer's location through its own
+trailer.
 
-The CRC covers all bytes after `FOOTER_OFFSET`: `[8, CRC_field)`. This protects feature flags, column descriptors, row
-group blocks, and footer content, while excluding the mutable `FOOTER_OFFSET` field at offset 0. It is located via
-`FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENGTH - 4`.
+The CRC covers all bytes after `PARQUET_META_FILE_SIZE`: `[8, CRC_field)`. This protects feature flags, column
+descriptors, row group blocks, and footer content, while excluding the mutable `PARQUET_META_FILE_SIZE` field at
+offset 0. It is located via `FOOTER_LENGTH`: `CRC offset = footer_start + FOOTER_LENGTH - 4`.
 
-| offset | size | field                 | type | description                                                                         |
-|--------|------|-----------------------|------|-------------------------------------------------------------------------------------|
-| 0      | 8    | PARQUET_FOOTER_OFFSET | u64  | byte offset in the parquet file where the parquet footer starts                     |
-| 8      | 4    | PARQUET_FOOTER_LENGTH | u32  | length of the parquet footer in bytes                                               |
-| 12     | 4    | ROW_GROUP_COUNT       | u32  |                                                                                     |
-| 16     | 8    | UNUSED_BYTES          | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)  |
-| 24     | 8    | PREV_FOOTER_OFFSET    | u64  | byte offset of the previous footer in the chain (0 if first version)                |
-| 32     | 8    | FOOTER_FEATURE_FLAGS  | u64  | per-footer feature flags; independent of the header's FEATURE_FLAGS                 |
-| 40     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
-| ..     | ..   | FOOTER_FEATURE_SECTIONS |    | Feature-flag-gated sections, in bit order (may be empty)                            |
-| ..     | 4    | CHECKSUM              | u32  | CRC32 over bytes `[8, this field)` — all content after `FOOTER_OFFSET`              |
-| ..     | 4    | FOOTER_LENGTH         | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM |
+| offset | size | field                       | type | description                                                                                          |
+| ------ | ---- | --------------------------- | ---- | ---------------------------------------------------------------------------------------------------- |
+| 0      | 8    | PARQUET_FOOTER_OFFSET       | u64  | byte offset in the parquet file where the parquet footer starts                                      |
+| 8      | 4    | PARQUET_FOOTER_LENGTH       | u32  | length of the parquet footer in bytes                                                                |
+| 12     | 4    | ROW_GROUP_COUNT             | u32  |                                                                                                      |
+| 16     | 8    | UNUSED_BYTES                | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)                   |
+| 24     | 8    | PREV_PARQUET_META_FILE_SIZE | u64  | committed `_pm` file size at the previous snapshot (0 if first); walk back via trailer at `prev - 4` |
+| 32     | 8    | FOOTER_FEATURE_FLAGS        | u64  | per-footer feature flags; independent of the header's FEATURE_FLAGS                                  |
+| 40     | ..   | ROW_GROUP_ENTRIES           |      | ROW_GROUP_COUNT * Row group entry (4B each)                                                          |
+| ..     | ..   | FOOTER_FEATURE_SECTIONS     |      | Feature-flag-gated sections, in bit order (may be empty)                                             |
+| ..     | 4    | CHECKSUM                    | u32  | CRC32 over bytes `[8, this field)` — all content after `PARQUET_META_FILE_SIZE`                      |
+| ..     | 4    | FOOTER_LENGTH               | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM                  |
 
 The parquet file size is derived from the footer metadata:
 `parquet_file_size = PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8` (4B parquet footer length field + 4B PAR1
@@ -376,7 +393,7 @@ magic). This eliminates the need to store the parquet file size separately.
 ### Row group entry (4 bytes)
 
 | offset | size | field        | type | description                                            |
-|--------|------|--------------|------|--------------------------------------------------------|
+| ------ | ---- | ------------ | ---- | ------------------------------------------------------ |
 | 0      | 4    | BLOCK_OFFSET | u32  | byte offset from file start >> 3 (actual = value << 3) |
 
 ## Concurrent Writing/Reading
@@ -387,28 +404,36 @@ as the MVCC version token.
 **Writer flow:**
 
 1. Write/update `data.parquet`.
-2. Write the `_pm` metadata file. On update, append new/changed row group blocks after the old footer, then write a new
-   footer (with CRC + trailer) at the end. Patch `FOOTER_OFFSET` in the header as the last write.
+2. Write the `_pm` metadata file. On update, append new/changed row group blocks after the old trailer, then write a
+   new footer (with CRC) and a new 4-byte `FOOTER_LENGTH` trailer at the end. Patch `PARQUET_META_FILE_SIZE` in the header as the
+   last write — this is the MVCC commit signal. Readers see either the old committed size (with the old trailer at
+   `old_parquet_meta_file_size - 4`) or the new one.
 3. Commit `_txn` (A/B buffered), updating the partition name txn and parquet file size.
 
 **Reader flow:**
 
 1. Read `_txn` via `safeReadTxn()` (spin-lock with version check). Obtain parquet file size from field 3.
-2. stat() the `_pm` file to get its actual size; memory-map the `_pm` file.
-3. Read `FOOTER_OFFSET` from the header to locate the latest footer.
-4. Walk the `PREV_FOOTER_OFFSET` chain: for each footer, derive the parquet file size (
-   `PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8`). Use the first footer whose derived parquet size is <= the
-   parquet file size from `_txn`.
-5. Read the footer: PARQUET_FOOTER_OFFSET, PARQUET_FOOTER_LENGTH, ROW_GROUP_COUNT, UNUSED_BYTES, and row group entries.
-6. For metadata-only operations (timestamp stats), read directly from the `_pm` file.
-7. For data operations, memory-map `data.parquet` using the parquet file size from `_txn`.
+2. Memory-map the first 32 bytes of the `_pm` file. Read `PARQUET_META_FILE_SIZE` from offset 0.
+3. Remap (or open-and-map) `parquet_meta_file_size` bytes of the `_pm` file. Do not consult `stat()` / `ff.length()` — the
+   filesystem size may include unpublished bytes.
+4. Read the 4-byte trailer at `PARQUET_META_FILE_SIZE - 4` to get `FOOTER_LENGTH`; derive `footer_offset = PARQUET_META_FILE_SIZE - 4 -
+   FOOTER_LENGTH`.
+5. Walk the MVCC chain: derive parquet file size from the current footer
+   (`PARQUET_FOOTER_OFFSET + PARQUET_FOOTER_LENGTH + 8`). If it matches the `_txn` snapshot, stop. Otherwise, read
+   `PREV_PARQUET_META_FILE_SIZE` from the current footer and repeat from step 4 with the new size. Each step
+   re-validates the previous footer location via its own trailer.
+6. Read the footer: PARQUET_FOOTER_OFFSET, PARQUET_FOOTER_LENGTH, ROW_GROUP_COUNT, UNUSED_BYTES, and row group entries.
+7. For metadata-only operations (timestamp stats), read directly from the `_pm` file.
+8. For data operations, memory-map `data.parquet` using the parquet file size from `_txn`.
 
 **Rewrite mode** (new partition directory with new name txn): new metadata file created. No concurrent access until
 `_txn` flips.
 
-**Update mode** (same partition directory): new row group blocks appended after old footer, new footer written at the
-end. Unchanged row groups keep their old offsets. The header's `FOOTER_OFFSET` is patched last for atomicity. Readers
-pinned to an older `_txn` snapshot walk the `PREV_FOOTER_OFFSET` chain to find their matching footer.
+**Update mode** (same partition directory): new row group blocks appended after old trailer, new footer and trailer
+written at the end. Unchanged row groups keep their old offsets. The header's `PARQUET_META_FILE_SIZE` is patched last
+for atomicity. Readers pinned to an older `_txn` snapshot read the committed-at-that-time `PARQUET_META_FILE_SIZE`
+(from their own earlier mapping) and walk the `PREV_PARQUET_META_FILE_SIZE` chain from the matching trailer to find
+their footer.
 
 ## Access patterns
 
@@ -470,7 +495,7 @@ the file (after the existing footer) and a new footer is written afterwards. The
 last to point to the new footer. The new parquet file size is written to `_txn` field 3 so that readers can identify
 which footer matches their snapshot.
 
-Existing readers continue to see their committed data by walking the `PREV_FOOTER_OFFSET` chain: each footer links to
+Existing readers continue to see their committed data by walking the `PREV_PARQUET_META_FILE_SIZE` chain: each footer links to
 the previous one, and the reader selects the footer whose derived parquet file size matches the parquet file size from
 its `_txn` snapshot.
 

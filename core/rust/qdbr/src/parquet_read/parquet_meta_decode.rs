@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn find_ts_before_all_data() -> ParquetResult<()> {
         let (pm, fo) = build_ts_pm(&[(100, 1000, 2000)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         // timestamp < min of first row group → 2*0+1 = 1
         let result = find_row_group_by_timestamp(&reader, 500, 0, 100, 0, |_, _, _, _| {
@@ -410,7 +410,7 @@ mod tests {
     #[test]
     fn find_ts_within_row_group() -> ParquetResult<()> {
         let (pm, fo) = build_ts_pm(&[(100, 1000, 2000)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         // 1000 <= 1500 < 2000 → inside rg 0 → 2*(0+1) = 2
         let result = find_row_group_by_timestamp(&reader, 1500, 0, 100, 0, |_, _, _, _| {
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn find_ts_after_all_data() -> ParquetResult<()> {
         let (pm, fo) = build_ts_pm(&[(100, 1000, 2000)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         // timestamp >= max → end marker: 2*1+1 = 3
         let result = find_row_group_by_timestamp(&reader, 3000, 0, 100, 0, |_, _, _, _| {
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn find_ts_multiple_row_groups() -> ParquetResult<()> {
         let (pm, fo) = build_ts_pm(&[(100, 1000, 2000), (100, 2000, 3000), (100, 3000, 4000)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         // Before first → 1
         assert_eq!(
@@ -471,7 +471,7 @@ mod tests {
             (0, 0, 0), // empty, skipped
             (100, 1000, 2000),
         ])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         // Should skip rg 0 (empty) and find timestamp in rg 1.
         let result =
@@ -508,7 +508,7 @@ mod tests {
         writer.add_row_group(rg);
 
         let (pm, fo) = writer.finish()?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         // The closure returns min=1000 (row_lo=0, row_hi=1) and max=2000
         // (row_lo=99, row_hi=100).
@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn find_ts_col_out_of_range() {
         let (pm, fo) = build_ts_pm(&[(100, 1000, 2000)]).unwrap();
-        let reader = ParquetMetaReader::new(&pm, fo).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm, fo).unwrap();
 
         let err =
             find_row_group_by_timestamp(&reader, 1500, 0, 100, 99, |_, _, _, _| unreachable!());
@@ -551,9 +551,9 @@ mod tests {
 
     #[test]
     fn decode_single_timestamp_column() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, pm_footer_offset) = build_matched_parquet_pm(10)?;
+        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(10)?;
 
-        let reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -586,8 +586,8 @@ mod tests {
 
     #[test]
     fn decode_row_group_index_out_of_range() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, pm_footer_offset) = build_matched_parquet_pm(10)?;
-        let reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset)?;
+        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(10)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -615,8 +615,8 @@ mod tests {
 
     #[test]
     fn decode_column_index_out_of_range() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, pm_footer_offset) = build_matched_parquet_pm(10)?;
-        let reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset)?;
+        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(10)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -645,8 +645,8 @@ mod tests {
 
     #[test]
     fn decode_partial_row_range() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, pm_footer_offset) = build_matched_parquet_pm(100)?;
-        let reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset)?;
+        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(100)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -681,8 +681,8 @@ mod tests {
 
     #[test]
     fn decode_filtered_subset() -> ParquetResult<()> {
-        let (parquet_data, pm_bytes, pm_footer_offset) = build_matched_parquet_pm(100)?;
-        let reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset)?;
+        let (parquet_data, pm_bytes, parquet_meta_file_size) = build_matched_parquet_pm(100)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, parquet_meta_file_size)?;
 
         let tas = crate::allocator::TestAllocatorState::new();
         let allocator = tas.allocator();
@@ -720,7 +720,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Create matched parquet file + `_pm` bytes using `convert_from_parquet`.
-    /// Returns `(parquet_bytes, pm_bytes, pm_footer_offset)`.
+    /// Returns `(parquet_bytes, pm_bytes, parquet_meta_file_size)`.
     fn build_matched_parquet_pm(row_count: usize) -> ParquetResult<(Vec<u8>, Vec<u8>, u64)> {
         use crate::parquet::qdb_metadata::QdbMeta;
         use crate::parquet::tests::ColumnTypeTagExt;
@@ -776,8 +776,9 @@ mod tests {
             })
             .map(|j| QdbMeta::deserialize(j).unwrap());
 
-        let (pm_bytes, footer_offset) = convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0)?;
+        let (pm_bytes, parquet_meta_file_size) =
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0)?;
 
-        Ok((parquet_buf, pm_bytes, footer_offset))
+        Ok((parquet_buf, pm_bytes, parquet_meta_file_size))
     }
 }

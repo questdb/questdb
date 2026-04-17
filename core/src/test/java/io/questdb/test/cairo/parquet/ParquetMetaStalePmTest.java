@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -181,20 +182,46 @@ public class ParquetMetaStalePmTest extends AbstractCairoTest {
         final AtomicBoolean interceptEnabled = new AtomicBoolean(false);
         final AtomicBoolean intercepted = new AtomicBoolean(false);
 
+        // After regeneration writes a valid _pm, intercept the next header
+        // read and return a bogus parquet_meta_file_size. readParquetMetaFileSize() succeeds,
+        // mapRO() succeeds, and then parquetMetaReader.of() fails because
+        // the bogus size doesn't match reality — exercising the cleanup
+        // path that must munmap the already-acquired mapping.
         final FilesFacade corruptingFf = new TestFilesFacadeImpl() {
+            private boolean pmOpenInFlight;
+
             @Override
-            public long length(LPSZ name) {
-                long len = super.length(name);
-                // After regeneration writes a valid _pm, return a truncated size
-                // so parquetMetaReader.of() fails on size validation (10 < 32).
+            public boolean close(long fd) {
+                pmOpenInFlight = false;
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
                 if (interceptEnabled.get()
                         && !intercepted.get()
-                        && len > 0
+                        && fd >= 0
                         && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
-                    intercepted.set(true);
-                    return 10;
+                    pmOpenInFlight = true;
                 }
-                return len;
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long address, long len, long offset) {
+                if (pmOpenInFlight
+                        && !intercepted.get()
+                        && len == 8
+                        && offset == 0) {
+                    intercepted.set(true);
+                    // Plant a bogus parquet_meta_file_size — just large enough to pass
+                    // the readParquetMetaFileSize lower-bound check, but vastly larger
+                    // than the actual file.
+                    Unsafe.getUnsafe().putLong(address, Long.MAX_VALUE / 2);
+                    return 8;
+                }
+                return super.read(fd, address, len, offset);
             }
         };
 
@@ -211,9 +238,9 @@ public class ParquetMetaStalePmTest extends AbstractCairoTest {
                 execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
                 Assert.fail("expected CairoException from corrupted _pm size");
             } catch (CairoException ignored) {
-                // Expected: parquetMetaReader.of() rejects the truncated _pm size.
-                // With the fix, the mmap from mapRO() is properly cleaned up.
-                // Without the fix, assertMemoryLeak() detects the leaked mmap.
+                // Expected: mapRO() or parquetMetaReader.of() rejects the
+                // bogus parquet_meta_file_size. With proper cleanup, no mmap leaks;
+                // without it, assertMemoryLeak() detects the leak.
             }
         });
     }

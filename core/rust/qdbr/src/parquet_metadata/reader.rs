@@ -57,11 +57,20 @@ pub struct ParquetMetaReader<'a> {
 }
 
 impl<'a> ParquetMetaReader<'a> {
-    /// Creates a reader by reading the footer length trailer at the end of the file.
+    /// Creates a reader from the committed `_pm` file size.
     ///
-    /// `file_size` is the total size of the `_pm` file. The last 4 bytes store
-    /// the footer length (from footer start through CRC, inclusive). The footer
-    /// offset is derived as `file_size - 4 - footer_length`.
+    /// `file_size` is the total committed size of the `_pm` file — the value
+    /// stored in the header at `HEADER_PARQUET_META_FILE_SIZE_OFF`. The caller is
+    /// expected to have read that value from the header before calling here
+    /// (and before sizing any mmap). The last 4 bytes of the committed view
+    /// store the footer length, from which this method derives the footer
+    /// offset as `file_size - 4 - footer_length`.
+    ///
+    /// The resulting reader is bound to the first `file_size` bytes of `data`.
+    /// Any trailing bytes (e.g. from an in-progress append that hasn't been
+    /// published yet) are ignored. As a sanity check, the method also
+    /// validates that the header's `parquet_meta_file_size` agrees with the passed-in
+    /// value — a mismatch is treated as corruption.
     #[must_use = "returns the reader"]
     pub fn from_file_size(data: &'a [u8], file_size: u64) -> ParquetResult<Self> {
         let file_size_usize = usize::try_from(file_size).map_err(|_| {
@@ -109,7 +118,20 @@ impl<'a> ParquetMetaReader<'a> {
                     file_size
                 )
             })?;
-        Self::new(file_data, footer_offset)
+        let reader = Self::new(file_data, footer_offset)?;
+        // Defense in depth: the header's parquet_meta_file_size must match the value
+        // we were handed. If they disagree, the file is corrupt or the
+        // caller passed a stale size — either way, refuse to proceed.
+        let header_size = reader.header.parquet_meta_file_size();
+        if header_size != file_size {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "header parquet_meta_file_size {} does not match caller-provided file size {}",
+                header_size,
+                file_size
+            ));
+        }
+        Ok(reader)
     }
 
     /// Creates a reader over the given byte slice.
@@ -325,18 +347,29 @@ impl<'a> ParquetMetaReader<'a> {
         self.data
     }
 
+    /// Returns the total committed `_pm` file size as encoded in the header.
+    /// For a well-formed file this matches `data().len()`.
+    pub fn parquet_meta_file_size(&self) -> u64 {
+        self.header.parquet_meta_file_size()
+    }
+
     /// Returns the footer offset within this file.
     pub fn footer_offset(&self) -> u64 {
         self.footer_offset
     }
 
-    /// Returns the previous footer offset from the footer chain (0 if first version).
-    pub fn prev_footer_offset(&self) -> u64 {
-        self.footer.prev_footer_offset()
+    /// Returns the committed `_pm` file size at the time of the previous
+    /// snapshot (0 if this is the first snapshot in the chain).
+    pub fn prev_parquet_meta_file_size(&self) -> u64 {
+        self.footer.prev_parquet_meta_file_size()
     }
 
-    /// Walks the prev_footer_offset chain starting from `header_footer_offset` to
-    /// find the footer whose parquet file size matches `target_parquet_size`.
+    /// Walks the MVCC chain starting from the latest snapshot to find the
+    /// footer whose parquet file size matches `target_parquet_size`. Each
+    /// step reads `prev_parquet_meta_file_size` from the current footer,
+    /// then derives the previous footer location from the trailer at
+    /// `prev_size - 4` — the same size-then-trailer indirection the header
+    /// uses for the latest footer.
     ///
     /// Parquet file size is derived from each footer as:
     /// `parquet_footer_offset + parquet_footer_length + 8`.
@@ -344,38 +377,59 @@ impl<'a> ParquetMetaReader<'a> {
     /// Returns `(footer_offset, Footer)` for the matching footer.
     pub fn find_footer_for_parquet_size(
         data: &'a [u8],
-        header_footer_offset: u64,
+        parquet_meta_file_size: u64,
         target_parquet_size: u64,
     ) -> ParquetResult<(u64, Footer<'a>)> {
-        let mut current_offset = header_footer_offset;
+        let mut current_size = parquet_meta_file_size;
         loop {
-            let current_usize = usize::try_from(current_offset).map_err(|_| {
-                parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "footer offset {} exceeds addressable range",
-                    current_offset
-                )
-            })?;
-            let footer_data = data.get(current_usize..).ok_or_else(|| {
-                parquet_meta_err!(
-                    ParquetMetaErrorKind::Truncated,
-                    "footer offset {} out of bounds",
-                    current_offset
-                )
-            })?;
-            if footer_data.len() < FOOTER_TRAILER_SIZE {
+            if current_size < (FOOTER_TRAILER_SIZE as u64) {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::Truncated,
-                    "footer region too small for trailer at offset {}",
-                    current_offset
+                    "chain walk: _pm size {} too small for trailer",
+                    current_size
                 ));
             }
-            let trailer_start = footer_data.len() - FOOTER_TRAILER_SIZE;
-            let footer_length = u32::from_le_bytes(
-                footer_data[trailer_start..trailer_start + FOOTER_TRAILER_SIZE]
-                    .try_into()
-                    .expect("slice is 4 bytes"),
-            );
+            let current_size_usize = usize::try_from(current_size).map_err(|_| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "_pm size {} exceeds addressable range",
+                    current_size
+                )
+            })?;
+            let trailer_abs = current_size_usize - FOOTER_TRAILER_SIZE;
+            let trailer = data
+                .get(trailer_abs..trailer_abs + FOOTER_TRAILER_SIZE)
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::Truncated,
+                        "trailer at {} out of bounds",
+                        trailer_abs
+                    )
+                })?;
+            // Safety: .get() returned a 4-byte slice.
+            let footer_length = u32::from_le_bytes(trailer.try_into().expect("slice is 4 bytes"));
+            let current_offset = current_size
+                .checked_sub(FOOTER_TRAILER_SIZE as u64)
+                .and_then(|s| s.checked_sub(footer_length as u64))
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::Truncated,
+                        "footer length {} exceeds _pm size {}",
+                        footer_length,
+                        current_size
+                    )
+                })?;
+            let current_offset_usize = current_offset as usize;
+            let footer_data = data
+                .get(current_offset_usize..current_size_usize)
+                .ok_or_else(|| {
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::Truncated,
+                        "footer at {}..{} out of bounds",
+                        current_offset,
+                        current_size
+                    )
+                })?;
             let footer = Footer::new(footer_data, footer_length)?;
 
             let pq_size =
@@ -384,15 +438,15 @@ impl<'a> ParquetMetaReader<'a> {
                 return Ok((current_offset, footer));
             }
 
-            let prev = footer.prev_footer_offset();
-            if prev == 0 || prev >= current_offset {
+            let prev_size = footer.prev_parquet_meta_file_size();
+            if prev_size == 0 || prev_size >= current_size {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::InvalidValue,
                     "no footer found for parquet size {}",
                     target_parquet_size
                 ));
             }
-            current_offset = prev;
+            current_size = prev_size;
         }
     }
 
@@ -765,9 +819,9 @@ mod tests {
         for (type_code, name) in types {
             w.add_column(name, -1, *type_code, ColumnFlags::new(), 0, 0, 0, 0);
         }
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.column_count(), types.len() as u32);
         assert_eq!(reader.designated_timestamp(), Some(5));
 
@@ -778,6 +832,17 @@ mod tests {
         }
     }
 
+    /// Derives the footer offset of a freshly finished file by reading the
+    /// trailer. Only needed by tests that want to corrupt specific footer
+    /// bytes before re-opening.
+    fn footer_offset_of(bytes: &[u8], parquet_meta_file_size: u64) -> u64 {
+        let end = parquet_meta_file_size as usize;
+        let trailer = &bytes[end - FOOTER_TRAILER_SIZE..end];
+        let footer_length =
+            u32::from_le_bytes(trailer.try_into().expect("slice is 4 bytes")) as u64;
+        parquet_meta_file_size - FOOTER_TRAILER_SIZE as u64 - footer_length
+    }
+
     #[test]
     fn crc_corruption_detected() {
         let mut w = ParquetMetaWriter::new();
@@ -785,12 +850,12 @@ mod tests {
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(42);
         w.add_row_group(rg);
-        let (mut bytes, footer_offset) = w.finish().unwrap();
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
 
         // Corrupt a byte in the CRC-covered area (column descriptors, after offset 8).
         let target = crate::parquet_metadata::types::HEADER_CRC_AREA_OFF + 1;
         bytes[target] ^= 0xFF;
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert!(reader.verify_checksum().is_err());
     }
 
@@ -801,14 +866,15 @@ mod tests {
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(42);
         w.add_row_group(rg);
-        let (mut bytes, footer_offset) = w.finish().unwrap();
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        // Corrupt a byte inside the footer (first byte after footer_offset).
+        // Corrupt a byte inside the footer (first byte after the footer start).
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let target = footer_offset as usize;
         if target < bytes.len() {
             bytes[target] ^= 0xFF;
         }
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert!(reader.verify_checksum().is_err());
     }
 
@@ -816,9 +882,9 @@ mod tests {
     fn verify_checksum_passes_on_valid_file() {
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         reader.verify_checksum().unwrap();
     }
 
@@ -828,14 +894,15 @@ mod tests {
 
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (mut bytes, footer_offset) = w.finish().unwrap();
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
 
         // Patch footer feature flags to set an unknown required bit (bit 32).
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
         let required_bit: u64 = 1 << 32;
         bytes[flags_off..flags_off + 8].copy_from_slice(&required_bit.to_le_bytes());
 
-        let err = match ParquetMetaReader::new(&bytes, footer_offset) {
+        let err = match ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size) {
             Ok(_) => panic!("expected error for required footer flag"),
             Err(e) => e,
         };
@@ -851,15 +918,16 @@ mod tests {
 
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (mut bytes, footer_offset) = w.finish().unwrap();
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
 
         // Patch footer feature flags to set an unknown optional bit (bit 5).
         // Readers must accept the file and ignore the unknown bit.
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
         let optional_bit: u64 = 1 << 5;
         bytes[flags_off..flags_off + 8].copy_from_slice(&optional_bit.to_le_bytes());
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.footer_feature_flags().0, optional_bit);
     }
 
@@ -891,8 +959,8 @@ mod tests {
             w.add_row_group(rg);
         }
 
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
 
         assert_eq!(reader.row_group_count(), 5);
         for i in 0..5 {
@@ -907,10 +975,54 @@ mod tests {
     fn footer_offset_accessor() {
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
-        assert_eq!(reader.footer_offset(), footer_offset);
+        let expected_footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert_eq!(reader.footer_offset(), expected_footer_offset);
+    }
+
+    #[test]
+    fn parquet_meta_file_size_matches_slice_len() {
+        // The header field patched at finish() must equal bytes.len().
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+        assert_eq!(parquet_meta_file_size, bytes.len() as u64);
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        assert_eq!(reader.parquet_meta_file_size(), parquet_meta_file_size);
+        assert_eq!(reader.data().len(), bytes.len());
+    }
+
+    #[test]
+    fn from_file_size_rejects_header_size_mismatch() {
+        // Tampering with the header's parquet_meta_file_size field (post-CRC) is caught
+        // by the header/size cross-check even though the CRC still validates.
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
+
+        // Overwrite header field with a bogus, smaller value.
+        let bogus = parquet_meta_file_size - 1;
+        bytes[0..8].copy_from_slice(&bogus.to_le_bytes());
+
+        assert!(ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).is_err());
+    }
+
+    #[test]
+    fn from_file_size_ignores_trailing_bytes() {
+        // Simulate an in-progress append: actual slice is larger than the
+        // committed header-reported size. Reader must behave as if only the
+        // committed prefix exists.
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
+        bytes.extend_from_slice(&[0xAA_u8; 32]);
+
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        reader.verify_checksum().unwrap();
+        assert_eq!(reader.data().len(), parquet_meta_file_size as usize);
     }
 
     #[test]
@@ -922,9 +1034,10 @@ mod tests {
         let mut rg = RowGroupBlockBuilder::new(1);
         rg.set_num_rows(10);
         w.add_row_group(rg);
-        let (mut bytes, footer_offset) = w.finish().unwrap();
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
 
         // The first row group entry is at footer_offset + FOOTER_FIXED_SIZE (after the fixed fields).
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let entry_offset =
             footer_offset as usize + crate::parquet_metadata::types::FOOTER_FIXED_SIZE;
         // Set the block offset to a huge value that, when shifted, exceeds the file.
@@ -934,10 +1047,10 @@ mod tests {
         // Fix the CRC so the reader doesn't reject on checksum mismatch.
         // CRC is at len - TRAILER(4) - CRC(4).
         let crc_offset = bytes.len() - 8;
-        let crc = crc32fast::hash(&bytes[..crc_offset]);
+        let crc = crc32fast::hash(&bytes[HEADER_CRC_AREA_OFF..crc_offset]);
         bytes[crc_offset..crc_offset + 4].copy_from_slice(&crc.to_le_bytes());
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert!(reader.row_group(0).is_err());
     }
 
@@ -948,12 +1061,13 @@ mod tests {
         // Simplest: just truncate a valid file at the footer.
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        // Truncate the file to cut off the last byte (the CRC).
+        // Truncate the file to cut off the last byte (the CRC). The
+        // caller-declared parquet_meta_file_size still points past the truncation,
+        // so the reader must reject.
         let truncated = &bytes[..bytes.len() - 1];
-        // This should fail because the footer's checksum field is out of bounds.
-        assert!(ParquetMetaReader::new(truncated, footer_offset).is_err());
+        assert!(ParquetMetaReader::from_file_size(truncated, parquet_meta_file_size).is_err());
     }
 
     #[test]
@@ -975,11 +1089,12 @@ mod tests {
         rg.set_num_rows(42);
         w.add_row_group(rg);
         w.parquet_footer(4096, 256);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
         // from_file_size should derive the same footer offset from the trailer.
-        let reader = ParquetMetaReader::from_file_size(&bytes, bytes.len() as u64).unwrap();
-        assert_eq!(reader.footer_offset(), footer_offset);
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
+        let expected_footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
+        assert_eq!(reader.footer_offset(), expected_footer_offset);
         assert_eq!(reader.column_count(), 1);
         assert_eq!(reader.row_group_count(), 1);
         assert_eq!(reader.parquet_footer_offset(), 4096);
@@ -1009,8 +1124,8 @@ mod tests {
         w.add_sorting_column(0);
         w.add_sorting_column(1);
 
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
 
         assert_eq!(reader.sorting_column_count(), 2);
         assert_eq!(reader.sorting_column(0).unwrap(), 0);
@@ -1022,9 +1137,9 @@ mod tests {
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         w.unused_bytes(4096);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.unused_bytes(), 4096);
     }
 
@@ -1032,9 +1147,9 @@ mod tests {
     fn data_accessor_returns_full_slice() {
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.data().len(), bytes.len());
         assert_eq!(reader.data().as_ptr(), bytes.as_ptr());
     }
@@ -1064,8 +1179,8 @@ mod tests {
         rg.add_bloom_filter(1, &bitset).unwrap();
         w.add_row_group(rg);
 
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         reader.verify_checksum().unwrap();
 
         assert!(reader.has_bloom_filters());
@@ -1097,8 +1212,8 @@ mod tests {
         rg.add_external_bloom_filter(0, 4096, 512).unwrap();
         w.add_row_group(rg);
 
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         reader.verify_checksum().unwrap();
 
         assert!(reader.has_bloom_filters());
@@ -1125,8 +1240,8 @@ mod tests {
         rg1.add_bloom_filter(0, &[0xBBu8; 32]).unwrap();
         w.add_row_group(rg1);
 
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         reader.verify_checksum().unwrap();
 
         // Row group 0 has sentinel 0 (absent).
@@ -1146,8 +1261,8 @@ mod tests {
         rg.set_num_rows(10);
         w.add_row_group(rg);
 
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         reader.verify_checksum().unwrap();
 
         assert!(!reader.has_bloom_filters());
@@ -1164,18 +1279,19 @@ mod tests {
         rg.add_bloom_filter(0, &[0xCC_u8; 32]).unwrap();
         w.add_row_group(rg);
 
-        let (mut bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let (mut bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         reader.verify_checksum().unwrap();
 
         // Corrupt a byte in the bloom filter footer section.
         // The footer section is between the row group entries and CRC.
+        let footer_offset = footer_offset_of(&bytes, parquet_meta_file_size);
         let footer_start = footer_offset as usize;
-        // Footer: 24 (fixed) + 4 (1 rg entry) + bloom section + CRC + trailer
-        let bloom_section_start = footer_start + 24 + 4;
+        // Footer: FOOTER_FIXED_SIZE (40) + 4 (1 rg entry) + bloom section + CRC + trailer
+        let bloom_section_start = footer_start + FOOTER_FIXED_SIZE + 4;
         bytes[bloom_section_start] ^= 0xFF;
 
-        let reader2 = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader2 = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert!(reader2.verify_checksum().is_err());
     }
 
@@ -1309,7 +1425,7 @@ mod tests {
     fn skip_is_null_when_no_nulls() -> TestParquetResult<()> {
         //                  (rows, nulls, min, max, has_stats)
         let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
         assert!(reader.can_skip_row_group(0, &[filter], 0)?);
@@ -1319,7 +1435,7 @@ mod tests {
     #[test]
     fn no_skip_is_null_when_nulls_present() -> TestParquetResult<()> {
         let (pm, fo) = build_long_pm(&[(100, 5, 10, 200, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
         assert!(!reader.can_skip_row_group(0, &[filter], 0)?);
@@ -1329,7 +1445,7 @@ mod tests {
     #[test]
     fn skip_is_not_null_when_all_nulls() -> TestParquetResult<()> {
         let (pm, fo) = build_long_pm(&[(100, 100, 0, 0, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NOT_NULL, 0, ColumnTypeTag::Long as i32);
         assert!(reader.can_skip_row_group(0, &[filter], 0)?);
@@ -1339,7 +1455,7 @@ mod tests {
     #[test]
     fn no_skip_is_not_null_when_some_non_nulls() -> TestParquetResult<()> {
         let (pm, fo) = build_long_pm(&[(100, 50, 10, 200, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         let filter = make_filter(0, 0, FILTER_OP_IS_NOT_NULL, 0, ColumnTypeTag::Long as i32);
         assert!(!reader.can_skip_row_group(0, &[filter], 0)?);
@@ -1350,7 +1466,7 @@ mod tests {
     fn skip_eq_outside_min_max() -> TestParquetResult<()> {
         // Range [100, 200], search for 300.
         let (pm, fo) = build_long_pm(&[(1000, 0, 100, 200, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         let value: i64 = 300;
         let filter = make_filter(
@@ -1369,7 +1485,7 @@ mod tests {
     fn no_skip_eq_inside_min_max() -> TestParquetResult<()> {
         // Range [100, 200], search for 150.
         let (pm, fo) = build_long_pm(&[(1000, 0, 100, 200, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         let value: i64 = 150;
         let filter = make_filter(
@@ -1388,7 +1504,7 @@ mod tests {
     fn skip_gt_above_max() -> TestParquetResult<()> {
         // Range [100, 200], GT 200 → all values <= 200 so skip.
         let (pm, fo) = build_long_pm(&[(1000, 0, 100, 200, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         let value: i64 = 200;
         let filter = make_filter(
@@ -1407,7 +1523,7 @@ mod tests {
     fn skip_lt_below_min() -> TestParquetResult<()> {
         // Range [100, 200], LT 100 → all values >= 100 so skip.
         let (pm, fo) = build_long_pm(&[(1000, 0, 100, 200, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         let value: i64 = 100;
         let filter = make_filter(
@@ -1425,7 +1541,7 @@ mod tests {
     #[test]
     fn no_skip_without_stats() -> TestParquetResult<()> {
         let (pm, fo) = build_long_pm(&[(1000, 0, 0, 0, false)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         let value: i64 = 9999;
         let filter = make_filter(
@@ -1444,7 +1560,7 @@ mod tests {
     #[test]
     fn skip_rg_index_out_of_range() {
         let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)]).unwrap();
-        let reader = ParquetMetaReader::new(&pm, fo).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&pm, fo).unwrap();
 
         let err = reader.can_skip_row_group(5, &[], 0);
         assert!(err.is_err());
@@ -1457,7 +1573,7 @@ mod tests {
     #[test]
     fn skip_column_index_out_of_range_continues() -> TestParquetResult<()> {
         let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         // Column index 99 doesn't exist → filter is ignored, no skip.
         let filter = make_filter(99, 0, FILTER_OP_IS_NULL, 0, ColumnTypeTag::Long as i32);
@@ -1468,7 +1584,7 @@ mod tests {
     #[test]
     fn skip_empty_filters() -> TestParquetResult<()> {
         let (pm, fo) = build_long_pm(&[(100, 0, 10, 200, true)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         assert!(!reader.can_skip_row_group(0, &[], 0)?);
         Ok(())
@@ -1480,7 +1596,7 @@ mod tests {
         let min = [0x11u8; 16];
         let max = [0x33u8; 16];
         let (pm, fo) = build_uuid_pm(&[(100, 0, min, max)])?;
-        let reader = ParquetMetaReader::new(&pm, fo)?;
+        let reader = ParquetMetaReader::from_file_size(&pm, fo)?;
 
         // Filter value: 0xFF..FF (16 bytes), outside the range.
         let filter_value = [0xFFu8; 16];

@@ -404,7 +404,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             long addr = 0;
             long parquetMetaFileSize = 0;
             try {
-                parquetMetaFileSize = ff.length(partitionDirPath.$());
+                // Size the mapping from the committed PARQUET_META_FILE_SIZE header
+                // field, not ff.length(). A non-positive return means the
+                // file is missing, unreadable, or header-corrupt — skip it.
+                parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, partitionDirPath.$());
                 if (parquetMetaFileSize <= 0) {
                     return;
                 }
@@ -412,7 +415,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 if (parquetMetaReader == null) {
                     parquetMetaReader = new ParquetMetaFileReader();
                 }
-                parquetMetaReader.of(addr, parquetMetaFileSize, parquetFileSize);
+                parquetMetaReader.of(addr, parquetFileSize);
             } catch (Throwable e) {
                 LOG.error().$("could not read parquet metadata [path=").$(partitionDirPath).$(", error=").$(e.getMessage()).I$();
                 closeParquetMeta();

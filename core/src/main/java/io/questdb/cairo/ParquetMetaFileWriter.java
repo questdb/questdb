@@ -30,7 +30,9 @@ package io.questdb.cairo;
  * <p>
  * The result is a native memory buffer holding the complete _pm file bytes.
  * The caller accesses the data via {@link #resultDataPtr}, {@link #resultDataLen},
- * and {@link #resultFooterOffset}, and must call {@link #destroyResult} when done.
+ * and {@link #resultParquetMetaFileSize}, and must call {@link #destroyResult} when done.
+ * {@link #resultParquetMetaFileSize} returns the total committed file size that the
+ * Rust writer has already patched into the header at offset 0.
  */
 public class ParquetMetaFileWriter {
 
@@ -54,7 +56,7 @@ public class ParquetMetaFileWriter {
 
     public static native long resultDataPtr(long resultPtr);
 
-    public static native long resultFooterOffset(long resultPtr);
+    public static native long resultParquetMetaFileSize(long resultPtr);
 
     public static native void setDesignatedTimestamp(long writerPtr, int index);
 

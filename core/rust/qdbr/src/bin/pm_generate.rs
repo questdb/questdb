@@ -84,11 +84,11 @@ fn generate(
     )
     .map_err(|e| format!("failed to convert: {}", e))?;
 
-    let pm_file_size = pm_bytes.len() as u64;
+    let parquet_meta_file_size = pm_bytes.len() as u64;
     let mut out = File::create(output_path)?;
     out.write_all(&pm_bytes)?;
 
-    Ok(pm_file_size)
+    Ok(parquet_meta_file_size)
 }
 
 fn extract_qdb_meta(metadata: &parquet2::metadata::FileMetaData) -> Option<QdbMeta> {

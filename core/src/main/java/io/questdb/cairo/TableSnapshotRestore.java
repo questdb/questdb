@@ -628,13 +628,19 @@ public class TableSnapshotRestore implements QuietCloseable {
             int partitionDirLen = path.size();
 
             // mmap _pm metadata to read parquet file size and provide metadata to the decoder.
+            // Size the mapping from the committed PARQUET_META_FILE_SIZE header field,
+            // not from ff.length() — the filesystem size is not a commit
+            // boundary.
             path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            final long parquetMetaFileSize = ff.length(path.$());
+            final long parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+            if (parquetMetaFileSize <= 0) {
+                throw CairoException.critical(0).put("missing or invalid _pm [path=").put(path).put(']');
+            }
             long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             try {
                 final long parquetSize;
                 try (ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader()) {
-                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetMetadataFileSize);
+                    parquetMetaReader.of(parquetMetaAddr, parquetMetadataFileSize);
                     parquetSize = parquetMetaReader.getParquetFileSize();
                 }
 

@@ -125,16 +125,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long parquetMetaAddr = 0;
         long parquetMetaFileSize = 0;
         try {
-            // Derive parquet file size from _pm metadata.
+            // Derive parquet file size from _pm metadata. The _pm size comes
+            // from the committed PARQUET_META_FILE_SIZE header field, not from
+            // ff.length() — the filesystem size may include bytes from an
+            // unpublished append and is not a valid commit boundary. A
+            // non-positive return means missing / unreadable / header-corrupt,
+            // in which case we regenerate from data.parquet.
             int parquetNameLen = path.size();
             int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            parquetMetaFileSize = ff.length(path.$());
+            parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
             boolean isStale = parquetMetaFileSize <= 0;
             if (!isStale) {
                 parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                 try {
-                    parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
+                    parquetMetaReader.of(parquetMetaAddr, parquetFileSize);
                 } catch (CairoException e) {
                     ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
                     parquetMetaAddr = 0;
@@ -151,9 +156,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .I$();
                 regenerateParquetMetadata(ff, path, partitionDirLen, parquetFileSize, cairoConfiguration);
                 path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-                parquetMetaFileSize = ff.length(path.$());
+                parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                if (parquetMetaFileSize <= 0) {
+                    throw CairoException.critical(0)
+                            .put("regenerated _pm is missing or invalid [path=").put(path).put(']');
+                }
                 parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-                parquetMetaReader.of(parquetMetaAddr, parquetMetaFileSize, parquetFileSize);
+                parquetMetaReader.of(parquetMetaAddr, parquetFileSize);
             }
             parquetSize = parquetMetaReader.getParquetFileSize();
             path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();

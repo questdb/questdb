@@ -32,7 +32,7 @@ use crate::parquet_metadata::reader::ParquetMetaReader;
 use crate::parquet_metadata::row_group::RowGroupBlockBuilder;
 use crate::parquet_metadata::types::{
     ColumnFlags, BLOCK_ALIGNMENT, BLOCK_ALIGNMENT_SHIFT, COLUMN_CHUNK_SIZE, FOOTER_CHECKSUM_SIZE,
-    FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, HEADER_FOOTER_OFFSET_OFF,
+    FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, HEADER_PARQUET_META_FILE_SIZE_OFF,
 };
 
 // ── ParquetMetaWriter (create mode) ───────────────────────────────────────────
@@ -164,9 +164,10 @@ impl ParquetMetaWriter {
 
     /// Finishes writing and returns the complete `_pm` file bytes.
     ///
-    /// Returns `(bytes, footer_offset)` where `footer_offset` is the byte
-    /// offset of the footer within the file (to store in `_txn`).
-    #[must_use = "returns the file bytes and footer offset"]
+    /// Returns `(bytes, parquet_meta_file_size)` where `parquet_meta_file_size` is the total
+    /// committed file size — the same value that is patched into the header
+    /// at `HEADER_PARQUET_META_FILE_SIZE_OFF` and matches `bytes.len() as u64`.
+    #[must_use = "returns the file bytes and parquet_meta_file_size"]
     pub fn finish(&mut self) -> ParquetResult<(Vec<u8>, u64)> {
         // Auto-derive bloom filter columns from row group contents if not set.
         let is_external = self.header_builder.bloom_filters_external;
@@ -229,22 +230,25 @@ impl ParquetMetaWriter {
             fb.add_row_group_offset(offset)?;
         }
         fb.set_bloom_filter_section(bloom_section);
-        let footer_offset = fb.write_to(&mut buf) as u64;
+        fb.write_to(&mut buf);
 
-        // Patch footer_offset into the header.
-        buf[HEADER_FOOTER_OFFSET_OFF..HEADER_FOOTER_OFFSET_OFF + 8]
-            .copy_from_slice(&footer_offset.to_le_bytes());
-
-        // Compute and write CRC32 over [HEADER_FIXED_SIZE, checksum_field_offset).
-        // The CRC covers everything after the fixed header (which contains the
-        // mutable footer_offset field): column descriptors, row group blocks,
-        // and footer.
+        // Compute and write CRC32 over [HEADER_CRC_AREA_OFF, checksum_field_offset).
+        // The CRC covers everything after the mutable parquet_meta_file_size field at
+        // offset 0: feature flags, column descriptors, row group blocks, and
+        // footer.
         let checksum_field_offset = buf.len() - FOOTER_TRAILER_SIZE - FOOTER_CHECKSUM_SIZE;
         let crc = crc32fast::hash(&buf[HEADER_CRC_AREA_OFF..checksum_field_offset]);
         buf[checksum_field_offset..checksum_field_offset + FOOTER_CHECKSUM_SIZE]
             .copy_from_slice(&crc.to_le_bytes());
 
-        Ok((buf, footer_offset))
+        // Patch the total committed file size into the header last. Readers
+        // treat this as the MVCC commit signal — the file is only consistent
+        // once this field agrees with the on-disk length through the trailer.
+        let parquet_meta_file_size = buf.len() as u64;
+        buf[HEADER_PARQUET_META_FILE_SIZE_OFF..HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&parquet_meta_file_size.to_le_bytes());
+
+        Ok((buf, parquet_meta_file_size))
     }
 }
 
@@ -296,8 +300,11 @@ fn build_bloom_filter_footer_section(
 ///
 /// Unchanged row groups keep their original offsets in the new footer.
 pub struct ParquetMetaUpdateWriter<'a> {
+    /// Slice covering exactly `existing_parquet_meta_file_size` bytes.
     existing: &'a [u8],
+    existing_parquet_meta_file_size: u64,
     existing_footer_offset: u64,
+    existing_footer_length: u32,
     /// (original_offset | None for new/replaced, builder)
     entries: Vec<RowGroupEntry>,
     parquet_footer_offset: u64,
@@ -322,9 +329,17 @@ enum RowGroupEntry {
 }
 
 impl<'a> ParquetMetaUpdateWriter<'a> {
-    /// Creates an update writer from the existing file data and its footer offset.
-    pub fn new(existing: &'a [u8], existing_footer_offset: u64) -> ParquetResult<Self> {
-        let reader = ParquetMetaReader::new(existing, existing_footer_offset)?;
+    /// Creates an update writer from the existing file slice and the committed
+    /// `_pm` file size from the header. The caller must pass a slice that
+    /// covers at least `existing_parquet_meta_file_size` bytes; trailing bytes beyond
+    /// that (e.g. from an in-progress append or filesystem padding) are
+    /// ignored.
+    pub fn new(existing: &'a [u8], existing_parquet_meta_file_size: u64) -> ParquetResult<Self> {
+        let reader = ParquetMetaReader::from_file_size(existing, existing_parquet_meta_file_size)?;
+        let existing = reader.data();
+        let existing_footer_offset = reader.footer_offset();
+        let existing_footer_length =
+            Self::read_trailer_footer_length(existing, existing_parquet_meta_file_size)?;
 
         let footer_usize = usize::try_from(existing_footer_offset).map_err(|_| {
             parquet_meta_err!(
@@ -339,8 +354,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
                 "footer offset out of bounds"
             )
         })?;
-        let footer_length = Self::read_footer_length(existing)?;
-        let footer = Footer::new(footer_data, footer_length)?;
+        let footer = Footer::new(footer_data, existing_footer_length)?;
 
         let rg_count = footer.row_group_count() as usize;
 
@@ -381,7 +395,9 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
 
         Ok(Self {
             existing,
+            existing_parquet_meta_file_size,
             existing_footer_offset,
+            existing_footer_length,
             entries,
             parquet_footer_offset: footer.parquet_footer_offset(),
             parquet_footer_length: footer.parquet_footer_length(),
@@ -429,36 +445,55 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         self
     }
 
-    /// Reads the footer_length_through_crc value from the trailer at the end of the file.
-    fn read_footer_length(data: &[u8]) -> ParquetResult<u32> {
-        if data.len() < FOOTER_TRAILER_SIZE {
+    /// Reads the footer_length_through_crc value from the trailer at
+    /// `parquet_meta_file_size - FOOTER_TRAILER_SIZE`. The trailer's position is
+    /// governed by the committed `parquet_meta_file_size`, not the slice length —
+    /// callers may pass a slice longer than the committed view (e.g. an
+    /// mmap that includes trailing bytes from an in-progress append).
+    fn read_trailer_footer_length(data: &[u8], parquet_meta_file_size: u64) -> ParquetResult<u32> {
+        let parquet_meta_file_size_usize =
+            usize::try_from(parquet_meta_file_size).map_err(|_| {
+                parquet_meta_err!(
+                    ParquetMetaErrorKind::Truncated,
+                    "_pm file size {} exceeds addressable range",
+                    parquet_meta_file_size
+                )
+            })?;
+        if parquet_meta_file_size_usize < FOOTER_TRAILER_SIZE
+            || data.len() < parquet_meta_file_size_usize
+        {
             return Err(parquet_meta_err!(
                 ParquetMetaErrorKind::Truncated,
-                "file too small for footer trailer"
+                "data too small for footer trailer at _pm file size {}",
+                parquet_meta_file_size
             ));
         }
-        let trailer = &data[data.len() - FOOTER_TRAILER_SIZE..];
+        let trailer_start = parquet_meta_file_size_usize - FOOTER_TRAILER_SIZE;
         Ok(u32::from_le_bytes(
-            trailer.try_into().expect("slice is 4 bytes"),
+            data[trailer_start..trailer_start + FOOTER_TRAILER_SIZE]
+                .try_into()
+                .expect("slice is 4 bytes"),
         ))
     }
 
     /// Finishes the update.
     ///
-    /// Returns `(append_bytes, new_footer_offset)`:
-    /// - `append_bytes`: bytes to append to the file after the old footer
-    /// - `new_footer_offset`: the absolute offset of the new footer in the file
+    /// Returns `(append_bytes, new_parquet_meta_file_size)`:
+    /// - `append_bytes`: bytes to append to the file after the old footer/trailer
+    /// - `new_parquet_meta_file_size`: the total committed file size after the append
+    ///   (`existing_parquet_meta_file_size + append_bytes.len() as u64`). The caller
+    ///   must patch this value into the header at `HEADER_PARQUET_META_FILE_SIZE_OFF`
+    ///   as the last write — it is the MVCC commit signal for the new
+    ///   snapshot.
     ///
-    /// The caller must also write the CRC32 at the end of the new footer.
-    /// The CRC covers `[0, checksum_field_offset)` of the entire file
-    /// (existing + appended).
-    #[must_use = "returns the append bytes and new footer offset"]
+    /// The CRC32 for the new snapshot is already written at the correct
+    /// position inside `append_bytes`; it covers `[HEADER_CRC_AREA_OFF,
+    /// new_crc_field_offset)` of the entire file (existing + appended).
+    #[must_use = "returns the append bytes and new parquet_meta_file_size"]
     pub fn finish(&self) -> ParquetResult<(Vec<u8>, u64)> {
-        // The new data starts right after the old footer.
-        let footer_usize = self.existing_footer_offset as usize;
-        let footer_length = Self::read_footer_length(self.existing)?;
-        let old_footer_total = footer_length as usize + FOOTER_TRAILER_SIZE;
-        let append_start = footer_usize + old_footer_total;
+        // The new data starts right after the old footer's trailer — which
+        // is exactly the current committed file size.
+        let append_start = self.existing_parquet_meta_file_size as usize;
 
         let mut append_buf = Vec::new();
 
@@ -562,16 +597,19 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             Vec::new()
         };
 
-        // Write the new footer with prev_footer_offset pointing to the old footer.
+        // Write the new footer. The MVCC chain walks back via the committed
+        // parquet_meta_file_size at each step — not via a direct footer
+        // offset — so store the existing committed size here. A reader
+        // walking back derives the old footer location from the trailer
+        // at `existing_parquet_meta_file_size - 4`.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
         fb.unused_bytes(self.unused_bytes);
-        fb.prev_footer_offset(self.existing_footer_offset);
+        fb.prev_parquet_meta_file_size(self.existing_parquet_meta_file_size);
         for &offset in &final_offsets {
             fb.add_row_group_offset(offset)?;
         }
         fb.set_bloom_filter_section(bloom_section);
-        let footer_rel_start = fb.write_to(&mut append_buf);
-        let new_footer_offset = (append_start + footer_rel_start) as u64;
+        fb.write_to(&mut append_buf);
 
         // Resume CRC32 from the previous checksum. The CRC covers
         // [HEADER_CRC_AREA_OFF, crc_field) of the entire (existing + appended) file.
@@ -579,8 +617,8 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         // We continue from there, hashing the old CRC field + old trailer + new
         // append data up to the new CRC field.
         let footer_usize = self.existing_footer_offset as usize;
-        let footer_length = Self::read_footer_length(self.existing)?;
-        let old_crc_field_offset = footer_usize + footer_length as usize - FOOTER_CHECKSUM_SIZE;
+        let old_crc_field_offset =
+            footer_usize + self.existing_footer_length as usize - FOOTER_CHECKSUM_SIZE;
         let old_crc = u32::from_le_bytes(
             self.existing[old_crc_field_offset..old_crc_field_offset + FOOTER_CHECKSUM_SIZE]
                 .try_into()
@@ -601,7 +639,8 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         append_buf[crc_offset_in_buf..crc_offset_in_buf + FOOTER_CHECKSUM_SIZE]
             .copy_from_slice(&crc.to_le_bytes());
 
-        Ok((append_buf, new_footer_offset))
+        let new_parquet_meta_file_size = (append_start + append_buf.len()) as u64;
+        Ok((append_buf, new_parquet_meta_file_size))
     }
 }
 
@@ -642,8 +681,8 @@ mod tests {
 
     #[test]
     fn create_and_read_back() {
-        let (bytes, footer_offset) = make_simple_file();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let (bytes, parquet_meta_file_size) = make_simple_file();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
 
         assert_eq!(reader.column_count(), 2);
         assert_eq!(reader.row_group_count(), 1);
@@ -661,9 +700,9 @@ mod tests {
     fn create_empty() {
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.column_count(), 1);
         assert_eq!(reader.row_group_count(), 0);
     }
@@ -673,9 +712,9 @@ mod tests {
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
         w.squash_tracker(99);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert!(reader.feature_flags().has_squash_tracker());
         assert_eq!(reader.squash_tracker(), Some(99));
     }
@@ -685,9 +724,9 @@ mod tests {
         // Never calling squash_tracker() must produce a file with the bit clear.
         let mut w = ParquetMetaWriter::new();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert!(!reader.feature_flags().has_squash_tracker());
         assert_eq!(reader.squash_tracker(), None);
     }
@@ -700,17 +739,18 @@ mod tests {
         w.squash_tracker(7);
         w.designated_timestamp(-1);
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (bytes, footer_offset) = w.finish().unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
 
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.squash_tracker(), Some(7));
     }
 
     #[test]
     fn update_append_row_group() {
-        let (original, footer_offset) = make_simple_file();
+        let (original, existing_parquet_meta_file_size) = make_simple_file();
 
-        let mut updater = ParquetMetaUpdateWriter::new(&original, footer_offset).unwrap();
+        let mut updater =
+            ParquetMetaUpdateWriter::new(&original, existing_parquet_meta_file_size).unwrap();
 
         let mut rg = RowGroupBlockBuilder::new(2);
         rg.set_num_rows(500);
@@ -721,14 +761,17 @@ mod tests {
         updater.add_row_group(rg);
         updater.parquet_footer(8192, 512);
 
-        let (append_bytes, new_footer_offset) = updater.finish().unwrap();
+        let (append_bytes, new_parquet_meta_file_size) = updater.finish().unwrap();
 
-        // Construct the full updated file.
-        let old_end = original.len();
-        let mut full = original[..old_end].to_vec();
+        // Construct the full updated file and patch the header's parquet_meta_file_size
+        // to publish the new snapshot — mirrors what the Java writer does.
+        let mut full = original.to_vec();
         full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_parquet_meta_file_size.to_le_bytes());
 
-        let reader = ParquetMetaReader::new(&full, new_footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&full, new_parquet_meta_file_size).unwrap();
         reader.verify_checksum().unwrap();
         assert_eq!(reader.row_group_count(), 2);
         assert_eq!(reader.parquet_footer_offset(), 8192);
@@ -757,21 +800,24 @@ mod tests {
         rg1.set_num_rows(200);
         w.add_row_group(rg1);
 
-        let (original, footer_offset) = w.finish().unwrap();
+        let (original, existing_parquet_meta_file_size) = w.finish().unwrap();
 
         // Replace row group 1.
-        let mut updater = ParquetMetaUpdateWriter::new(&original, footer_offset).unwrap();
+        let mut updater =
+            ParquetMetaUpdateWriter::new(&original, existing_parquet_meta_file_size).unwrap();
         let mut new_rg1 = RowGroupBlockBuilder::new(1);
         new_rg1.set_num_rows(999);
         updater.replace_row_group(1, new_rg1).unwrap();
 
-        let (append_bytes, new_footer_offset) = updater.finish().unwrap();
+        let (append_bytes, new_parquet_meta_file_size) = updater.finish().unwrap();
 
-        let old_end = original.len();
-        let mut full = original[..old_end].to_vec();
+        let mut full = original.to_vec();
         full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_parquet_meta_file_size.to_le_bytes());
 
-        let reader = ParquetMetaReader::new(&full, new_footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&full, new_parquet_meta_file_size).unwrap();
         reader.verify_checksum().unwrap();
         assert_eq!(reader.row_group_count(), 2);
 
@@ -783,8 +829,9 @@ mod tests {
 
     #[test]
     fn replace_row_group_out_of_range() {
-        let (original, footer_offset) = make_simple_file();
-        let mut updater = ParquetMetaUpdateWriter::new(&original, footer_offset).unwrap();
+        let (original, existing_parquet_meta_file_size) = make_simple_file();
+        let mut updater =
+            ParquetMetaUpdateWriter::new(&original, existing_parquet_meta_file_size).unwrap();
         let rg = RowGroupBlockBuilder::new(2);
         // Only 1 row group exists (index 0), so index 5 is out of range.
         assert!(updater.replace_row_group(5, rg).is_err());
@@ -815,22 +862,26 @@ mod tests {
         rg2.add_bloom_filter(0, &bf2).unwrap();
         w.add_row_group(rg2);
 
-        let (original, footer_offset) = w.finish().unwrap();
+        let (original, existing_parquet_meta_file_size) = w.finish().unwrap();
 
         // Replace row group 1 with a new bloom filter.
         let bf_new = vec![0xDD_u8; 64];
-        let mut updater = ParquetMetaUpdateWriter::new(&original, footer_offset).unwrap();
+        let mut updater =
+            ParquetMetaUpdateWriter::new(&original, existing_parquet_meta_file_size).unwrap();
         let mut new_rg1 = RowGroupBlockBuilder::new(1);
         new_rg1.set_num_rows(999);
         new_rg1.add_bloom_filter(0, &bf_new).unwrap();
         updater.replace_row_group(1, new_rg1).unwrap();
 
-        let (append_bytes, new_footer_offset) = updater.finish().unwrap();
+        let (append_bytes, new_parquet_meta_file_size) = updater.finish().unwrap();
 
         let mut full = original.to_vec();
         full.extend_from_slice(&append_bytes);
+        full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&new_parquet_meta_file_size.to_le_bytes());
 
-        let reader = ParquetMetaReader::new(&full, new_footer_offset).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&full, new_parquet_meta_file_size).unwrap();
         reader.verify_checksum().unwrap();
         assert_eq!(reader.row_group_count(), 3);
 
@@ -860,8 +911,8 @@ mod tests {
     fn default_creates_same_as_new() {
         let mut w = ParquetMetaWriter::default();
         w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
-        let (bytes, footer_offset) = w.finish().unwrap();
-        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        let (bytes, parquet_meta_file_size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert_eq!(reader.column_count(), 1);
         assert_eq!(reader.designated_timestamp(), None);
     }

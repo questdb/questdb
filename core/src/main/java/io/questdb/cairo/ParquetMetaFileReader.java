@@ -26,11 +26,16 @@ package io.questdb.cairo;
 
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetRowGroupSkipper;
+import io.questdb.log.Log;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 
 /**
@@ -56,12 +61,12 @@ import io.questdb.std.str.Utf8s;
  * Binary format (little-endian):
  * <pre>
  * HEADER (32 bytes fixed):
- *   [0]  FOOTER_OFFSET     u64
- *   [8]  FEATURE_FLAGS     u64
- *   [16] DESIGNATED_TS     i32
- *   [20] SORTING_COL_CNT   u32
- *   [24] COLUMN_COUNT      u32
- *   [28] RESERVED          u32
+ *   [0]  PARQUET_META_FILE_SIZE  u64  (total committed file size; patched last as MVCC commit signal)
+ *   [8]  FEATURE_FLAGS           u64
+ *   [16] DESIGNATED_TS           i32
+ *   [20] SORTING_COL_CNT         u32
+ *   [24] COLUMN_COUNT            u32
+ *   [28] RESERVED                u32
  *   [32..] column descriptors (32B each), sorting columns (4B each), name strings
  *   [..] header feature sections (if any feature flags set)
  *
@@ -69,18 +74,25 @@ import io.questdb.std.str.Utf8s;
  *   [0]  NUM_ROWS        u64
  *   [8..] column chunks (64B each), then optional out-of-line stats
  *
- * FOOTER (offset derived from trailer at end of file):
- *   [0]  PARQUET_FOOTER_OFFSET   u64
- *   [8]  PARQUET_FOOTER_LENGTH   u32
- *   [12] ROW_GROUP_COUNT         u32
- *   [16] UNUSED_BYTES            u64
- *   [24] PREV_FOOTER_OFFSET      u64
- *   [32] FOOTER_FEATURE_FLAGS    u64  (per-footer flags; distinct from header FEATURE_FLAGS)
+ * FOOTER (offset derived from trailer at PARQUET_META_FILE_SIZE - 4):
+ *   [0]  PARQUET_FOOTER_OFFSET          u64
+ *   [8]  PARQUET_FOOTER_LENGTH          u32
+ *   [12] ROW_GROUP_COUNT                u32
+ *   [16] UNUSED_BYTES                   u64
+ *   [24] PREV_PARQUET_META_FILE_SIZE    u64  (0 if first snapshot; walk back via trailer at prev_size - 4)
+ *   [32] FOOTER_FEATURE_FLAGS           u64  (per-footer flags; distinct from header FEATURE_FLAGS)
  *   [40..] row group entries (4B each, u32 block offset >> 3)
  *   [..]  feature sections (gated by header FEATURE_FLAGS or FOOTER_FEATURE_FLAGS)
- *   [..]  CRC32                  u32
- *   [..]  FOOTER_LENGTH          u32  (total bytes from footer start through CRC)
+ *   [..]  CRC32                         u32
+ *   [..]  FOOTER_LENGTH                 u32  (total bytes from footer start through CRC)
  * </pre>
+ * <p>
+ * Callers must never read the `_pm` file size from the filesystem (via
+ * {@code ff.length()} or similar). Instead, map the header prefix, read
+ * {@code PARQUET_META_FILE_SIZE} at offset 0, then remap to that size and
+ * pass the address to {@link #of(long, long)}. The filesystem size may
+ * include bytes from an in-progress, unpublished append and is not a
+ * valid commit boundary — only {@code PARQUET_META_FILE_SIZE} is.
  */
 public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietCloseable {
 
@@ -102,7 +114,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
     // Footer offsets (relative to footer start)
     private static final int FOOTER_PARQUET_FOOTER_OFFSET_OFF = 0;
-    private static final int FOOTER_PREV_FOOTER_OFFSET_OFF = 24;
+    private static final int FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF = 24;
     private static final int FOOTER_ROW_GROUP_COUNT_OFF = 12;
     // Footer trailer size (appended after CRC)
     private static final int FOOTER_TRAILER_SIZE = 4;
@@ -110,9 +122,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int HEADER_COLUMN_COUNT_OFF = 24;
     private static final int HEADER_DESIGNATED_TS_OFF = 16;
     private static final int HEADER_FEATURE_FLAGS_OFF = 8;
-    private static final int HEADER_FIXED_SIZE = 32;
-    // Header offsets (new layout: footer_offset(8) + feature_flags(8) + dts(4) + sorting(4) + col_count(4) + reserved(4))
-    private static final int HEADER_FOOTER_OFFSET_OFF = 0;
+    public static final int HEADER_FIXED_SIZE = 32;
+    // Header offsets (layout: parquet_meta_file_size(8) + feature_flags(8) + dts(4) + sorting(4) + col_count(4) + reserved(4))
+    public static final int HEADER_PARQUET_META_FILE_SIZE_OFF = 0;
     // Feature flag bits 32-63 are required: unknown bits must cause rejection.
     private static final long OPTIONAL_FEATURE_MASK = 0x0000_0000_FFFF_FFFFL;
     private static final long REQUIRED_FEATURE_MASK = 0xFFFF_FFFF_0000_0000L;
@@ -126,6 +138,105 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private long nativeReaderPtr;
     private int rowGroupCount;
     private long totalRowCount;
+
+    /**
+     * Reads the committed {@code PARQUET_META_FILE_SIZE} field from a {@code _pm} file
+     * without mapping the whole file. Callers that manage their own mapping
+     * (e.g. via {@link io.questdb.cairo.vm.MemoryCMR}) use this to size the
+     * full mapping. Never calls {@code ff.length()} — the filesystem size is
+     * not a valid commit boundary.
+     * <p>
+     * Returns {@code -1} if the file is missing, unreadable, or the header
+     * holds an implausible {@code parquet_meta_file_size} (too small to contain a
+     * header + trailer). This mirrors {@link FilesFacade#length} semantics:
+     * non-positive return means "can't be used", and callers use that as a
+     * "regenerate" or "missing" signal with a plain {@code <= 0} check
+     * instead of catching exceptions. Propagates unrecoverable errors
+     * (e.g. native allocation failure) as-is.
+     *
+     * @param ff   files facade
+     * @param path path to the {@code _pm} file
+     * @return the committed {@code parquet_meta_file_size} stored in the header, or
+     * {@code -1} if the file cannot be opened or yields an invalid value
+     */
+    public static long readParquetMetaFileSize(FilesFacade ff, LPSZ path) {
+        final long fd = ff.openRO(path);
+        if (fd < 0) {
+            return -1;
+        }
+        try {
+            final long scratch = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+            try {
+                if (ff.read(fd, scratch, 8, 0) != 8) {
+                    return -1;
+                }
+                final long parquetMetaFileSize = Unsafe.getUnsafe().getLong(scratch);
+                Unsafe.getUnsafe().loadFence();
+                if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
+                    return -1;
+                }
+                return parquetMetaFileSize;
+            } finally {
+                Unsafe.free(scratch, 8, MemoryTag.NATIVE_DEFAULT);
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    /**
+     * Maps a {@code _pm} file in two stages: first the fixed header prefix,
+     * then the full committed file size read from {@code PARQUET_META_FILE_SIZE} at
+     * offset 0. Never calls {@code ff.length()} — the filesystem size is not
+     * a valid commit boundary.
+     * <p>
+     * The returned address is mmaped at the committed size ({@code PARQUET_META_FILE_SIZE}).
+     * The caller must later {@code ff.munmap(addr, size, memoryTag)} with the
+     * same size, which is available via {@link #getFileSize()} after calling
+     * {@link #of(long, long)} on the address.
+     *
+     * @param ff        files facade
+     * @param path      path to the {@code _pm} file (full, null-terminated)
+     * @param log       logger for open-RO diagnostics
+     * @param memoryTag memory tag bucket for the final mapping
+     * @return the address of the mmaped {@code _pm} file, sized to the header's
+     * {@code PARQUET_META_FILE_SIZE}
+     * @throws CairoException if the file is missing, cannot be opened, or
+     *                        contains an invalid {@code PARQUET_META_FILE_SIZE}
+     */
+    public static long mapParquetMeta(FilesFacade ff, LPSZ path, Log log, int memoryTag) {
+        final long fd = TableUtils.openRO(ff, path, log);
+        try {
+            final long headerAddr = ff.mmap(fd, HEADER_FIXED_SIZE, 0, Files.MAP_RO, memoryTag);
+            if (headerAddr == FilesFacade.MAP_FAILED) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not mmap _pm header [file=").put(path).put(']');
+            }
+            final long parquetMetaFileSize;
+            try {
+                parquetMetaFileSize = Unsafe.getUnsafe().getLong(headerAddr + HEADER_PARQUET_META_FILE_SIZE_OFF);
+                Unsafe.getUnsafe().loadFence();
+            } finally {
+                ff.munmap(headerAddr, HEADER_FIXED_SIZE, memoryTag);
+            }
+            if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm parquet_meta_file_size [file=").put(path)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                        .put(']');
+            }
+            final long addr = ff.mmap(fd, parquetMetaFileSize, 0, Files.MAP_RO, memoryTag);
+            if (addr == FilesFacade.MAP_FAILED) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not mmap _pm [file=").put(path)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
+                        .put(']');
+            }
+            return addr;
+        } finally {
+            ff.close(fd);
+        }
+    }
 
     @Override
     public boolean canSkipRowGroup(int rowGroupIndex, DirectLongList filters, long filterBufEnd) {
@@ -330,81 +441,86 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     }
 
     /**
-     * Initializes (or reinitializes) the reader with the given mmap address, file size,
-     * and parquet file size (MVCC token from _txn field 3).
+     * Initializes (or reinitializes) the reader over a {@code _pm} file that
+     * has already been mmapped at its committed size. The caller is
+     * responsible for sizing that mmap from {@code PARQUET_META_FILE_SIZE}
+     * in the header (see class Javadoc) — never from the filesystem length.
      * <p>
-     * The footer is located via the header's footer_offset field. If the latest footer's
-     * parquet file size exceeds parquetFileSize, the reader walks the prev_footer_offset
-     * chain to find the matching footer for this _txn snapshot.
+     * The committed file size is read from the header at offset 0 and used
+     * to locate the trailer (which gives the footer length). The footer
+     * offset is then derived as {@code parquet_meta_file_size - 4 -
+     * footer_length}. If the latest footer's parquet file size exceeds
+     * {@code parquetFileSize}, the reader walks the MVCC chain via each
+     * footer's {@code prev_parquet_meta_file_size} — each step re-applies
+     * the size-then-trailer indirection, so the previous footer's location
+     * is re-validated through its own trailer.
      * <p>
      * Calls {@link #clear()} first so that any previously allocated native
      * handle from a prior {@code of()} call is released before storing the
      * new state.
      *
-     * @param addr            base address of the mmaped _pm file
-     * @param fileSize        actual size of the mmaped _pm file in bytes
-     * @param parquetFileSize parquet file size from _txn field 3, used as MVCC version token
-     * @throws CairoException if the format version is unsupported or the file is too small
+     * @param addr            base address of the mmaped {@code _pm} file,
+     *                        sized to the header's
+     *                        {@code PARQUET_META_FILE_SIZE}
+     * @param parquetFileSize parquet file size from {@code _txn} field 3,
+     *                        used as MVCC version token; pass
+     *                        {@link Long#MAX_VALUE} to disable MVCC matching
+     * @throws CairoException if the format is unsupported or corrupt
      */
-    public void of(long addr, long fileSize, long parquetFileSize) {
+    public void of(long addr, long parquetFileSize) {
         clear();
-        if (fileSize < HEADER_FIXED_SIZE) {
-            throw CairoException.critical(0)
-                    .put("pm file too small [fileSize=").put(fileSize).put(']');
-        }
 
-        // Read footer_offset from the header. A loadFence ensures subsequent
-        // reads of the footer data observe the bytes the writer committed
-        // before patching this field.
-        long footerOffset = Unsafe.getUnsafe().getLong(addr + HEADER_FOOTER_OFFSET_OFF);
+        // Read the committed parquet_meta_file_size from the header. A
+        // loadFence ensures subsequent reads of the footer/row group data
+        // observe the bytes the writer committed before patching this field.
+        long parquetMetaFileSize = Unsafe.getUnsafe().getLong(addr + HEADER_PARQUET_META_FILE_SIZE_OFF);
         Unsafe.getUnsafe().loadFence();
-        if (footerOffset < 0 || footerOffset >= fileSize) {
+        if (parquetMetaFileSize < HEADER_FIXED_SIZE + FOOTER_TRAILER_SIZE) {
             throw CairoException.critical(0)
-                    .put("invalid _pm header footer_offset [offset=").put(footerOffset)
-                    .put(", fileSize=").put(fileSize)
-                    .put(']');
+                    .put("invalid _pm parquet_meta_file_size [parquetMetaFileSize=").put(parquetMetaFileSize).put(']');
         }
 
-        // Walk the prev_footer_offset chain to find the footer matching parquetFileSize.
-        // Long.MAX_VALUE is a sentinel: use the latest footer (at footerOffset) without MVCC matching.
-        // This is an O(K) linear scan where K is the number of append-only footer updates
-        // since the last full rewrite. In practice K stays small because O3PartitionJob
-        // triggers a full _pm rewrite when the unused-bytes ratio exceeds the configured
-        // threshold (default 50%) or absolute unused bytes exceed the limit (default 1 GB).
-        long currentOffset = footerOffset;
-        if (parquetFileSize != Long.MAX_VALUE) {
-            while (true) {
-                long currentAddr = addr + currentOffset;
-                long pqFooterOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
-                int pqFooterLength = Unsafe.getUnsafe().getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
-                long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + 8;
-                if (derivedPqSize == parquetFileSize) {
-                    break;
-                }
-                long prevOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PREV_FOOTER_OFFSET_OFF);
-                if (prevOffset == 0 || prevOffset < 0 || prevOffset >= fileSize || prevOffset >= currentOffset) {
-                    throw CairoException.critical(CairoException.STALE_PARQUET_METADATA)
-                            .put("no _pm footer found for parquet size [parquetFileSize=").put(parquetFileSize)
-                            .put(']');
-                }
-                currentOffset = prevOffset;
-            }
-        }
-
-        // Cross-validate the trailer for the latest footer only. The trailer
-        // (last 4 bytes) stores the footer length through CRC. Reject clearly
-        // invalid values (derived offset outside the file) early; subtle
-        // mismatches (extra bytes) are caught after reading rowGroupCount.
-        if (currentOffset == footerOffset) {
-            int trailerFooterLength = Unsafe.getUnsafe().getInt(addr + fileSize - FOOTER_TRAILER_SIZE);
-            long trailerDerivedOffset = fileSize - FOOTER_TRAILER_SIZE - Integer.toUnsignedLong(trailerFooterLength);
-            if (trailerDerivedOffset < HEADER_FIXED_SIZE || trailerDerivedOffset >= fileSize) {
+        // Walk the MVCC chain. Each step: read the trailer at `currentSize - 4`
+        // to get the footer length, derive the footer offset, then check the
+        // parquet file size. If it doesn't match, read
+        // `prev_parquet_meta_file_size` from the current footer and repeat.
+        //
+        // Long.MAX_VALUE is a sentinel: use the latest footer without MVCC
+        // matching. In practice K stays small because O3PartitionJob
+        // triggers a full _pm rewrite when the unused-bytes ratio exceeds
+        // the configured threshold (default 50%) or absolute unused bytes
+        // exceed the limit (default 1 GB).
+        long currentSize = parquetMetaFileSize;
+        long currentOffset;
+        long currentFooterLength;
+        while (true) {
+            currentFooterLength = Integer.toUnsignedLong(
+                    Unsafe.getUnsafe().getInt(addr + currentSize - FOOTER_TRAILER_SIZE));
+            currentOffset = currentSize - FOOTER_TRAILER_SIZE - currentFooterLength;
+            if (currentOffset < HEADER_FIXED_SIZE || currentOffset >= currentSize) {
                 throw CairoException.critical(0)
-                        .put("invalid _pm footer offset [trailerFooterLength=").put(Integer.toUnsignedLong(trailerFooterLength))
-                        .put(", footerOffset=").put(footerOffset)
-                        .put(", fileSize=").put(fileSize)
+                        .put("invalid _pm footer offset [footerLength=").put(currentFooterLength)
+                        .put(", parquetMetaFileSize=").put(currentSize)
                         .put(']');
             }
+            if (parquetFileSize == Long.MAX_VALUE) {
+                break;
+            }
+
+            long currentAddr = addr + currentOffset;
+            long pqFooterOffset = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PARQUET_FOOTER_OFFSET_OFF);
+            int pqFooterLength = Unsafe.getUnsafe().getInt(currentAddr + FOOTER_PARQUET_FOOTER_LENGTH_OFF);
+            long derivedPqSize = pqFooterOffset + Integer.toUnsignedLong(pqFooterLength) + 8;
+            if (derivedPqSize == parquetFileSize) {
+                break;
+            }
+            long prevSize = Unsafe.getUnsafe().getLong(currentAddr + FOOTER_PREV_PARQUET_META_FILE_SIZE_OFF);
+            if (prevSize <= 0 || prevSize >= currentSize) {
+                throw CairoException.critical(CairoException.STALE_PARQUET_METADATA)
+                        .put("no _pm footer found for parquet size [parquetFileSize=").put(parquetFileSize)
+                        .put(']');
+            }
+            currentSize = prevSize;
         }
 
         // Use local variables for all validation. Fields are only assigned
@@ -413,19 +529,19 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
         long footerAddr = addr + currentOffset;
         int columnCount = Unsafe.getUnsafe().getInt(addr + HEADER_COLUMN_COUNT_OFF);
         long headerEndOffset = HEADER_FIXED_SIZE + (long) columnCount * COLUMN_DESCRIPTOR_SIZE;
-        if (headerEndOffset > fileSize) {
+        if (headerEndOffset > parquetMetaFileSize) {
             throw CairoException.critical(0)
                     .put("invalid _pm columnCount [count=").put(columnCount)
-                    .put(", fileSize=").put(fileSize)
+                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
                     .put(']');
         }
         int rowGroupCount = Unsafe.getUnsafe().getInt(footerAddr + FOOTER_ROW_GROUP_COUNT_OFF);
         final long baseFooterLength = FOOTER_FIXED_SIZE + (long) rowGroupCount * Integer.BYTES + Integer.BYTES;
-        if (currentOffset + baseFooterLength > fileSize) {
+        if (currentOffset + baseFooterLength > parquetMetaFileSize) {
             throw CairoException.critical(0)
                     .put("invalid _pm footer length [rowGroupCount=").put(rowGroupCount)
                     .put(", footerOffset=").put(currentOffset)
-                    .put(", fileSize=").put(fileSize)
+                    .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
                     .put(']');
         }
         long featureFlags = Unsafe.getUnsafe().getLong(addr + HEADER_FEATURE_FLAGS_OFF);
@@ -445,25 +561,24 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(']');
         }
 
-        // For the latest footer, cross-validate actual footer size from the
-        // trailer against the expected base size. Extra bytes without feature
-        // flags to justify them indicate corruption. Both header and footer
+        // Cross-validate actual footer size from the selected footer's trailer
+        // against the expected base size. Extra bytes without feature flags
+        // to justify them indicate corruption. Both header and footer
         // optional flag bits can attach sections, so either set is enough.
-        if (currentOffset == footerOffset) {
-            int trailerFooterLength = Unsafe.getUnsafe().getInt(addr + fileSize - FOOTER_TRAILER_SIZE);
-            long actualFooterLength = Integer.toUnsignedLong(trailerFooterLength);
-            // baseFooterLength already includes CRC (Integer.BYTES at the end).
-            // The trailer's footer_length covers from footer start through CRC.
-            long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
-            long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK;
-            if (knownOptionalFeatureFlags == 0
-                    && knownOptionalFooterFeatureFlags == 0
-                    && actualFooterLength != baseFooterLength) {
-                throw CairoException.critical(0)
-                        .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength)
-                        .put(", actual=").put(actualFooterLength)
-                        .put(']');
-            }
+        // The check applies to whichever footer the MVCC walk settled on —
+        // each step reads its own trailer, so this covers every footer in
+        // the chain.
+        // baseFooterLength already includes CRC (Integer.BYTES at the end).
+        // The trailer's footer_length covers from footer start through CRC.
+        long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
+        long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK;
+        if (knownOptionalFeatureFlags == 0
+                && knownOptionalFooterFeatureFlags == 0
+                && currentFooterLength != baseFooterLength) {
+            throw CairoException.critical(0)
+                    .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength)
+                    .put(", actual=").put(currentFooterLength)
+                    .put(']');
         }
 
         long minBlockSize = 8 + (long) columnCount * COLUMN_CHUNK_SIZE;
@@ -472,11 +587,11 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
             long entryAddr = footerAddr + FOOTER_FIXED_SIZE + (long) i * 4;
             int stored = Unsafe.getUnsafe().getInt(entryAddr);
             long blockOffset = Integer.toUnsignedLong(stored) << BLOCK_ALIGNMENT_SHIFT;
-            if (blockOffset + minBlockSize > fileSize) {
+            if (blockOffset + minBlockSize > parquetMetaFileSize) {
                 throw CairoException.critical(0)
                         .put("invalid _pm row group block offset [rowGroup=").put(i)
                         .put(", offset=").put(blockOffset)
-                        .put(", fileSize=").put(fileSize)
+                        .put(", parquetMetaFileSize=").put(parquetMetaFileSize)
                         .put(']');
             }
             rowCount += Unsafe.getUnsafe().getLong(addr + blockOffset);
@@ -484,7 +599,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
 
         // All validations passed — commit state.
         this.addr = addr;
-        this.fileSize = fileSize;
+        this.fileSize = parquetMetaFileSize;
         this.footerAddr = footerAddr;
         this.columnCount = columnCount;
         this.rowGroupCount = rowGroupCount;

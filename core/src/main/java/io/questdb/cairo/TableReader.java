@@ -1357,6 +1357,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     /**
      * Opens (or remaps) the _pm metadata file for the given partition and
      * returns the parquet file size derived from its footer metadata.
+     * <p>
+     * The mapping is sized from the header's {@code PARQUET_META_FILE_SIZE} field, not
+     * from {@code ff.length()} — the filesystem size is not a valid commit
+     * boundary (an in-progress, unpublished append may have already extended
+     * the file on disk).
      */
     private long openParquetMetadata(int partitionIndex, long partitionNameTxn) {
         final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
@@ -1365,10 +1370,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         path.trimTo(rootLen);
         pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
 
-        // stat() the _pm file to get its actual size (field 3 is now parquet file size).
-        final long parquetMetaFileSize = ff.length(path.$());
-        if (parquetMetaFileSize < 1) {
-            throw CairoException.critical(0).put("missing _pm sidecar file [path=").put(path).put(']');
+        final long parquetMetaFileSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+        if (parquetMetaFileSize <= 0) {
+            throw CairoException.critical(0).put("missing or invalid _pm sidecar file [path=").put(path).put(']');
         }
 
         MemoryCMR parquetMetaMem = parquetMetadataPartitions.getQuick(partitionIndex);
@@ -1379,7 +1383,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             parquetMetadataPartitions.setQuick(partitionIndex, parquetMetaMem);
         }
 
-        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetMetaFileSize, parquetFileSize);
+        parquetMetaReader.of(parquetMetaMem.addressOf(0), parquetFileSize);
         return parquetMetaReader.getParquetFileSize();
     }
 

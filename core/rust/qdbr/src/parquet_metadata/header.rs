@@ -66,7 +66,7 @@ impl ColumnDescriptorRaw {
 /// All u64 fields are naturally 8-byte aligned.
 #[derive(Debug, Copy, Clone)]
 pub struct FileHeaderRaw {
-    pub footer_offset: u64,
+    pub parquet_meta_file_size: u64,
     pub feature_flags: HeaderFeatureFlags,
     pub designated_timestamp: i32,
     pub sorting_column_count: u32,
@@ -99,12 +99,13 @@ impl<'a> FileHeader<'a> {
             ));
         }
 
-        // Parse fixed header fields individually (feature_flags at offset 4
-        // is not 8-byte aligned, so we cannot use a repr(C) pointer cast).
-        // Unwraps: data.len() >= HEADER_FIXED_SIZE (24) checked above, so all
+        // Parse fixed header fields individually (feature_flags at offset 8
+        // would not be 8-byte aligned in a repr(C) struct-pointer cast given
+        // the leading u64, so we read by byte slice).
+        // Unwraps: data.len() >= HEADER_FIXED_SIZE (32) checked above, so all
         // fixed-width slices are exactly the right length.
         let raw = FileHeaderRaw {
-            footer_offset: u64::from_le_bytes(data[0..8].try_into().unwrap()),
+            parquet_meta_file_size: u64::from_le_bytes(data[0..8].try_into().unwrap()),
             feature_flags: HeaderFeatureFlags::from_le_bytes(data[8..16].try_into().unwrap()),
             designated_timestamp: i32::from_le_bytes(data[16..20].try_into().unwrap()),
             sorting_column_count: u32::from_le_bytes(data[20..24].try_into().unwrap()),
@@ -279,9 +280,11 @@ impl<'a> FileHeader<'a> {
         self.raw.feature_flags
     }
 
-    /// Returns the footer offset stored in the header.
-    pub fn footer_offset(&self) -> u64 {
-        self.raw.footer_offset
+    /// Returns the total committed `_pm` file size stored in the header.
+    /// The writer patches this last, so observing a value here is the MVCC
+    /// commit signal for the latest snapshot.
+    pub fn parquet_meta_file_size(&self) -> u64 {
+        self.raw.parquet_meta_file_size
     }
 
     /// Index of the designated timestamp column, or `None` if not set (-1).
@@ -595,7 +598,8 @@ impl FileHeaderBuilder {
         }
 
         // Fixed header fields (32 bytes).
-        // footer_offset placeholder (patched by the top-level writer after the footer is written).
+        // parquet_meta_file_size placeholder (patched last by the top-level writer once
+        // the full file size is known — acts as the MVCC commit signal).
         buf.extend_from_slice(&0u64.to_le_bytes());
         buf.extend_from_slice(&flags.0.to_le_bytes());
         buf.extend_from_slice(&self.designated_timestamp.to_le_bytes());
@@ -802,7 +806,7 @@ mod tests {
     fn header_too_small_for_columns() {
         // Write a header claiming 10 columns but truncate the buffer.
         let mut buf = vec![0u8; HEADER_FIXED_SIZE];
-        buf[0..8].copy_from_slice(&0u64.to_le_bytes()); // footer_offset
+        buf[0..8].copy_from_slice(&0u64.to_le_bytes()); // parquet_meta_file_size
         buf[8..16].copy_from_slice(&0u64.to_le_bytes()); // feature_flags
         buf[16..20].copy_from_slice(&(-1i32).to_le_bytes()); // designated_ts
         buf[20..24].copy_from_slice(&0u32.to_le_bytes()); // sorting count
