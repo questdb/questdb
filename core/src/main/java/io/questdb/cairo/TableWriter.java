@@ -1954,6 +1954,65 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Drops the local {@code data.parquet} file for a parquet-format partition
+     * while keeping the {@code _pm} sidecar, the partition directory, and the
+     * partition's {@code TxReader} entry. Callers use this when the partition
+     * has been uploaded to cold storage and they want to free the local copy;
+     * queries then route through {@code ParquetColumnChunkResolver} to fetch
+     * byte ranges from the object store.
+     * <p>
+     * The partition must already be in parquet format
+     * ({@code txWriter.isPartitionParquet(partitionIndex) == true}); otherwise
+     * this method throws. The active (most recent) partition is skipped.
+     */
+    public void dropLocalParquetForColdPartition(long partitionTimestamp) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            return;
+        }
+
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0) {
+            return;
+        }
+
+        if (!txWriter.isPartitionParquet(partitionIndex)) {
+            throw CairoException.nonCritical()
+                    .put("cannot drop local parquet for non-parquet partition [table=")
+                    .put(tableToken.getTableName())
+                    .put(", partition=").put(partitionTimestamp)
+                    .put(']');
+        }
+
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        try {
+            setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            if (ff.exists(path.$())) {
+                if (!ff.removeQuiet(path.$())) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not remove local parquet file [path=").put(path).put(']');
+                }
+                LOG.info().$("dropped local parquet, partition now served from cold storage [path=")
+                        .$substr(pathRootSize, path).I$();
+            }
+            // Bump version so open readers reload their partition metadata and
+            // route through the cold resolver on the next access.
+            txWriter.bumpPartitionTableVersion();
+            txWriter.commit(denseSymbolMapWriters);
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     @Override
     public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         assert txWriter.getLagRowCount() == 0;
