@@ -28,6 +28,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             Sample By Fill
                               range: ('2024-01-01','2024-01-01T04:00:00.000000Z')
                               stride: '1h'
+                              fill: null
                                 Sort
                                   keys: [ts]
                                     Async Group By workers: 1

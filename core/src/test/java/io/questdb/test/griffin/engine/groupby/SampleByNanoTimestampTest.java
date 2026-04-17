@@ -9846,6 +9846,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                             SelectedRecord
                                 Sample By Fill
                                   stride: '30m'
+                                  fill: null
                                     Sort
                                       keys: [k]
                                         Async Group By workers: 1
@@ -15705,7 +15706,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
             return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By Fill\n" +
                     "      stride: '1m'\n" +
-                    (fill.equals("prev") ? "      fill: prev\n" : "") +
+                    "      fill: " + fill + "\n" +
                     "        Sort\n" +
                     "          keys: [tstmp]\n" +
                     "            Async JIT Group By workers: 1\n" +

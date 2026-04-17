@@ -6617,6 +6617,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
+                          fill: null
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -6634,6 +6635,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
+                          fill: null
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -6748,6 +6750,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
+                          fill: value
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -6778,6 +6781,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
+                          fill: value
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -6795,6 +6799,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
+                          fill: value
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -7056,6 +7061,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sample By Fill
                           stride: '1h'
+                          fill: null
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
@@ -7112,6 +7118,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     SelectedRecord
                         Sample By Fill
                           stride: '1d'
+                          fill: value
                             Sort
                               keys: [ts]
                                 Async Group By workers: 1
