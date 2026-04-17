@@ -467,6 +467,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     bloom_filter_fpp: jdouble,
     min_compression_ratio: jdouble,
     parquet_meta_fd: jint,
+    squash_tracker: jlong,
 ) -> jlong {
     let encode = || -> ParquetResult<i64> {
         let partition = create_partition_descriptor(
@@ -538,10 +539,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .with_sorting_columns(sorting_columns.clone())
             .with_bloom_filter_columns(bloom_filter_cols)
             .with_bloom_filter_fpp(bloom_filter_fpp)
-            .with_min_compression_ratio(min_compression_ratio);
+            .with_min_compression_ratio(min_compression_ratio)
+            .with_squash_tracker(squash_tracker);
 
-        let (schema, additional_meta) =
-            crate::parquet_write::schema::to_parquet_schema(&partition, raw_array_encoding)?;
+        let (schema, additional_meta) = crate::parquet_write::schema::to_parquet_schema(
+            &partition,
+            raw_array_encoding,
+            squash_tracker,
+        )?;
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
         let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
@@ -991,6 +996,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let (parquet_schema, additional_data) = crate::parquet_write::schema::to_parquet_schema(
             &partition_template,
             raw_array_encoding != 0,
+            -1,
         )?;
         // SAFETY: Pointer was passed from Java and points to a valid allocator for the JNI call duration.
         let allocator = unsafe { &*allocator_ptr };

@@ -430,6 +430,7 @@ pub struct Partition {
 pub fn to_parquet_schema(
     partition: &Partition,
     raw_array_encoding: bool,
+    squash_tracker: i64,
 ) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
         .columns
@@ -475,6 +476,8 @@ pub fn to_parquet_schema(
             .schema
             .push(QdbMetaCol { column_type, column_top: 0, format, ascii });
     }
+
+    qdb_meta.squash_tracker = squash_tracker;
 
     let encoded_qdb_meta = qdb_meta.serialize()?;
     let questdb_keyval = KeyValue::new(QDB_META_KEY.to_string(), encoded_qdb_meta);

@@ -282,7 +282,8 @@ public class ParquetTest extends AbstractTest {
                         (int) bloomFilterIndexes.size(),
                         0.01,
                         0.0,
-                        -1
+                        -1,
+                        -1L
                 );
                 Configuration configuration = new Configuration();
                 final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
@@ -559,7 +560,8 @@ public class ParquetTest extends AbstractTest {
                         (int) bloomFilterIndexes.size(),
                         0.01,
                         0.0,
-                        -1
+                        -1,
+                        -1L
                 );
 
                 Configuration configuration = new Configuration();
@@ -656,7 +658,8 @@ public class ParquetTest extends AbstractTest {
                         (int) bloomFilterIndexes.size(),
                         0.01,
                         0.0,
-                        -1
+                        -1,
+                        -1L
                 );
 
                 Configuration configuration = new Configuration();
@@ -744,7 +747,8 @@ public class ParquetTest extends AbstractTest {
                         (int) bloomFilterIndexes.size(),
                         0.01,
                         0.0,
-                        -1
+                        -1,
+                        -1L
                 );
 
                 Configuration configuration = new Configuration();

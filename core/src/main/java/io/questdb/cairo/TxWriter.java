@@ -369,6 +369,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         setPartitionParquetFormat(timestamp, -1, false);
     }
 
+    public void resetPartitionParquetGenerated(int partitionIndex) {
+        resetPartitionParquetGeneratedByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public void resetPartitionParquetGeneratedByRawIndex(int indexRaw) {
+        setPartitionParquetGeneratedByRawIndex(indexRaw, false);
+        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, -1L);
+    }
+
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
     }
@@ -440,8 +449,32 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setQuick(offset, maskedSize);
 
-        int fileSize = indexRaw + PARTITION_PARQUET_FILE_SIZE;
+        int fileSize = indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET;
         attachedPartitions.setQuick(fileSize, parquetFileSize);
+    }
+
+    public void setPartitionParquetGenerated(int partitionIndex, boolean parquetGenerated) {
+        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        setPartitionParquetGeneratedByRawIndex(indexRaw, parquetGenerated);
+    }
+
+    public void setPartitionParquetGenerated(int partitionIndex, long fileLength) {
+        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        setPartitionParquetGeneratedByRawIndex(indexRaw, true);
+        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, fileLength);
+    }
+
+    public void setPartitionParquetGenerated(long timestamp, boolean parquetGenerated) {
+        setPartitionParquetGeneratedByRawIndex(findAttachedPartitionRawIndex(timestamp), parquetGenerated);
+    }
+
+    public void setPartitionParquetGeneratedByRawIndex(int indexRaw, boolean parquetGenerated) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+        attachedPartitions.setQuick(offset, updatePartitionHasParquetGenerated(maskedSize, parquetGenerated));
     }
 
     public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {
@@ -565,6 +598,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     private static long updatePartitionHasParquetFormat(long maskedSize, boolean isParquetFormat) {
         return updatePartitionFlagAt(maskedSize, isParquetFormat, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
+    }
+
+    private static long updatePartitionHasParquetGenerated(long maskedSize, boolean parquetGenerated) {
+        return updatePartitionFlagAt(maskedSize, parquetGenerated, PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET);
     }
 
     private static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
