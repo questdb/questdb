@@ -24,67 +24,52 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 
 /**
- * Bundles column indexes and writer indexes (field_ids) for parquet column mapping.
+ * Bundles column indexes, writer indexes, and original writer indexes for parquet column mapping.
  * <p>
- * Backed by a single {@link IntList} with interleaved pairs:
- * {@code [colIdx0, writerIdx0, colIdx1, writerIdx1, ...]}
+ * Backed by a single {@link IntList} with interleaved triples:
+ * {@code [colIdx0, writerIdx0, origWriterIdx0, colIdx1, writerIdx1, origWriterIdx1, ...]}
  * <p>
- * Optionally holds a reference to a writer-index-to-dense-index map from
- * {@link io.questdb.cairo.TableReaderMetadata}. This map covers all historical
- * writer indexes (including those from type-converted columns) and enables
- * parquet column resolution after ALTER COLUMN TYPE.
+ * The original writer index is the root of the replacingIndex chain. For type-converted
+ * columns (ALTER COLUMN TYPE), it points to the original column index before any conversions.
+ * Parquet files store data under the original writer index as field_id, so a single direct
+ * lookup always finds the column regardless of how many type conversions happened.
  */
 public class ColumnMapping implements Mutable {
     private final IntList data = new IntList();
-    // Nullable. Set only for table reader cursors to enable type-converted column lookup.
-    private IntIntHashMap writerIndexToDenseIndex;
 
-    public void addColumn(int columnIndex, int writerIndex) {
+    public void addColumn(int columnIndex, int writerIndex, int originalWriterIndex) {
         data.add(columnIndex);
         data.add(writerIndex);
+        data.add(originalWriterIndex);
     }
 
     @Override
     public void clear() {
         data.clear();
-        writerIndexToDenseIndex = null;
     }
 
     public void copyFrom(ColumnMapping other) {
         data.clear();
         data.addAll(other.data);
-        writerIndexToDenseIndex = other.writerIndexToDenseIndex;
     }
 
     public int getColumnCount() {
-        return data.size() / 2;
+        return data.size() / 3;
     }
 
     public int getColumnIndex(int i) {
-        return data.getQuick(2 * i);
+        return data.getQuick(3 * i);
     }
 
-    public int getDenseIndexForWriterIndex(int writerIndex) {
-        if (writerIndexToDenseIndex != null) {
-            return writerIndexToDenseIndex.get(writerIndex);
-        }
-        return -1;
+    public int getOriginalWriterIndex(int i) {
+        return data.getQuick(3 * i + 2);
     }
 
     public int getWriterIndex(int i) {
-        return data.getQuick(2 * i + 1);
-    }
-
-    public boolean hasWriterIndexToDenseIndex() {
-        return writerIndexToDenseIndex != null;
-    }
-
-    public void setWriterIndexToDenseIndex(IntIntHashMap map) {
-        this.writerIndexToDenseIndex = map;
+        return data.getQuick(3 * i + 1);
     }
 }

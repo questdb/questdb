@@ -30,7 +30,6 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -159,43 +158,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testConvertPartitionToParquet() throws Exception {
-        Rnd rnd = generateRandom(LOG, 91398913289583L, 1776263263142L);
-        setTestParams(rnd);
-
-        FuzzChangeColumnTypeOperation.CONVERT_TO_SYMBOL_ALLOWED = false;
-
-        try {
-            setFuzzProbabilities(
-                    0.01,
-                    0.01,
-                    0.01,
-                    0.1,
-                    0.05,
-                    0.05,
-                    0.1,
-                    0.1,
-                    1.0,
-                    0.01,
-                    0.00,
-                    0.5,
-                    0.5,
-                    0.1,
-                    0.0,
-                    0.8,
-                    0.00,
-                    0,
-                    0.01,
-                    0.1
-            );
-            setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-            runFuzz(rnd);
-        } finally {
-            FuzzChangeColumnTypeOperation.CONVERT_TO_SYMBOL_ALLOWED = true;
-        }
-    }
-
-    @Test
     public void testChunkedSequencerWriting() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
@@ -204,6 +166,38 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzProperties(rnd);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         Assert.assertEquals(10, node1.getConfiguration().getDefaultSeqPartTxnCount());
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testConvertPartitionToParquet() throws Exception {
+//        Rnd rnd = generateRandom(LOG, 92233461544666L, 1776264097713L);
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.1,
+                1.0,
+                0.01,
+                0.00,
+                0.5,
+                0.5,
+                0.1,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
         runFuzz(rnd);
     }
 

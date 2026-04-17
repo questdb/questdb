@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.ConvertersNative;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
@@ -159,20 +158,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (tableWriterMetadata.getColumnType(i) < 0) {
                         continue;
                     }
-                    final int writerIndex = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
-                    int parquetIdx = parquetColIdToIdx.get(writerIndex);
-                    if (parquetIdx < 0) {
-                        // Column not found by current writer index. Walk the
-                        // replacingIndex chain (ALTER COLUMN TYPE): the parquet
-                        // file stores data under an earlier writer index.
-                        int replacingIndex = tableWriterMetadata.getColumnMetadata(i).getReplacingIndex();
-                        while (replacingIndex >= 0 && parquetIdx < 0) {
-                            parquetIdx = parquetColIdToIdx.get(replacingIndex);
-                            replacingIndex = tableWriterMetadata.getColumnMetadata(replacingIndex).getReplacingIndex();
-                        }
-                        if (parquetIdx >= 0) {
-                            hasTypeConvertedColumns = true;
-                        }
+                    final int origWriterIndex = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
+                    int parquetIdx = parquetColIdToIdx.get(origWriterIndex);
+                    if (parquetIdx >= 0 && origWriterIndex != tableWriterMetadata.getColumnMetadata(i).getWriterIndex()) {
+                        hasTypeConvertedColumns = true;
                     }
                     tableToParquetIdx.setQuick(i, parquetIdx);
                     if (parquetIdx < 0) {
@@ -266,7 +255,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                     O3Utils.close(ff, writerFd);
                     // writerFdOs is not closed on error because in this catch is always -1;
-                    //noinspection ConstantValue
                     assert writerFdOs == -1;
                     throw e;
                 }
@@ -313,7 +301,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
                             colType |= PARQUET_SYMBOL_NOT_NULL_HINT;
                         }
-                        final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
+                        final int colId = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
                         final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(i).getParquetEncodingConfig();
                         schemaDesc.addColumn(
                                 tableWriterMetadata.getColumnName(i),
@@ -1569,7 +1557,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 continue;
             }
             final String columnName = tableWriterMetadata.getColumnName(columnIndex);
-            final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+            final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
             final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
             final boolean notTheTimestamp = columnIndex != timestampIndex;
             final int columnOffset = getPrimaryColumnIndex(columnIndex);
@@ -1989,38 +1977,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
-    /**
-     * Walks the replacingIndex chain for a type-converted column to find the
-     * first conversion target type. For a chain like SYMBOL→TIMESTAMP→DOUBLE,
-     * the parquet column stores SYMBOL, and the first conversion target is
-     * TIMESTAMP — the type of the column that directly replaced the parquet
-     * source. Returns {@code columnType} (the final target) when there is no
-     * intermediate step.
-     */
-    static int findFirstConversionTarget(int columnIndex, int columnType, RecordMetadata metadata) {
-        int ri = metadata.getColumnMetadata(columnIndex).getReplacingIndex();
-        if (ri < 0) {
-            return columnType;
-        }
-        int ri2 = metadata.getColumnMetadata(ri).getReplacingIndex();
-        if (ri2 < 0) {
-            // Single hop — no intermediate.
-            return columnType;
-        }
-        // Multi-hop chain: walk to the column that directly replaced the
-        // parquet source (second-to-last in the chain).
-        int firstTargetType = Math.abs(metadata.getColumnType(ri));
-        while (true) {
-            int ri3 = metadata.getColumnMetadata(ri2).getReplacingIndex();
-            if (ri3 < 0) {
-                break;
-            }
-            firstTargetType = Math.abs(metadata.getColumnType(ri2));
-            ri2 = ri3;
-        }
-        return firstTargetType;
-    }
-
     static void convertVarColumnToFixed(
             int srcType,
             int dstType,
@@ -2068,73 +2024,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             writeFixedParsedValue(dstType, dstPtr, i, value);
         }
-    }
-
-    /**
-     * Converts VARCHAR_SLICE format data to STRING format.
-     * VARCHAR_SLICE: 16-byte aux entries (header + inline/pointer), separate data buffer.
-     * STRING: 8-byte aux entries (offset into data), data = [i32 len][char[len]] per row.
-     */
-    static void convertVarcharSliceToString(
-            long srcAuxPtr,
-            int rowCount,
-            long dstAuxPtr,
-            long dstDataPtr
-    ) {
-        Utf8StringSink utf8Sink = new Utf8StringSink();
-        long dstDataOffset = 0;
-        for (int i = 0; i < rowCount; i++) {
-            Unsafe.getUnsafe().putLong(dstAuxPtr + (long) i * Long.BYTES, dstDataOffset);
-
-            long auxEntryAddr = srcAuxPtr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-            int header = Unsafe.getUnsafe().getInt(auxEntryAddr);
-
-            if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
-                Unsafe.getUnsafe().putInt(dstDataPtr + dstDataOffset, -1);
-                dstDataOffset += Integer.BYTES;
-                continue;
-            }
-
-            int utf8Size = header >>> 4;
-            long utf8Ptr;
-            if (utf8Size <= VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
-                utf8Ptr = auxEntryAddr + VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
-            } else {
-                utf8Ptr = Unsafe.getUnsafe().getLong(auxEntryAddr + 8);
-            }
-
-            utf8Sink.clear();
-            for (int j = 0; j < utf8Size; j++) {
-                utf8Sink.putAny(Unsafe.getUnsafe().getByte(utf8Ptr + j));
-            }
-            CharSequence cs = utf8Sink.asAsciiCharSequence();
-            int len = cs.length();
-
-            Unsafe.getUnsafe().putInt(dstDataPtr + dstDataOffset, len);
-            dstDataOffset += Integer.BYTES;
-            for (int j = 0; j < len; j++) {
-                Unsafe.getUnsafe().putChar(dstDataPtr + dstDataOffset, cs.charAt(j));
-                dstDataOffset += Character.BYTES;
-            }
-        }
-        // Write sentinel entry: STRING aux uses N+1 offsets where aux[N] = total data size.
-        Unsafe.getUnsafe().putLong(dstAuxPtr + (long) rowCount * Long.BYTES, dstDataOffset);
-    }
-
-    /**
-     * Estimates the STRING data buffer size needed for VARCHAR_SLICE data.
-     * Returns rowCount * Integer.BYTES (for length fields) + total UTF-8 byte count * Character.BYTES.
-     */
-    static long estimateStringDataSizeFromVarcharSlice(long srcAuxPtr, int rowCount) {
-        long totalUtf8Bytes = 0;
-        for (int i = 0; i < rowCount; i++) {
-            long auxEntryAddr = srcAuxPtr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-            int header = Unsafe.getUnsafe().getInt(auxEntryAddr);
-            if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) == 0) {
-                totalUtf8Bytes += (header >>> 4);
-            }
-        }
-        return (long) rowCount * Integer.BYTES + totalUtf8Bytes * Character.BYTES;
     }
 
     private static void writeFixedNull(int dstType, long dstPtr, int rowIndex) {
@@ -2519,8 +2408,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     decodeType = (srcTag == ColumnType.VARCHAR)
                             ? ColumnType.VARCHAR_SLICE : srcType;
                 } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
-                    // Symbol→any: Rust supports Symbol→VarcharSlice remapping.
-                    decodeType = ColumnType.VARCHAR_SLICE;
+                    decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR_SLICE;
                 }
                 parquetColumns.add(decodeType);
                 activeToDecodeIdx.setQuick(activeColCount, decodeColCount);
@@ -2747,28 +2635,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 nullBufs.setQuick(bi4 + 3, nullDataSize);
                             }
                         }
-                    } else if (decodeIdx >= 0) {
-                        // Aux is present but format may not match target (e.g., Symbol→String:
-                        // decoded as VARCHAR_SLICE but target is STRING).
-                        int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
-                        int srcTag2 = ColumnType.tagOf(decoder.metadata().getColumnType(parquetIdx));
-                        if (ColumnType.isSymbol(srcTag2) && !ColumnType.isVarchar(columnType)) {
-                            // Convert VARCHAR_SLICE format to STRING format.
-                            long stringDataSize = estimateStringDataSizeFromVarcharSlice(columnAuxPtr, rowGroupSize);
-                            long stringDataBuf = Unsafe.malloc(stringDataSize, MemoryTag.NATIVE_O3);
-                            // STRING aux uses N+1 offsets (sentinel at position N = total data size).
-                            long stringAuxSize = (long) (rowGroupSize + 1) * Long.BYTES;
-                            long stringAuxBuf = Unsafe.malloc(stringAuxSize, MemoryTag.NATIVE_O3);
-
-                            nullBufs.setQuick(bi4, stringAuxBuf);
-                            nullBufs.setQuick(bi4 + 1, stringAuxSize);
-                            nullBufs.setQuick(bi4 + 2, stringDataBuf);
-                            nullBufs.setQuick(bi4 + 3, stringDataSize);
-
-                            convertVarcharSliceToString(columnAuxPtr, rowGroupSize, stringAuxBuf, stringDataBuf);
-                            columnAuxPtr = stringAuxBuf;
-                            columnDataPtr = stringDataBuf;
-                        }
                     }
                     srcPtrs.setQuick(bi2, columnDataPtr);
                     srcPtrs.setQuick(bi2 + 1, columnAuxPtr);
@@ -2815,36 +2681,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             srcType = ColumnType.VARCHAR;
                         }
 
-                        // For chained conversions (e.g. SYMBOL→TIMESTAMP→DOUBLE), find the
-                        // first target type in the chain. The var→fixed parse step must use
-                        // the first target (TIMESTAMP), then a fixed→fixed cast produces the
-                        // final type (DOUBLE).
-                        int firstTargetType = findFirstConversionTarget(columnIndex, columnType, tableWriterMetadata);
-
-                        long columnDataSize = rowGroupBuffers.getChunkDataSize(decodeIdx);
-                        if (ColumnType.tagOf(firstTargetType) != ColumnType.tagOf(columnType)) {
-                            // Two-step: var→firstTarget, then firstTarget→finalTarget.
-                            long tmpSize = (long) rowGroupSize * ColumnType.sizeOf(firstTargetType);
-                            long tmpBuf = Unsafe.malloc(tmpSize, MemoryTag.NATIVE_O3);
-                            try {
-                                convertVarColumnToFixed(srcType, firstTargetType, columnDataPtr, columnAuxPtr, rowGroupSize, tmpBuf);
-                                long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
-                                long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
-                                nullBufs.setQuick(bi4, fixBuf);
-                                nullBufs.setQuick(bi4 + 1, fixSize);
-                                ConvertersNative.fixedToFixed(tmpBuf, firstTargetType, fixBuf, columnType, rowGroupSize);
-                                columnDataPtr = fixBuf;
-                            } finally {
-                                Unsafe.free(tmpBuf, tmpSize, MemoryTag.NATIVE_O3);
-                            }
-                        } else {
-                            long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
-                            long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
-                            nullBufs.setQuick(bi4, fixBuf);
-                            nullBufs.setQuick(bi4 + 1, fixSize);
-                            convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf);
-                            columnDataPtr = fixBuf;
-                        }
+                        long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
+                        long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
+                        nullBufs.setQuick(bi4, fixBuf);
+                        nullBufs.setQuick(bi4 + 1, fixSize);
+                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf);
+                        columnDataPtr = fixBuf;
                     } else if (columnDataPtr == 0) {
                         // Column top or missing from parquet: create null source buffer.
                         long nullFixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
@@ -2888,7 +2730,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     assert columnIndex >= 0;
                     assert columnType >= 0;
                     final String columnName = tableWriterMetadata.getColumnName(columnIndex);
-                    final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                    final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
                     final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
                     final boolean notTheTimestamp = columnIndex != timestampIndex;
@@ -3755,7 +3597,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     decodeType = (srcTag == ColumnType.VARCHAR)
                             ? ColumnType.VARCHAR_SLICE : srcType;
                 } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
-                    decodeType = ColumnType.VARCHAR_SLICE;
+                    decodeType = dstTag == ColumnType.STRING ? ColumnType.STRING : ColumnType.VARCHAR_SLICE;
                 }
                 parquetColumns.add(decodeType);
                 activeToDecodeIdx[activeColCount] = decodeColCount;
@@ -3784,7 +3626,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int columnType = tableWriterMetadata.getColumnType(columnIndex);
                 int decodeIdx = activeToDecodeIdx[ai];
                 final String columnName = tableWriterMetadata.getColumnName(columnIndex);
-                final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
                 final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
                 if (ColumnType.isVarSize(columnType)) {
@@ -3848,26 +3690,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 tmpBufs[ai * 4 + 3] = nullDataSize;
                             }
                         }
-                    } else if (decodeIdx >= 0) {
-                        // Aux present — check if format conversion needed (e.g. Symbol→String).
-                        int parquetIdx = tableToParquetIdx.getQuick(columnIndex);
-                        int srcTag = ColumnType.tagOf(decoder.metadata().getColumnType(parquetIdx));
-                        if (ColumnType.isSymbol(srcTag) && !ColumnType.isVarchar(columnType)) {
-                            long stringDataSize = estimateStringDataSizeFromVarcharSlice(columnAuxPtr, rowGroupSize);
-                            long stringDataBuf = Unsafe.malloc(stringDataSize, MemoryTag.NATIVE_O3);
-                            // STRING aux uses N+1 offsets (sentinel at position N = total data size).
-                            long stringAuxSize = (long) (rowGroupSize + 1) * Long.BYTES;
-                            long stringAuxBuf = Unsafe.malloc(stringAuxSize, MemoryTag.NATIVE_O3);
-                            tmpBufs[ai * 4] = stringAuxBuf;
-                            tmpBufs[ai * 4 + 1] = stringAuxSize;
-                            tmpBufs[ai * 4 + 2] = stringDataBuf;
-                            tmpBufs[ai * 4 + 3] = stringDataSize;
-                            convertVarcharSliceToString(columnAuxPtr, rowGroupSize, stringAuxBuf, stringDataBuf);
-                            columnAuxPtr = stringAuxBuf;
-                            columnAuxSize = stringAuxSize;
-                            columnDataPtr = stringDataBuf;
-                            columnDataSize = stringDataSize;
-                        }
                     }
 
                     partitionDescriptor.addColumn(
@@ -3896,32 +3718,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             srcType = ColumnType.VARCHAR;
                         }
 
-                        int firstTargetType = findFirstConversionTarget(columnIndex, columnType, tableWriterMetadata);
-                        long columnDataSize = rowGroupBuffers.getChunkDataSize(decodeIdx);
-
-                        if (ColumnType.tagOf(firstTargetType) != ColumnType.tagOf(columnType)) {
-                            // Two-step chain: var→firstTarget, then firstTarget→finalTarget.
-                            long tmpSize = (long) rowGroupSize * ColumnType.sizeOf(firstTargetType);
-                            long tmpBuf = Unsafe.malloc(tmpSize, MemoryTag.NATIVE_O3);
-                            try {
-                                convertVarColumnToFixed(srcType, firstTargetType, columnDataPtr, columnAuxPtr, rowGroupSize, tmpBuf);
-                                long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
-                                long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
-                                tmpBufs[ai * 4] = fixBuf;
-                                tmpBufs[ai * 4 + 1] = fixSize;
-                                ConvertersNative.fixedToFixed(tmpBuf, firstTargetType, fixBuf, columnType, rowGroupSize);
-                                columnDataPtr = fixBuf;
-                            } finally {
-                                Unsafe.free(tmpBuf, tmpSize, MemoryTag.NATIVE_O3);
-                            }
-                        } else {
-                            long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
-                            long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
-                            tmpBufs[ai * 4] = fixBuf;
-                            tmpBufs[ai * 4 + 1] = fixSize;
-                            convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf);
-                            columnDataPtr = fixBuf;
-                        }
+                        long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
+                        long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
+                        tmpBufs[ai * 4] = fixBuf;
+                        tmpBufs[ai * 4 + 1] = fixSize;
+                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf);
+                        columnDataPtr = fixBuf;
                     } else if (columnDataPtr == 0) {
                         // Column missing from parquet: null fixed data.
                         long nullFixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
@@ -3930,8 +3732,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         columnDataPtr = nullFixBuf;
                         tmpBufs[ai * 4] = nullFixBuf;
                         tmpBufs[ai * 4 + 1] = nullFixSize;
-                    } else if (decodeIdx >= 0) {
-                        // Fixed passthrough: Rust decoded/post_converted to target type.
                     }
 
                     if (ColumnType.isSymbol(columnType)) {

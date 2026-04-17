@@ -300,7 +300,8 @@ impl ParquetDecoder {
             // so this workaround allows them to be read as varchar columns.
             if column_type.tag() == ColumnTypeTag::Symbol
                 && (to_column_type.tag() == ColumnTypeTag::Varchar
-                    || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
+                    || to_column_type.tag() == ColumnTypeTag::VarcharSlice
+                    || to_column_type.tag() == ColumnTypeTag::String)
             {
                 column_type = to_column_type;
             }
@@ -524,7 +525,8 @@ impl ParquetDecoder {
             // Special case for handling symbol columns in QuestDB-created Parquet files.
             if column_type.tag() == ColumnTypeTag::Symbol
                 && (to_column_type.tag() == ColumnTypeTag::Varchar
-                    || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
+                    || to_column_type.tag() == ColumnTypeTag::VarcharSlice
+                    || to_column_type.tag() == ColumnTypeTag::String)
             {
                 column_type = to_column_type;
             }
@@ -1168,7 +1170,8 @@ impl ParquetDecoder {
                     && to_column_type.tag() == ColumnTypeTag::VarcharSlice)
                 || (column_type.tag() == ColumnTypeTag::Symbol
                     && (to_column_type.tag() == ColumnTypeTag::Varchar
-                        || to_column_type.tag() == ColumnTypeTag::VarcharSlice));
+                        || to_column_type.tag() == ColumnTypeTag::VarcharSlice
+                        || to_column_type.tag() == ColumnTypeTag::String));
             if !types_match {
                 return Err(fmt_err!(
                     InvalidType,

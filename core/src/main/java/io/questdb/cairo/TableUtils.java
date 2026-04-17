@@ -249,7 +249,6 @@ public final class TableUtils {
         return TX_RECORD_HEADER_SIZE + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
-    @SuppressWarnings("JavaExistingMethodCanBeUsed")
     // the mig methods are deliberately standalone so that between old versions
     // does not regress if the main code changes
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
@@ -2231,10 +2230,30 @@ public final class TableUtils {
             boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(metaMem, i));
 
             if (replacingColumnIndex > -1 && replacingColumnIndex < columnCount - 1) {
-                // Replace the column index
-                targetList.set(3 * replacingColumnIndex, i);
-                targetList.set(3 * replacingColumnIndex + 1, nameOffset);
-                targetList.set(3 * replacingColumnIndex + 2, isSymbol ? denseSymbolIndex : -1);
+                // Find the slot where the replaced column currently lives.
+                // For a chain A→B→C, when C replaces B, B may already have been
+                // moved into A's slot by a prior replacement. Follow the chain
+                // of negative markers to find the actual slot.
+                int targetSlot = replacingColumnIndex;
+                int marker = targetList.getQuick(3 * targetSlot);
+                if (marker < 0) {
+                    // Slot holds a dead marker — the column that was here was itself
+                    // replaced into an earlier slot. Decode the marker to find the
+                    // original slot: marker = -(originalReplacingIndex) - 1.
+                    // But we need to find where 'replacingColumnIndex' actually lives.
+                    // Search for it among all slots.
+                    for (int s = 0, sn = targetList.size() / 3; s < sn; s++) {
+                        if (targetList.getQuick(3 * s) == replacingColumnIndex) {
+                            targetSlot = s;
+                            break;
+                        }
+                    }
+                }
+
+                // Replace the column index at the found slot
+                targetList.set(3 * targetSlot, i);
+                targetList.set(3 * targetSlot + 1, nameOffset);
+                targetList.set(3 * targetSlot + 2, isSymbol ? denseSymbolIndex : -1);
 
                 targetList.add(-replacingColumnIndex - 1);
                 targetList.add(0);

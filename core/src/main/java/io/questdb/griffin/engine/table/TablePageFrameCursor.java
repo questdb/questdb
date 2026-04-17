@@ -43,10 +43,13 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         columnMapping.clear();
         for (int i = 0, n = columnIndexes.size(); i < n; i++) {
             int colIdx = columnIndexes.getQuick(i);
-            columnMapping.addColumn(colIdx, readerMetadata.getWriterIndex(colIdx));
-        }
-        if (readerMetadata instanceof TableReaderMetadata trm) {
-            columnMapping.setWriterIndexToDenseIndex(trm.getWriterIndexToDenseIndexMap());
+            columnMapping.addColumn(
+                    colIdx,
+                    readerMetadata.getWriterIndex(colIdx),
+                    readerMetadata instanceof TableReaderMetadata trm
+                            ? trm.getOriginalWriterIndex(colIdx)
+                            : readerMetadata.getWriterIndex(colIdx)
+            );
         }
     }
 

@@ -62,9 +62,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // Maps column ID (field_id / writer index) to parquet column index.
     // Rebuilt each time openParquet() encounters a new file.
     private final IntIntHashMap columnIdToParquetIdx;
-    // Maps dense column index to parquet column index for type-converted column fallback.
-    // Rebuilt per openParquet() call when the column mapping has writerIndexToDenseIndex.
-    private final IntIntHashMap denseIdxToParquetIdx;
     private final PageFrameMemoryImpl frameMemory;
     private final ObjList<ParquetBuffers> freeParquetBuffers;
     // Contains parquet to query column index mapping.
@@ -88,7 +85,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 freeParquetBuffers.add(new ParquetBuffers());
             }
             columnIdToParquetIdx = new IntIntHashMap();
-            denseIdxToParquetIdx = new IntIntHashMap();
             frameMemory = new PageFrameMemoryImpl();
             fromParquetColumnIndexes = new IntList(16);
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
@@ -340,18 +336,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
     }
 
-    private void buildDenseIdxToParquetIdx(ColumnMapping columnMapping, PartitionDecoder.Metadata parquetMetadata) {
-        denseIdxToParquetIdx.clear();
-        final int parquetColumnCount = parquetMetadata.getColumnCount();
-        for (int j = 0; j < parquetColumnCount; j++) {
-            final int fieldId = parquetMetadata.getColumnId(j);
-            final int denseIdx = columnMapping.getDenseIndexForWriterIndex(fieldId < 0 ? j : fieldId);
-            if (denseIdx >= 0) {
-                denseIdxToParquetIdx.put(denseIdx, j);
-            }
-        }
-    }
-
     private void openParquet(int frameIndex) {
         final PartitionDecoder frameDecoder = addressCache.getParquetPartitionDecoder(frameIndex);
         if (parquetDecoder.getFileAddr() != frameDecoder.getFileAddr() || parquetDecoder.getFileSize() != frameDecoder.getFileSize()) {
@@ -361,16 +345,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         buildColumnIdMap(parquetMetadata);
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
-        final boolean hasWriterIndexMap = columnMapping.hasWriterIndexToDenseIndex();
-        if (hasWriterIndexMap) {
-            buildDenseIdxToParquetIdx(columnMapping, parquetMetadata);
-        }
 
         final int readParquetColumnCount = columnMapping.getColumnCount();
         sourceColumnTypes.setAll(readParquetColumnCount, -1);
         hasTypeCasts = false;
         for (int i = 0; i < readParquetColumnCount; i++) {
-            resolveParquetColumn(i, columnMapping, hasWriterIndexMap, parquetMetadata);
+            resolveParquetColumn(i, columnMapping, parquetMetadata);
         }
     }
 
@@ -383,31 +363,28 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         buildColumnIdMap(parquetMetadata);
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
-        final boolean hasWriterIndexMap = columnMapping.hasWriterIndexToDenseIndex();
-        if (hasWriterIndexMap) {
-            buildDenseIdxToParquetIdx(columnMapping, parquetMetadata);
-        }
 
         final int readParquetColumnCount = columnMapping.getColumnCount();
         sourceColumnTypes.setAll(readParquetColumnCount, -1);
         hasTypeCasts = false;
         for (int i = 0; i < readParquetColumnCount; i++) {
             if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
-                resolveParquetColumn(i, columnMapping, hasWriterIndexMap, parquetMetadata);
+                resolveParquetColumn(i, columnMapping, parquetMetadata);
             }
         }
     }
 
-    private void resolveParquetColumn(int i, ColumnMapping columnMapping, boolean hasWriterIndexMap, PartitionDecoder.Metadata parquetMetadata) {
+    private void resolveParquetColumn(int i, ColumnMapping columnMapping, PartitionDecoder.Metadata parquetMetadata) {
         final int columnWriterIndex = columnMapping.getWriterIndex(i);
         int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
 
-        if (parquetIdx < 0 && hasWriterIndexMap) {
+        if (parquetIdx < 0) {
             // Direct writer index lookup failed. The column may have been type-converted
-            // (ALTER COLUMN TYPE), so the parquet file stores it under an old writer index.
-            // Fall back to matching by dense column index.
-            final int queryDenseIdx = columnMapping.getColumnIndex(i);
-            parquetIdx = denseIdxToParquetIdx.get(queryDenseIdx);
+            // (ALTER COLUMN TYPE), so the parquet file stores it under the original writer index.
+            final int origWriterIndex = columnMapping.getOriginalWriterIndex(i);
+            if (origWriterIndex >= 0 && origWriterIndex != columnWriterIndex) {
+                parquetIdx = columnIdToParquetIdx.get(origWriterIndex);
+            }
             if (parquetIdx >= 0) {
                 int targetType = addressCache.getColumnTypes().getQuick(i);
                 if (ColumnType.isSymbol(ColumnType.tagOf(targetType))) {
@@ -422,7 +399,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 if (ColumnType.isSymbol(sourceTag) && !ColumnType.isSymbol(targetTag)) {
                     // Symbol → non-symbol: decode as VARCHAR_SLICE, Java converts lazily.
                     // For Symbol→VARCHAR, the fallthrough below handles it (VARCHAR_SLICE is native format).
-                    if (targetTag != ColumnType.VARCHAR) {
+                    if (targetTag != ColumnType.VARCHAR && targetTag != ColumnType.STRING) {
                         parquetColumns.add(parquetIdx);
                         fromParquetColumnIndexes.setQuick(parquetIdx, i);
                         parquetColumns.add(ColumnType.VARCHAR_SLICE);
