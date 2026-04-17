@@ -321,7 +321,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 }
 
                 // SBBF probe
-                if (genLookup.mightNotContainKey(currentGen, requestedKey)) {
+                if (genLookup.notContainKey(currentGen, requestedKey)) {
                     currentGen++;
                     continue;
                 }

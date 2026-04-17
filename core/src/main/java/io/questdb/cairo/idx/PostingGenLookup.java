@@ -385,7 +385,7 @@ public class PostingGenLookup implements Closeable {
     }
 
     // Tier 2 accessor
-    boolean mightNotContainKey(int gen, int key) {
+    boolean notContainKey(int gen, int key) {
         if (gen >= sbbfGenCount) {
             return false; // no SBBF for this gen (dense gen), assume present
         }
