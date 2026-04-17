@@ -95,7 +95,7 @@ fn bench_row_group(c: &mut Criterion) {
     {
         let data = PartitionData::new(ROW_COUNT, 0);
         let partition = data.to_partition();
-        let (schema, _meta) = to_parquet_schema(&partition, false).expect("schema");
+        let (schema, _meta) = to_parquet_schema(&partition, false, -1).expect("schema");
         let encodings = to_encodings(&partition);
         let compressions = to_compressions(&partition);
         let bloom_cols = HashSet::new();
@@ -130,7 +130,7 @@ fn bench_row_group(c: &mut Criterion) {
             .collect();
         let partitions: Vec<Partition> = parts.iter().map(|p| p.to_partition()).collect();
         let partition_refs: Vec<&Partition> = partitions.iter().collect();
-        let (schema, _meta) = to_parquet_schema(&partitions[0], false).expect("schema");
+        let (schema, _meta) = to_parquet_schema(&partitions[0], false, -1).expect("schema");
         let encodings = to_encodings(&partitions[0]);
         let compressions = to_compressions(&partitions[0]);
         let bloom_cols = HashSet::new();
