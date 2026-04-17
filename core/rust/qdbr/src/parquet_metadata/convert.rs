@@ -2637,7 +2637,7 @@ mod tests {
 
         // Use chunked API to capture bloom filter bitsets.
         let (schema, additional_meta) =
-            crate::parquet_write::schema::to_parquet_schema(&partition, false).unwrap();
+            crate::parquet_write::schema::to_parquet_schema(&partition, false, -1).unwrap();
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
         let mut chunked = writer
