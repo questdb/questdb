@@ -41,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class EarliestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
+    private Function filter;
 
     public EarliestByAllSymbolsFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -58,6 +59,7 @@ public class EarliestByAllSymbolsFilteredRecordCursorFactory extends AbstractTre
                 configuration.getSqlEarliestByRowCount(), MemoryTag.NATIVE_EARLIEST_BY_LONG_LIST);
 
         try {
+            this.filter = filter;
             Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes);
             this.cursor = new EarliestByAllSymbolsFilteredRecordCursor(
                     configuration,
@@ -92,5 +94,6 @@ public class EarliestByAllSymbolsFilteredRecordCursorFactory extends AbstractTre
     protected void _close() {
         super._close();
         Misc.free(cursor);
+        filter = Misc.free(filter);
     }
 }

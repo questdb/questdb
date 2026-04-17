@@ -127,7 +127,9 @@ class EarliestByAllIndexedRecordCursor extends AbstractAscendingRecordListCursor
 
                 RowCursor rowCursor = indexReader.getCursor(true, key, partitionLo, partitionHi);
                 while (rowCursor.hasNext()) {
-                    long row = rowCursor.next();
+                    // BitmapIndexFwdReader.Cursor.next() already returns frame-local rows
+                    // (it subtracts the minValue we passed in, i.e. partitionLo).
+                    final long row = rowCursor.next();
                     recordA.setRowIndex(row);
 
                     if (hasGeoHashFilter && !matchesGeoHashPrefix(geoHashColumnIndex, geoHashColumnType)) {

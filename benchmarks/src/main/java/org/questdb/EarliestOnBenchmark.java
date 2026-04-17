@@ -47,6 +47,11 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -58,9 +63,8 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class EarliestOnBenchmark {
-    private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
-
     private SqlCompilerImpl compiler;
+    private CairoConfiguration configuration;
     private SqlExecutionContextImpl ctx;
     private CairoEngine engine;
     private RecordCursorFactory earliestOnFactory;
@@ -70,6 +74,7 @@ public class EarliestOnBenchmark {
     private RecordCursorFactory groupByJoinFactory;
     private RecordCursorFactory groupByJoinFilteredFactory;
     private RecordCursorFactory groupByJoinIntervalFactory;
+    private Path root;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -84,7 +89,22 @@ public class EarliestOnBenchmark {
     }
 
     @Setup(Level.Trial)
-    public void setup() throws SqlException {
+    public void setup() throws IOException, SqlException {
+        // A fresh temp dir per trial prevents CREATE TABLE IF NOT EXISTS from silently
+        // reusing leftover data, which would make the benchmark measure stale state.
+        root = Files.createTempDirectory("questdb-earliest-on-bench-");
+        try {
+            setupInternal();
+        } catch (Throwable t) {
+            // JMH does not invoke @TearDown when @Setup throws, so clean up here to
+            // avoid leaking the temp dir into java.io.tmpdir.
+            safeCleanup();
+            throw t;
+        }
+    }
+
+    private void setupInternal() throws SqlException {
+        configuration = new DefaultCairoConfiguration(root.toString());
         engine = new CairoEngine(configuration);
         ctx = new SqlExecutionContextImpl(engine, 1).with(
                 configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -161,16 +181,35 @@ public class EarliestOnBenchmark {
     }
 
     @TearDown(Level.Trial)
-    public void tearDown() {
-        earliestOnFactory.close();
-        earliestOnFilteredFactory.close();
-        earliestOnIndexedFactory.close();
-        earliestOnIntervalFactory.close();
-        groupByJoinFactory.close();
-        groupByJoinFilteredFactory.close();
-        groupByJoinIntervalFactory.close();
-        compiler.close();
-        engine.close();
+    public void tearDown() throws IOException {
+        safeCleanup();
+    }
+
+    private static void closeQuietly(AutoCloseable c) {
+        if (c == null) {
+            return;
+        }
+        try {
+            c.close();
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private void safeCleanup() throws IOException {
+        closeQuietly(earliestOnFactory);
+        closeQuietly(earliestOnFilteredFactory);
+        closeQuietly(earliestOnIndexedFactory);
+        closeQuietly(earliestOnIntervalFactory);
+        closeQuietly(groupByJoinFactory);
+        closeQuietly(groupByJoinFilteredFactory);
+        closeQuietly(groupByJoinIntervalFactory);
+        closeQuietly(compiler);
+        closeQuietly(engine);
+        if (root != null) {
+            try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
+                paths.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
+            }
+        }
     }
 
     @Benchmark

@@ -84,27 +84,31 @@ class EarliestByAllFilteredRecordCursor extends AbstractAscendingRecordListCurso
 
     @Override
     protected void buildTreeMap() {
-        PageFrame frame;
-        while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+        try {
+            PageFrame frame;
+            while ((frame = frameCursor.next()) != null) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                final int frameIndex = frameCount;
+                final long partitionLo = frame.getPartitionLo();
+                final long partitionHi = frame.getPartitionHi() - 1;
 
-            frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+                frameAddressCache.add(frameCount, frame);
+                frameMemoryPool.navigateTo(frameCount++, recordA);
 
-            for (long row = 0; row <= partitionHi - partitionLo; row++) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    MapKey key = map.withKey();
-                    key.put(recordA, recordSink);
-                    if (key.create()) {
-                        rows.add(Rows.toRowID(frameIndex, row));
+                for (long row = 0; row <= partitionHi - partitionLo; row++) {
+                    recordA.setRowIndex(row);
+                    if (filter.getBool(recordA)) {
+                        MapKey key = map.withKey();
+                        key.put(recordA, recordSink);
+                        if (key.create()) {
+                            rows.add(Rows.toRowID(frameIndex, row));
+                        }
                     }
                 }
             }
+        } finally {
+            // Always clear so stale keys don't leak into the next of() on this reused cursor.
+            map.clear();
         }
-        map.clear();
     }
 }

@@ -1981,7 +1981,7 @@ public class QueryModel implements IQueryModel {
                 aliasToSink(alias.token, sink);
             }
 
-            if (getLatestByType() != LATEST_BY_NEW && timestamp != null) {
+            if (getLatestByType() != LATEST_BY_NEW && getEarliestByType() != EARLIEST_BY_NEW && timestamp != null) {
                 sink.putAscii(" timestamp (");
                 timestamp.toSink(sink);
                 sink.putAscii(')');
@@ -1996,6 +1996,16 @@ public class QueryModel implements IQueryModel {
                 sink.putAscii(", ");
                 sink.put(timestampColumnIndex);
                 sink.putAscii(')');
+            }
+
+            if (getEarliestByType() == EARLIEST_BY_DEPRECATED && getEarliestBy().size() > 0) {
+                sink.putAscii(" earliest by ");
+                for (int i = 0, n = getEarliestBy().size(); i < n; i++) {
+                    if (i > 0) {
+                        sink.putAscii(',');
+                    }
+                    getEarliestBy().getQuick(i).toSink(sink);
+                }
             }
 
             if (getLatestByType() == LATEST_BY_DEPRECATED && getLatestBy().size() > 0) {
@@ -2247,6 +2257,18 @@ public class QueryModel implements IQueryModel {
         if (!joinSlave && outerJoinExpressionClause != null) {
             sink.putAscii(" outer-join-expressions ");
             outerJoinExpressionClause.toSink(sink);
+        }
+
+        if (getEarliestByType() == EARLIEST_BY_NEW && getEarliestBy().size() > 0) {
+            sink.putAscii(" earliest on ");
+            timestamp.toSink(sink);
+            sink.putAscii(" partition by ");
+            for (int i = 0, n = getEarliestBy().size(); i < n; i++) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                getEarliestBy().getQuick(i).toSink(sink);
+            }
         }
 
         if (getLatestByType() == LATEST_BY_NEW && getLatestBy().size() > 0) {

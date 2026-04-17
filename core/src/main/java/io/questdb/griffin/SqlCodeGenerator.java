@@ -5780,7 +5780,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final RecordMetadata metadata = factory.getMetadata();
-        prepareLatestByColumnIndexes(earliestBy, metadata);
+        prepareLatestByColumnIndexes(earliestBy, metadata, "EARLIEST ON");
 
         if (!factory.recordCursorSupportsRandomAccess()) {
             return new io.questdb.griffin.engine.table.EarliestByRecordCursorFactory(
@@ -5805,8 +5805,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 orderedByTimestampAsc = true;
             }
         } else {
-            // No nested model, assume ordered by timestamp ascending
-            orderedByTimestampAsc = true;
+            // No nested model: the ordered fast path is only safe when the factory
+            // scans the designated timestamp in forward order.
+            orderedByTimestampAsc = timestampIndex == metadata.getTimestampIndex()
+                    && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
         }
 
         return new io.questdb.griffin.engine.table.EarliestByLightRecordCursorFactory(
@@ -9164,7 +9166,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Compute earliest by column count only if latest by is not active (they are mutually exclusive).
         // prepareLatestByColumnIndexes reuses listColumnFilterA/keyTypes, so we call it for earliestBy
         // only when latestBy is empty.
-        final int earliestByColumnCount = latestByColumnCount == 0 ? prepareLatestByColumnIndexes(earliestBy, queryMeta) : 0;
+        final int earliestByColumnCount = latestByColumnCount == 0 ? prepareLatestByColumnIndexes(earliestBy, queryMeta, "EARLIEST ON") : 0;
         final TableToken tableToken = metadata.getTableToken();
         ExpressionNode withinExtracted;
 
@@ -9315,7 +9317,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // regenerate column index lists after potential sub-query compilation
-                prepareLatestByColumnIndexes(earliestBy, queryMeta);
+                prepareLatestByColumnIndexes(earliestBy, queryMeta, "EARLIEST ON");
 
                 return generateEarliestByTableQuery(
                         model,
@@ -10353,6 +10355,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, RecordMetadata myMeta) throws SqlException {
+        return prepareLatestByColumnIndexes(latestBy, myMeta, "LATEST ON");
+    }
+
+    private int prepareLatestByColumnIndexes(ObjList<ExpressionNode> latestBy, RecordMetadata myMeta, CharSequence clauseLabel) throws SqlException {
         keyTypes.clear();
         listColumnFilterA.clear();
 
@@ -10405,7 +10411,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 .put(latestByNode.token)
                                 .put(" (")
                                 .put(ColumnType.nameOf(columnType))
-                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in LATEST ON");
+                                .put("): invalid type, only [BOOLEAN, BYTE, SHORT, INT, LONG, DATE, TIMESTAMP, FLOAT, DOUBLE, LONG128, LONG256, CHAR, STRING, VARCHAR, SYMBOL, UUID, GEOHASH, IPv4] are supported in ")
+                                .put(clauseLabel);
                 }
             }
         }

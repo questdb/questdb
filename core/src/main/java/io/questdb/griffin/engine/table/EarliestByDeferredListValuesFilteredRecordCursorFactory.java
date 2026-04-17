@@ -67,8 +67,15 @@ public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends Abs
             @NotNull IntList columnSizeShifts
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
-        this.includedSymbolFuncs = includedSymbolFuncs != null ? new ObjList<>(includedSymbolFuncs) : null;
-        this.excludedSymbolFuncs = excludedSymbolFuncs != null ? new ObjList<>(excludedSymbolFuncs) : null;
+        // Normalize empty lists to null so lookupDeferredSymbols and the cursor's
+        // restriction flags stay in agreement (otherwise the cursor would leave its
+        // symbol key set unallocated while lookupDeferredSymbols dereferences it).
+        this.includedSymbolFuncs = includedSymbolFuncs != null && includedSymbolFuncs.size() > 0
+                ? new ObjList<>(includedSymbolFuncs)
+                : null;
+        this.excludedSymbolFuncs = excludedSymbolFuncs != null && excludedSymbolFuncs.size() > 0
+                ? new ObjList<>(excludedSymbolFuncs)
+                : null;
         this.filter = filter;
         this.columnIndex = columnIndex;
         cursor = new EarliestByValueListRecordCursor(
@@ -77,8 +84,8 @@ public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends Abs
                 columnIndex,
                 filter,
                 configuration.getDefaultSymbolCapacity(),
-                includedSymbolFuncs != null && includedSymbolFuncs.size() > 0,
-                excludedSymbolFuncs != null && excludedSymbolFuncs.size() > 0
+                this.includedSymbolFuncs != null,
+                this.excludedSymbolFuncs != null
         );
     }
 
@@ -140,6 +147,10 @@ public class EarliestByDeferredListValuesFilteredRecordCursorFactory extends Abs
     @Override
     protected void _close() {
         super._close();
+        // This factory takes ownership of the cloned deferred symbol function lists;
+        // release any closeable resources they hold.
+        Misc.freeObjList(includedSymbolFuncs);
+        Misc.freeObjList(excludedSymbolFuncs);
         Misc.free(filter);
         Misc.free(cursor);
     }

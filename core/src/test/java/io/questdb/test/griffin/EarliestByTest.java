@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -2294,6 +2295,141 @@ public class EarliestByTest extends AbstractCairoTest {
                             "a\t1970-01-01T00:00:00.000000" + suffix + "\n" +
                             "b\t1970-01-01T01:00:00.000000" + suffix + "\n",
                     "SELECT * FROM (SELECT * FROM t EARLIEST ON ts PARTITION BY s)",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestByIndexedMultipleFramesPerPartition() throws Exception {
+        // Forces a single partition to span multiple page frames so that
+        // EarliestByAllIndexedRecordCursor encounters frames with partitionLo > 0.
+        // The bitmap index reader returns frame-local row ids (it subtracts minValue
+        // == partitionLo internally); this test guards against any future caller that
+        // accidentally re-subtracts partitionLo.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 4);
+        configOverrideUseWithinLatestByOptimisation();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            // 12 rows in a single partition, split into 3 frames of 4 rows each.
+            // Earliest 'a' is v=1 at 00:00, earliest 'b' is v=2 at 00:01 (both in frame 0).
+            // Earliest 'c' is v=9 at 00:08 (in frame 2, partitionLo=8). The revert-guard
+            // matters most for 'c', which lives in a non-zero-partitionLo frame.
+            execute("INSERT INTO t VALUES " +
+                    "('a', 1, '1970-01-01T00:00:00'), " +
+                    "('b', 2, '1970-01-01T00:00:01'), " +
+                    "('a', 3, '1970-01-01T00:00:02'), " +
+                    "('b', 4, '1970-01-01T00:00:03'), " +
+                    "('a', 5, '1970-01-01T00:00:04'), " +
+                    "('b', 6, '1970-01-01T00:00:05'), " +
+                    "('a', 7, '1970-01-01T00:00:06'), " +
+                    "('b', 8, '1970-01-01T00:00:07'), " +
+                    "('c', 9, '1970-01-01T00:00:08'), " +
+                    "('c', 10, '1970-01-01T00:00:09'), " +
+                    "('c', 11, '1970-01-01T00:00:10'), " +
+                    "('c', 12, '1970-01-01T00:00:11')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            assertQuery(
+                    "s\tv\tts\n" +
+                            "a\t1\t1970-01-01T00:00:00.000000" + suffix + "\n" +
+                            "b\t2\t1970-01-01T00:00:01.000000" + suffix + "\n" +
+                            "c\t9\t1970-01-01T00:00:08.000000" + suffix + "\n",
+                    "SELECT s, v, ts FROM t EARLIEST ON ts PARTITION BY s",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnInvalidPartitionByColumnErrorMessage() throws Exception {
+        // EARLIEST ON validation errors must say "EARLIEST ON", not "LATEST ON".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b BINARY, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                select("SELECT * FROM t EARLIEST ON ts PARTITION BY b").close();
+                org.junit.Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                String msg = e.getFlyweightMessage().toString();
+                org.junit.Assert.assertTrue(
+                        "error message should mention EARLIEST ON but was: " + msg,
+                        msg.contains("EARLIEST ON")
+                );
+                org.junit.Assert.assertFalse(
+                        "error message must not mention LATEST ON but was: " + msg,
+                        msg.contains("LATEST ON")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testEarliestOnSubQueryOrderedNullTimestamps() throws Exception {
+        // Drives the buildMapForOrderedSubQuery path (random-access sub-query whose
+        // timestamp matches the designated one) with NULL timestamps. The ordered path
+        // must skip NULL-timestamp rows instead of pinning them as "earliest", and must
+        // produce the same row set as the unordered path for keys that have at least
+        // one non-NULL row.
+        assertMemoryLeak(() -> {
+            // No designated timestamp so the ts column can hold NULLs.
+            execute("CREATE TABLE t (s SYMBOL, v INT, ts " + timestampType.getTypeName() + ")");
+            execute("INSERT INTO t VALUES " +
+                    "('a', 1, NULL), " +
+                    "('a', 2, '1970-01-01T02:00:00'), " +
+                    "('a', 3, '1970-01-01T01:00:00'), " +
+                    "('b', 4, NULL), " +
+                    "('b', 5, '1970-01-01T00:00:00'), " +
+                    "('c', 6, NULL), " +
+                    "('c', 7, NULL)");
+
+            // ORDER BY ts places NULLs first in ascending order. The earliest
+            // non-NULL for 'a' is 01:00 (v=3), for 'b' is 00:00 (v=5). 'c' has
+            // only NULL rows and must be omitted.
+            assertSql(
+                    "count\n2\n",
+                    "SELECT count() FROM (" +
+                            "SELECT s, v, ts FROM (SELECT * FROM t ORDER BY ts) EARLIEST ON ts PARTITION BY s" +
+                            ")"
+            );
+            assertSql(
+                    "s\tv\n" +
+                            "a\t3\n" +
+                            "b\t5\n",
+                    "SELECT s, v FROM (" +
+                            "SELECT s, v, ts FROM (SELECT * FROM t ORDER BY ts) EARLIEST ON ts PARTITION BY s" +
+                            ") ORDER BY s"
+            );
+        });
+    }
+
+    @Test
+    public void testEarliestOnValueListExcludedSymbolsNotInTable() throws Exception {
+        // Verifies that EarliestByValueListRecordCursor's excluded-only scan correctly
+        // subtracts only excluded keys that actually exist in the symbol table. A
+        // previous iteration subtracted the full excluded set, which underestimated the
+        // distinct count and terminated the scan before every reachable row was found.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('a', '1970-01-01T00:00:00'), " +
+                    "('b', '1970-01-01T01:00:00'), " +
+                    "('c', '1970-01-01T02:00:00'), " +
+                    "('a', '1970-01-01T03:00:00'), " +
+                    "('b', '1970-01-01T04:00:00'), " +
+                    "('c', '1970-01-01T05:00:00')");
+
+            String suffix = getTimestampSuffix(timestampType.getTypeName());
+            // Exclude a mix: one real symbol ('a') and two that don't exist in the
+            // table. Expected: earliest of 'b' and 'c' only.
+            assertQuery(
+                    "s\tts\n" +
+                            "b\t1970-01-01T01:00:00.000000" + suffix + "\n" +
+                            "c\t1970-01-01T02:00:00.000000" + suffix + "\n",
+                    "SELECT s, ts FROM t WHERE s NOT IN ('a', 'zzz', 'missing') EARLIEST ON ts PARTITION BY s",
                     "ts",
                     true,
                     true

@@ -74,7 +74,8 @@ class EarliestByAllSymbolsFilteredRecordCursor extends AbstractAscendingRecordLi
     @Override
     public void close() {
         if (isOpen()) {
-            Misc.free(filter);
+            // The filter is owned by the enclosing factory; releasing it here would
+            // leave this reusable cursor pointing at a closed filter across runs.
             Misc.free(map);
             super.close();
         }
@@ -140,31 +141,35 @@ class EarliestByAllSymbolsFilteredRecordCursor extends AbstractAscendingRecordLi
             possibleCombinations = countSymbolCombinations();
         }
 
-        PageFrame frame;
-        OUTER:
-        while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            final int frameIndex = frameCount;
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+        try {
+            PageFrame frame;
+            OUTER:
+            while ((frame = frameCursor.next()) != null) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                final int frameIndex = frameCount;
+                final long partitionLo = frame.getPartitionLo();
+                final long partitionHi = frame.getPartitionHi() - 1;
 
-            frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
+                frameAddressCache.add(frameCount, frame);
+                frameMemoryPool.navigateTo(frameCount++, recordA);
 
-            for (long row = 0; row <= partitionHi - partitionLo; row++) {
-                recordA.setRowIndex(row);
-                if (filter.getBool(recordA)) {
-                    MapKey key = map.withKey();
-                    key.put(recordA, recordSink);
-                    if (key.create()) {
-                        rows.add(Rows.toRowID(frameIndex, row));
-                        if (rows.size() == possibleCombinations) {
-                            break OUTER;
+                for (long row = 0; row <= partitionHi - partitionLo; row++) {
+                    recordA.setRowIndex(row);
+                    if (filter.getBool(recordA)) {
+                        MapKey key = map.withKey();
+                        key.put(recordA, recordSink);
+                        if (key.create()) {
+                            rows.add(Rows.toRowID(frameIndex, row));
+                            if (rows.size() == possibleCombinations) {
+                                break OUTER;
+                            }
                         }
                     }
                 }
             }
+        } finally {
+            // Always clear so stale keys don't leak into the next of() on this reused cursor.
+            map.clear();
         }
-        map.clear();
     }
 }

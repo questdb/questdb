@@ -245,9 +245,16 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         private void buildMapForOrderedSubQuery() {
-            // For earliest with ordered ascending, keep the FIRST row per partition
+            // For earliest with ordered ascending, keep the FIRST row per partition.
+            // Rows with NULL timestamps are skipped to match buildMapForUnorderedSubQuery
+            // semantics; otherwise the winning row would depend on which planner path
+            // was chosen.
             while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
+
+                if (baseRecord.getTimestamp(timestampIndex) == Numbers.LONG_NULL) {
+                    continue;
+                }
 
                 final MapKey key = earliestByMap.withKey();
                 recordSink.copy(baseRecord, key);
@@ -262,17 +269,24 @@ public class EarliestByLightRecordCursorFactory extends AbstractRecordCursorFact
             while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
+                // Skip NULL-timestamp rows so the map's key set matches the ordered fast
+                // path; otherwise a key with only NULL rows would be emitted here but
+                // omitted in buildMapForOrderedSubQuery.
+                final long newTimestamp = baseRecord.getTimestamp(timestampIndex);
+                if (newTimestamp == Numbers.LONG_NULL) {
+                    continue;
+                }
+
                 final MapKey key = earliestByMap.withKey();
                 recordSink.copy(baseRecord, key);
                 final MapValue value = key.createValue();
 
                 if (value.isNew()) {
                     value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
-                    value.putTimestamp(TIMESTAMP_VALUE_IDX, baseRecord.getTimestamp(timestampIndex));
+                    value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                 } else {
                     long prevTimestamp = value.getTimestamp(TIMESTAMP_VALUE_IDX);
-                    long newTimestamp = baseRecord.getTimestamp(timestampIndex);
-                    if (newTimestamp != Numbers.LONG_NULL && (prevTimestamp == Numbers.LONG_NULL || newTimestamp < prevTimestamp)) {
+                    if (newTimestamp < prevTimestamp) {
                         value.putLong(ROW_ID_VALUE_IDX, baseRecord.getRowId());
                         value.putTimestamp(TIMESTAMP_VALUE_IDX, newTimestamp);
                     }

@@ -127,13 +127,27 @@ class EarliestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         } else if (restrictedByExcludedValues) {
             final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-            int distinctSymbols = symbolTable.getSymbolCount();
-            if (symbolTable.containsNullValue()) {
-                distinctSymbols++;
-            } else if (excludedSymbolKeys.contains(SymbolTable.VALUE_IS_NULL)) {
+            final int symbolCount = symbolTable.getSymbolCount();
+            final boolean tableHasNull = symbolTable.containsNullValue();
+            int distinctSymbols = symbolCount;
+            if (tableHasNull) {
                 distinctSymbols++;
             }
-            distinctSymbols -= excludedSymbolKeys.size();
+            // Only subtract excluded keys that actually exist in the table; otherwise
+            // distinctCount would be an under-estimate and the scan would terminate
+            // before every reachable row has been found.
+            int actuallyExcluded = 0;
+            for (int i = 0, n = excludedSymbolKeys.size(); i < n; i++) {
+                final int key = excludedSymbolKeys.get(i);
+                if (key == SymbolTable.VALUE_IS_NULL) {
+                    if (tableHasNull) {
+                        actuallyExcluded++;
+                    }
+                } else if (key >= 0 && key < symbolCount) {
+                    actuallyExcluded++;
+                }
+            }
+            distinctSymbols -= actuallyExcluded;
             if (distinctSymbols > 0) {
                 rowIds.setCapacity(distinctSymbols);
             }
