@@ -201,10 +201,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.DATE -> DateColumn.newInstance(index, isNotNull);
             case ColumnType.TIMESTAMP -> TimestampColumn.newInstance(index, columnType, isNotNull);
             case ColumnType.RECORD -> new RecordColumn(index, metadata.getMetadata(index));
-            case ColumnType.GEOBYTE -> GeoByteColumn.newInstance(index, columnType);
-            case ColumnType.GEOSHORT -> GeoShortColumn.newInstance(index, columnType);
-            case ColumnType.GEOINT -> GeoIntColumn.newInstance(index, columnType);
-            case ColumnType.GEOLONG -> GeoLongColumn.newInstance(index, columnType);
+            case ColumnType.GEOBYTE -> GeoByteColumn.newInstance(index, columnType, isNotNull);
+            case ColumnType.GEOSHORT -> GeoShortColumn.newInstance(index, columnType, isNotNull);
+            case ColumnType.GEOINT -> GeoIntColumn.newInstance(index, columnType, isNotNull);
+            case ColumnType.GEOLONG -> GeoLongColumn.newInstance(index, columnType, isNotNull);
             case ColumnType.NULL -> NullConstant.NULL;
             case ColumnType.LONG256 -> Long256Column.newInstance(index, isNotNull);
             case ColumnType.LONG128 -> Long128Column.newInstance(index, isNotNull);

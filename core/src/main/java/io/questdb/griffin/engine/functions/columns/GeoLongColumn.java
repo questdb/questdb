@@ -33,23 +33,29 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class GeoLongColumn extends GeoLongFunction implements ColumnFunction {
     private static final GeoLongColumn[] COLUMNS;
     private final int columnIndex;
+    private final boolean notNull;
 
-    private GeoLongColumn(int columnIndex, int columnType) {
+    private GeoLongColumn(int columnIndex, int columnType, boolean notNull) {
         super(columnType);
         this.columnIndex = columnIndex;
+        this.notNull = notNull;
     }
 
     public static GeoLongColumn newInstance(int columnIndex, int columnType) {
+        return newInstance(columnIndex, columnType, false);
+    }
+
+    public static GeoLongColumn newInstance(int columnIndex, int columnType, boolean notNull) {
         assert ColumnType.getGeoHashBits(columnType) >= ColumnType.GEOLONG_MIN_BITS &&
                 ColumnType.getGeoHashBits(columnType) <= ColumnType.GEOLONG_MAX_BITS;
 
         final int bits = (ColumnType.GEOLONG_MAX_BITS - ColumnType.GEOLONG_MIN_BITS + 1);
 
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        if (!notNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS[columnIndex * bits + ColumnType.getGeoHashBits(columnType) - ColumnType.GEOLONG_MIN_BITS];
         }
 
-        return new GeoLongColumn(columnIndex, columnType);
+        return new GeoLongColumn(columnIndex, columnType, notNull);
     }
 
     @Override
@@ -63,6 +69,11 @@ public class GeoLongColumn extends GeoLongFunction implements ColumnFunction {
     }
 
     @Override
+    public boolean isNotNull() {
+        return notNull;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }
@@ -73,7 +84,7 @@ public class GeoLongColumn extends GeoLongFunction implements ColumnFunction {
 
         for (int col = 0; col < STATIC_COLUMN_COUNT; col++) {
             for (int bit = ColumnType.GEOLONG_MIN_BITS; bit <= ColumnType.GEOLONG_MAX_BITS; bit++) {
-                COLUMNS[col * bits + bit - ColumnType.GEOLONG_MIN_BITS] = new GeoLongColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
+                COLUMNS[col * bits + bit - ColumnType.GEOLONG_MIN_BITS] = new GeoLongColumn(col, ColumnType.getGeoHashTypeWithBits(bit), false);
             }
         }
     }
