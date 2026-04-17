@@ -512,25 +512,32 @@ public class Unordered4Map implements Map, Reopenable {
             return;
         }
         final long buf = Unsafe.malloc(valueSize, memoryTag);
-        Vect.memset(buf, valueSize, 0);
-        // Populate the empty value into the scratch buffer using value as a flyweight.
-        // updateEmpty() only writes to value addresses (valueAddress + offset), so the
-        // entry address is irrelevant here.
-        value.of(buf);
-        updater.updateEmpty(value);
-        // If the resulting value region is all zeros, we don't need a per-entry memcpy
-        // since fresh slots are already zeroed by clear().
-        boolean allZero = true;
-        for (long p = buf, end = buf + valueSize; p < end; p++) {
-            if (Unsafe.getUnsafe().getByte(p) != 0) {
-                allZero = false;
-                break;
+        try {
+            Vect.memset(buf, valueSize, 0);
+            // Populate the empty value into the scratch buffer using value as a flyweight.
+            // updateEmpty() only writes to value addresses (valueAddress + offset), so the
+            // entry address is irrelevant here.
+            value.of(buf);
+            updater.updateEmpty(value);
+            // If the resulting value region is all zeros, we don't need a per-entry memcpy
+            // since fresh slots are already zeroed by clear().
+            boolean allZero = true;
+            for (long p = buf, end = buf + valueSize; p < end; p++) {
+                if (Unsafe.getUnsafe().getByte(p) != 0) {
+                    allZero = false;
+                    break;
+                }
             }
-        }
-        if (allZero) {
-            Unsafe.free(buf, valueSize, memoryTag);
-        } else {
-            batchEmptyValueStart = buf;
+            if (allZero) {
+                Unsafe.free(buf, valueSize, memoryTag);
+            } else {
+                batchEmptyValueStart = buf;
+            }
+        } catch (Throwable th) {
+            if (batchEmptyValueStart != buf) {
+                Unsafe.free(buf, valueSize, memoryTag);
+            }
+            throw th;
         }
     }
 

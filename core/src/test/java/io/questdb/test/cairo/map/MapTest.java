@@ -1464,7 +1464,7 @@ public class MapTest extends AbstractCairoTest {
     private static class TestPageFrameRecord extends PageFrameMemoryRecord {
         private final int[] logicalKeys;
         private final MapType mapType;
-        private final Utf8String[] varcharKeys;
+        private final ObjList<Utf8String> varcharKeys;
         private long bufferAddr;
         private long bufferSize;
 
@@ -1472,9 +1472,9 @@ public class MapTest extends AbstractCairoTest {
             this.mapType = mapType;
             this.logicalKeys = logicalKeys;
             if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
-                this.varcharKeys = new Utf8String[logicalKeys.length];
+                this.varcharKeys = new ObjList<>(logicalKeys.length);
                 for (int i = 0; i < logicalKeys.length; i++) {
-                    this.varcharKeys[i] = new Utf8String(String.valueOf(logicalKeys[i]));
+                    this.varcharKeys.add(new Utf8String(String.valueOf(logicalKeys[i])));
                 }
                 this.bufferAddr = 0;
                 this.bufferSize = 0;
@@ -1518,7 +1518,7 @@ public class MapTest extends AbstractCairoTest {
 
         @Override
         public Utf8Sequence getVarcharA(int columnIndex) {
-            return varcharKeys[(int) rowIndex];
+            return varcharKeys.getQuick((int) rowIndex);
         }
     }
 

@@ -104,17 +104,21 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             lastShardStats.extendAndSet(i, new GroupByMapStats());
         }
         lastOwnerStats = new GroupByMapStats();
-        ownerFragment = new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, ownerFunctionUpdater, workerCount, -1);
         perWorkerFragments = new ObjList<>(workerCount);
-        for (int i = 0; i < workerCount; i++) {
-            final GroupByFunctionsUpdater workerUpdater = perWorkerFunctionUpdaters != null
-                    ? perWorkerFunctionUpdaters.getQuick(i)
-                    : ownerFunctionUpdater;
-            perWorkerFragments.extendAndSet(i, new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, workerUpdater, workerCount, i));
-        }
-        // Destination shards are lazily initialized by the worker threads.
         destShards = new ObjList<>(NUM_SHARDS);
         destShards.setPos(NUM_SHARDS);
+        try {
+            ownerFragment = new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, ownerFunctionUpdater, workerCount, -1);
+            for (int i = 0; i < workerCount; i++) {
+                final GroupByFunctionsUpdater workerUpdater = perWorkerFunctionUpdaters != null
+                        ? perWorkerFunctionUpdaters.getQuick(i)
+                        : ownerFunctionUpdater;
+                perWorkerFragments.extendAndSet(i, new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, workerUpdater, workerCount, i));
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

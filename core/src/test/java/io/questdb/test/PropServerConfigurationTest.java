@@ -1089,6 +1089,42 @@ public class PropServerConfigurationTest {
         newPropServerConfiguration(properties);
     }
 
+    @Test
+    public void testInvalidGroupByBatchSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.groupby.batch.size", "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testInvalidGroupByBatchSizeTooLarge() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.groupby.batch.size", String.valueOf(io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 2));
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testInvalidGroupByBatchSizeZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.parallel.groupby.batch.size", "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.parallel.groupby.batch.size must be between 1 and");
+        }
+    }
+
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidIPv4Address() throws Exception {
         Properties properties = new Properties();

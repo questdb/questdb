@@ -432,17 +432,22 @@ public class OrderedMap implements Map, Reopenable {
         if (updater == null || valueSize == 0) {
             return;
         }
-        // OrderedMap.clear() only resets kPos and the offsets array — it does NOT zero
+        // OrderedMap.clear() only resets kPos and the offsets array -- it does NOT zero
         // the heap. probeBatch therefore cannot rely on fresh slots being zeroed, so
         // we always keep the scratch buffer and memcpy it into every new entry.
         final long buf = Unsafe.malloc(valueSize, heapMemoryTag);
-        Vect.memset(buf, valueSize, 0);
-        // Populate the empty value into the scratch buffer using value as a flyweight.
-        // updateEmpty() only writes through valueAddress, so the entry address is
-        // irrelevant here.
-        value.of(buf);
-        updater.updateEmpty(value);
-        batchEmptyValueStart = buf;
+        try {
+            Vect.memset(buf, valueSize, 0);
+            // Populate the empty value into the scratch buffer using value as a flyweight.
+            // updateEmpty() only writes through valueAddress, so the entry address is
+            // irrelevant here.
+            value.of(buf);
+            updater.updateEmpty(value);
+            batchEmptyValueStart = buf;
+        } catch (Throwable th) {
+            Unsafe.free(buf, valueSize, heapMemoryTag);
+            throw th;
+        }
     }
 
     @Override

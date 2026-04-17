@@ -2044,6 +2044,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int defaultReduceQueueCapacity = Math.min(4 * queryWorkers, 256);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByBatchSize = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 2048);
+            validateGroupByBatchSize(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, this.cairoGroupByBatchSize);
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByTopKQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_QUEUE_CAPACITY, defaultReduceQueueCapacity));
@@ -2480,6 +2481,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + ((httpIlpConnectionLimit > 0) ? PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", " : "")
                             + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
+        }
+    }
+
+    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
+        // A non-positive batch size would turn the reducer loop
+        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
+        // into an infinite loop. Cap at the same 24-bit row index bound as
+        // page frames since the batch cannot exceed a single page frame.
+        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxBatchSize) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
         }
     }
 

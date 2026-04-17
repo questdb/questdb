@@ -80,9 +80,14 @@ public class GroupByMapFragment implements QuietCloseable {
         this.shards = new ObjList<>(NUM_SHARDS);
         this.slotId = slotId;
         this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true);
-        // Set up the empty value pattern used by the batched dispatch path.
-        // The map is created in an already-open state, so reopenMap() would skip this on first use.
-        map.setBatchEmptyValue(groupByFunctionsUpdater);
+        try {
+            // Set up the empty value pattern used by the batched dispatch path.
+            // The map is created in an already-open state, so reopenMap() would skip this on first use.
+            map.setBatchEmptyValue(groupByFunctionsUpdater);
+        } catch (Throwable th) {
+            Misc.free(map);
+            throw th;
+        }
     }
 
     @Override
@@ -118,8 +123,13 @@ public class GroupByMapFragment implements QuietCloseable {
             int keyCapacity = targetKeyCapacity(configuration, workerCount, ownerStats, owner);
             long heapSize = targetHeapSize(configuration, workerCount, ownerStats, owner);
             map.reopen(keyCapacity, heapSize);
-            // Set up the empty value pattern used by the batched dispatch path.
-            map.setBatchEmptyValue(groupByFunctionsUpdater);
+            try {
+                // Set up the empty value pattern used by the batched dispatch path.
+                map.setBatchEmptyValue(groupByFunctionsUpdater);
+            } catch (Throwable th) {
+                map.close();
+                throw th;
+            }
         }
         return map;
     }
