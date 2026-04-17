@@ -7,11 +7,11 @@ stopped_at: Completed 12-04-PLAN.md (regression test coverage, plan-text refresh
 last_updated: "2026-04-17T17:06:22.995Z"
 last_activity: 2026-04-17
 progress:
-  total_phases: 12
-  completed_phases: 11
+  total_phases: 13
+  completed_phases: 12
   total_plans: 14
   completed_plans: 14
-  percent: 100
+  percent: 92
 ---
 
 # Project State
@@ -107,6 +107,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - Phase 11 added retroactively via `/gsd-add-phase hardening`; code landed first (commits `2125201f30`, `28b00e8340`, `a6355c3e65`), paper trail back-filled via `/gsd-forensics` on 2026-04-14
 - Phase 5 closed as "Absorbed by 7–10" on 2026-04-14 — its four `must_have.truths` were satisfied cumulatively by the finer-grained phases rather than as a single batch
 - Phase 12 added: Replace safety-net reclassification with legacy fallback and tighten optimizer PREV gate. Driven by `/review-pr` finding that the codegen safety-net silently rewrites expression-argument aggregates with unsupported output types as `FILL_KEY`, producing duplicated fill rows (see `testSampleByFillNeedFix` regression vs master). Also closes LONG128/INTERVAL gap between `isUnsupportedPrevType` and `isFastPathPrevSupportedType`. Scope expanded to include missing regression tests for phase-11 production changes (UUID / Long256 / Decimal128 / Decimal256 key-column FILL_KEY dispatch, geo "no-prev-yet" null sentinels, selective `assertSql→assertQueryNoLeakCheck` conversions), removal of the redundant `anyPrev` detection loop, `hasExplicitTo` guard for runtime-null `TO`, alphabetizing FillRecord getters / SampleByFillCursor members / imports / `isKeyColumn`, replacing FQN signatures with plain imports, emitting `fill=` unconditionally in `toPlan`, and asserting on `Dates.parseOffset` failure. PR metadata (title, body tone, `.planning/` diff noise) excluded — tracked separately
+- Phase 13 added: Migrate FILL(PREV) snapshots from materialized values to rowId-based replay. Borrowed verbatim from branch `sm_fill_prev_fast_all_types` (their phase 12; research complete with GO verdict, candidate a). Replaces per-type `simplePrev[]`/MapValue snapshot dispatch in `SampleByFillRecordCursorFactory` with a single chain rowId per key, read lazily via `baseCursor.recordAt(prevRecord, prevRowId)`. Prerequisite `SortedRecordCursor.chain.clear()` fix ships as its own independent commit. Seeds SEED-001 and SEED-002 auto-surface during `/gsd-plan-phase 13` with trigger `rowId migration phase is planned` — bucket-1 plumbing follow-ups (WR-01..WR-04, Defect 3) to be re-sorted as either fixed-here-alongside or obsoleted-if-retro-fallback-deleted; bucket-2 cursor defects (toTop state corruption, CTE-wrap projection corruption) to be verified as absorbed by the rewrite
 
 ### Pending Todos
 

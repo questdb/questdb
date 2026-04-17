@@ -18,6 +18,7 @@ QuestDB's SAMPLE BY FILL queries now execute on the parallel GROUP BY fast path 
 - [x] **Phase 10: Fix Offset-Aware Bucket Alignment** — Propagate calendar offset so sampler grid matches timestamp_floor_utc
 - [x] **Phase 11: Hardening — Review Findings & Missing Test Coverage** — UUID FILL_KEY dispatch, geo/decimal null sentinels, NULL-key/CTE/sparse-DST tests
 - [x] **Phase 12: Replace safety-net reclassification with legacy fallback and tighten optimizer PREV gate** — Retro-fallback mechanism, Tier 1 gate tightening, FILL(PREV, PREV(...)) grammar rules, 19 regression tests, code-quality sweep (completed 2026-04-17)
+- [ ] **Phase 13: Migrate FILL(PREV) snapshots from materialized values to rowId-based replay** — Replace per-type snapshot materialization in `SampleByFillRecordCursorFactory` with a single chain rowId per key, read lazily via `recordAt`. Ship prerequisite `SortedRecordCursor.chain.clear()` fix as its own commit. Borrowed from `sm_fill_prev_fast_all_types` branch (research verdict GO, candidate a)
 
 ## Phase Details
 
@@ -199,9 +200,31 @@ Plans:
 - [x] 12-03-PLAN.md — SqlCodeGenerator overhaul: grammar rules D-05..D-09 + anyPrev loop removal + safety-net deletion + FallbackToLegacyException throw + try/catch at three generateFill call sites + isKeyColumn relocation + SampleByFillRecordCursorFactory import slot + Dates.parseOffset assert
 - [x] 12-04-PLAN.md — Tests: 5 retro-fallback + 1 TO-null + testSampleByFillNeedFix restore + 11 grammar tests (8 CONTEXT + 3 positives) + 5 FILL_KEY + ~15 assertSql→assertQueryNoLeakCheck conversions + plan-text assertion refresh across 4 test files
 
+### Phase 13: Migrate FILL(PREV) snapshots from materialized values to rowId-based replay
+
+**Goal:** Replace per-type materialization of FILL(PREV) snapshots in the fast-path fill cursor with a single chain rowId per key, replayed on emit via `baseCursor.recordAt(prevRecord, prevRowId)`. Ship the prerequisite `SortedRecordCursor.chain.clear()` fix (today's root cause of data corruption on cursor reuse) as its own standalone commit before the rewrite. Borrowed from the `sm_fill_prev_fast_all_types` branch: research complete with GO verdict, candidate (a) selected. Scope matches that branch's phase 12 — pure rowId rewrite of `SampleByFillRecordCursorFactory`, deletion of all per-type snapshot dispatch (KIND_LONG_BITS / KIND_SYMBOL / KIND_LONG128 / KIND_DECIMAL128 / KIND_LONG256 / KIND_DECIMAL256 / KIND_STRING / KIND_VARCHAR / KIND_BIN / KIND_ARRAY), plus prev-record lifetime-binding hygiene via a dedicated third record slot (`RecordChain.getRecordC()` or equivalent) to avoid coupling to `SortedRecordCursor.recordB`.
+
+**Depends on:** Phase 12
+**Requirements**: Internal refactor — builds on PTSF-01..06 and COR-01..04; no new requirement IDs
+
+**Success Criteria** (what must be TRUE — borrowed from source branch's 12-CONTEXT.md, to be re-validated during planning):
+  1. `SampleByFillRecordCursorFactory` stores exactly one `prevRowId` per key (keyed map value slot) or one `simplePrevRowId` (non-keyed) — no per-type copied-value buffers.
+  2. Gap-fill emit reads prev values via `baseCursor.recordAt(prevRecord, prevRowId)` then typed getters on `prevRecord`; uniform across all types.
+  3. `SortedRecordCursor.of()` calls `chain.clear()` on reuse when `isOpen=true` — shipped as an independent commit before the fill rewrite.
+  4. Retro-fallback mechanism from phase 12 is reassessed: if rowId unlocks all currently-unsupported PREV types (UUID/LONG128/LONG256/DECIMAL128/DECIMAL256/STRING/VARCHAR/BINARY/array/INTERVAL), retro-fallback is deleted; if only a subset, WR-01/WR-02/WR-03 from seed SEED-001 are fixed alongside.
+  5. `recordAt` cached once per emit row (planner concern PI-02 from source branch).
+  6. Existing tests still pass: `SampleByTest`, `SampleByFillTest`, `SampleByNanoTimestampTest`, `ExplainPlanTest`, `RecordCursorMemoryUsageTest`, `OrderBy*` tests.
+  7. Seeds SEED-001 and SEED-002 are revisited and closed: bucket 1 follow-ups routed into this phase's scope; cursor defects 1 and 2 absorbed by the rewrite or filed as independent phases.
+  8. All 13 per-type FILL(PREV) tests listed in `13-VALIDATION-INPUTS.md` (borrowed from `sm_fill_prev_fast_all_types` commit `f43a3d7057`) land on this branch and pass on the fast path (plan output shows `Sample By Fill`, not `Sample By`).
+
+**Plans:** 0 plans (run `/gsd-plan-phase 13` to break down)
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 13)
+
 ## Progress
 
-**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12.
+**Execution Order:** Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -217,3 +240,4 @@ Plans:
 | 10. Fix Offset-Aware Bucket Alignment | 1/1 | Complete | 2026-04-13 |
 | 11. Hardening — Review Findings & Missing Test Coverage | 1/1 | Complete (retroactive) | 2026-04-13 |
 | 12. Replace safety-net reclassification with legacy fallback | 4/4 | Complete    | 2026-04-17 |
+| 13. Migrate FILL(PREV) snapshots to rowId-based replay | 0/0 | Not planned | — |
