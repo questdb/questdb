@@ -1227,6 +1227,46 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqTypedDecimalNullOnNotNullColumnFoldsToFalse() throws Exception {
+        assertMemoryLeak(() -> {
+            // EqDecimalFunctionFactory must detect the typed decimal null sentinel
+            // (produced by cast(NULL as decimal(...))), not just the untyped literal
+            // NULL. DecimalUtil.maybeRescaleDecimalConstant converts the untyped null
+            // to a precision-specific sentinel, so the factory also rechecks after
+            // rescaling.
+            execute("""
+                    CREATE TABLE t (
+                        d8 DECIMAL(2, 0) NOT NULL,
+                        d16 DECIMAL(4, 0) NOT NULL,
+                        d32 DECIMAL(9, 0) NOT NULL,
+                        d64 DECIMAL(18, 2) NOT NULL,
+                        d128 DECIMAL(38, 2) NOT NULL,
+                        d256 DECIMAL(60, 2) NOT NULL,
+                        ts TIMESTAMP NOT NULL
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t VALUES
+                        (1::DECIMAL(2, 0), 100::DECIMAL(4, 0), 1000::DECIMAL(9, 0),
+                         123.45::DECIMAL(18, 2), 999999.99::DECIMAL(38, 2),
+                         1234567890.00::DECIMAL(60, 2), '2024-01-01')
+                    """);
+
+            // Typed-null equality on a NOT NULL decimal column folds to false.
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d8 = cast(NULL as DECIMAL(2, 0))");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d16 = cast(NULL as DECIMAL(4, 0))");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d32 = cast(NULL as DECIMAL(9, 0))");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d64 = cast(NULL as DECIMAL(18, 2))");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d128 = cast(NULL as DECIMAL(38, 2))");
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d256 = cast(NULL as DECIMAL(60, 2))");
+
+            // Standard IS NULL / IS NOT NULL still works.
+            assertSql("count\n0\n", "SELECT count(*) FROM t WHERE d64 IS NULL");
+            assertSql("count\n1\n", "SELECT count(*) FROM t WHERE d64 IS NOT NULL");
+        });
+    }
+
+    @Test
     public void testAggregateOnNotNullColumnIsConsistent() throws Exception {
         assertMemoryLeak(() -> {
             // Every native aggregate kernel today (both the vectorized Vect.* / Rosti::keyed*

@@ -66,11 +66,15 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
         // `x = NULL` / `x IS NULL` on a NOT NULL DECIMAL column is always false.
-        // NegatingFunctionFactory flips the constant for IS NOT NULL.
-        if (ColumnType.isNull(left.getType()) && right.isNotNull()) {
+        // Handles both the untyped literal NULL (ColumnType.NULL) and a typed
+        // decimal null constant (e.g. cast(NULL as decimal(18,2))). Runs before
+        // DecimalUtil rescaling so the cheaper precision is also detected after
+        // rescaling below. NegatingFunctionFactory flips the constant for
+        // IS NOT NULL.
+        if (isConstantNull(left) && right.isNotNull()) {
             return BooleanConstant.FALSE;
         }
-        if (ColumnType.isNull(right.getType()) && left.isNotNull()) {
+        if (isConstantNull(right) && left.isNotNull()) {
             return BooleanConstant.FALSE;
         }
         left = DecimalUtil.maybeRescaleDecimalConstant(
@@ -89,6 +93,16 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
                 ColumnType.getDecimalScale(left.getType())
         );
         args.setQuick(1, right);
+
+        // After rescaling, a literal NULL has been converted to the other side's
+        // precision-specific decimal null sentinel. Catch that here for the
+        // NOT NULL fold.
+        if (isConstantNull(left) && right.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
+        if (isConstantNull(right) && left.isNotNull()) {
+            return BooleanConstant.FALSE;
+        }
 
         final int leftType = left.getType();
         final int rightType = right.getType();
@@ -115,6 +129,33 @@ public class EqDecimalFunctionFactory implements FunctionFactory {
             case 0, 1, 2, 3 -> new Decimal64Func(left, right);
             case 4 -> new Decimal128Func(left, right);
             default -> new Decimal256Func(left, right);
+        };
+    }
+
+    private static boolean isConstantNull(Function fn) {
+        if (!fn.isConstant()) {
+            return false;
+        }
+        final int type = fn.getType();
+        if (ColumnType.isNull(type)) {
+            return true;
+        }
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> fn.getDecimal8(null) == Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> fn.getDecimal16(null) == Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> fn.getDecimal32(null) == Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> fn.getDecimal64(null) == Decimals.DECIMAL64_NULL;
+            case ColumnType.DECIMAL128 -> {
+                final Decimal128 probe = new Decimal128();
+                fn.getDecimal128(null, probe);
+                yield probe.isNull();
+            }
+            case ColumnType.DECIMAL256 -> {
+                final Decimal256 probe = new Decimal256();
+                fn.getDecimal256(null, probe);
+                yield probe.isNull();
+            }
+            default -> false;
         };
     }
 
