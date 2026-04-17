@@ -177,7 +177,7 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
         })
         .map(|json_str| QdbMeta::deserialize(json_str).expect("deserialize QdbMeta"));
 
-    let (pm_bytes, pm_footer_offset) = convert_from_parquet(
+    let (pm_bytes, pm_file_size) = convert_from_parquet(
         &metadata,
         qdb_meta.as_ref(),
         parquet_footer_offset,
@@ -186,7 +186,7 @@ fn run_e2e_pipeline(parquet_bytes: &[u8]) {
     .expect("convert_from_parquet");
 
     let pm_reader =
-        ParquetMetaReader::new(&pm_bytes, pm_footer_offset).expect("ParquetMetaReader::new");
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_file_size).expect("ParquetMetaReader::new");
     pm_reader.verify_checksum().expect("CRC checksum");
 
     let col_count = pm_reader.column_count() as usize;
@@ -324,7 +324,7 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
         })
         .map(|json_str| QdbMeta::deserialize(json_str).expect("deserialize QdbMeta"));
 
-    let (pm_bytes, pm_footer_offset) = convert_from_parquet(
+    let (pm_bytes, pm_file_size) = convert_from_parquet(
         &metadata,
         qdb_meta.as_ref(),
         parquet_footer_offset,
@@ -333,7 +333,7 @@ fn run_e2e_pipeline_multi(parquet_bytes: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) 
     .expect("convert_from_parquet");
 
     let pm_reader =
-        ParquetMetaReader::new(&pm_bytes, pm_footer_offset).expect("ParquetMetaReader::new");
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_file_size).expect("ParquetMetaReader::new");
     pm_reader.verify_checksum().expect("CRC checksum");
 
     let col_count = pm_reader.column_count() as usize;
@@ -478,7 +478,7 @@ fn e2e_single_timestamp() {
         })
         .map(|json_str| QdbMeta::deserialize(json_str).expect("deserialize"));
 
-    let (pm_bytes, pm_footer_offset) = convert_from_parquet(
+    let (pm_bytes, pm_file_size) = convert_from_parquet(
         &metadata,
         qdb_meta.as_ref(),
         parquet_footer_offset,
@@ -487,7 +487,7 @@ fn e2e_single_timestamp() {
     .expect("convert_from_parquet");
 
     let pm_reader =
-        ParquetMetaReader::new(&pm_bytes, pm_footer_offset).expect("ParquetMetaReader::new");
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_file_size).expect("ParquetMetaReader::new");
     pm_reader.verify_checksum().expect("CRC");
 
     assert_eq!(pm_reader.column_count(), 1);
@@ -619,7 +619,7 @@ fn e2e_multi_column() {
         })
         .map(|json_str| QdbMeta::deserialize(json_str).expect("deserialize"));
 
-    let (pm_bytes, pm_footer_offset) = convert_from_parquet(
+    let (pm_bytes, pm_file_size) = convert_from_parquet(
         &metadata,
         qdb_meta.as_ref(),
         parquet_footer_offset,
@@ -628,7 +628,7 @@ fn e2e_multi_column() {
     .expect("convert_from_parquet");
 
     let pm_reader =
-        ParquetMetaReader::new(&pm_bytes, pm_footer_offset).expect("ParquetMetaReader::new");
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_file_size).expect("ParquetMetaReader::new");
     pm_reader.verify_checksum().expect("CRC");
 
     assert_eq!(pm_reader.column_count(), 4);
@@ -715,9 +715,10 @@ fn e2e_flba_uuid() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fo) =
+    let (pm_bytes, pm_fs) =
         convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl).expect("convert_from_parquet");
-    let pm_reader = ParquetMetaReader::new(&pm_bytes, pm_fo).expect("ParquetMetaReader::new");
+    let pm_reader =
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
     let desc = pm_reader.column_descriptor(0).unwrap();
     assert_eq!(desc.physical_type, 7, "expected FLBA physical type");
@@ -748,9 +749,10 @@ fn e2e_flba_long256() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fo) =
+    let (pm_bytes, pm_fs) =
         convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl).expect("convert_from_parquet");
-    let pm_reader = ParquetMetaReader::new(&pm_bytes, pm_fo).expect("ParquetMetaReader::new");
+    let pm_reader =
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
     let desc = pm_reader.column_descriptor(0).unwrap();
     assert_eq!(desc.physical_type, 7, "expected FLBA physical type");
@@ -781,9 +783,10 @@ fn e2e_snappy_compressed() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fo) =
+    let (pm_bytes, pm_fs) =
         convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl).expect("convert_from_parquet");
-    let pm_reader = ParquetMetaReader::new(&pm_bytes, pm_fo).expect("ParquetMetaReader::new");
+    let pm_reader =
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
     let rg = pm_reader.row_group(0).unwrap();
     let chunk = rg.column_chunk(0).unwrap();
@@ -818,9 +821,10 @@ fn e2e_zstd_compressed() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fo) =
+    let (pm_bytes, pm_fs) =
         convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl).expect("convert_from_parquet");
-    let pm_reader = ParquetMetaReader::new(&pm_bytes, pm_fo).expect("ParquetMetaReader::new");
+    let pm_reader =
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
     let rg = pm_reader.row_group(0).unwrap();
     let chunk = rg.column_chunk(0).unwrap();
@@ -851,9 +855,10 @@ fn e2e_nullable_optional() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_fo) =
+    let (pm_bytes, pm_fs) =
         convert_from_parquet(&metadata, qdb_meta.as_ref(), fo, fl).expect("convert_from_parquet");
-    let pm_reader = ParquetMetaReader::new(&pm_bytes, pm_fo).expect("ParquetMetaReader::new");
+    let pm_reader =
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_fs).expect("ParquetMetaReader::new");
 
     let desc = pm_reader.column_descriptor(0).unwrap();
     assert_eq!(
@@ -932,7 +937,7 @@ fn e2e_multiple_row_groups() {
         })
         .map(|s| QdbMeta::deserialize(s).expect("deserialize"));
 
-    let (pm_bytes, pm_footer_offset) = convert_from_parquet(
+    let (pm_bytes, pm_file_size) = convert_from_parquet(
         &metadata,
         qdb_meta.as_ref(),
         parquet_footer_offset,
@@ -941,7 +946,7 @@ fn e2e_multiple_row_groups() {
     .expect("convert_from_parquet");
 
     let pm_reader =
-        ParquetMetaReader::new(&pm_bytes, pm_footer_offset).expect("ParquetMetaReader::new");
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_file_size).expect("ParquetMetaReader::new");
     pm_reader.verify_checksum().expect("CRC");
 
     let rg_count = pm_reader.row_group_count() as usize;
@@ -1066,7 +1071,7 @@ fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &
         })
         .map(|json_str| QdbMeta::deserialize(json_str).expect("deserialize"));
 
-    let (pm_bytes, pm_footer_offset) = convert_from_parquet(
+    let (pm_bytes, pm_file_size) = convert_from_parquet(
         &metadata,
         qdb_meta.as_ref(),
         parquet_footer_offset,
@@ -1074,7 +1079,8 @@ fn run_e2e_filtered<const FILL_NULLS: bool>(parquet_bytes: &[u8], rows_filter: &
     )
     .expect("convert_from_parquet");
 
-    let pm_reader = ParquetMetaReader::new(&pm_bytes, pm_footer_offset).expect("ParquetMetaReader");
+    let pm_reader =
+        ParquetMetaReader::from_file_size(&pm_bytes, pm_file_size).expect("ParquetMetaReader");
 
     let ta = TestAlloc::new();
     let allocator = ta.allocator();

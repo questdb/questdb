@@ -497,8 +497,13 @@ fn check_corrupted_checksum() {
     let mut pm_bytes = make_pm_bytes(&parquet_bytes);
 
     // Flip a byte in the footer to invalidate the CRC.
-    // The footer offset is stored in the header at bytes [0..8].
-    let footer_offset = u64::from_le_bytes(pm_bytes[0..8].try_into().unwrap()) as usize;
+    // The header at bytes [0..8] stores the total file size; the trailer (last 4 bytes)
+    // stores the footer length. Footer offset = file_size - 4 - footer_length.
+    let file_size = u64::from_le_bytes(pm_bytes[0..8].try_into().unwrap()) as usize;
+    let trailer_start = file_size - 4;
+    let footer_length =
+        u32::from_le_bytes(pm_bytes[trailer_start..file_size].try_into().unwrap()) as usize;
+    let footer_offset = file_size - 4 - footer_length;
     // Corrupt the first byte of the footer.
     pm_bytes[footer_offset] ^= 0xFF;
 
