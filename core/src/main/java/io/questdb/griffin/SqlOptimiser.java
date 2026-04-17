@@ -518,8 +518,30 @@ public class SqlOptimiser implements Mutable {
                     ? fill.getQuick(fillIdx)
                     : (fill.size() == 1 ? fill.getQuick(0) : null);
             if (fillExpr != null && isPrevKeyword(fillExpr.token)) {
-                // Skip PREV(alias) cross-column references — handled by generateFill safety net
-                if (fillExpr.type == ExpressionNode.FUNCTION && fillExpr.paramCount == 1) {
+                if (fillExpr.type == ExpressionNode.FUNCTION && fillExpr.paramCount == 1
+                        && fillExpr.rhs != null && fillExpr.rhs.type == LITERAL) {
+                    // PREV(alias): resolve the alias against the output model,
+                    // then walk to the source aggregate's argument column type.
+                    QueryColumn srcOutput = model.getAliasToColumnMap().get(fillExpr.rhs.token);
+                    if (srcOutput != null) {
+                        ExpressionNode srcAst = srcOutput.getAst();
+                        if (srcAst.type == FUNCTION && srcAst.rhs != null && srcAst.rhs.type == LITERAL) {
+                            // aggregate on LITERAL: resolve the base column on the nested model.
+                            QueryColumn srcBase = nested.getAliasToColumnMap().get(srcAst.rhs.token);
+                            if (srcBase != null && srcBase.getColumnType() >= 0
+                                    && isUnsupportedPrevType(ColumnType.tagOf(srcBase.getColumnType()))) {
+                                return true;
+                            }
+                        }
+                        // srcAst.type == LITERAL: key or timestamp column. The runtime
+                        // reads key values directly from keysMapRecord (not from the
+                        // prev snapshot), so PREV(key_col) is supported regardless of
+                        // the key column's type. Pass through.
+                        //
+                        // Expression-arg source: type is unknowable at the gate.
+                        // Pass through and let the codegen retro-fallback catch it
+                        // if the resolved output type is unsupported.
+                    }
                     fillIdx++;
                     continue;
                 }
@@ -553,7 +575,8 @@ public class SqlOptimiser implements Mutable {
         return switch (tag) {
             case ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR,
                  ColumnType.LONG256, ColumnType.BINARY, ColumnType.UUID,
-                 ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> true;
+                 ColumnType.DECIMAL128, ColumnType.DECIMAL256,
+                 ColumnType.LONG128, ColumnType.INTERVAL -> true;
             default -> ColumnType.isArray(tag);
         };
     }
