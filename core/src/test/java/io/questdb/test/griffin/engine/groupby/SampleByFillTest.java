@@ -131,6 +131,116 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillKeyedDecimal128() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed SAMPLE BY with a DECIMAL128 key column (DECIMAL(25,2) encodes
+            // as DECIMAL128 at the physical level). Covers FillRecord.getDecimal128
+            // FILL_KEY dispatch. At 01:00 each key is missing and must emit a fill
+            // row carrying the DECIMAL128 key value, not null.
+            execute("CREATE TABLE t (k DECIMAL(25, 2), v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(cast('1.00' AS DECIMAL(25,2)), 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('2.00' AS DECIMAL(25,2)), 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('1.00' AS DECIMAL(25,2)), 11.0, '2024-01-01T02:00:00.000000Z')," +
+                    "(cast('2.00' AS DECIMAL(25,2)), 21.0, '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tk\tsum
+                            2024-01-01T00:00:00.000000Z\t1.00\t10.0
+                            2024-01-01T00:00:00.000000Z\t2.00\t20.0
+                            2024-01-01T01:00:00.000000Z\t1.00\tnull
+                            2024-01-01T01:00:00.000000Z\t2.00\tnull
+                            2024-01-01T02:00:00.000000Z\t1.00\t11.0
+                            2024-01-01T02:00:00.000000Z\t2.00\t21.0
+                            """,
+                    "SELECT ts, k, sum(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillKeyedDecimal256() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed SAMPLE BY with a DECIMAL256 key column (DECIMAL(39,2) encodes
+            // as DECIMAL256 at the physical level). Covers FillRecord.getDecimal256
+            // FILL_KEY dispatch.
+            execute("CREATE TABLE t (k DECIMAL(39, 2), v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(cast('1.00' AS DECIMAL(39,2)), 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('2.00' AS DECIMAL(39,2)), 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('1.00' AS DECIMAL(39,2)), 11.0, '2024-01-01T02:00:00.000000Z')," +
+                    "(cast('2.00' AS DECIMAL(39,2)), 21.0, '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tk\tsum
+                            2024-01-01T00:00:00.000000Z\t1.00\t10.0
+                            2024-01-01T00:00:00.000000Z\t2.00\t20.0
+                            2024-01-01T01:00:00.000000Z\t1.00\tnull
+                            2024-01-01T01:00:00.000000Z\t2.00\tnull
+                            2024-01-01T02:00:00.000000Z\t1.00\t11.0
+                            2024-01-01T02:00:00.000000Z\t2.00\t21.0
+                            """,
+                    "SELECT ts, k, sum(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillKeyedLong256() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed SAMPLE BY with a LONG256 key column. Covers FillRecord.getLong256A,
+            // getLong256B, and getLong256(col, sink) FILL_KEY dispatch. The fill row at
+            // 01:00 for each key emits the LONG256 key value (not a zero sentinel).
+            execute("CREATE TABLE t (k LONG256, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "(cast('0x01' AS LONG256), 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('0x02' AS LONG256), 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(cast('0x01' AS LONG256), 11.0, '2024-01-01T02:00:00.000000Z')," +
+                    "(cast('0x02' AS LONG256), 21.0, '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tk\tsum
+                            2024-01-01T00:00:00.000000Z\t0x01\t10.0
+                            2024-01-01T00:00:00.000000Z\t0x02\t20.0
+                            2024-01-01T01:00:00.000000Z\t0x01\tnull
+                            2024-01-01T01:00:00.000000Z\t0x02\tnull
+                            2024-01-01T02:00:00.000000Z\t0x01\t11.0
+                            2024-01-01T02:00:00.000000Z\t0x02\t21.0
+                            """,
+                    "SELECT ts, k, sum(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillKeyedUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed SAMPLE BY with a UUID key column. Covers FillRecord.getLong128Hi
+            // and getLong128Lo FILL_KEY dispatch (UUID is physically 128 bits). The
+            // fill row at 01:00 for each key emits the UUID key value (not a zero
+            // sentinel).
+            execute("CREATE TABLE t (k UUID, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('00000000-0000-0000-0000-000000000001', 10.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('00000000-0000-0000-0000-000000000002', 20.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('00000000-0000-0000-0000-000000000001', 11.0, '2024-01-01T02:00:00.000000Z')," +
+                    "('00000000-0000-0000-0000-000000000002', 21.0, '2024-01-01T02:00:00.000000Z')");
+            assertSql(
+                    """
+                            ts\tk\tsum
+                            2024-01-01T00:00:00.000000Z\t00000000-0000-0000-0000-000000000001\t10.0
+                            2024-01-01T00:00:00.000000Z\t00000000-0000-0000-0000-000000000002\t20.0
+                            2024-01-01T01:00:00.000000Z\t00000000-0000-0000-0000-000000000001\tnull
+                            2024-01-01T01:00:00.000000Z\t00000000-0000-0000-0000-000000000002\tnull
+                            2024-01-01T02:00:00.000000Z\t00000000-0000-0000-0000-000000000001\t11.0
+                            2024-01-01T02:00:00.000000Z\t00000000-0000-0000-0000-000000000002\t21.0
+                            """,
+                    "SELECT ts, k, sum(v) FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
     public void testFillNullDstFallback() throws Exception {
         assertMemoryLeak(() -> {
             // Dense data: one row every 10 minutes around Europe/Riga DST fall-back 2021-10-31.
@@ -974,6 +1084,43 @@ public class SampleByFillTest extends AbstractCairoTest {
                             """,
                     "SELECT ts, city, first(g) FROM geo_weather " +
                             "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR"
+            );
+        });
+    }
+
+    @Test
+    public void testFillPrevGeoNoPrevYet() throws Exception {
+        assertMemoryLeak(() -> {
+            // Keyed SAMPLE BY FROM '2024-01-01' TO '2024-01-02' FILL(PREV) with data
+            // arriving only in later buckets. The leading fill rows must emit the
+            // GEOHASH NULL sentinels (GeoHashes.BYTE_NULL / SHORT_NULL / INT_NULL /
+            // GeoHashes.NULL) because no prior data bucket has set a value, NOT
+            // zero and NOT Numbers.*_NULL. Covers the four null-sentinel branches
+            // in FillRecord at lines ~933 (getGeoByte), ~945 (getGeoShort), ~957
+            // (getGeoInt), ~969 (getGeoLong).
+            execute("CREATE TABLE t (city SYMBOL, " +
+                    "g1 GEOHASH(3b), g2 GEOHASH(15b), g4 GEOHASH(6c), g8 GEOHASH(8c), " +
+                    "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('A', cast('8' AS GEOHASH(3b)), cast('sp0' AS GEOHASH(15b)), " +
+                    "cast('sp05ds' AS GEOHASH(6c)), cast('sp05ds00' AS GEOHASH(8c)), " +
+                    "'2024-01-01T22:00:00.000000Z')");
+            // Buckets from 2024-01-01T20:00 through T23:00 with data only at 22:00.
+            // At 20:00 and 21:00 the key 'A' has no prev yet: all four geo columns
+            // must emit their width-specific NULL sentinel (rendered as empty
+            // string in text output), not "0" or "null".
+            assertSql(
+                    """
+                            ts\tcity\tfirst\tfirst1\tfirst2\tfirst3
+                            2024-01-01T20:00:00.000000Z\tA\t\t\t\t
+                            2024-01-01T21:00:00.000000Z\tA\t\t\t\t
+                            2024-01-01T22:00:00.000000Z\tA\t010\tsp0\tsp05ds\tsp05ds00
+                            2024-01-01T23:00:00.000000Z\tA\t010\tsp0\tsp05ds\tsp05ds00
+                            """,
+                    "SELECT ts, city, first(g1), first(g2), first(g4), first(g8) " +
+                            "FROM t " +
+                            "SAMPLE BY 1h FROM '2024-01-01T20:00:00.000000Z' TO '2024-01-02T00:00:00.000000Z' " +
+                            "FILL(PREV) ALIGN TO CALENDAR"
             );
         });
     }
