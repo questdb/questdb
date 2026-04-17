@@ -27,13 +27,13 @@
 use crate::parquet::error::ParquetResult;
 use crate::parquet_metadata::error::{parquet_meta_err, ParquetMetaErrorKind};
 use crate::parquet_metadata::types::{
-    BlockAlignedOffset, BLOCK_ALIGNMENT_SHIFT, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE,
-    FOOTER_TRAILER_SIZE, ROW_GROUP_ENTRY_SIZE,
+    BlockAlignedOffset, FooterFeatureFlags, BLOCK_ALIGNMENT_SHIFT, FOOTER_CHECKSUM_SIZE,
+    FOOTER_FIXED_SIZE, FOOTER_TRAILER_SIZE, ROW_GROUP_ENTRY_SIZE,
 };
 
-// ── On-disk footer fixed portion (32 bytes) ─────────────────────────────
+// ── On-disk footer fixed portion (40 bytes) ─────────────────────────────
 
-/// On-disk layout of the fixed portion of the footer (32 bytes, read field-by-field).
+/// On-disk layout of the fixed portion of the footer (40 bytes, read field-by-field).
 #[derive(Debug, Copy, Clone)]
 pub struct FooterRaw {
     pub parquet_footer_offset: u64,
@@ -41,6 +41,7 @@ pub struct FooterRaw {
     pub row_group_count: u32,
     pub unused_bytes: u64,
     pub prev_footer_offset: u64,
+    pub feature_flags: FooterFeatureFlags,
 }
 
 // ── Footer (zero-copy reader) ──────────────────────────────────────────
@@ -49,8 +50,10 @@ pub struct FooterRaw {
 ///
 /// The footer starts at the offset derived from the trailer and contains:
 /// PARQUET_FOOTER_OFFSET(u64), PARQUET_FOOTER_LENGTH(u32),
-/// ROW_GROUP_COUNT(u32), UNUSED_BYTES(u64), ROW_GROUP_ENTRIES(4B each),
-/// [feature sections gated by header feature flags], CHECKSUM(u32).
+/// ROW_GROUP_COUNT(u32), UNUSED_BYTES(u64), PREV_FOOTER_OFFSET(u64),
+/// FOOTER_FEATURE_FLAGS(u64), ROW_GROUP_ENTRIES(4B each),
+/// [feature sections gated by header or footer feature flags],
+/// CHECKSUM(u32).
 ///
 /// CRC is located via `footer_length` from the trailer: `CRC offset =
 /// footer_length - 4` relative to footer start. This handles unknown
@@ -74,7 +77,7 @@ impl<'a> Footer<'a> {
             ));
         }
         // Read fields individually to avoid repr(C) padding issues.
-        // Unwraps: data.len() >= FOOTER_FIXED_SIZE (24) + FOOTER_CHECKSUM_SIZE
+        // Unwraps: data.len() >= FOOTER_FIXED_SIZE (40) + FOOTER_CHECKSUM_SIZE
         // checked above, so all fixed-width slices are exactly the right length.
         let raw = FooterRaw {
             parquet_footer_offset: u64::from_le_bytes(data[0..8].try_into().unwrap()),
@@ -82,6 +85,7 @@ impl<'a> Footer<'a> {
             row_group_count: u32::from_le_bytes(data[12..16].try_into().unwrap()),
             unused_bytes: u64::from_le_bytes(data[16..24].try_into().unwrap()),
             prev_footer_offset: u64::from_le_bytes(data[24..32].try_into().unwrap()),
+            feature_flags: FooterFeatureFlags::from_le_bytes(data[32..40].try_into().unwrap()),
         };
 
         // Validate that the footer data is large enough for base entries + CRC.
@@ -179,6 +183,11 @@ impl<'a> Footer<'a> {
         self.raw.prev_footer_offset
     }
 
+    /// Returns the feature flags stored in this footer.
+    pub fn feature_flags(&self) -> FooterFeatureFlags {
+        self.raw.feature_flags
+    }
+
     /// Returns the actual byte offset of the row group block at `index`.
     /// The stored value is right-shifted by [`BLOCK_ALIGNMENT_SHIFT`].
     pub fn row_group_block_offset(&self, index: usize) -> ParquetResult<u64> {
@@ -226,6 +235,7 @@ pub struct FooterBuilder {
     parquet_footer_length: u32,
     unused_bytes: u64,
     prev_footer_offset: u64,
+    feature_flags: FooterFeatureFlags,
     row_group_offsets: Vec<u64>,
     /// Optional bloom filter footer feature section bytes, written between
     /// row group entries and CRC.
@@ -239,6 +249,7 @@ impl FooterBuilder {
             parquet_footer_length,
             unused_bytes: 0,
             prev_footer_offset: 0,
+            feature_flags: FooterFeatureFlags::new(),
             row_group_offsets: Vec::new(),
             bloom_filter_section: Vec::new(),
         }
@@ -251,6 +262,12 @@ impl FooterBuilder {
 
     pub fn prev_footer_offset(&mut self, prev_footer_offset: u64) -> &mut Self {
         self.prev_footer_offset = prev_footer_offset;
+        self
+    }
+
+    /// Sets the per-footer feature flags written alongside the fixed fields.
+    pub fn feature_flags(&mut self, feature_flags: FooterFeatureFlags) -> &mut Self {
+        self.feature_flags = feature_flags;
         self
     }
 
@@ -282,6 +299,7 @@ impl FooterBuilder {
         buf.extend_from_slice(&(self.row_group_offsets.len() as u32).to_le_bytes());
         buf.extend_from_slice(&self.unused_bytes.to_le_bytes());
         buf.extend_from_slice(&self.prev_footer_offset.to_le_bytes());
+        buf.extend_from_slice(&self.feature_flags.to_le_bytes());
 
         for &offset in &self.row_group_offsets {
             let stored = (offset >> BLOCK_ALIGNMENT_SHIFT) as u32;
@@ -384,8 +402,9 @@ mod tests {
         buf.extend_from_slice(&5u32.to_le_bytes()); // row_group_count = 5
         buf.extend_from_slice(&0u64.to_le_bytes()); // unused_bytes
         buf.extend_from_slice(&0u64.to_le_bytes()); // prev_footer_offset
-                                                    // Need 32 + 5*4 + 4 = 56 bytes, but only have 32.
-        assert!(Footer::new(&buf, 32).is_err());
+        buf.extend_from_slice(&0u64.to_le_bytes()); // footer_feature_flags
+                                                    // Need 40 + 5*4 + 4 = 64 bytes, but only have 40.
+        assert!(Footer::new(&buf, 40).is_err());
     }
 
     #[test]
@@ -421,7 +440,7 @@ mod tests {
     fn footer_length_too_small_for_base() {
         // Build a valid empty footer, then call Footer::new with a
         // footer_length_through_crc that is smaller than base_size_through_crc.
-        // base_through_crc for 0 row groups = FOOTER_FIXED_SIZE(32) + FOOTER_CHECKSUM_SIZE(4) = 36.
+        // base_through_crc for 0 row groups = FOOTER_FIXED_SIZE(40) + FOOTER_CHECKSUM_SIZE(4) = 44.
         let fb = FooterBuilder::new(0, 0);
         let mut buf = Vec::new();
         let start = fb.write_to(&mut buf);
@@ -429,6 +448,31 @@ mod tests {
         // Pass a footer_length_through_crc smaller than the required base size.
         let too_small = (FOOTER_FIXED_SIZE + FOOTER_CHECKSUM_SIZE - 1) as u32;
         assert!(Footer::new(&buf[start..], too_small).is_err());
+    }
+
+    #[test]
+    fn feature_flags_round_trip() {
+        use crate::parquet_metadata::types::FooterFeatureFlags;
+
+        let mut fb = FooterBuilder::new(0, 0);
+        fb.feature_flags(FooterFeatureFlags(0xA5));
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        let footer = parse_footer(&buf, start);
+        assert_eq!(footer.feature_flags(), FooterFeatureFlags(0xA5));
+    }
+
+    #[test]
+    fn feature_flags_default_zero() {
+        use crate::parquet_metadata::types::FooterFeatureFlags;
+
+        let fb = FooterBuilder::new(0, 0);
+        let mut buf = Vec::new();
+        let start = fb.write_to(&mut buf);
+
+        let footer = parse_footer(&buf, start);
+        assert_eq!(footer.feature_flags(), FooterFeatureFlags::new());
     }
 
     #[test]

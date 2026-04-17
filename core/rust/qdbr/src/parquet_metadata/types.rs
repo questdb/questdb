@@ -49,11 +49,15 @@ pub const COLUMN_DESCRIPTOR_SIZE: usize = 32;
 pub const COLUMN_CHUNK_SIZE: usize = 64;
 
 /// Fixed portion of the footer (parquet_footer_offset(8) + parquet_footer_length(4)
-/// + row_group_count(4) + unused_bytes(8) + prev_footer_offset(8)).
-pub const FOOTER_FIXED_SIZE: usize = 32;
+/// + row_group_count(4) + unused_bytes(8) + prev_footer_offset(8)
+/// + footer_feature_flags(8)).
+pub const FOOTER_FIXED_SIZE: usize = 40;
 
 /// Byte offset within the footer where prev_footer_offset is stored.
 pub const FOOTER_PREV_FOOTER_OFFSET_OFF: usize = 24;
+
+/// Byte offset within the footer where footer_feature_flags is stored.
+pub const FOOTER_FEATURE_FLAGS_OFF: usize = 32;
 
 // ── Feature flags ─────────────────────────────────────────────────────
 
@@ -71,9 +75,13 @@ const fn unknown_required(raw: u64, known_required: u64) -> u64 {
 
 /// Feature flags stored in the file header.
 ///
-/// A single field gates feature sections in both the header (after name strings)
-/// and the footer (after row group entries). Each feature's spec defines whether
-/// it adds a header section, a footer section, or both.
+/// Applies file-wide: these flags describe capabilities of the whole `_pm`
+/// file and cover every footer in the MVCC chain. Features that need to vary
+/// between footers live in [`FooterFeatureFlags`] instead.
+///
+/// Each feature's spec defines whether it adds a header section, a footer
+/// section, or both. Header-gated footer sections are attached to every
+/// footer in the file.
 ///
 /// Bits 0-31 are optional (reader ignores unknown bits).
 /// Bits 32-63 are required (reader rejects the file if unknown bits are set).
@@ -155,6 +163,41 @@ impl HeaderFeatureFlags {
             ));
         }
         Ok(())
+    }
+}
+
+// ── FooterFeatureFlags ───────────────────────────────────────────────
+
+/// Feature flags stored in each footer.
+///
+/// Applies per footer: two footers in the MVCC chain reached via
+/// `PREV_FOOTER_OFFSET` can carry different footer-flag sets and therefore
+/// different footer feature sections. Use these for features that are
+/// genuinely per-snapshot; file-wide capabilities belong in
+/// [`HeaderFeatureFlags`].
+///
+/// Bits 0-31 are optional (reader ignores unknown bits).
+/// Bits 32-63 are required (reader rejects the file if unknown bits are set).
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct FooterFeatureFlags(pub u64);
+
+impl FooterFeatureFlags {
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    pub const fn from_le_bytes(bytes: [u8; 8]) -> Self {
+        Self(u64::from_le_bytes(bytes))
+    }
+
+    pub const fn to_le_bytes(self) -> [u8; 8] {
+        self.0.to_le_bytes()
+    }
+
+    /// Returns the unknown required bits given a mask of known required bits.
+    /// Non-zero means the reader must reject the footer.
+    pub const fn unknown_required(self, known_required: u64) -> u64 {
+        unknown_required(self.0, known_required)
     }
 }
 

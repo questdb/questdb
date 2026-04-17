@@ -75,8 +75,9 @@ import io.questdb.std.str.Utf8s;
  *   [12] ROW_GROUP_COUNT         u32
  *   [16] UNUSED_BYTES            u64
  *   [24] PREV_FOOTER_OFFSET      u64
- *   [32..] row group entries (4B each, u32 block offset >> 3)
- *   [..]  feature sections (gated by header FEATURE_FLAGS)
+ *   [32] FOOTER_FEATURE_FLAGS    u64  (per-footer flags; distinct from header FEATURE_FLAGS)
+ *   [40..] row group entries (4B each, u32 block offset >> 3)
+ *   [..]  feature sections (gated by header FEATURE_FLAGS or FOOTER_FEATURE_FLAGS)
  *   [..]  CRC32                  u32
  *   [..]  FOOTER_LENGTH          u32  (total bytes from footer start through CRC)
  * </pre>
@@ -96,7 +97,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
     private static final int COL_DESC_ID_OFF = 8;
     private static final int COL_DESC_NAME_LENGTH_OFF = 24;
     private static final int COL_DESC_NAME_OFFSET_OFF = 0;
-    private static final int FOOTER_FIXED_SIZE = 32;
+    private static final int FOOTER_FEATURE_FLAGS_OFF = 32;
+    private static final int FOOTER_FIXED_SIZE = 40;
     private static final int FOOTER_PARQUET_FOOTER_LENGTH_OFF = 8;
     // Footer offsets (relative to footer start)
     private static final int FOOTER_PARQUET_FOOTER_OFFSET_OFF = 0;
@@ -434,17 +436,29 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper, QuietClose
                     .put(Long.toHexString(unknownRequired))
                     .put(']');
         }
+        long footerFeatureFlags = Unsafe.getUnsafe().getLong(footerAddr + FOOTER_FEATURE_FLAGS_OFF);
+        long unknownRequiredFooter = footerFeatureFlags & REQUIRED_FEATURE_MASK;
+        if (unknownRequiredFooter != 0) {
+            throw CairoException.critical(0)
+                    .put("unsupported required _pm footer feature flags [flags=0x")
+                    .put(Long.toHexString(unknownRequiredFooter))
+                    .put(']');
+        }
 
         // For the latest footer, cross-validate actual footer size from the
         // trailer against the expected base size. Extra bytes without feature
-        // flags to justify them indicate corruption.
+        // flags to justify them indicate corruption. Both header and footer
+        // optional flag bits can attach sections, so either set is enough.
         if (currentOffset == footerOffset) {
             int trailerFooterLength = Unsafe.getUnsafe().getInt(addr + fileSize - FOOTER_TRAILER_SIZE);
             long actualFooterLength = Integer.toUnsignedLong(trailerFooterLength);
             // baseFooterLength already includes CRC (Integer.BYTES at the end).
             // The trailer's footer_length covers from footer start through CRC.
             long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
-            if (knownOptionalFeatureFlags == 0 && actualFooterLength != baseFooterLength) {
+            long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK;
+            if (knownOptionalFeatureFlags == 0
+                    && knownOptionalFooterFeatureFlags == 0
+                    && actualFooterLength != baseFooterLength) {
                 throw CairoException.critical(0)
                         .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength)
                         .put(", actual=").put(actualFooterLength)

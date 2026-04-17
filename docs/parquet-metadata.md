@@ -101,6 +101,7 @@ offsets in the footer feature section.
                  |  row_group_count       |
                  |  unused_bytes          |
                  |  prev_footer_offset    |  (0 if first version)
+                 |  footer_feature_flags  |  (per-footer flags)
                  |  entry 0: offset ------+--> ROW GROUP BLOCK 0
                  |  entry 1: offset ------+--> ROW GROUP BLOCK 1
                  |  ...                   |
@@ -145,12 +146,29 @@ offsets in the footer feature section.
 
 ### Feature flags
 
-The header contains a single `feature_flags` field (`u64`) reserved for future format extensions:
+`_pm` has two independent `u64` feature-flag fields:
+
+- `FEATURE_FLAGS` in the header applies file-wide. It covers every footer in
+  the MVCC chain and is the right place for capabilities that are the same for
+  every snapshot of the file.
+- `FOOTER_FEATURE_FLAGS` in each footer applies only to that footer. Two
+  footers reachable via `PREV_FOOTER_OFFSET` can carry different sets of
+  footer flags, enabling per-snapshot feature sections.
+
+Both fields share the same bit policy:
 
 - **Bits 0-31**: optional - unknown bits may be ignored.
-- **Bits 32-63**: required - unknown bits must cause the reader to reject the file.
+- **Bits 32-63**: required - unknown bits must cause the reader to reject the file (or, for footer flags, the specific footer the reader is about to use).
+
+Feature sections appear in bit order. Header-gated sections live at the end of
+the header (after name strings); footer-gated sections live at the end of the
+footer (after row group entries, before the CRC). The footer-trailer's
+`FOOTER_LENGTH` bounds all footer sections so readers can locate the CRC
+without recognizing every bit.
 
 #### Defined feature flags
+
+No footer flag bits are defined yet. Header flag bits:
 
 | bit | name                   | dependency | header section                                                                                                           | footer section                                                                                                                                 |
 |-----|------------------------|------------|--------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -345,7 +363,9 @@ group blocks, and footer content, while excluding the mutable `FOOTER_OFFSET` fi
 | 12     | 4    | ROW_GROUP_COUNT       | u32  |                                                                                     |
 | 16     | 8    | UNUSED_BYTES          | u64  | accumulated dead bytes in the parquet file (old footers + replaced row group data)  |
 | 24     | 8    | PREV_FOOTER_OFFSET    | u64  | byte offset of the previous footer in the chain (0 if first version)                |
-| 32     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
+| 32     | 8    | FOOTER_FEATURE_FLAGS  | u64  | per-footer feature flags; independent of the header's FEATURE_FLAGS                 |
+| 40     | ..   | ROW_GROUP_ENTRIES     |      | ROW_GROUP_COUNT * Row group entry (4B each)                                         |
+| ..     | ..   | FOOTER_FEATURE_SECTIONS |    | Feature-flag-gated sections, in bit order (may be empty)                            |
 | ..     | 4    | CHECKSUM              | u32  | CRC32 over bytes `[8, this field)` — all content after `FOOTER_OFFSET`              |
 | ..     | 4    | FOOTER_LENGTH         | u32  | total bytes from footer start through CHECKSUM (inclusive); NOT covered by CHECKSUM |
 

@@ -382,13 +382,13 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
 
                 // Read the row group entry from the original footer to reuse in footer2.
                 int rowGroupEntry = Unsafe.getUnsafe().getInt(
-                        file.dataPtr + origFooterOffset + 32 // FOOTER_FIXED_SIZE
+                        file.dataPtr + origFooterOffset + 40 // FOOTER_FIXED_SIZE
                 );
 
                 // Append a second footer with a different parquet file size.
                 // Footer2: parquetFooterOff=200, parquetFooterLen=80 → derived size = 288.
-                // Layout: fixed(32) + 1 rg entry(4) + CRC(4) + trailer(4) = 44 bytes.
-                int newFooterBytes = 44;
+                // Layout: fixed(40) + 1 rg entry(4) + CRC(4) + trailer(4) = 52 bytes.
+                int newFooterBytes = 52;
                 long newTotalLen = origLen + newFooterBytes;
                 long newBuf = Unsafe.malloc(newTotalLen, MemoryTag.NATIVE_DEFAULT);
                 try {
@@ -397,21 +397,22 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     long newFooterOff = origLen;
                     long fa = newBuf + newFooterOff;
 
-                    // Footer fixed portion (32 bytes)
+                    // Footer fixed portion (40 bytes)
                     Unsafe.getUnsafe().putLong(fa, 200L);              // parquet_footer_offset
                     Unsafe.getUnsafe().putInt(fa + 8, 80);             // parquet_footer_length
                     Unsafe.getUnsafe().putInt(fa + 12, 1);             // row_group_count
                     Unsafe.getUnsafe().putLong(fa + 16, 0L);           // unused_bytes
                     Unsafe.getUnsafe().putLong(fa + 24, origFooterOffset); // prev_footer_offset
+                    Unsafe.getUnsafe().putLong(fa + 32, 0L);           // footer_feature_flags
 
                     // Row group entry (reuse the same block offset)
-                    Unsafe.getUnsafe().putInt(fa + 32, rowGroupEntry);
+                    Unsafe.getUnsafe().putInt(fa + 40, rowGroupEntry);
 
                     // CRC placeholder (of() does not verify the CRC hash value)
-                    Unsafe.getUnsafe().putInt(fa + 36, 0);
+                    Unsafe.getUnsafe().putInt(fa + 44, 0);
 
-                    // Trailer: footer_length = fixed(32) + rg(4) + CRC(4) = 40
-                    Unsafe.getUnsafe().putInt(fa + 40, 40);
+                    // Trailer: footer_length = fixed(40) + rg(4) + CRC(4) = 48
+                    Unsafe.getUnsafe().putInt(fa + 48, 48);
 
                     // Patch header footer_offset to point to the new footer.
                     Unsafe.getUnsafe().putLong(newBuf, newFooterOff);
@@ -783,6 +784,27 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
                     Assert.fail("expected CairoException");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.getMessage().contains("unsupported required _pm feature flags"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnknownRequiredFooterFeatureFlagRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PmTestFile file = buildFile(1, 100)) {
+                // Footer feature flags live at footerOffset + 32 (FOOTER_FEATURE_FLAGS_OFF).
+                // Set bit 32 (a required footer feature flag).
+                long footerFlagsAddr = file.dataPtr + file.footerOffset + 32;
+                long originalFlags = Unsafe.getUnsafe().getLong(footerFlagsAddr);
+                Unsafe.getUnsafe().putLong(footerFlagsAddr, originalFlags | (1L << 32));
+
+                ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                try {
+                    reader.of(file.dataPtr, file.dataLen, Long.MAX_VALUE);
+                    Assert.fail("expected CairoException");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage().contains("unsupported required _pm footer feature flags"));
                 }
             }
         });

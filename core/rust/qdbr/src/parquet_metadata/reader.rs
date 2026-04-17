@@ -32,8 +32,8 @@ use crate::parquet_metadata::footer::Footer;
 use crate::parquet_metadata::header::{ColumnDescriptorRaw, FileHeader};
 use crate::parquet_metadata::row_group::RowGroupBlockReader;
 use crate::parquet_metadata::types::{
-    decode_stat_sizes, HeaderFeatureFlags, StatFlags, FOOTER_CHECKSUM_SIZE, FOOTER_FIXED_SIZE,
-    FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, ROW_GROUP_ENTRY_SIZE,
+    decode_stat_sizes, FooterFeatureFlags, HeaderFeatureFlags, StatFlags, FOOTER_CHECKSUM_SIZE,
+    FOOTER_FIXED_SIZE, FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF, ROW_GROUP_ENTRY_SIZE,
 };
 use crate::parquet_read::row_groups::ParquetDecoder;
 use crate::parquet_read::{
@@ -156,6 +156,18 @@ impl<'a> ParquetMetaReader<'a> {
         );
 
         let footer = Footer::new(footer_data, footer_length)?;
+
+        // Reject footers that carry unknown required flag bits. The currently
+        // selected footer may be newer than this reader understands, in which
+        // case reading it would silently miss a required per-footer section.
+        let unknown_required = footer.feature_flags().unknown_required(0);
+        if unknown_required != 0 {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::InvalidValue,
+                "unsupported required footer feature flags [flags=0x{:X}]",
+                unknown_required
+            ));
+        }
 
         // Parse bloom filter footer section if the feature flag is set.
         let bloom_filter_section = if header.feature_flags().has_bloom_filters() {
@@ -295,6 +307,11 @@ impl<'a> ParquetMetaReader<'a> {
 
     pub fn feature_flags(&self) -> HeaderFeatureFlags {
         self.header.feature_flags()
+    }
+
+    /// Returns the feature flags stored in the currently selected footer.
+    pub fn footer_feature_flags(&self) -> FooterFeatureFlags {
+        self.footer.feature_flags()
     }
 
     /// Partition squash tracker, or `None` when the SQUASH_TRACKER bit is not
@@ -803,6 +820,47 @@ mod tests {
 
         let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
         reader.verify_checksum().unwrap();
+    }
+
+    #[test]
+    fn unknown_required_footer_flags_rejected() {
+        use crate::parquet_metadata::types::FOOTER_FEATURE_FLAGS_OFF;
+
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (mut bytes, footer_offset) = w.finish().unwrap();
+
+        // Patch footer feature flags to set an unknown required bit (bit 32).
+        let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        let required_bit: u64 = 1 << 32;
+        bytes[flags_off..flags_off + 8].copy_from_slice(&required_bit.to_le_bytes());
+
+        let err = match ParquetMetaReader::new(&bytes, footer_offset) {
+            Ok(_) => panic!("expected error for required footer flag"),
+            Err(e) => e,
+        };
+        assert!(
+            format!("{err}").contains("unsupported required footer feature flags"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_optional_footer_flags_accepted() {
+        use crate::parquet_metadata::types::FOOTER_FEATURE_FLAGS_OFF;
+
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        let (mut bytes, footer_offset) = w.finish().unwrap();
+
+        // Patch footer feature flags to set an unknown optional bit (bit 5).
+        // Readers must accept the file and ignore the unknown bit.
+        let flags_off = footer_offset as usize + FOOTER_FEATURE_FLAGS_OFF;
+        let optional_bit: u64 = 1 << 5;
+        bytes[flags_off..flags_off + 8].copy_from_slice(&optional_bit.to_le_bytes());
+
+        let reader = ParquetMetaReader::new(&bytes, footer_offset).unwrap();
+        assert_eq!(reader.footer_feature_flags().0, optional_bit);
     }
 
     #[test]
