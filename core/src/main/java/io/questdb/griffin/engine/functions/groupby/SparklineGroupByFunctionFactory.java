@@ -51,9 +51,9 @@ public class SparklineGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new TextChartGroupByFunction(
+        return new SparklineGroupByFunction(
                 "sparkline",
-                TextChartGroupByFunction.SPARK_CHARS,
+                SparklineGroupByFunction.SPARK_CHARS,
                 args.getQuick(0),
                 null,
                 null,

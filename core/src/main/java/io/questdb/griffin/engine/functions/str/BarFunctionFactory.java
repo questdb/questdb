@@ -41,7 +41,7 @@ import org.jetbrains.annotations.Nullable;
 public class BarFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "bar(DDDI)";
     // ▏▎▍▌▋▊▉█ - fractional blocks in increasing fill order
-    private static final char[] BAR_CHARS = {'\u258F', '\u258E', '\u258D', '\u258C', '\u258B', '\u258A', '\u2589', '\u2588'};
+    private static final char[] BAR_CHARS = {'▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'};
 
     @Override
     public String getSignature() {
