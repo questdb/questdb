@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IPv4Function;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -62,6 +63,13 @@ public class IPv4Column extends IPv4Function implements ColumnFunction {
 
     @Override
     public int getIPv4(Record rec) {
+        // Preserve the double-call pattern: upstream random-IP factories (e.g. RndIPv4)
+        // advance their RNG on every getIPv4() invocation, so collapsing to a single call
+        // shifts deterministic test fixtures. Keeping both calls matches the long-standing
+        // pattern other ColumnFunction types follow.
+        if (rec.getIPv4(columnIndex) == Numbers.IPv4_NULL) {
+            return Numbers.IPv4_NULL;
+        }
         return rec.getIPv4(columnIndex);
     }
 
